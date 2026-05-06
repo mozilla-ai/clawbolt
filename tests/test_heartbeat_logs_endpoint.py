@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.models import HeartbeatLog, User
+from tests.db_test_utils import open_test_db_session
 
 
 def _create_heartbeat_log(
@@ -17,7 +17,7 @@ def _create_heartbeat_log(
     reasoning: str = "",
     tasks: str = "",
 ) -> None:
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         db.add(
             HeartbeatLog(
@@ -37,7 +37,7 @@ def _create_heartbeat_log(
 
 def _create_other_user() -> str:
     """Create a second user and return their id."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         other = User(
             id=str(uuid.uuid4()),
@@ -181,7 +181,7 @@ def test_delete_heartbeat_logs_cross_user_isolation(client: TestClient, test_use
     assert resp.json()["deleted"] == 1
 
     # Other user's logs should still exist
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         remaining = db.query(HeartbeatLog).filter(HeartbeatLog.user_id == other_id).count()
         assert remaining == 1

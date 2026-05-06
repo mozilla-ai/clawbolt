@@ -57,7 +57,7 @@ def _create_companycam_tools(service: CompanyCamService, ctx: ToolContext) -> li
     ]
 
 
-def _companycam_auth_check(ctx: ToolContext) -> str | None:
+async def _companycam_auth_check(ctx: ToolContext) -> str | None:
     """Check whether CompanyCam is available for this user.
 
     Returns None when connected (tools are available).
@@ -65,7 +65,7 @@ def _companycam_auth_check(ctx: ToolContext) -> str | None:
     """
     if not settings.companycam_client_id or not settings.companycam_client_secret:
         return None  # Not configured server-side, hide tools
-    if oauth_service.is_connected(ctx.user.id, _INTEGRATION):
+    if await oauth_service.is_connected(ctx.user.id, _INTEGRATION):
         return None
     return (
         "CompanyCam is not connected. "

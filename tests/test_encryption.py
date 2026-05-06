@@ -29,7 +29,6 @@ from pydantic import SecretStr
 from sqlalchemy import text as _sa_text
 
 import backend.app.auth.loader as auth_loader
-import backend.app.database as _db_module
 from alembic import op as _alembic_op
 from backend.app.config import settings as _app_settings
 from backend.app.models import ChatSession, Message, OAuthToken, User
@@ -43,6 +42,7 @@ from backend.app.security.encryption import (
     encrypt,
     is_envelope,
 )
+from tests.db_test_utils import open_test_db_session
 
 
 def _load_migration_018():  # noqa: ANN202
@@ -263,7 +263,7 @@ def test_encrypted_string_round_trip_through_orm(
     install_recording_provider: _RecordingProvider,
 ) -> None:
     """An OAuthToken row's encrypted columns round-trip through PostgreSQL."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(id=str(uuid.uuid4()), user_id="enc-test", onboarding_complete=True)
         db.add(user)
@@ -281,7 +281,7 @@ def test_encrypted_string_round_trip_through_orm(
     finally:
         db.close()
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         loaded = db.get(OAuthToken, token_id)
         assert loaded is not None
@@ -302,7 +302,7 @@ def test_message_body_round_trip_through_orm(
     """A Message row's encrypted body / processed_context round-trip
     through PostgreSQL. ORM reads see plaintext; the underlying column
     holds an envelope."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-enc-test", onboarding_complete=True)
         db.add(user)
@@ -327,7 +327,7 @@ def test_message_body_round_trip_through_orm(
         db.close()
 
     # Round-trip: plaintext on read.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         loaded = db.get(Message, message_id)
         assert loaded is not None
@@ -340,7 +340,7 @@ def test_message_body_round_trip_through_orm(
     # plaintext we wrote. This is the at-rest guarantee the migration
     # delivers; a database leak (pgdump from a backup, snapshot of a
     # read replica) gives the attacker ciphertext, not message bodies.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         rows = db.execute(
             _sa_text("SELECT body, processed_context FROM messages WHERE id = :id"),
@@ -378,7 +378,7 @@ def test_tool_interactions_json_round_trip_through_orm(
         '"args":{"customer":"Acme Plumbing"},'
         '"result":"ok","is_error":false,"receipt":null}]'
     )
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-tool-enc-test", onboarding_complete=True)
         db.add(user)
@@ -401,7 +401,7 @@ def test_tool_interactions_json_round_trip_through_orm(
     finally:
         db.close()
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         loaded = db.get(Message, message_id)
         assert loaded is not None
@@ -409,7 +409,7 @@ def test_tool_interactions_json_round_trip_through_orm(
     finally:
         db.close()
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         rows = db.execute(
             _sa_text("SELECT tool_interactions_json FROM messages WHERE id = :id"),
@@ -439,7 +439,7 @@ def test_message_body_empty_string_passes_through(
     half empty bodies would still issue 50 wraps, measurable on
     high-throughput deployments.
     """
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-empty-test", onboarding_complete=True)
         db.add(user)
@@ -473,7 +473,7 @@ def test_message_body_empty_string_passes_through(
     assert "processed_context" not in msg_columns
     assert "tool_interactions_json" not in msg_columns
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         loaded = db.get(Message, message_id)
         assert loaded is not None
@@ -489,7 +489,7 @@ def test_encrypted_string_read_of_non_envelope_raises(
 ) -> None:
     """Reading a row whose ciphertext was not migrated to envelope format
     fails fast rather than returning silently corrupted data."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(id=str(uuid.uuid4()), user_id="enc-pre", onboarding_complete=True)
         db.add(user)
@@ -511,7 +511,7 @@ def test_encrypted_string_read_of_non_envelope_raises(
     finally:
         db.close()
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         # SQLAlchemy materializes column values eagerly during ORM
         # loading, so the EncryptedString check fires on .one() rather
@@ -719,7 +719,7 @@ def test_migration_020_full_upgrade_loop_against_real_db(
     # migration state. Going through the ORM would invoke the
     # ``EncryptedString`` type decorator and pre-encrypt them, which is
     # exactly what we want to AVOID for this test.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-mig-e2e-test", onboarding_complete=True)
         db.add(user)
@@ -756,7 +756,7 @@ def test_migration_020_full_upgrade_loop_against_real_db(
     # point at the test session's connection so the migration writes
     # through to the same database the test reads from afterwards.
     migration = _load_migration_020()
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
         migration.upgrade()
@@ -766,7 +766,7 @@ def test_migration_020_full_upgrade_loop_against_real_db(
 
     # Verify the migration wrote envelopes for the non-empty rows and
     # left the empty row alone (empty strings short-circuit in _rekey).
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         rows = db.execute(
             _sa_text(
@@ -794,7 +794,7 @@ def test_migration_020_full_upgrade_loop_against_real_db(
     # short-circuit fires). The cursor reach-around guarantees the loop
     # terminates regardless. We assert termination simply by reaching
     # the next line without timing out.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
         migration.upgrade()
@@ -873,7 +873,7 @@ def test_migration_022_full_upgrade_loop_against_real_db(
     """
     monkeypatch.setattr(_app_settings, "encryption_key", SecretStr("a" * 32))
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             id=str(uuid.uuid4()),
@@ -916,7 +916,7 @@ def test_migration_022_full_upgrade_loop_against_real_db(
         db.close()
 
     migration = _load_migration_022()
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
         migration.upgrade()
@@ -925,7 +925,7 @@ def test_migration_022_full_upgrade_loop_against_real_db(
         db.close()
 
     # Verify envelopes on disk for non-empty rows; empties stay empty.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         mem = db.execute(
             _sa_text("SELECT memory_text, history_text FROM memory_documents WHERE user_id = :u"),
@@ -958,7 +958,7 @@ def test_migration_022_full_upgrade_loop_against_real_db(
 
     # Idempotent re-run terminates instead of looping forever (regression
     # for the cursor reach-around at end of batch).
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
         migration.upgrade()
@@ -975,7 +975,7 @@ def test_migration_022_refuses_when_encryption_key_unset_and_data_exists(
     ephemeral key that vanishes on the next process restart."""
     monkeypatch.setattr(_app_settings, "encryption_key", SecretStr(""))
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             id=str(uuid.uuid4()),
@@ -997,7 +997,7 @@ def test_migration_022_refuses_when_encryption_key_unset_and_data_exists(
         db.close()
 
     migration = _load_migration_022()
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
         with pytest.raises(RuntimeError, match="ENCRYPTION_KEY"):
@@ -1042,7 +1042,7 @@ def test_migration_024_full_upgrade_loop_against_real_db(
     idempotency."""
     monkeypatch.setattr(_app_settings, "encryption_key", SecretStr("a" * 32))
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-tool-mig-test", onboarding_complete=True)
         db.add(user)
@@ -1070,7 +1070,7 @@ def test_migration_024_full_upgrade_loop_against_real_db(
         db.close()
 
     migration = _load_migration_024()
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
         migration.upgrade()
@@ -1078,7 +1078,7 @@ def test_migration_024_full_upgrade_loop_against_real_db(
     finally:
         db.close()
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         rows = db.execute(
             _sa_text(
@@ -1096,7 +1096,7 @@ def test_migration_024_full_upgrade_loop_against_real_db(
         db.close()
 
     # Idempotent re-run terminates instead of looping forever.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
         migration.upgrade()
@@ -1113,7 +1113,7 @@ def test_migration_024_refuses_when_encryption_key_unset_and_data_exists(
     key."""
     monkeypatch.setattr(_app_settings, "encryption_key", SecretStr(""))
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-tool-preflight", onboarding_complete=True)
         db.add(user)
@@ -1135,7 +1135,7 @@ def test_migration_024_refuses_when_encryption_key_unset_and_data_exists(
         db.close()
 
     migration = _load_migration_024()
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
         with pytest.raises(RuntimeError, match="ENCRYPTION_KEY"):

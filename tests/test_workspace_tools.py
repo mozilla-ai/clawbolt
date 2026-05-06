@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.tools.base import ToolResult
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.config import settings
 from backend.app.models import MemoryDocument, User
+from tests.db_test_utils import open_test_db_session
 
 
 def _get_tool_fn(user_id: str, tool_name: str) -> Callable[..., Awaitable[ToolResult]]:
@@ -30,7 +30,7 @@ def _user_dir(user: User) -> Path:
 
 def _set_user_column(user_id: str, column: str, value: str) -> None:
     """Set a text column on User directly in the DB."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=user_id).first()
         assert user is not None
@@ -42,7 +42,7 @@ def _set_user_column(user_id: str, column: str, value: str) -> None:
 
 def _get_user_column(user_id: str, column: str) -> str:
     """Read a text column from User in the DB."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=user_id).first()
         assert user is not None
@@ -296,7 +296,7 @@ async def test_heartbeat_md_roundtrip(test_user: User) -> None:
 
 def _set_memory_doc(user_id: str, column: str, value: str) -> None:
     """Set a column on MemoryDocument directly in the DB."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         doc = db.query(MemoryDocument).filter_by(user_id=user_id).first()
         if doc is None:
@@ -311,7 +311,7 @@ def _set_memory_doc(user_id: str, column: str, value: str) -> None:
 
 def _get_memory_doc(user_id: str, column: str) -> str:
     """Read a column from MemoryDocument in the DB."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         doc = db.query(MemoryDocument).filter_by(user_id=user_id).first()
         if doc is None:

@@ -19,7 +19,6 @@ from backend.app.services.oauth import (
     OAuthTokenData,
     _refresh_lock_key,
     _try_acquire_advisory_lock_async,
-    _try_acquire_advisory_lock_sync,
 )
 
 # ---------------------------------------------------------------------------
@@ -437,7 +436,7 @@ class TestNotifyReauthNeeded:
     async def test_notification_failure_does_not_crash(self, oauth_svc: OAuthService) -> None:
         """Notification errors should be swallowed silently."""
         with patch(
-            "backend.app.services.oauth.db_session",
+            "backend.app.services.oauth.AsyncSessionLocal",
             side_effect=RuntimeError("db down"),
         ):
             # Should not raise
@@ -450,16 +449,17 @@ class TestNotifyReauthNeeded:
         mock_route.channel = "telegram"
         mock_route.channel_identifier = "12345"
 
-        mock_db = MagicMock()
-        mock_db.__enter__ = MagicMock(return_value=mock_db)
-        mock_db.__exit__ = MagicMock(return_value=False)
-        mock_db.execute.return_value.scalars.return_value.first.return_value = mock_route
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = mock_route
+
+        mock_db = AsyncMock()
+        mock_db.execute.return_value = mock_result
+        mock_db.close = AsyncMock()
 
         mock_bus = AsyncMock()
 
         with (
-            patch("backend.app.services.oauth.db_session", return_value=mock_db),
-            patch("backend.app.services.oauth.select"),
+            patch("backend.app.services.oauth.AsyncSessionLocal", return_value=mock_db),
             patch("backend.app.bus.message_bus", mock_bus),
         ):
             await oauth_svc._notify_reauth_needed("user-1", "google_calendar")
@@ -540,30 +540,6 @@ class TestAdvisoryLockBounded:
         finally:
             await async_engine.dispose()
 
-    def test_sync_acquire_returns_false_when_lock_held_by_peer(self, _pg_engine: Engine) -> None:
-        lock_key = _refresh_lock_key("contended-user-sync", "quickbooks")
-        peer = _pg_engine.raw_connection()
-        try:
-            cur = peer.cursor()
-            cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (lock_key,))
-            peer.commit()
-
-            db = _pg_engine.connect()
-            try:
-                with patch("backend.app.services.oauth._LOCK_MAX_WAIT_S", 0.3):
-                    start = time.monotonic()
-                    acquired = _try_acquire_advisory_lock_sync(db, lock_key)
-                    elapsed = time.monotonic() - start
-            finally:
-                db.close()
-
-            assert acquired is False
-            assert elapsed < 1.0
-        finally:
-            cur.execute("SELECT pg_advisory_unlock_all()")
-            peer.commit()
-            peer.close()
-
 
 # ---------------------------------------------------------------------------
 # Concurrency regression: refresh_token advisory-lock serialization (issue #1145)
@@ -592,16 +568,15 @@ class TestRefreshTokenLockSerialization:
 
     * Async test uses ``asyncio.gather`` against the production
       ``refresh_token`` coroutine.
-    * Sync test uses ``threading.Thread`` against the production
-      ``build_on_refresh_callback`` ``_persist`` closure (the sync
-      sibling helper).
+    * Callback test uses ``asyncio.gather`` against the production
+      ``build_on_refresh_callback`` closure.
 
     The lock helpers are exercised end-to-end via the public service
     methods, not in isolation, so a future refactor that bypasses the
     helpers entirely still has to hit this assertion.
 
     No timestamp-based assertions across tasks (per #1202): all
-    coordination is via ``asyncio.Event`` / ``threading.Event``.
+    coordination is via ``asyncio.Event``.
     """
 
     _N_CONCURRENT = 3
@@ -749,19 +724,16 @@ class TestRefreshTokenLockSerialization:
                 f"({r.refresh_token!r}); the lock allowed a racing rotation"
             )
 
-    def test_sync_callback_serializes_concurrent_persists(
+    @pytest.mark.asyncio()
+    async def test_callback_serializes_concurrent_persists(
         self, _pg_engine: Engine, oauth_svc: OAuthService
     ) -> None:
         """N concurrent ``on_refresh`` callbacks for the same user serialize
         on the advisory lock: each runs the load+save under the lock so
         the rotated ``refresh_token`` field is preserved across overlapping
         provider-driven mid-call refreshes.
-
-        Same mutation-test invariant as the async test, but for the
-        sync ``_try_acquire_advisory_lock_sync`` helper used by
-        ``build_on_refresh_callback``.
         """
-        user_id = "lock-test-user-sync"
+        user_id = "lock-test-user-callback"
         integration = "quickbooks"
 
         # Each thread persists a unique rotated refresh_token so we
@@ -793,7 +765,7 @@ class TestRefreshTokenLockSerialization:
         # next one starts, masking the bug.
         hold_inside_critical_s = 0.05
 
-        def _load_uncached(uid: str, ig: str) -> OAuthTokenData | None:
+        async def _load_uncached(uid: str, ig: str) -> OAuthTokenData | None:
             current = persisted["current"]
             snapshot = OAuthTokenData(
                 access_token=current.access_token,
@@ -808,12 +780,12 @@ class TestRefreshTokenLockSerialization:
                 loaded_bases.append(snapshot.refresh_token)
             return snapshot
 
-        def _save(uid: str, ig: str, token: OAuthTokenData) -> None:
+        async def _save(uid: str, ig: str, token: OAuthTokenData) -> None:
             # Hold inside the critical section so a buggy peer that
             # bypasses the lock has a clean window to also observe
             # the pre-save state and append its own ``base-rt`` to
             # ``loaded_bases``.
-            time.sleep(hold_inside_critical_s)
+            await asyncio.sleep(hold_inside_critical_s)
             with record_lock:
                 persisted["current"] = OAuthTokenData(
                     access_token=token.access_token,
@@ -825,36 +797,27 @@ class TestRefreshTokenLockSerialization:
                     extra=dict(token.extra),
                 )
 
-        barrier = threading.Barrier(self._N_CONCURRENT)
+        start = asyncio.Event()
 
-        def _run_callback(idx: int) -> None:
+        async def _run_callback(idx: int) -> None:
             # Coordinate so all N threads call the public callback at
             # the same moment. Each callback opens its own lock
             # connection and contends for the advisory lock.
-            barrier.wait(timeout=self._TIMEOUT_S)
+            await start.wait()
             new_at = f"rotated-at-{idx}"
             new_rt = f"rotated-rt-{idx}"
             cb = oauth_svc.build_on_refresh_callback(user_id, integration)
-            cb(new_at, new_rt, time.time() + 3600)
+            await cb(new_at, new_rt, time.time() + 3600)
 
         # Apply the patches once on the shared service before
-        # spawning threads. ``patch.object`` is not thread-safe when
-        # used as a context manager from multiple threads, so we set
-        # it up at the test scope (single thread) and let each worker
-        # thread observe the same patched attributes.
+        # spawning tasks so every callback sees the same mocked state.
         with (
             patch.object(oauth_svc, "_load_token_uncached", side_effect=_load_uncached),
             patch.object(oauth_svc, "save_token", side_effect=_save),
         ):
-            threads = [
-                threading.Thread(target=_run_callback, args=(idx,))
-                for idx in range(self._N_CONCURRENT)
-            ]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join(timeout=self._TIMEOUT_S * 2)
-                assert not t.is_alive(), "callback thread did not complete"
+            tasks = [asyncio.create_task(_run_callback(idx)) for idx in range(self._N_CONCURRENT)]
+            start.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=self._TIMEOUT_S * 2)
 
         # Every callback ran its post-lock load (none bailed out on
         # lock timeout).

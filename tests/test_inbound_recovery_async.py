@@ -9,7 +9,7 @@ The most load-bearing assertion is
 ``test_unlock_on_different_connection_is_a_no_op_async`` -- the async
 port of the same-connection-coupling regression. The async sweep opens
 a single ``AsyncConnection`` for the lock and routes both
-``_try_acquire_lock_async`` and ``_release_lock_async`` through that
+``_try_acquire_lock`` and ``_release_lock`` through that
 connection. If a future refactor splits acquire and release across
 different ``AsyncConnection`` handles (or accidentally routes one
 through an ``AsyncSession`` whose ``commit()`` returns the connection
@@ -29,8 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.app.agent.inbound_recovery import (
     _RECOVERY_LOCK_KEY,
-    _release_lock_async,
-    _try_acquire_lock_async,
+    _release_lock,
+    _try_acquire_lock,
 )
 
 
@@ -64,14 +64,14 @@ class TestInboundRecoveryLockSerializationAsync:
         connection. Mirrors the sync ``_try_lock_in_thread``."""
         connection = await engine.connect()
         try:
-            acquired = await _try_acquire_lock_async(connection)
+            acquired = await _try_acquire_lock(connection)
             result["acquired"] = acquired
             ready.set()
             if not acquired:
                 return
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(release.wait(), timeout=self._TIMEOUT_S)
-            await _release_lock_async(connection)
+            await _release_lock(connection)
         finally:
             await connection.close()
 
@@ -84,16 +84,16 @@ class TestInboundRecoveryLockSerializationAsync:
     ) -> None:
         """One of N contenders racing for the lock. Opens a fresh
         ``AsyncConnection``, waits for the barrier event, then calls
-        the production ``_try_acquire_lock_async``. If acquired,
-        releases via ``_release_lock_async`` on the same connection."""
+        the production ``_try_acquire_lock``. If acquired,
+        releases via ``_release_lock`` on the same connection."""
         connection = await engine.connect()
         try:
             await barrier_event.wait()
-            acquired = await _try_acquire_lock_async(connection)
+            acquired = await _try_acquire_lock(connection)
             async with results_lock:
                 results.append(acquired)
             if acquired:
-                await _release_lock_async(connection)
+                await _release_lock(connection)
         finally:
             await connection.close()
 
@@ -113,7 +113,7 @@ class TestInboundRecoveryLockSerializationAsync:
         # the lock as taken.
         holder_conn = await _pg_async_engine.connect()
         try:
-            held = await _try_acquire_lock_async(holder_conn)
+            held = await _try_acquire_lock(holder_conn)
             assert held, "holder task failed to pre-acquire the lock"
 
             tasks = [
@@ -126,7 +126,7 @@ class TestInboundRecoveryLockSerializationAsync:
             barrier_event.set()
             await asyncio.wait_for(asyncio.gather(*tasks), timeout=self._TIMEOUT_S)
         finally:
-            await _release_lock_async(holder_conn)
+            await _release_lock(holder_conn)
             await holder_conn.close()
 
         assert len(results) == self._N_CONTENDERS
@@ -158,7 +158,7 @@ class TestInboundRecoveryLockSerializationAsync:
 
             contender_conn = await _pg_async_engine.connect()
             try:
-                got = await _try_acquire_lock_async(contender_conn)
+                got = await _try_acquire_lock(contender_conn)
                 assert got is False, (
                     "contender acquired the lock while holder owned it; "
                     "pg_try_advisory_lock failed to exclude concurrent "
@@ -172,9 +172,9 @@ class TestInboundRecoveryLockSerializationAsync:
 
         post_conn = await _pg_async_engine.connect()
         try:
-            got_after = await _try_acquire_lock_async(post_conn)
+            got_after = await _try_acquire_lock(post_conn)
             assert got_after is True, "lock was not released after holder task exited"
-            await _release_lock_async(post_conn)
+            await _release_lock(post_conn)
         finally:
             await post_conn.close()
 
@@ -190,8 +190,8 @@ class TestInboundRecoveryLockSerializationAsync:
 
         This is the invariant the issue body calls out for the async
         conversion. If a future refactor accidentally routes
-        ``_release_lock_async`` through a different ``AsyncConnection``
-        than ``_try_acquire_lock_async`` (or routes either through an
+        ``_release_lock`` through a different ``AsyncConnection``
+        than ``_try_acquire_lock`` (or routes either through an
         ``AsyncSession`` whose ``commit()`` returns the connection to
         the pool), the unlock becomes a silent no-op and the lock
         leaks for the lifetime of the original connection. This test
@@ -203,7 +203,7 @@ class TestInboundRecoveryLockSerializationAsync:
         observer_conn = await _pg_async_engine.connect()
         try:
             # Holder acquires.
-            held = await _try_acquire_lock_async(holder_conn)
+            held = await _try_acquire_lock(holder_conn)
             assert held is True
 
             # Try to release on a different connection. Postgres
@@ -221,18 +221,18 @@ class TestInboundRecoveryLockSerializationAsync:
             )
 
             # The lock is still held: a third connection cannot acquire.
-            still_held = await _try_acquire_lock_async(observer_conn)
+            still_held = await _try_acquire_lock(observer_conn)
             assert still_held is False, (
                 "lock was released by an unlock on a different connection; "
                 "the async recovery code's same-connection coupling is broken"
             )
 
             # Releasing on the holder connection actually frees it.
-            await _release_lock_async(holder_conn)
+            await _release_lock(holder_conn)
 
-            now_free = await _try_acquire_lock_async(observer_conn)
+            now_free = await _try_acquire_lock(observer_conn)
             assert now_free is True, "lock did not free after release on the owning connection"
-            await _release_lock_async(observer_conn)
+            await _release_lock(observer_conn)
         finally:
             await holder_conn.close()
             await wrong_conn.close()

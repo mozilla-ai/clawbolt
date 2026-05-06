@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from any_llm import AuthenticationError, ContentFilterError
 
-import backend.app.database as _db_module
 from backend.app.agent.approval import PermissionLevel, get_approval_store
 from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.router import (
@@ -15,6 +14,7 @@ from backend.app.agent.router import (
 from backend.app.bus import message_bus
 from backend.app.models import User
 from tests.conftest import create_test_session
+from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import make_error_response, make_text_response, make_tool_call_response
 from tests.mocks.storage import MockStorageBackend
 
@@ -677,7 +677,7 @@ async def test_empty_to_address_returns_early(
 ) -> None:
     """User with no channel_identifier or phone should return early."""
     # Create user with empty delivery fields (persisted so FK queries work)
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         no_addr = User(
             user_id="no-addr",
@@ -715,7 +715,7 @@ async def test_send_media_reply_suppresses_duplicate_text(
     """When agent calls send_media_reply, the router should NOT also dispatch text."""
     # Pre-approve messaging tools so the approval gate doesn't block
     store = get_approval_store()
-    store.set_permission(test_user.id, "send_media_reply", PermissionLevel.ALWAYS)
+    await store.set_permission_async(test_user.id, "send_media_reply", PermissionLevel.ALWAYS)
     # LLM calls send_media_reply tool
     tool_response = make_tool_call_response(
         tool_calls=[
@@ -1164,14 +1164,13 @@ async def test_to_address_uses_channel_specific_identifier(
     (which equals the numeric user_id, e.g. "1"). Telegram replies must
     still use the real Telegram chat_id from the user index.
     """
-    import backend.app.database as _db_module
     from backend.app.models import ChannelRoute
 
     telegram_chat_id = "555000111"
 
     # Create a second user so its id (2) doesn't collide with leaked index
     # entries from other tests that map telegram:<x> -> 1.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             user_id="cross-channel-user",

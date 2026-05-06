@@ -4,13 +4,13 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.agent.core import AgentResponse
 from backend.app.agent.dto import StoredMessage
 from backend.app.agent.router import PipelineContext, persist_system_prompt_step
 from backend.app.agent.session_db import get_session_store
 from backend.app.models import ChatSession, Message, User
 from tests.conftest import create_test_session
+from tests.db_test_utils import open_test_db_session
 
 
 def _create_session_with_prompt(
@@ -20,7 +20,7 @@ def _create_session_with_prompt(
     messages: list[dict[str, object]] | None = None,
 ) -> None:
     """Create a session row with an optional initial system prompt."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs = ChatSession(
             session_id=session_id,

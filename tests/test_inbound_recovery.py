@@ -14,9 +14,11 @@ re-dispatches each via ``_dispatch_to_pipeline``. These tests exercise:
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import threading
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -29,14 +31,13 @@ from backend.app.agent.inbound_recovery import (
     _build_dispatch_inputs,
     _find_orphaned_inbounds,
     _parse_media_refs,
-    _release_lock,
-    _try_acquire_lock,
     recover_orphan_inbound_messages,
 )
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, Message, User
+from tests.db_test_utils import open_test_db_session
 
 
 async def _make_user_async(factory: async_sessionmaker) -> User:
@@ -108,6 +109,49 @@ async def _add_message_async(
     return msg
 
 
+def _run(coro: Any) -> Any:
+    return asyncio.run(coro)
+
+
+async def _find_orphaned_inbounds_with_async_db(
+    cutoff_utc: datetime.datetime,
+    freshness_floor_utc: datetime.datetime,
+) -> list[tuple[Message, ChatSession]]:
+    db = AsyncSessionLocal()
+    try:
+        return await _find_orphaned_inbounds(db, cutoff_utc, freshness_floor_utc)
+    finally:
+        await db.close()
+
+
+async def _build_dispatch_inputs_with_async_db(
+    msg: Message,
+    chat_session: ChatSession,
+) -> tuple[User, Any, Any] | None:
+    db = AsyncSessionLocal()
+    try:
+        return await _build_dispatch_inputs(db, msg, chat_session)
+    finally:
+        await db.close()
+
+
+def _try_acquire_lock_sync(connection: Any) -> bool:
+    got_lock = connection.execute(
+        text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+        {"k": _RECOVERY_LOCK_KEY},
+    ).scalar()
+    connection.commit()
+    return bool(got_lock)
+
+
+def _release_lock_sync(connection: Any) -> None:
+    connection.execute(
+        text("SELECT pg_advisory_unlock(hashtext(:k))"),
+        {"k": _RECOVERY_LOCK_KEY},
+    )
+    connection.commit()
+
+
 def _make_user(db: Session) -> User:
     user = User(
         id=str(uuid.uuid4()),
@@ -120,6 +164,7 @@ def _make_user(db: Session) -> User:
     db.add(user)
     db.commit()
     db.refresh(user)
+    db.expunge(user)
     return user
 
 
@@ -135,6 +180,7 @@ def _make_session(db: Session, user: User, channel: str = "bluebubbles") -> Chat
     db.add(cs)
     db.commit()
     db.refresh(cs)
+    db.expunge(cs)
     return cs
 
 
@@ -160,6 +206,7 @@ def _add_message(
     db.add(msg)
     db.commit()
     db.refresh(msg)
+    db.expunge(msg)
     return msg
 
 
@@ -169,14 +216,16 @@ def _add_message(
 
 
 def test_inbound_with_no_outbound_is_orphan() -> None:
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
         _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="hello?", minutes_ago=2)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
-        rows = _find_orphaned_inbounds(db, cutoff, datetime.datetime.now(datetime.UTC))
+        rows = _run(
+            _find_orphaned_inbounds_with_async_db(cutoff, datetime.datetime.now(datetime.UTC))
+        )
     finally:
         db.close()
 
@@ -187,7 +236,7 @@ def test_inbound_with_no_outbound_is_orphan() -> None:
 
 
 def test_inbound_followed_by_outbound_is_not_orphan() -> None:
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
@@ -195,7 +244,9 @@ def test_inbound_followed_by_outbound_is_not_orphan() -> None:
         _add_message(db, cs, MessageDirection.OUTBOUND, seq=2, body="hi back", minutes_ago=1)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
-        rows = _find_orphaned_inbounds(db, cutoff, datetime.datetime.now(datetime.UTC))
+        rows = _run(
+            _find_orphaned_inbounds_with_async_db(cutoff, datetime.datetime.now(datetime.UTC))
+        )
     finally:
         db.close()
 
@@ -205,14 +256,16 @@ def test_inbound_followed_by_outbound_is_not_orphan() -> None:
 def test_inbound_outside_lookback_is_ignored() -> None:
     """Messages older than the cutoff are excluded so we don't dispatch a
     stale reply for something the user has long since moved past."""
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
         _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="long ago", minutes_ago=120)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
-        rows = _find_orphaned_inbounds(db, cutoff, datetime.datetime.now(datetime.UTC))
+        rows = _run(
+            _find_orphaned_inbounds_with_async_db(cutoff, datetime.datetime.now(datetime.UTC))
+        )
     finally:
         db.close()
 
@@ -223,7 +276,7 @@ def test_orphan_detection_is_per_session() -> None:
     """A second session's outbound must not satisfy the first session's
     inbound. Without the per-session join the EXISTS would let one user's
     activity declare another user's inbound 'processed'."""
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user_a = _make_user(db)
         user_b = _make_user(db)
@@ -234,7 +287,9 @@ def test_orphan_detection_is_per_session() -> None:
         _add_message(db, cs_b, MessageDirection.OUTBOUND, seq=1, body="B reply", minutes_ago=1)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
-        rows = _find_orphaned_inbounds(db, cutoff, datetime.datetime.now(datetime.UTC))
+        rows = _run(
+            _find_orphaned_inbounds_with_async_db(cutoff, datetime.datetime.now(datetime.UTC))
+        )
     finally:
         db.close()
 
@@ -251,7 +306,7 @@ def test_orphan_detection_is_per_session() -> None:
 
 
 def test_build_dispatch_inputs_round_trips_message_fields() -> None:
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
@@ -259,7 +314,7 @@ def test_build_dispatch_inputs_round_trips_message_fields() -> None:
             db, cs, MessageDirection.INBOUND, seq=7, body="rebuild me", minutes_ago=5
         )
 
-        result = _build_dispatch_inputs(db, msg, cs)
+        result = _run(_build_dispatch_inputs_with_async_db(msg, cs))
     finally:
         db.close()
 
@@ -276,7 +331,7 @@ def test_build_dispatch_inputs_round_trips_message_fields() -> None:
 def test_build_dispatch_inputs_returns_none_when_user_missing() -> None:
     """Defense in depth: if the user row was deleted in the window between
     persist and recovery, log and skip rather than crash."""
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
@@ -286,7 +341,7 @@ def test_build_dispatch_inputs_returns_none_when_user_missing() -> None:
         db.delete(user)
         db.commit()
 
-        result = _build_dispatch_inputs(db, msg, cs)
+        result = _run(_build_dispatch_inputs_with_async_db(msg, cs))
     finally:
         db.close()
 
@@ -362,7 +417,7 @@ async def test_recover_dispatches_each_orphan(async_db: async_sessionmaker) -> N
 
 @pytest.mark.asyncio()
 async def test_recover_short_circuits_when_lookback_zero() -> None:
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
@@ -428,7 +483,7 @@ def test_freshness_floor_excludes_brand_new_inbounds() -> None:
     path's responsibility, not recovery. Without this floor a worker
     could race the in-flight MessageBatcher and double-dispatch a message
     that was about to be processed normally."""
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
@@ -437,7 +492,7 @@ def test_freshness_floor_excludes_brand_new_inbounds() -> None:
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
         # Floor at -30s: anything newer is excluded as too-fresh.
         floor = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=30)
-        rows = _find_orphaned_inbounds(db, cutoff, floor)
+        rows = _run(_find_orphaned_inbounds_with_async_db(cutoff, floor))
     finally:
         db.close()
 
@@ -446,7 +501,7 @@ def test_freshness_floor_excludes_brand_new_inbounds() -> None:
 
 def test_freshness_floor_includes_messages_older_than_floor() -> None:
     """Sanity: floor at +0s (now) includes messages from the past."""
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
@@ -454,7 +509,7 @@ def test_freshness_floor_includes_messages_older_than_floor() -> None:
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
         floor = datetime.datetime.now(datetime.UTC)
-        rows = _find_orphaned_inbounds(db, cutoff, floor)
+        rows = _run(_find_orphaned_inbounds_with_async_db(cutoff, floor))
     finally:
         db.close()
 
@@ -472,7 +527,7 @@ def test_orphan_is_no_longer_detected_after_outbound_lands() -> None:
     and persists an outbound, the next sweep doesn't see the inbound as
     an orphan anymore. Simulate that by adding the outbound by hand and
     re-running the query."""
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
@@ -480,13 +535,13 @@ def test_orphan_is_no_longer_detected_after_outbound_lands() -> None:
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
         floor = datetime.datetime.now(datetime.UTC)
-        before = _find_orphaned_inbounds(db, cutoff, floor)
+        before = _run(_find_orphaned_inbounds_with_async_db(cutoff, floor))
         assert len(before) == 1
 
         # Simulate the agent loop running and persisting its reply.
         _add_message(db, cs, MessageDirection.OUTBOUND, seq=2, body="ok", minutes_ago=1)
 
-        after = _find_orphaned_inbounds(db, cutoff, floor)
+        after = _run(_find_orphaned_inbounds_with_async_db(cutoff, floor))
     finally:
         db.close()
 
@@ -504,7 +559,7 @@ async def test_recovery_skips_when_another_worker_holds_the_lock() -> None:
     another connection already holds the lock. The sweep must short-circuit
     in that case, otherwise N workers in a rolling restart would each
     re-dispatch the same orphans N times."""
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         user = _make_user(db)
         cs = _make_session(db, user)
@@ -514,7 +569,7 @@ async def test_recovery_skips_when_another_worker_holds_the_lock() -> None:
 
     with (
         patch(
-            "backend.app.agent.inbound_recovery._try_acquire_lock_async",
+            "backend.app.agent.inbound_recovery._try_acquire_lock",
             new=AsyncMock(return_value=False),
         ),
         patch(
@@ -655,11 +710,11 @@ class TestInboundRecoveryLockSerialization:
         try:
             shim = _ConnSession(connection)
             barrier.wait(timeout=self._TIMEOUT_S)
-            acquired = _try_acquire_lock(shim)  # type: ignore[arg-type]
+            acquired = _try_acquire_lock_sync(shim)
             with results_lock:
                 results.append(acquired)
             if acquired:
-                _release_lock(shim)  # type: ignore[arg-type]
+                _release_lock_sync(shim)
         finally:
             connection.close()
 
@@ -800,7 +855,7 @@ class TestInboundRecoveryLockSerialization:
         This is the invariant the issue body calls out: under the async
         conversion, the lock acquisition and release must remain coupled
         to the same connection. If a future refactor accidentally routes
-        ``_release_lock`` through a different ``SessionLocal()`` than
+        ``_release_lock`` through a different ``open_test_db_session()`` than
         ``_try_acquire_lock``, the unlock becomes a silent no-op and the
         lock leaks for the lifetime of the original connection. This test
         encodes that coupling so a regression surfaces immediately.

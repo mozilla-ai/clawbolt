@@ -8,13 +8,12 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from httpx import ASGITransport
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import backend.app.database as _db_module
@@ -30,19 +29,26 @@ from backend.app.database import Base
 from backend.app.main import app
 from backend.app.models import ChatSession, Message, User
 from backend.app.services.rate_limiter import webhook_rate_limiter
+from tests.db_test_utils import get_test_sync_engine, open_test_db_session
 
-_TEST_DB_URL = "postgresql+psycopg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
 _ASYNC_TEST_DB_URL = "postgresql+asyncpg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+
+
+def _reset_public_schema(engine: Engine) -> None:
+    """Drop and recreate ``public`` so shared-db test tables cannot block setup."""
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
+        conn.exec_driver_sql("CREATE SCHEMA public")
 
 
 @pytest.fixture(scope="session")
 def _pg_engine() -> Generator[Engine]:
     """Session-scoped PostgreSQL engine. Tables are created once per test run."""
-    engine = create_engine(_TEST_DB_URL, pool_pre_ping=True)
-    Base.metadata.drop_all(engine)
+    engine = get_test_sync_engine()
+    _reset_public_schema(engine)
     Base.metadata.create_all(engine)
     yield engine
-    Base.metadata.drop_all(engine)
+    _reset_public_schema(engine)
     engine.dispose()
 
 
@@ -158,45 +164,20 @@ _TRUNCATE_TABLE_NAMES = [t.name for t in Base.metadata.sorted_tables]
 def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
     """Per-test isolation via real commits + post-test TRUNCATE.
 
-    The earlier design opened a session-long transaction and rebound the
-    sync session factory to ``join_transaction_mode="conditional_savepoint"``,
-    so test commits became savepoint releases inside one outer
-    transaction; teardown rolled the outer transaction back. That kept
-    sync writes invisible to other connections, which broke once
-    production code started doing async DB reads on the same data the
-    tests had inserted via the sync session (cross-API caveat in the
-    comment block below).
-
-    The new design lets ``SessionLocal()`` commit normally and TRUNCATEs
-    the schema after each test instead. Sync and async writes are now
-    real commits, so the async session pool sees them and vice versa.
-    Tests that previously relied on the savepoint to hide a partial
-    failure (e.g. ``IntegrityError`` from a flush in a unique-constraint
-    test) need to issue an explicit ``rollback`` after the expected
-    failure.
+    Production DB access is async-only, but many tests still use a
+    standalone sync session for setup and assertions. Those writes
+    commit for real, and the async session pool must see them, so the
+    harness uses TRUNCATE-on-teardown rather than wrapping each test in
+    one hidden sync transaction.
 
     The fixture also disposes the sync engine pool on teardown. Code
     paths like ``cleanup_orphaned_approvals`` take a session-scoped
     ``pg_advisory_lock`` and return the connection to the pool with the
-    lock still held; the prior savepoint design pinned a single
-    connection per test, so the lock left the pool with the connection.
-    Under TRUNCATE isolation the engine pool is shared across tests, so
-    we close every pooled connection between tests to drop any
-    advisory locks the test left behind.
+    lock still held. Closing every pooled sync connection between tests
+    guarantees the next test does not inherit that lock.
     """
-    test_session_factory = sessionmaker(
-        autocommit=False,
-        autoflush=False,
-        bind=_pg_engine,
-    )
-
-    old_engine = _db_module._engine
-    old_factory = _db_module._SessionLocal
     old_async_engine = _db_module._async_engine
     old_async_session_factory = _db_module._async_session_factory
-
-    _db_module._engine = _pg_engine
-    _db_module._SessionLocal = test_session_factory
 
     # Set up per-test file store isolation
     with patch.object(settings, "data_dir", str(tmp_path)):
@@ -219,9 +200,6 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
     # ``cleanup_orphaned_approvals``.
     _pg_engine.dispose()
 
-    # Restore
-    _db_module._engine = old_engine
-    _db_module._SessionLocal = old_factory
     # Restore the async engine/factory to whatever a session-scoped
     # fixture (e.g. ``_isolate_async_engine`` from #1210) installed
     # before this test ran. If nothing installed them, the prior values
@@ -345,7 +323,7 @@ async def test_user(tmp_path: Path) -> User:
     Also creates the file-store directory structure so per-user stores
     (sessions, memory, etc.) can still write files during the hybrid period.
     """
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             id=str(uuid.uuid4()),
@@ -419,7 +397,7 @@ def create_test_session(
     """
     from datetime import UTC, datetime
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs = ChatSession(
             session_id=session_id,

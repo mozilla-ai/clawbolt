@@ -19,7 +19,7 @@ import logging
 import pkgutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, Field
 
@@ -80,7 +80,7 @@ class ToolFactory:
     core: bool = True
     summary: str = ""
     sub_tools: list[SubToolInfo] = field(default_factory=list)
-    auth_check: Callable[[ToolContext], str | None] | None = None
+    auth_check: Callable[[ToolContext], str | None | Awaitable[str | None]] | None = None
 
 
 class ListCapabilitiesParams(BaseModel):
@@ -249,7 +249,7 @@ class ToolRegistry:
         core: bool = True,
         summary: str = "",
         sub_tools: list[SubToolInfo] | None = None,
-        auth_check: Callable[[ToolContext], str | None] | None = None,
+        auth_check: Callable[[ToolContext], str | None | Awaitable[str | None]] | None = None,
     ) -> None:
         """Register a tool factory by name.
 
@@ -340,6 +340,15 @@ class ToolRegistry:
             tools.extend(created)
         return tools
 
+    async def _run_auth_check(self, factory: ToolFactory, context: ToolContext) -> str | None:
+        """Resolve a factory auth check that may be sync or async."""
+        if factory.auth_check is None:
+            return None
+        result = factory.auth_check(context)
+        if inspect.isawaitable(result):
+            return cast("str | None", await result)
+        return cast("str | None", result)
+
     async def create_core_tools(
         self,
         context: ToolContext,
@@ -362,7 +371,7 @@ class ToolRegistry:
             context, selected_factories=selected, excluded_tool_names=excluded_tool_names
         )
 
-    def get_available_specialist_summaries(
+    async def get_available_specialist_summaries(
         self,
         context: ToolContext,
         *,
@@ -390,7 +399,7 @@ class ToolRegistry:
                 continue
             if factory.requires_outbound and context.publish_outbound is None:
                 continue
-            if factory.auth_check is not None and factory.auth_check(context) is not None:
+            if await self._run_auth_check(factory, context) is not None:
                 continue
             summaries[name] = factory.summary
         return summaries
@@ -425,7 +434,7 @@ class ToolRegistry:
                 continue
             if factory.requires_outbound and context.publish_outbound is None:
                 continue
-            if factory.auth_check is not None and factory.auth_check(context) is not None:
+            if await self._run_auth_check(factory, context) is not None:
                 continue
             ready.add(name)
         if not ready:
@@ -437,7 +446,7 @@ class ToolRegistry:
         )
         return tools, ready
 
-    def get_unauthenticated_specialists(
+    async def get_unauthenticated_specialists(
         self,
         context: ToolContext,
         *,
@@ -462,7 +471,7 @@ class ToolRegistry:
                 continue
             if factory.auth_check is None:
                 continue
-            reason = factory.auth_check(context)
+            reason = await self._run_auth_check(factory, context)
             if reason is not None:
                 unauthenticated[name] = reason
         return unauthenticated

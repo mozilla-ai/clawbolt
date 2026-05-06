@@ -5,15 +5,17 @@ and updates preferred_channel. Also tests guard rails (webchat rejection,
 unknown channel rejection) and startup migration.
 """
 
+import asyncio
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-import backend.app.database as _db_module
 from backend.app.agent.heartbeat import resolve_heartbeat_route
 from backend.app.agent.ingestion import _get_or_create_user
+from backend.app.database import AsyncSessionLocal
 from backend.app.models import ChannelRoute, User
+from tests.db_test_utils import open_test_db_session
 
 
 def _create_user_with_routes(
@@ -24,7 +26,7 @@ def _create_user_with_routes(
 
     ``routes`` is a list of (channel, identifier, enabled) tuples.
     """
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             id=str(uuid.uuid4()),
@@ -87,12 +89,23 @@ async def _create_user_with_routes_async(
         return str(user.id)
 
 
+def _resolve_heartbeat_route_sync(user: User) -> tuple[str, ChannelRoute] | None:
+    async def _resolve() -> tuple[str, ChannelRoute] | None:
+        db = AsyncSessionLocal()
+        try:
+            return await resolve_heartbeat_route(user, db)
+        finally:
+            await db.close()
+
+    return asyncio.run(_resolve())
+
+
 class TestAutoDisableOnEnable:
     """PATCH /user/channels/routes/{channel} with enabled=true disables others."""
 
     def test_enable_telegram_disables_linq(self, client) -> None:  # noqa: ANN001
         # Get the test user's ID
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).first()
             assert user is not None
@@ -124,7 +137,7 @@ class TestAutoDisableOnEnable:
         assert resp.status_code == 200
         assert resp.json()["enabled"] is True
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             linq_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="linq").first()
             assert linq_route is not None
@@ -133,7 +146,7 @@ class TestAutoDisableOnEnable:
             db.close()
 
     def test_enable_preserves_webchat(self, client) -> None:  # noqa: ANN001
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).first()
             assert user is not None
@@ -164,7 +177,7 @@ class TestAutoDisableOnEnable:
         )
         assert resp.status_code == 200
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             webchat_route = (
                 db.query(ChannelRoute).filter_by(user_id=user_id, channel="webchat").first()
@@ -175,7 +188,7 @@ class TestAutoDisableOnEnable:
             db.close()
 
     def test_enable_updates_preferred_channel(self, client) -> None:  # noqa: ANN001
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).first()
             assert user is not None
@@ -191,7 +204,7 @@ class TestAutoDisableOnEnable:
         )
         assert resp.status_code == 200
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).filter_by(id=user_id).first()
             assert user is not None
@@ -200,7 +213,7 @@ class TestAutoDisableOnEnable:
             db.close()
 
     def test_disable_does_not_affect_others(self, client) -> None:  # noqa: ANN001
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).first()
             assert user is not None
@@ -231,7 +244,7 @@ class TestAutoDisableOnEnable:
         )
         assert resp.status_code == 200
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             linq_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="linq").first()
             assert linq_route is not None
@@ -275,7 +288,7 @@ class TestIngestionNoAutoDisable:
         resolved_user = await _get_or_create_user("telegram", "ingest-111")
         assert resolved_user.id == user_id
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             linq_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="linq").first()
             assert linq_route is not None
@@ -285,7 +298,7 @@ class TestIngestionNoAutoDisable:
 
     async def test_webchat_does_not_overwrite_preferred_channel(self) -> None:
         uid = str(uuid.uuid4())
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 id=uid,
@@ -319,7 +332,7 @@ class TestIngestionNoAutoDisable:
         resolved_user = await _get_or_create_user("webchat", uid)
         assert resolved_user.id == uid
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             u = db.query(User).filter_by(id=uid).first()
             assert u is not None
@@ -347,7 +360,7 @@ class TestStaleRouteCleanup:
         resolved = await _get_or_create_user("bluebubbles", "+15551234567")
         assert resolved.id == user_id
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             routes = db.query(ChannelRoute).filter_by(user_id=user_id, channel="bluebubbles").all()
             identifiers = {r.channel_identifier for r in routes}
@@ -372,7 +385,7 @@ class TestStaleRouteCleanup:
 
         await _get_or_create_user("bluebubbles", "+15551234567")
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             tg_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="telegram").first()
             assert tg_route is not None
@@ -392,11 +405,11 @@ class TestHeartbeatRouting:
             preferred_channel="telegram",
         )
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).filter_by(id=uid).first()
             assert user is not None
-            result = resolve_heartbeat_route(user, db)
+            result = _resolve_heartbeat_route_sync(user)
             assert result is not None
             channel_name, route = result
             assert channel_name == "telegram"
@@ -418,11 +431,11 @@ class TestHeartbeatRouting:
             preferred_channel="telegram",
         )
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).filter_by(id=uid).first()
             assert user is not None
-            result = resolve_heartbeat_route(user, db)
+            result = _resolve_heartbeat_route_sync(user)
             assert result is not None
             channel_name, _route = result
             assert channel_name == "linq"
@@ -440,11 +453,11 @@ class TestHeartbeatRouting:
             preferred_channel="telegram",
         )
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).filter_by(id=uid).first()
             assert user is not None
-            result = resolve_heartbeat_route(user, db)
+            result = _resolve_heartbeat_route_sync(user)
             assert result is None
         finally:
             db.close()
@@ -584,7 +597,7 @@ class TestPatchDisableSyncsPreferred:
         There is no other enabled route to repoint to, and resolve now
         returns None instead of relying on drift-sync.
         """
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).first()
             assert user is not None
@@ -608,7 +621,7 @@ class TestPatchDisableSyncsPreferred:
         )
         assert resp.status_code == 200
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).filter_by(id=user_id).first()
             assert user is not None
@@ -623,7 +636,7 @@ class TestPatchDisableSyncsPreferred:
         arise from legacy data. Fix at the write path so the heartbeat lookup
         never needs to paper over drift.
         """
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).first()
             assert user is not None
@@ -655,7 +668,7 @@ class TestPatchDisableSyncsPreferred:
         )
         assert resp.status_code == 200
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = db.query(User).filter_by(id=user_id).first()
             assert user is not None

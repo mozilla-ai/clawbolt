@@ -20,7 +20,6 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-import backend.app.database as _db_module
 from backend.app.agent.approval import (
     ApprovalDecision,
     ApprovalPolicy,
@@ -33,6 +32,7 @@ from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage, message_bus
 from backend.app.main import app
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ class TestWebchatApprovalSSE:
         async def _approve_soon() -> None:
             while not gate.has_pending(test_user.id):
                 await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+            await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -147,7 +147,7 @@ class TestWebchatApprovalSSE:
         async def _approve_soon() -> None:
             while not gate.has_pending(test_user.id):
                 await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+            await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -182,7 +182,7 @@ class TestWebchatApprovalSSE:
 @pytest.fixture()
 async def approval_user() -> User:
     """Create a user for approval tests."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="approval-test-user")
         db.add(user)

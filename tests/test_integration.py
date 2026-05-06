@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.file_store import (
     StoredMessage,
     UserData,
@@ -16,6 +15,7 @@ from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.session_db import get_session_store
 from backend.app.bus import message_bus
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import make_text_response
 
 
@@ -97,7 +97,7 @@ async def test_full_message_round_trip_new_user() -> None:
     # User was auto-created
     from backend.app.models import ChannelRoute
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         route = db.query(ChannelRoute).filter_by(channel_identifier="777888999").first()
         if route:

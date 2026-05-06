@@ -14,6 +14,7 @@ from backend.app.agent.messages import (
     UserMessage,
 )
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 
 
 @pytest.fixture()
@@ -157,10 +158,9 @@ async def test_get_or_create_conversation_reuses_old_session(
     old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=48)
     old_session_id = "old-conv"
 
-    import backend.app.database as _db_module
     from backend.app.models import ChatSession
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs = ChatSession(
             session_id=old_session_id,

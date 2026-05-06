@@ -6,8 +6,8 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.models import LLMUsageLog, User
+from tests.db_test_utils import open_test_db_session
 
 
 def _create_usage(
@@ -20,7 +20,7 @@ def _create_usage(
     cost: float = 0.001,
     created_at: datetime | None = None,
 ) -> None:
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         db.add(
             LLMUsageLog(
@@ -41,7 +41,7 @@ def _create_usage(
 
 
 def _create_other_user() -> str:
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         other = User(
             id=str(uuid.uuid4()),

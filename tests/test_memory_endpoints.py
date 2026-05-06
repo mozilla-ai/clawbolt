@@ -2,8 +2,8 @@
 
 from fastapi.testclient import TestClient
 
-from backend.app.database import SessionLocal
 from backend.app.models import MemoryDocument, User
+from tests.db_test_utils import open_test_db_session
 
 
 def _seed_memory(user: User) -> None:
@@ -13,7 +13,7 @@ def _seed_memory(user: User) -> None:
     test helpers seed the row directly so they can run from inside a
     sync ``TestClient`` test without spinning up an event loop.
     """
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         doc = db.query(MemoryDocument).filter_by(user_id=user.id).one_or_none()
         text = "## Pricing\n- Deck: $45/sqft\n- Fence: $20/ft\n"

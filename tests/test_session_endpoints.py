@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.models import ChatSession, Message, User
+from tests.db_test_utils import open_test_db_session
 
 
 def _create_session(
@@ -26,7 +26,7 @@ def _create_session(
     Returns the generated session_id (the test client itself never
     needs it; this is only for verification queries).
     """
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         session_id = f"sess-{uuid.uuid4().hex[:8]}"
         cs = ChatSession(
@@ -214,7 +214,7 @@ def test_get_conversation_channel_defaults_empty(client: TestClient, test_user: 
 
 def test_get_conversation_scoped_to_authenticated_user(client: TestClient, test_user: User) -> None:
     """A different user's session is invisible to this user's GET."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         other = User(
             id="other-isolation-get",
@@ -277,7 +277,7 @@ def test_system_prompt_post_onboarding(client: TestClient, test_user: User) -> N
 
 def test_system_prompt_during_onboarding(client: TestClient) -> None:
     """A user still in onboarding gets the bootstrap-flavored prompt."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             id="sp-onboard",
@@ -524,7 +524,6 @@ def test_delete_conversation_history(client: TestClient, test_user: User) -> Non
 
 def test_delete_conversation_history_preserves_memory(client: TestClient, test_user: User) -> None:
     """Memory documents are not affected by conversation history deletion."""
-    from backend.app.database import SessionLocal
     from backend.app.models import MemoryDocument
 
     _create_session(
@@ -534,7 +533,7 @@ def test_delete_conversation_history_preserves_memory(client: TestClient, test_u
     # Seed memory directly via ORM. ``MemoryStore`` is async-only after
     # the #1160 follow-up; sync ``TestClient`` tests bypass the store
     # rather than spin up an event loop just to seed a row.
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         doc = MemoryDocument(
             user_id=test_user.id,
@@ -549,7 +548,7 @@ def test_delete_conversation_history_preserves_memory(client: TestClient, test_u
     resp = client.delete("/api/user/conversation/messages")
     assert resp.status_code == 200
 
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         doc = db.query(MemoryDocument).filter_by(user_id=test_user.id).one()
         assert "Important fact." in (doc.memory_text or "")
@@ -573,7 +572,7 @@ def test_delete_conversation_history_empty_session(client: TestClient, test_user
 
 def test_delete_does_not_affect_other_users(client: TestClient, test_user: User) -> None:
     """Authenticated DELETE only touches the caller's conversation."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         other = User(
             id="other-isolation-del",
@@ -598,7 +597,7 @@ def test_delete_does_not_affect_other_users(client: TestClient, test_user: User)
     resp = client.delete("/api/user/conversation/messages")
     assert resp.status_code == 404
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs = db.query(ChatSession).filter_by(session_id=other_session_id).first()
         assert cs is not None

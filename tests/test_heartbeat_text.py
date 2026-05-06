@@ -2,8 +2,8 @@
 
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 
 
 def test_profile_includes_heartbeat_text(client: TestClient) -> None:
@@ -35,7 +35,7 @@ def test_heartbeat_text_persists_in_db(client: TestClient) -> None:
 
 async def test_heartbeat_text_round_trip_via_db() -> None:
     """Writing heartbeat_text via the DB and reading it back should work."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="heartbeat-test", phone="+15551112222")
         db.add(user)
@@ -47,7 +47,7 @@ async def test_heartbeat_text_round_trip_via_db() -> None:
         db.close()
 
     # Update with heartbeat text
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         db_user = db.query(User).filter_by(id=user_id).first()
         assert db_user is not None
@@ -61,7 +61,7 @@ async def test_heartbeat_text_round_trip_via_db() -> None:
     assert updated.heartbeat_text == "- [ ] Test item"
 
     # Re-read from DB
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         reloaded = db.query(User).filter_by(id=user_id).first()
         assert reloaded is not None
@@ -73,7 +73,7 @@ async def test_heartbeat_text_round_trip_via_db() -> None:
 
 async def test_new_user_heartbeat_text_empty() -> None:
     """New users should have empty heartbeat_text by default."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="default-heartbeat-test", phone="+15559998888")
         db.add(user)

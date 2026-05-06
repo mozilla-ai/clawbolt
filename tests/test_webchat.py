@@ -7,17 +7,17 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.bus import OutboundMessage, message_bus
 from backend.app.config import settings
 from backend.app.main import app
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 
 
 @pytest.fixture()
 async def webchat_user() -> User:
     """Create a user for web chat tests."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="webchat-test-user")
         db.add(user)
@@ -294,7 +294,7 @@ def test_sse_rejects_wrong_user(
 ) -> None:
     """A different user must not be able to subscribe to another user's SSE stream."""
     # Create a second user
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user_b = User(user_id="webchat-other-user")
         db.add(user_b)

@@ -38,6 +38,7 @@ from backend.app.agent.heartbeat import (
 )
 from backend.app.agent.system_prompt import to_local_time
 from backend.app.models import ChannelRoute, ChatSession, Message, User
+from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import (
     make_text_response,
     make_tool_call_response,
@@ -51,7 +52,7 @@ from tests.mocks.llm import (
 
 @pytest.fixture()
 def user() -> User:
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         u = User(
             user_id="hb-user-001",
@@ -69,7 +70,7 @@ def user() -> User:
 
 @pytest.fixture()
 def user_with_timezone() -> User:
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         u = User(
             user_id="hb-user-003",
@@ -1700,7 +1701,7 @@ class TestUserMessagedWithinIntegration:
 
     async def test_returns_true_for_recent_inbound(self, user: User) -> None:
         now = datetime.datetime.now(datetime.UTC)
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             _seed_message(
                 db,
@@ -1714,7 +1715,7 @@ class TestUserMessagedWithinIntegration:
 
     async def test_returns_false_for_old_inbound(self, user: User) -> None:
         now = datetime.datetime.now(datetime.UTC)
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             _seed_message(
                 db,
@@ -1735,7 +1736,7 @@ class TestUserMessagedWithinIntegration:
         fire if the user has gone quiet.
         """
         now = datetime.datetime.now(datetime.UTC)
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             _seed_message(
                 db,
@@ -1749,7 +1750,7 @@ class TestUserMessagedWithinIntegration:
 
     async def test_other_users_messages_do_not_leak(self, user: User) -> None:
         """A different user's recent inbound must not trigger this user's gate."""
-        other_db = _db_module.SessionLocal()
+        other_db = open_test_db_session()
         try:
             other = User(
                 user_id="hb-quiet-other",
@@ -1764,7 +1765,7 @@ class TestUserMessagedWithinIntegration:
             other_db.close()
 
         now = datetime.datetime.now(datetime.UTC)
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             _seed_message(
                 db,
@@ -1799,7 +1800,7 @@ class TestGetDailyHeartbeatCount:
         await store.log_heartbeat()
         # Add a log from yesterday directly to the DB
         yesterday = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             db.add(HeartbeatLogModel(user_id=user.id, created_at=yesterday))
             db.commit()
@@ -1824,7 +1825,7 @@ class TestGetDailyHeartbeatCount:
         from backend.app.agent.stores import HeartbeatStore
 
         # Create other user in DB so FK constraints are satisfied
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             other_user = User(
                 user_id="hb-other",
@@ -2147,7 +2148,7 @@ class TestHeartbeatScheduler:
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="hb-inactive-test",
@@ -2192,7 +2193,7 @@ class TestHeartbeatScheduler:
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             for i, (onboarded, active) in enumerate(
                 [(True, True), (True, False), (False, True), (False, False)]
@@ -2275,7 +2276,7 @@ class TestHeartbeatScheduler:
         mock_settings.heartbeat_max_daily_messages = 5
 
         # Create real users in the DB with telegram routes
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             for i in range(4):
                 user = User(
@@ -2319,7 +2320,7 @@ class TestHeartbeatScheduler:
         mock_settings.heartbeat_max_daily_messages = 5
 
         # Create real users in the DB with telegram routes
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             for i in range(3):
                 user = User(
@@ -2370,7 +2371,7 @@ class TestHeartbeatScheduler:
         mock_settings.heartbeat_max_daily_messages = 5
 
         # Create real users in the DB with telegram routes
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             for i in range(5):
                 user = User(
@@ -2489,7 +2490,7 @@ class TestPerUserFrequencyScheduling:
         mock_settings.heartbeat_interval_minutes = 30
 
         # Create a real user in the DB with a telegram route
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="hb-interval-skip-001",
@@ -2539,7 +2540,7 @@ class TestPerUserFrequencyScheduling:
         mock_settings.heartbeat_interval_minutes = 30
 
         # Create a real user in the DB with a telegram route
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="hb-interval-elapsed-001",
@@ -2596,7 +2597,7 @@ class TestPerUserFrequencyScheduling:
         mock_settings.heartbeat_interval_minutes = 30
 
         # Create a real user in the DB with a telegram route
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="hb-invalid-freq-001",
@@ -2654,7 +2655,7 @@ class TestGetChannelIdentifier:
     """ChannelRoute DB lookup for channel identifiers."""
 
     def test_returns_matching_identifier(self) -> None:
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(user_id="ch-id-test-1")
             db.add(user)
@@ -2670,7 +2671,7 @@ class TestGetChannelIdentifier:
             db.close()
 
     def test_returns_none_when_no_match(self) -> None:
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(user_id="ch-id-test-2")
             db.add(user)
@@ -2684,7 +2685,7 @@ class TestGetChannelIdentifier:
             db.close()
 
     def test_does_not_return_other_users_identifier(self) -> None:
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user_a = User(user_id="ch-id-test-a")
             user_b = User(user_id="ch-id-test-b")
@@ -2722,7 +2723,7 @@ class TestTickChatIdLookup:
         mock_settings.heartbeat_max_daily_messages = 5
 
         # Create a real user with a ChannelRoute for telegram
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="hb-chatid-001",
@@ -2764,7 +2765,7 @@ class TestTickChatIdLookup:
         mock_settings.heartbeat_max_daily_messages = 5
 
         # Create a real user with NO ChannelRoute for telegram
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="hb-fallback-001",
@@ -2808,7 +2809,7 @@ class TestPerUserMaxDaily:
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 5
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="hb-maxdaily-custom",
@@ -2853,7 +2854,7 @@ class TestPerUserMaxDaily:
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 7
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="hb-maxdaily-default",

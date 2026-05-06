@@ -14,11 +14,12 @@ from sqlalchemy.ext.asyncio import (
 
 import backend.app.database as _db_module
 from backend.app.models import ChannelRoute, User
+from tests.db_test_utils import open_test_db_session
 
 
 def test_create_and_read_user() -> None:
     """Insert a User row and read it back."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="alice@example.com", phone="+15551234567")
         db.add(user)
@@ -36,7 +37,7 @@ def test_create_and_read_user() -> None:
 
 def test_channel_route_unique_constraint() -> None:
     """Duplicate (channel, channel_identifier) raises IntegrityError."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="bob@example.com")
         db.add(user)
@@ -72,37 +73,6 @@ def test_all_tables_created(_pg_engine: Engine) -> None:
         result = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'"))
         actual = {row[0] for row in result}
     assert expected <= actual
-
-
-def test_engine_uses_pool_recycle_and_tcp_keepalives() -> None:
-    """Engine creation passes pool_recycle and TCP keepalive args.
-
-    Regression: a hosted Postgres in front of a NAT/proxy can silently
-    drop idle TCP sockets, leaving the client half-open. Without
-    ``pool_recycle`` and OS-level keepalives, a sync DB call from an
-    async route blocks the event loop on the dead socket for the
-    kernel's TCP retransmit window (~2h on Linux). The whole worker
-    appears frozen at zero CPU while ``/health/live`` keeps passing.
-    """
-    saved_engine = _db_module._engine
-    _db_module._engine = None
-    try:
-        with patch.object(_db_module, "create_engine") as mock_create:
-            _db_module.get_engine()
-
-        mock_create.assert_called_once()
-        kwargs = mock_create.call_args.kwargs
-        assert kwargs["pool_pre_ping"] is True
-        assert kwargs["pool_recycle"] == 1800
-        assert kwargs["connect_args"] == {
-            "keepalives": 1,
-            "keepalives_idle": 30,
-            "keepalives_interval": 10,
-            "keepalives_count": 5,
-            "options": "-c statement_timeout=30000",
-        }
-    finally:
-        _db_module._engine = saved_engine
 
 
 def test_sync_database_url_pins_psycopg3_driver() -> None:
@@ -181,11 +151,8 @@ def test_async_engine_singleton_and_pool_settings() -> None:
 async def test_async_session_can_execute_trivial_select() -> None:
     """End-to-end smoke: an ``AsyncSession`` can run ``select(1)``.
 
-    Builds its own engine so the test does not depend on the conftest
-    sync-rollback fixture (which manipulates ``_engine`` /
-    ``_SessionLocal`` only). This is the foundation-level proof that
-    asyncpg + async_sessionmaker + ``AsyncSession`` are wired
-    correctly. Per-store dual-API conversions live in #1150-1157.
+    Builds its own engine so the test only exercises the async runtime
+    wiring in ``backend.app.database``.
     """
     url = _db_module._async_database_url(
         "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
@@ -230,7 +197,7 @@ async def test_db_session_async_rollback_on_exception() -> None:
 
 def test_user_defaults() -> None:
     """User model has correct defaults."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="defaults@test.com")
         db.add(user)

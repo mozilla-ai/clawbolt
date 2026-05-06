@@ -8,13 +8,13 @@ import pytest
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.agent.file_store import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
 from backend.app.main import app
 from backend.app.models import User
 from backend.app.services.rate_limiter import InMemoryRateLimiter, check_webhook_rate_limit
+from tests.db_test_utils import open_test_db_session
 from tests.mocks.telegram import make_telegram_update_payload
 
 _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
@@ -42,7 +42,7 @@ def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
     with patch.object(settings, "data_dir", str(tmp_path)):
         reset_stores()
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="rl-test-user",

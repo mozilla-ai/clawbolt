@@ -86,10 +86,10 @@ async def build_initial_turn_tools(
         excluded_tool_names=disabled_sub_tools or None,
     )
     tools.extend(ready_specialist_tools)
-    specialist_summaries = default_registry.get_available_specialist_summaries(
+    specialist_summaries = await default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=disabled_groups or None
     )
-    unauthenticated = default_registry.get_unauthenticated_specialists(
+    unauthenticated = await default_registry.get_unauthenticated_specialists(
         tool_context, excluded_factories=disabled_groups or None
     )
     disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(

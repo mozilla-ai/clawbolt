@@ -35,10 +35,10 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-import backend.app.database as _db_module
 from backend.app.agent.ingestion import _get_or_create_user
 from backend.app.main import app
 from backend.app.models import ChannelRoute, ChatSession, Message, User
+from tests.db_test_utils import open_test_db_session
 
 
 @pytest_asyncio.fixture
@@ -47,7 +47,7 @@ async def telegram_user(async_db: async_sessionmaker) -> User:
 
     Routes the insert through the per-test ``async_db`` connection so the
     row is visible to ``get_current_user`` (which reads via asyncpg) in
-    the same test. A sync ``SessionLocal()`` write opens its own
+    the same test. A sync ``open_test_db_session()`` write opens its own
     connection and the row would be invisible under READ COMMITTED.
     """
     async with async_db() as db:
@@ -92,7 +92,7 @@ def _create_session(
     messages: list[dict],
 ) -> None:
     """Create a session with messages in the database."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs = ChatSession(
             session_id=session_id,
@@ -125,7 +125,6 @@ def _seed_memory(user: User) -> None:
     The MemoryStore API is async-only now; sync helpers seed the
     row directly to avoid spinning up an event loop here.
     """
-    from backend.app.database import SessionLocal
     from backend.app.models import MemoryDocument
 
     text = (
@@ -134,7 +133,7 @@ def _seed_memory(user: User) -> None:
         "- hourly_rate: 95 (confidence: 1.0)\n"
         "- specialty: panel upgrades (confidence: 0.9)\n"
     )
-    db = SessionLocal()
+    db = open_test_db_session()
     try:
         doc = db.query(MemoryDocument).filter_by(user_id=user.id).one_or_none()
         if doc is None:
@@ -263,7 +262,7 @@ class TestMultiChannelSingleTenant:
 
     def test_telegram_links_to_existing_web_user(self) -> None:
         """When a web-created user exists, Telegram reuses it."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             web_user = User(user_id="local@clawbolt.local")
             db.add(web_user)
@@ -281,7 +280,7 @@ class TestMultiChannelSingleTenant:
 
     def test_telegram_link_sets_channel_identifier(self) -> None:
         """Linking a Telegram chat to an existing user persists channel_identifier."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             db.add(User(user_id="local@clawbolt.local"))
             db.commit()
@@ -310,7 +309,7 @@ class TestMultiChannelSingleTenant:
     )
     def test_telegram_sessions_visible_in_dashboard_after_web_signup(self) -> None:
         """Sessions created via Telegram appear in dashboard when web created first."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             web_user = User(user_id="local@clawbolt.local")
             db.add(web_user)
@@ -356,7 +355,7 @@ class TestMultiChannelSingleTenant:
 
     def test_subsequent_telegram_lookup_uses_index(self) -> None:
         """After linking, future messages find the user via the channel route."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             db.add(User(user_id="local@clawbolt.local"))
             db.commit()
@@ -374,7 +373,7 @@ class TestMultiChannelSingleTenant:
         assert first.id == second.id
 
         # Verify only one user exists
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             all_users = db.query(User).all()
             assert len(all_users) == 1
@@ -392,7 +391,7 @@ class TestPremiumWebchatIdentity:
 
     def test_webchat_reuses_existing_user_by_pk(self) -> None:
         """When sender_id matches an existing user PK, reuse that user."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(user_id="google_oauth_user@example.com")
             db.add(user)
@@ -414,7 +413,7 @@ class TestPremiumWebchatIdentity:
         assert resolved.id == original_id
 
         # Verify no duplicate user was created
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             assert db.query(User).count() == 1
         finally:
@@ -422,7 +421,7 @@ class TestPremiumWebchatIdentity:
 
     def test_webchat_creates_channel_route(self) -> None:
         """Matching by PK should also create a ChannelRoute for future lookups."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(user_id="google_oauth_user@example.com")
             db.add(user)
@@ -439,7 +438,7 @@ class TestPremiumWebchatIdentity:
             asyncio.get_event_loop().run_until_complete(_get_or_create_user("webchat", original_id))
 
         # A ChannelRoute should now exist
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             route = (
                 db.query(ChannelRoute)
@@ -453,7 +452,7 @@ class TestPremiumWebchatIdentity:
 
     def test_webchat_second_message_uses_channel_route(self) -> None:
         """After the first PK match creates a route, subsequent lookups use it."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(user_id="google_oauth_user@example.com")
             db.add(user)
@@ -478,7 +477,7 @@ class TestPremiumWebchatIdentity:
 
     def test_premium_skips_single_tenant_reuse(self) -> None:
         """In premium mode, a new sender should NOT reuse the sole existing user."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(user_id="existing_premium_user@example.com")
             db.add(user)
@@ -499,7 +498,7 @@ class TestPremiumWebchatIdentity:
 
         assert new_user.id != existing_id
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             assert db.query(User).count() == 2
         finally:

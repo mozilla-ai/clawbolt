@@ -6,13 +6,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-import backend.app.database as _db_module
 from backend.app.models import CalendarConfig, User
+from tests.db_test_utils import open_test_db_session
 
 
 @pytest.fixture()
 def test_user() -> User:
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="cal-config-test-user", onboarding_complete=True)
         db.add(user)
@@ -26,7 +26,7 @@ def test_user() -> User:
 
 def test_create_calendar_config(test_user: User) -> None:
     """Should create a CalendarConfig row."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         config = CalendarConfig(
             user_id=test_user.id,
@@ -51,7 +51,7 @@ def test_create_calendar_config(test_user: User) -> None:
 
 def test_unique_constraint_user_provider_calendar(test_user: User) -> None:
     """Should enforce unique (user_id, provider, calendar_id) constraint."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         config1 = CalendarConfig(
             user_id=test_user.id,
@@ -77,7 +77,7 @@ def test_unique_constraint_user_provider_calendar(test_user: User) -> None:
 
 def test_multiple_calendars_per_user(test_user: User) -> None:
     """Same user+provider but different calendar_ids should be allowed."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         config1 = CalendarConfig(
             user_id=test_user.id,
@@ -109,7 +109,7 @@ def test_multiple_calendars_per_user(test_user: User) -> None:
 
 def test_cascade_delete_with_user(test_user: User) -> None:
     """CalendarConfig should be deleted when user is deleted."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         config = CalendarConfig(
             user_id=test_user.id,

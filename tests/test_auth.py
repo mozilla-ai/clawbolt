@@ -11,6 +11,7 @@ from backend.app.auth.dependencies import LOCAL_USER_ID, get_current_user
 from backend.app.auth.scoping import get_scoped_user
 from backend.app.config import settings
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 
 
 @pytest.mark.asyncio()
@@ -90,7 +91,7 @@ def test_auth_config_returns_none_mode(client: TestClient) -> None:
 @pytest.mark.asyncio()
 async def test_scoping_returns_404_for_wrong_user() -> None:
     """Scoping should return 404 when user doesn't belong to requester."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user1 = User(user_id="user-1")
         db.add(user1)
@@ -115,7 +116,7 @@ async def test_scoping_returns_404_for_wrong_user() -> None:
 @pytest.mark.asyncio()
 async def test_scoping_returns_user_for_correct_user() -> None:
     """Scoping should return user when user_id matches."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(user_id="user-1")
         db.add(user)

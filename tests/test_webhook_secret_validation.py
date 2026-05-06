@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.agent.file_store import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import (
@@ -18,6 +17,7 @@ from backend.app.config import (
 from backend.app.main import app
 from backend.app.models import User
 from backend.app.services.rate_limiter import check_webhook_rate_limit
+from tests.db_test_utils import open_test_db_session
 from tests.mocks.telegram import make_telegram_update_payload
 
 _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
@@ -35,7 +35,7 @@ def _make_client(
     with patch.object(settings, "data_dir", data_dir):
         reset_stores()
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 user_id="secret-test-user",

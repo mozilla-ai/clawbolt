@@ -15,12 +15,12 @@ from pathlib import Path
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.dto import UserData
 from backend.app.agent.session_db import SessionStore
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 
 # ---------------------------------------------------------------------------
 # Source-level checks: verify asyncio.to_thread is used in the right places
@@ -90,7 +90,7 @@ async def test_workspace_read_file_db_backed(
 ) -> None:
     """Workspace read_file should read USER.md from the DB."""
     # Write user_text directly to the DB
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=str(test_user.id)).first()
         assert user is not None
@@ -116,7 +116,7 @@ async def test_workspace_write_file_db_backed(
     result = await write_fn(path="USER.md", content="# User\n\n- Name: Sarah\n")
     assert result.is_error is False
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=str(test_user.id)).first()
         assert user is not None
@@ -131,7 +131,7 @@ async def test_workspace_edit_file_db_backed(
 ) -> None:
     """Workspace edit_file should edit USER.md in the DB."""
     # Seed initial content
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=str(test_user.id)).first()
         assert user is not None
@@ -145,7 +145,7 @@ async def test_workspace_edit_file_db_backed(
     result = await edit_fn(path="USER.md", old_text="$85/hr", new_text="$100/hr")
     assert result.is_error is False
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=str(test_user.id)).first()
         assert user is not None

@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from any_llm.types.messages import MessageResponse, MessageUsage
 
-import backend.app.database as _db_module
 from backend.app.agent.core import ClawboltAgent
 from backend.app.models import LLMUsageLog, User
 from backend.app.services.llm_usage import log_llm_usage
+from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import make_text_response
 
 # ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ def _make_response_with_usage(
 
 def _read_usage_entries(user_id: str) -> list[dict[str, object]]:
     """Read all LLM usage entries for a user from the database."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         logs = (
             db.query(LLMUsageLog).filter_by(user_id=user_id).order_by(LLMUsageLog.created_at).all()

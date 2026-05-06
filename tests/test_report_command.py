@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.ingestion import (
     InboundMessage,
     _parse_report_command,
@@ -23,6 +22,7 @@ from backend.app.agent.ingestion import (
 )
 from backend.app.bus import message_bus
 from backend.app.models import ChatSession, Message, ReportedConversation, User
+from tests.db_test_utils import open_test_db_session
 
 
 class TestParseReportCommand:
@@ -86,7 +86,7 @@ class TestReportInterception:
     @pytest.fixture()
     def report_user(self) -> User:
         """Create a User that exists in the test database."""
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             user = User(
                 id=str(uuid.uuid4()),
@@ -137,7 +137,7 @@ class TestReportInterception:
         mock_handle.assert_not_called()
 
         # Exactly one ReportedConversation row exists for this user.
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             rows = (
                 db.query(ReportedConversation)
@@ -171,7 +171,7 @@ class TestReportInterception:
         the surrounding window."""
         # Pre-seed a session with two prior messages so seq=2 is the
         # latest before /report fires.
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             cs = ChatSession(
                 session_id=f"sess-{uuid.uuid4().hex[:8]}",
@@ -214,7 +214,7 @@ class TestReportInterception:
         ):
             await process_inbound_from_bus(inbound)
 
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             row = (
                 db.query(ReportedConversation)
@@ -270,7 +270,7 @@ class TestReportInterception:
         mock_handle.assert_called_once()
 
         # No ReportedConversation row was written.
-        db = _db_module.SessionLocal()
+        db = open_test_db_session()
         try:
             count = (
                 db.query(ReportedConversation)

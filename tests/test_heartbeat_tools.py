@@ -2,10 +2,10 @@
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.tools.heartbeat_tools import create_heartbeat_tools
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 
 
 @pytest.mark.asyncio()
@@ -145,7 +145,7 @@ async def test_get_heartbeat_usage_hint_does_not_promise_reminders(
 @pytest.mark.asyncio()
 async def test_heartbeat_scoped_to_user(test_user: User) -> None:
     """Each user's heartbeat text is independent."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         other_user = User(user_id="hb-other-99", phone="+15559999999")
         db.add(other_user)

@@ -9,7 +9,7 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.auth.dependencies import get_current_user
-from backend.app.channel_state import realign_preferred_channel_async
+from backend.app.channel_state import realign_preferred_channel
 from backend.app.channels import is_bluebubbles_configured, reset_channel_clients
 from backend.app.config import (
     resolve_imessage_backend,
@@ -22,7 +22,7 @@ from backend.app.config_store import (
 )
 from backend.app.database import get_async_db
 from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
-from backend.app.query_helpers import get_or_404_async
+from backend.app.query_helpers import get_or_404
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
@@ -95,7 +95,7 @@ async def update_profile(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     # Re-query user in the current session to avoid detached instance issues
-    user = await get_or_404_async(db, User, detail="User not found", id=current_user.id)
+    user = await get_or_404(db, User, detail="User not found", id=current_user.id)
 
     for key, value in updates.items():
         setattr(user, key, value)
@@ -156,7 +156,7 @@ async def update_data_sharing_consent(
     which is the cheaper guarantee to keep correct: a one-shot accidental
     double-PUT can't drift the timestamp.
     """
-    user = await get_or_404_async(db, User, detail="User not found", id=current_user.id)
+    user = await get_or_404(db, User, detail="User not found", id=current_user.id)
     user.data_sharing_consent = body.consent
     user.data_sharing_consent_at = _data_sharing_consent_now()
     await db.commit()
@@ -294,7 +294,7 @@ async def update_channel_route(
         raise HTTPException(status_code=404, detail=f"Unknown channel: {channel}") from exc
 
     # Re-query user in the current session to avoid detached instance issues
-    user = await get_or_404_async(db, User, detail="User not found", id=current_user.id)
+    user = await get_or_404(db, User, detail="User not found", id=current_user.id)
 
     if body.enabled:
         # Single-channel enforcement: disable all other non-webchat routes
@@ -325,7 +325,7 @@ async def update_channel_route(
     if body.enabled:
         user.preferred_channel = channel
     else:
-        await realign_preferred_channel_async(db, user)
+        await realign_preferred_channel(db, user)
 
     await db.commit()
     if route is not None:

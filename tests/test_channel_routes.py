@@ -1,15 +1,17 @@
 """Tests for per-user channel enable/disable toggles (#821)."""
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.agent.heartbeat import resolve_heartbeat_route
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.bus import message_bus
+from backend.app.database import AsyncSessionLocal
 from backend.app.models import ChannelRoute, User
+from tests.db_test_utils import open_test_db_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -17,7 +19,7 @@ from backend.app.models import ChannelRoute, User
 
 
 def _create_route(user_id: str, channel: str, identifier: str, enabled: bool = True) -> None:
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         db.add(
             ChannelRoute(
@@ -30,6 +32,17 @@ def _create_route(user_id: str, channel: str, identifier: str, enabled: bool = T
         db.commit()
     finally:
         db.close()
+
+
+def _resolve_heartbeat_route_sync(user: User) -> tuple[str, ChannelRoute] | None:
+    async def _resolve() -> tuple[str, ChannelRoute] | None:
+        db = AsyncSessionLocal()
+        try:
+            return await resolve_heartbeat_route(user, db)
+        finally:
+            await db.close()
+
+    return asyncio.run(_resolve())
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +107,7 @@ def test_patch_creates_route_when_missing(client: TestClient, test_user: User) -
     """
     # Simulate a fresh user who has never received an inbound message: no
     # channel_identifier, no existing routes.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=test_user.id).first()
         assert user is not None
@@ -114,7 +127,7 @@ def test_patch_creates_route_when_missing(client: TestClient, test_user: User) -
     assert body["channel_identifier"] == ""
 
     # No row should have been created.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         rows = db.query(ChannelRoute).filter_by(user_id=test_user.id, channel="linq").all()
         assert rows == []
@@ -128,7 +141,7 @@ def test_patch_creates_route_when_missing(client: TestClient, test_user: User) -
 def test_patch_creates_route_when_user_has_identifier(client: TestClient, test_user: User) -> None:
     """When the user has a real channel_identifier (e.g. from a prior inbound
     message), PATCH creates a row so the enabled flag persists alongside it."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=test_user.id).first()
         assert user is not None
@@ -147,7 +160,7 @@ def test_patch_creates_route_when_user_has_identifier(client: TestClient, test_u
     assert body["enabled"] is True
     assert body["channel_identifier"] == "+15551234567"
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         row = db.query(ChannelRoute).filter_by(user_id=test_user.id, channel="linq").first()
         assert row is not None
@@ -188,7 +201,7 @@ async def test_inbound_disabled_sends_error(test_user: User) -> None:
 @pytest.mark.anyio
 async def test_inbound_disabled_does_not_update_preferred(test_user: User) -> None:
     """When route is disabled, preferred_channel should not switch to it."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=test_user.id).first()
         assert user is not None
@@ -208,7 +221,7 @@ async def test_inbound_disabled_does_not_update_preferred(test_user: User) -> No
     with patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0):
         await process_inbound_from_bus(inbound)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=test_user.id).first()
         assert user is not None
@@ -227,7 +240,7 @@ def test_heartbeat_resolve_skips_disabled(test_user: User) -> None:
     _create_route(test_user.id, "telegram", "111", enabled=False)
     _create_route(test_user.id, "linq", "222", enabled=True)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=test_user.id).first()
         assert user is not None
@@ -239,11 +252,7 @@ def test_heartbeat_resolve_skips_disabled(test_user: User) -> None:
         db.close()
 
     with patch("backend.app.agent.heartbeat.get_channel"):
-        db = _db_module.SessionLocal()
-        try:
-            result = resolve_heartbeat_route(user, db)
-        finally:
-            db.close()
+        result = _resolve_heartbeat_route_sync(user)
 
     assert result is not None
     assert result[0] == "linq"
@@ -260,7 +269,7 @@ def test_heartbeat_resolve_is_pure_lookup(test_user: User) -> None:
     _create_route(test_user.id, "telegram", "111", enabled=False)
     _create_route(test_user.id, "linq", "222", enabled=True)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=test_user.id).first()
         assert user is not None
@@ -272,17 +281,13 @@ def test_heartbeat_resolve_is_pure_lookup(test_user: User) -> None:
         db.close()
 
     with patch("backend.app.agent.heartbeat.get_channel"):
-        db = _db_module.SessionLocal()
-        try:
-            result = resolve_heartbeat_route(user, db)
-        finally:
-            db.close()
+        result = _resolve_heartbeat_route_sync(user)
 
     assert result is not None
     assert result[0] == "linq"
 
     # preferred_channel must be untouched by the lookup.
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         refreshed = db.query(User).filter_by(id=test_user.id).first()
         assert refreshed is not None
@@ -296,7 +301,7 @@ def test_heartbeat_resolve_none_when_all_disabled(test_user: User) -> None:
     _create_route(test_user.id, "telegram", "111", enabled=False)
     _create_route(test_user.id, "linq", "222", enabled=False)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = db.query(User).filter_by(id=test_user.id).first()
         assert user is not None
@@ -307,13 +312,7 @@ def test_heartbeat_resolve_none_when_all_disabled(test_user: User) -> None:
     finally:
         db.close()
 
-    db = _db_module.SessionLocal()
-    try:
-        result = resolve_heartbeat_route(user, db)
-    finally:
-        db.close()
-
-    assert result is None
+    assert _resolve_heartbeat_route_sync(user) is None
 
 
 # ---------------------------------------------------------------------------

@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.models import User
+from tests.db_test_utils import open_test_db_session
 
 _ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
@@ -18,7 +18,7 @@ skip_without_anthropic_key = pytest.mark.skipif(
 @pytest.fixture()
 def integration_user() -> User:
     """Test user for integration tests (via DB)."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             user_id="integration-test-user",
@@ -36,7 +36,7 @@ def integration_user() -> User:
 @pytest.fixture()
 def onboarded_user() -> User:
     """Onboarded user for heartbeat tests (via DB)."""
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             user_id="heartbeat-integration-user",

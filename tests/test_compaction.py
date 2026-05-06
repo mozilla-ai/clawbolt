@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.compaction import (
     COMPACTION_SYSTEM_PROMPT,
     _build_snapshot_pairs,
@@ -27,6 +26,7 @@ from backend.app.agent.stores import HeartbeatStore
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, CompactionEvent, User
+from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import extract_system_text, make_text_response
 
 
@@ -1043,7 +1043,7 @@ async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
     runner-up gracefully see the winner's row instead of raising an
     IntegrityError.
     """
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         user = User(
             user_id="concurrent-session-race",
@@ -1075,7 +1075,7 @@ async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
         "exactly one caller should have created the session; the other reused it"
     )
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         from backend.app.models import ChatSession as CS
 
@@ -1113,7 +1113,7 @@ async def test_compact_session_writes_event_row(test_user: UserData) -> None:
         AssistantMessage(content="noted"),
     ]
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         before = db.query(CompactionEvent).filter_by(user_id=test_user.id).count()
     finally:
@@ -1122,7 +1122,7 @@ async def test_compact_session_writes_event_row(test_user: UserData) -> None:
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await compact_session(test_user.id, messages, max_message_seq=2)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         rows = (
             db.query(CompactionEvent)
@@ -1239,7 +1239,7 @@ def _seed_session_with_messages(user: User, message_count: int) -> ChatSession:
     """Insert a ChatSession for *user* with *message_count* alternating
     inbound/outbound messages, returning the persisted ChatSession.
     """
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs = ChatSession(
             session_id=f"session-{user.id}",
@@ -1278,7 +1278,7 @@ def _seed_session_with_messages(user: User, message_count: int) -> ChatSession:
 async def test_load_conversation_history_respects_last_trim_seq(test_user: User) -> None:
     """Messages with seq <= last_trim_seq must be filtered out."""
     cs = _seed_session_with_messages(test_user, message_count=20)
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs_ref = db.query(ChatSession).filter_by(id=cs.id).first()
         assert cs_ref is not None
@@ -1329,7 +1329,7 @@ async def test_trigger_compaction_for_dropped_no_seqs_skips(test_user: User) -> 
         UserMessage(content="placeholder"),  # seq=None
     ]
     await trigger_compaction_for_dropped(test_user.id, in_memory_only)
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         rows = db.query(CompactionEvent).filter_by(user_id=test_user.id).count()
     finally:
@@ -1360,7 +1360,7 @@ async def test_trigger_compaction_for_dropped_inserts_pending_and_advances_water
         # Yield to let the (mocked) background task run.
         await asyncio.sleep(0)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs_ref = db.query(ChatSession).filter_by(id=cs.id).first()
         assert cs_ref is not None
@@ -1396,7 +1396,7 @@ async def test_watermark_event_seq_invariant_after_compaction(test_user: User) -
         await trigger_compaction_for_dropped(test_user.id, dropped)
         await asyncio.sleep(0)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         cs_ref = db.query(ChatSession).filter_by(id=cs.id).first()
         event = db.query(CompactionEvent).filter_by(user_id=test_user.id).first()
@@ -1419,7 +1419,7 @@ async def test_compact_session_with_event_id_updates_existing_row(
     """When event_id is provided, compact_session must UPDATE that row
     (flip status to 'completed', fill in snapshots) instead of inserting.
     """
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         ev = CompactionEvent(
             user_id=test_user.id,
@@ -1451,7 +1451,7 @@ async def test_compact_session_with_event_id_updates_existing_row(
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await compact_session(test_user.id, dropped, max_message_seq=5, event_id=event_id)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         ev = db.query(CompactionEvent).filter_by(id=event_id).first()
         assert ev is not None
@@ -1502,7 +1502,7 @@ async def test_compact_session_captures_llm_prompt_raw_and_parsed(
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await compact_session(test_user.id, dropped, max_message_seq=2)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         ev = (
             db.query(CompactionEvent)
@@ -1559,7 +1559,7 @@ async def test_compact_session_truncates_oversized_prompt(
     ):
         await compact_session(test_user.id, dropped, max_message_seq=1)
 
-    db = _db_module.SessionLocal()
+    db = open_test_db_session()
     try:
         ev = (
             db.query(CompactionEvent)
