@@ -30,7 +30,12 @@ from backend.app.models import User
 logger = logging.getLogger(__name__)
 
 
-async def provision_user(user: User, db: AsyncSession | None = None) -> None:
+async def provision_user(
+    user: User,
+    db: AsyncSession | None = None,
+    *,
+    commit: bool | None = None,
+) -> None:
     """Provision a new user: seed DB defaults and create the data directory.
 
     Seeds soul_text and user_text DB columns with default templates if
@@ -43,23 +48,25 @@ async def provision_user(user: User, db: AsyncSession | None = None) -> None:
     are currently empty and only writes BOOTSTRAP.md if missing and the
     user is not already onboarded.
     """
-    # Seed DB text columns with default templates
+    # Seed DB text columns with default templates.
+    #
+    # Callers that explicitly pass ``commit=False`` usually own a larger
+    # transaction and need DB + filesystem side effects to follow the same
+    # boundary. In that mode we flush seeded values but defer any on-disk
+    # provisioning until after the caller commits.
     seeded: list[str] = []
+    should_commit = True if commit is None else commit
+    if db is None and not should_commit:
+        raise ValueError("provision_user(commit=False) requires an existing AsyncSession")
     if db is None:
         async with db_session_async() as own_db:
-            await _seed_user_text(own_db, user, seeded)
+            await _seed_user_text(own_db, user, seeded, commit=should_commit)
     else:
-        await _seed_user_text(db, user, seeded)
+        await _seed_user_text(db, user, seeded, commit=should_commit)
 
-    # On-disk: BOOTSTRAP.md + data directory structure
-    user_dir = Path(settings.data_dir) / str(user.id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-
-    bootstrap_path = user_dir / "BOOTSTRAP.md"
-    bootstrap_written = False
-    if not bootstrap_path.exists() and not user.onboarding_complete:
-        bootstrap_path.write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
-        bootstrap_written = True
+    bootstrap_written: bool | str = "deferred" if not should_commit else False
+    if should_commit:
+        bootstrap_written = _provision_user_files(user)
 
     logger.info(
         "provision_user(user=%s): seeded=%s bootstrap_written=%s "
@@ -68,11 +75,29 @@ async def provision_user(user: User, db: AsyncSession | None = None) -> None:
         seeded or "none",
         bootstrap_written,
         user.onboarding_complete,
-        user_dir,
+        Path(settings.data_dir) / str(user.id),
     )
 
 
-async def _seed_user_text(db: AsyncSession, user: User, seeded: list[str]) -> None:
+def _provision_user_files(user: User) -> bool:
+    """Ensure the user data dir exists and BOOTSTRAP.md is present when needed."""
+    user_dir = Path(settings.data_dir) / str(user.id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+
+    bootstrap_path = user_dir / "BOOTSTRAP.md"
+    if not bootstrap_path.exists() and not user.onboarding_complete:
+        bootstrap_path.write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
+        return True
+    return False
+
+
+async def _seed_user_text(
+    db: AsyncSession,
+    user: User,
+    seeded: list[str],
+    *,
+    commit: bool,
+) -> None:
     """Re-query the User row in *db* and seed empty text columns with defaults.
 
     Mutates *seeded* in place so the caller can include the field list in
@@ -89,7 +114,10 @@ async def _seed_user_text(db: AsyncSession, user: User, seeded: list[str]) -> No
         db_user.user_text = f"# User\n\n{load_prompt('default_user')}\n"
         seeded.append("user_text")
     if seeded:
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         await db.refresh(db_user)
         user.soul_text = db_user.soul_text
         user.user_text = db_user.user_text

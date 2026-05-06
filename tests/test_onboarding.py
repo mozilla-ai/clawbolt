@@ -149,6 +149,40 @@ async def test_provision_user_creates_bootstrap_and_seeds_db() -> None:
         assert is_onboarding_needed(user) is True
 
 
+async def test_provision_user_commit_false_leaves_commit_to_caller() -> None:
+    """provision_user(commit=False) should not leak files before commit."""
+    from backend.app.agent.user_db import provision_user
+    from backend.app.database import db_session_async
+
+    user_id = "provision-no-commit"
+    user_dir = Path(settings.data_dir) / user_id
+    bootstrap = user_dir / "BOOTSTRAP.md"
+    async with db_session_async() as db:
+        user = User(id=user_id, user_id="provision-no-commit-user")
+        db.add(user)
+        await db.flush()
+
+        await provision_user(user, db, commit=False)
+
+        assert user.soul_text
+        assert user.user_text
+        assert (
+            await db.execute(select(User).where(User.id == user_id))
+        ).scalar_one_or_none() is not None
+        assert not user_dir.exists()
+        assert not bootstrap.exists()
+
+        await db.rollback()
+
+    async with db_session_async() as verify_db:
+        persisted = (
+            await verify_db.execute(select(User).where(User.id == user_id))
+        ).scalar_one_or_none()
+        assert persisted is None
+    assert not user_dir.exists()
+    assert not bootstrap.exists()
+
+
 async def test_provision_skips_bootstrap_when_onboarding_complete() -> None:
     """provision_user should not create BOOTSTRAP.md for onboarded users."""
     from backend.app.agent.user_db import provision_user
