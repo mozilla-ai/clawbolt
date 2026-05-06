@@ -35,6 +35,25 @@ _logger = logging.getLogger(__name__)
 ENVELOPE_PREFIX = "clw1"
 
 
+class EncryptionError(Exception):
+    """Raised when an envelope cannot be parsed or decrypted.
+
+    Wraps the lower-level failure modes (malformed structure, bad
+    base64, ``InvalidToken`` from Fernet, ``UnicodeDecodeError`` on the
+    plaintext) under a single public type so callers can catch one
+    exception and decide whether to degrade gracefully or surface to
+    the user. The original cause is preserved via ``__cause__`` (i.e.
+    ``raise EncryptionError(...) from exc``) so logs and tracebacks
+    keep enough detail to diagnose corruption.
+
+    Issue #1223: previously corrupt envelopes raised ``ValueError`` for
+    structural problems and ``InvalidToken`` for cryptographic ones,
+    making it tempting for callers to ``except Exception`` and silently
+    return empty/partial data. The dedicated type makes the contract
+    explicit.
+    """
+
+
 class EncryptionContext(TypedDict, total=False):
     """Per-row context passed to wrap/unwrap.
 
@@ -137,12 +156,30 @@ def encrypt(plaintext: str, provider: KEKProvider, context: EncryptionContext) -
 def decrypt(envelope: str, provider: KEKProvider, context: EncryptionContext) -> str:
     """Decrypt a serialized envelope back to plaintext.
 
-    Raises ``ValueError`` for malformed envelopes and propagates
-    ``InvalidToken`` if the underlying Fernet operations fail.
+    Raises ``EncryptionError`` for any corruption mode: malformed
+    envelope structure, a wrapped DEK that fails to unwrap, a
+    ciphertext that fails Fernet authentication, or plaintext that
+    isn't valid UTF-8. The original exception is chained via
+    ``__cause__`` so callers that log the failure get the underlying
+    detail without having to enumerate cryptographic exception types.
+
+    Fail-loud is intentional (issue #1223). Earlier code paths that
+    caught ``Exception`` and returned ``""`` turned a corrupted row
+    into silently-empty data downstream; the multi-append memory bug
+    in #1200 was the visible symptom.
     """
     kek_id, wrapped, ciphertext = _parse(envelope)
-    dek = provider.unwrap(kek_id, wrapped, context=context)
-    return Fernet(dek).decrypt(ciphertext.encode()).decode()
+    try:
+        dek = provider.unwrap(kek_id, wrapped, context=context)
+        return Fernet(dek).decrypt(ciphertext.encode()).decode()
+    except InvalidToken as exc:
+        raise EncryptionError(
+            f"Envelope failed authenticated decryption (kek_id={kek_id!r}): {exc}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise EncryptionError(
+            f"Decrypted plaintext is not valid UTF-8 (kek_id={kek_id!r}): {exc}"
+        ) from exc
 
 
 def is_envelope(value: str) -> bool:
@@ -168,14 +205,22 @@ def _serialize(kek_id: str, wrapped: bytes, ciphertext: str) -> str:
 
 
 def _parse(envelope: str) -> tuple[str, bytes, str]:
+    """Split a serialized envelope into ``(kek_id, wrapped_dek, ciphertext)``.
+
+    Raises ``EncryptionError`` (not ``ValueError``) on any structural
+    problem. Issue #1223: callers must not silently treat corrupt
+    envelopes as empty/partial data, so this surfaces a dedicated
+    exception type that's easy to catch deliberately and impossible to
+    catch by accident under a broad ``except ValueError``.
+    """
     parts = envelope.split(".", 3)
     if len(parts) != 4 or parts[0] != ENVELOPE_PREFIX:
-        raise ValueError(f"Malformed envelope (prefix/parts): {envelope[:32]!r}")
+        raise EncryptionError(f"Malformed envelope (prefix/parts): {envelope[:32]!r}")
     _, kek_id, wrapped_b64, ciphertext = parts
     try:
         wrapped = base64.urlsafe_b64decode(wrapped_b64.encode())
     except (ValueError, binascii.Error) as exc:
-        raise ValueError(f"Malformed envelope (wrapped DEK): {exc}") from exc
+        raise EncryptionError(f"Malformed envelope (wrapped DEK): {exc}") from exc
     return kek_id, wrapped, ciphertext
 
 
@@ -183,6 +228,7 @@ def _parse(envelope: str) -> tuple[str, bytes, str]:
 __all__ = [
     "ENVELOPE_PREFIX",
     "EncryptionContext",
+    "EncryptionError",
     "InvalidToken",
     "KEKProvider",
     "LocalKEKProvider",
