@@ -1,5 +1,6 @@
 """Tests for webhook rate limiting."""
 
+import asyncio
 import time
 from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
@@ -8,10 +9,10 @@ import pytest
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
-import backend.app.database as _db_module
 from backend.app.agent.file_store import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.main import app
 from backend.app.models import User
 from backend.app.services.rate_limiter import InMemoryRateLimiter, check_webhook_rate_limit
@@ -42,20 +43,21 @@ def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
     with patch.object(settings, "data_dir", str(tmp_path)):
         reset_stores()
 
-        db = _db_module.SessionLocal()
-        try:
-            user = User(
-                user_id="rl-test-user",
-                phone="+15559999999",
-                channel_identifier="777777",
-                preferred_channel="telegram",
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            db.expunge(user)
-        finally:
-            db.close()
+        async def _create_user() -> User:
+            async with db_session_async() as db:
+                user = User(
+                    user_id="rl-test-user",
+                    phone="+15559999999",
+                    channel_identifier="777777",
+                    preferred_channel="telegram",
+                )
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+                db.expunge(user)
+                return user
+
+        user = asyncio.run(_create_user())
 
         def _override_get_current_user() -> User:
             return user

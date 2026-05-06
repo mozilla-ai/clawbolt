@@ -1,30 +1,35 @@
 """Tests for memory endpoint (freeform MEMORY.md)."""
 
-from fastapi.testclient import TestClient
+import asyncio
 
-from backend.app.database import SessionLocal
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from backend.app.database import db_session_async
 from backend.app.models import MemoryDocument, User
 
 
 def _seed_memory(user: User) -> None:
     """Create memory with test data via direct ORM write.
 
-    The MemoryStore API is async-only now (issue #1160 follow-up); sync
-    test helpers seed the row directly so they can run from inside a
-    sync ``TestClient`` test without spinning up an event loop.
+    Runs the async write through ``asyncio.run`` so sync ``TestClient``
+    tests can call it without spinning their own event loop.
     """
-    db = SessionLocal()
-    try:
-        doc = db.query(MemoryDocument).filter_by(user_id=user.id).one_or_none()
-        text = "## Pricing\n- Deck: $45/sqft\n- Fence: $20/ft\n"
-        if doc is None:
-            doc = MemoryDocument(user_id=user.id, memory_text=text, history_text="")
-            db.add(doc)
-        else:
-            doc.memory_text = text
-        db.commit()
-    finally:
-        db.close()
+
+    async def _write() -> None:
+        async with db_session_async() as db:
+            doc = (
+                await db.execute(select(MemoryDocument).filter_by(user_id=user.id))
+            ).scalar_one_or_none()
+            text = "## Pricing\n- Deck: $45/sqft\n- Fence: $20/ft\n"
+            if doc is None:
+                doc = MemoryDocument(user_id=user.id, memory_text=text, history_text="")
+                db.add(doc)
+            else:
+                doc.memory_text = text
+            await db.commit()
+
+    asyncio.run(_write())
 
 
 def test_get_memory_empty(client: TestClient) -> None:

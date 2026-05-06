@@ -91,12 +91,13 @@ async def test_create_core_tools_excludes_disabled_factories() -> None:
     assert "read_file" not in excluded_names
 
 
-def test_specialist_summaries_excludes_core_factories() -> None:
+@pytest.mark.asyncio()
+async def test_specialist_summaries_excludes_core_factories() -> None:
     """Core factories (including file and heartbeat) should not appear in specialist summaries."""
     user = User(id="999", user_id="test")
     ctx = ToolContext(user=user)
 
-    summaries = default_registry.get_available_specialist_summaries(ctx)
+    summaries = await default_registry.get_available_specialist_summaries(ctx)
     for core_name in ("workspace", "profile", "memory", "messaging", "file", "heartbeat"):
         assert core_name not in summaries, f"{core_name} should not be a specialist"
 

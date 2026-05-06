@@ -368,7 +368,7 @@ async def _dispatch_to_pipeline(
                         "New message queued for user %s; resolving stale approval as INTERRUPTED",
                         user_id,
                     )
-                    gate.resolve(user_id, ApprovalDecision.INTERRUPTED)
+                    await gate.resolve(user_id, ApprovalDecision.INTERRUPTED)
                     return
         except asyncio.CancelledError:
             return
@@ -380,22 +380,17 @@ async def _dispatch_to_pipeline(
                 async with user_locks.acquire(user_id):
                     interrupt_task.cancel()
                     try:
-                        # Defensive User reload: use the sync session here
-                        # so the in-loop hot path stays mockable and fast.
-                        # The block runs once per pipeline invocation and
-                        # only writes to the in-memory ``user`` variable.
-                        from backend.app.database import SessionLocal
-
-                        db = SessionLocal()
-                        try:
-                            fresh = db.execute(
-                                select(User).filter_by(id=user_id)
+                        # Defensive User reload: pull the latest row so any
+                        # writes from a previous pipeline that was holding
+                        # the lock (e.g. via ingestion or admin updates)
+                        # land on this turn.
+                        async with db_session_async() as db:
+                            fresh = (
+                                await db.execute(select(User).filter_by(id=user_id))
                             ).scalar_one_or_none()
                             if fresh is not None:
                                 db.expunge(fresh)
                                 user = fresh
-                        finally:
-                            db.close()
                         # Reload session messages from DB so we see any
                         # messages persisted by a previous pipeline that
                         # was holding the lock (e.g. tool interactions
@@ -803,7 +798,7 @@ async def process_inbound_from_bus(
                 decision,
                 inbound.text[:100],
             )
-            gate.resolve(user.id, decision)
+            await gate.resolve(user.id, decision)
             # We do not persist the user's approval reply ("Yes", "Always", ...)
             # to the session. The reply is a UX artifact of the approval flow;
             # the underlying action is captured semantically when the resumed
@@ -836,7 +831,7 @@ async def process_inbound_from_bus(
             user.id,
             inbound.text[:100],
         )
-        gate.resolve(user.id, ApprovalDecision.INTERRUPTED)
+        await gate.resolve(user.id, ApprovalDecision.INTERRUPTED)
         # Fall through to normal session/pipeline dispatch below.
 
     session, _is_new = await get_or_create_conversation(user.id)

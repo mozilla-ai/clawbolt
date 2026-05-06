@@ -1,6 +1,8 @@
 """Tests for MessageBatcher: rapid-fire message batching per user."""
 
 import asyncio
+import contextlib
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +11,41 @@ from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.ingestion import InboundMessage, MessageBatcher, process_inbound_from_bus
 from backend.app.bus import message_bus
 from backend.app.models import User
+
+
+@pytest.fixture(autouse=True)
+def _stub_dispatch_db_calls() -> Generator[None]:
+    """Stub the DB calls inside ``_dispatch_to_pipeline`` for batcher unit tests.
+
+    ``_dispatch_to_pipeline`` does a defensive User reload and a session
+    reload before invoking the pipeline. The batcher tests do not seed
+    those rows; without a stub the reloads either hit the test DB and
+    return ``None`` (slow enough to race the ``asyncio.sleep`` waits) or
+    raise inside the lock scope, causing ``handle_inbound_message`` to
+    never run. Both are observability gaps, not behavior the unit
+    tests need to exercise.
+    """
+
+    @contextlib.asynccontextmanager
+    async def _noop_db_session():  # noqa: ANN202
+        db = MagicMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        db.execute = AsyncMock(return_value=result)
+        db.expunge = MagicMock()
+        yield db
+
+    mock_store = MagicMock()
+    mock_store.load_session_async = AsyncMock(return_value=None)
+
+    with (
+        patch("backend.app.agent.ingestion.db_session_async", _noop_db_session),
+        patch(
+            "backend.app.agent.ingestion.get_session_store",
+            return_value=mock_store,
+        ),
+    ):
+        yield
 
 
 class TestMessageBatcher:

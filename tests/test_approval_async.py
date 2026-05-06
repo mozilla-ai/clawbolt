@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from backend.app.agent.approval import (
     ApprovalStore,
     PermissionLevel,
-    _lock_user_permissions_async,
+    _lock_user_permissions,
     _user_permissions_lock_key,
 )
 from backend.app.models import User
@@ -42,64 +42,60 @@ from backend.app.models import User
 
 
 @pytest.mark.asyncio()
-async def test_set_permission_async_persists_and_reads_back(
+async def test_set_permission_persists_and_reads_back(
     async_test_user: User,
 ) -> None:
-    """``set_permission_async`` must round-trip through
-    ``load_user_permissions_async`` so the agent loop and the dashboard
+    """``set_permission`` must round-trip through
+    ``load_user_permissions`` so the agent loop and the dashboard
     both see the same data via the async API."""
     store = ApprovalStore()
-    await store.set_permission_async(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
-    data = await store.load_user_permissions_async(async_test_user.id)
+    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
+    data = await store.load_user_permissions(async_test_user.id)
     assert data["tools"]["send_media_reply"] == "deny"
 
 
 @pytest.mark.asyncio()
-async def test_ensure_complete_async_backfills_missing_tools(
+async def test_ensure_complete_backfills_missing_tools(
     async_test_user: User,
 ) -> None:
-    """``ensure_complete_async`` should write the defaults dict on first
+    """``ensure_complete`` should write the defaults dict on first
     call and leave existing overrides untouched."""
     store = ApprovalStore()
-    data = await store.ensure_complete_async(async_test_user.id)
+    data = await store.ensure_complete(async_test_user.id)
     assert "tools" in data
     assert len(data["tools"]) > 0
 
 
 @pytest.mark.asyncio()
-async def test_check_permission_async_resolves_resource_then_tool(
+async def test_check_permission_resolves_resource_then_tool(
     async_test_user: User,
 ) -> None:
     """Resource-keyed entries take precedence over tool-keyed entries
     in the async resolver, same as the sync resolver."""
     store = ApprovalStore()
-    await store.set_permission_async(
+    await store.set_permission(
         async_test_user.id,
         "web_fetch",
         PermissionLevel.ALWAYS,
         resource="example.com",
     )
     # Resource match wins.
-    level = await store.check_permission_async(
-        async_test_user.id, "web_fetch", resource="example.com"
-    )
+    level = await store.check_permission(async_test_user.id, "web_fetch", resource="example.com")
     assert level == PermissionLevel.ALWAYS
     # Unrelated resource falls through to the default ASK.
-    level = await store.check_permission_async(
-        async_test_user.id, "web_fetch", resource="other.com"
-    )
+    level = await store.check_permission(async_test_user.id, "web_fetch", resource="other.com")
     assert level == PermissionLevel.ASK
 
 
 @pytest.mark.asyncio()
-async def test_reset_permissions_async_writes_defaults(
+async def test_reset_permissions_writes_defaults(
     async_test_user: User,
 ) -> None:
-    """``reset_permissions_async`` should clobber any prior overrides."""
+    """``reset_permissions`` should clobber any prior overrides."""
     store = ApprovalStore()
-    await store.set_permission_async(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
-    await store.reset_permissions_async(async_test_user.id)
-    data = await store.load_user_permissions_async(async_test_user.id)
+    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
+    await store.reset_permissions(async_test_user.id)
+    data = await store.load_user_permissions(async_test_user.id)
     # Default for send_media_reply is not "deny" (the registry default
     # depends on the tool's declaration). Asserting the override is
     # gone is enough to prove reset wrote new data.
@@ -115,7 +111,7 @@ class TestApprovalLockSerializationAsync:
     """Async port of
     ``tests/test_approval.py::TestApprovalLockSerialization``.
 
-    Encodes the same matrix against ``_lock_user_permissions_async``:
+    Encodes the same matrix against ``_lock_user_permissions``:
 
     * Same user_id: two tasks must serialize on the lock; the second
       task must not acquire until the first commits.
@@ -148,7 +144,7 @@ class TestApprovalLockSerializationAsync:
         lock and not through a shared connection's serialization.
         """
         async with AsyncSession(engine, expire_on_commit=False) as db:
-            await _lock_user_permissions_async(db, user_id)
+            await _lock_user_permissions(db, user_id)
             result[f"{label}_acquired"] = time.monotonic()
             ready.set()
             with contextlib.suppress(TimeoutError):
@@ -265,8 +261,8 @@ async def test_async_isolation_rolls_back_between_tests_part_a(
     """Write a permission row through the async API. ``part_b`` asserts
     it disappeared after this test's transaction was rolled back."""
     store = ApprovalStore()
-    await store.set_permission_async(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
-    data = await store.load_user_permissions_async(async_test_user.id)
+    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
+    data = await store.load_user_permissions(async_test_user.id)
     assert data["tools"]["send_media_reply"] == "deny"
 
 
@@ -278,7 +274,7 @@ async def test_async_isolation_rolls_back_between_tests_part_b(
     different ``async_test_user`` rows ensure the assertion is on
     user_id-keyed state, not row identity."""
     store = ApprovalStore()
-    data = await store.load_user_permissions_async(async_test_user.id)
+    data = await store.load_user_permissions(async_test_user.id)
     # Either no row exists or, after ensure_complete, the registry default
     # for send_media_reply is whatever the registry says, not "deny".
     assert data.get("tools", {}).get("send_media_reply") != "deny"

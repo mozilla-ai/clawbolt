@@ -42,15 +42,22 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      # Surface 1.x Query API call sites in CI logs so the async migration
-      # (issue #1139) can pick them off incrementally. Non-blocking: warnings
-      # are visible but do not fail the build. See issue #1142.
+      # Surface any 1.x Query API call sites in CI logs as a regression
+      # signal (the async-DB migration in #1139 removed them). Non-blocking:
+      # warnings are visible but do not fail the build.
       SQLALCHEMY_WARN_20: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - run: uv sync --all-extras
-      - run: uv run pytest -v
+      # ``-n auto`` runs the suite across one xdist worker per CPU core. The
+      # conftest derives a per-worker test DB (``clawbolt_test_gw0`` etc.)
+      # from ``PYTEST_XDIST_WORKER`` and auto-creates them by connecting to
+      # the ``postgres`` admin DB. The ``POSTGRES_USER: clawbolt`` service
+      # makes ``clawbolt`` the cluster superuser, so ``CREATE DATABASE``
+      # succeeds without further setup. Sequential runs and ``OSS_TEST_DB``
+      # overrides still work unchanged.
+      - run: uv run pytest -n auto -v
 
   e2e-telegram:
     runs-on: ubuntu-latest

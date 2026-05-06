@@ -607,7 +607,7 @@ async def test_token_refresh_callback() -> None:
     """Should call on_token_refresh when tokens are refreshed."""
     callback_calls: list[tuple[str, str, float]] = []
 
-    def on_refresh(access: str, refresh: str, expires_at: float) -> None:
+    async def on_refresh(access: str, refresh: str, expires_at: float) -> None:
         callback_calls.append((access, refresh, expires_at))
 
     svc = GoogleCalendarService(

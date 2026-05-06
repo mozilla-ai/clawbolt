@@ -2,9 +2,9 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from any_llm import AuthenticationError, ContentFilterError
 
-import backend.app.database as _db_module
 from backend.app.agent.approval import PermissionLevel, get_approval_store
 from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.router import (
@@ -13,15 +13,16 @@ from backend.app.agent.router import (
     handle_inbound_message,
 )
 from backend.app.bus import message_bus
+from backend.app.database import db_session_async
 from backend.app.models import User
 from tests.conftest import create_test_session
 from tests.mocks.llm import make_error_response, make_text_response, make_tool_call_response
 from tests.mocks.storage import MockStorageBackend
 
 
-@pytest.fixture()
-def conversation(test_user: User) -> SessionState:
-    return create_test_session(
+@pytest_asyncio.fixture()
+async def conversation(test_user: User) -> SessionState:
+    return await create_test_session(
         user_id=test_user.id,
         session_id="test-conv",
         messages=[
@@ -677,19 +678,16 @@ async def test_empty_to_address_returns_early(
 ) -> None:
     """User with no channel_identifier or phone should return early."""
     # Create user with empty delivery fields (persisted so FK queries work)
-    db = _db_module.SessionLocal()
-    try:
+    async with db_session_async() as db:
         no_addr = User(
             user_id="no-addr",
             channel_identifier="",
             phone="",
         )
         db.add(no_addr)
-        db.commit()
-        db.refresh(no_addr)
+        await db.commit()
+        await db.refresh(no_addr)
         db.expunge(no_addr)
-    finally:
-        db.close()
 
     response = await handle_inbound_message(
         user=no_addr,
@@ -715,7 +713,7 @@ async def test_send_media_reply_suppresses_duplicate_text(
     """When agent calls send_media_reply, the router should NOT also dispatch text."""
     # Pre-approve messaging tools so the approval gate doesn't block
     store = get_approval_store()
-    store.set_permission(test_user.id, "send_media_reply", PermissionLevel.ALWAYS)
+    await store.set_permission(test_user.id, "send_media_reply", PermissionLevel.ALWAYS)
     # LLM calls send_media_reply tool
     tool_response = make_tool_call_response(
         tool_calls=[
@@ -1164,15 +1162,13 @@ async def test_to_address_uses_channel_specific_identifier(
     (which equals the numeric user_id, e.g. "1"). Telegram replies must
     still use the real Telegram chat_id from the user index.
     """
-    import backend.app.database as _db_module
     from backend.app.models import ChannelRoute
 
     telegram_chat_id = "555000111"
 
     # Create a second user so its id (2) doesn't collide with leaked index
     # entries from other tests that map telegram:<x> -> 1.
-    db = _db_module.SessionLocal()
-    try:
+    async with db_session_async() as db:
         user = User(
             user_id="cross-channel-user",
             channel_identifier="cross-channel-user",
@@ -1180,14 +1176,14 @@ async def test_to_address_uses_channel_specific_identifier(
             onboarding_complete=True,
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         user_id = user.id
         # Link the real Telegram chat_id in the channel routes
         db.add(
             ChannelRoute(user_id=user_id, channel="telegram", channel_identifier=telegram_chat_id)
         )
-        db.commit()
+        await db.commit()
         # Eagerly load all scalar attributes before expunging
         _ = (
             user.phone,
@@ -1199,8 +1195,6 @@ async def test_to_address_uses_channel_specific_identifier(
             user.onboarding_complete,
         )
         db.expunge(user)
-    finally:
-        db.close()
 
     # Create file-store directories for this user (hybrid period)
     from pathlib import Path
@@ -1212,7 +1206,7 @@ async def test_to_address_uses_channel_specific_identifier(
 
     from tests.conftest import create_test_session
 
-    session = create_test_session(user_id=user_id, session_id="s")
+    session = await create_test_session(user_id=user_id, session_id="s")
     message = StoredMessage(direction="inbound", body="hello from telegram", seq=1)
 
     mock_amessages.return_value = make_text_response("Cross-channel reply!")  # type: ignore[union-attr]

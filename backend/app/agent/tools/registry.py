@@ -80,7 +80,7 @@ class ToolFactory:
     core: bool = True
     summary: str = ""
     sub_tools: list[SubToolInfo] = field(default_factory=list)
-    auth_check: Callable[[ToolContext], str | None] | None = None
+    auth_check: Callable[[ToolContext], Awaitable[str | None]] | None = None
 
 
 class ListCapabilitiesParams(BaseModel):
@@ -249,7 +249,7 @@ class ToolRegistry:
         core: bool = True,
         summary: str = "",
         sub_tools: list[SubToolInfo] | None = None,
-        auth_check: Callable[[ToolContext], str | None] | None = None,
+        auth_check: Callable[[ToolContext], Awaitable[str | None]] | None = None,
     ) -> None:
         """Register a tool factory by name.
 
@@ -362,7 +362,7 @@ class ToolRegistry:
             context, selected_factories=selected, excluded_tool_names=excluded_tool_names
         )
 
-    def get_available_specialist_summaries(
+    async def get_available_specialist_summaries(
         self,
         context: ToolContext,
         *,
@@ -390,7 +390,7 @@ class ToolRegistry:
                 continue
             if factory.requires_outbound and context.publish_outbound is None:
                 continue
-            if factory.auth_check is not None and factory.auth_check(context) is not None:
+            if factory.auth_check is not None and await factory.auth_check(context) is not None:
                 continue
             summaries[name] = factory.summary
         return summaries
@@ -425,7 +425,7 @@ class ToolRegistry:
                 continue
             if factory.requires_outbound and context.publish_outbound is None:
                 continue
-            if factory.auth_check is not None and factory.auth_check(context) is not None:
+            if factory.auth_check is not None and await factory.auth_check(context) is not None:
                 continue
             ready.add(name)
         if not ready:
@@ -437,7 +437,7 @@ class ToolRegistry:
         )
         return tools, ready
 
-    def get_unauthenticated_specialists(
+    async def get_unauthenticated_specialists(
         self,
         context: ToolContext,
         *,
@@ -462,7 +462,7 @@ class ToolRegistry:
                 continue
             if factory.auth_check is None:
                 continue
-            reason = factory.auth_check(context)
+            reason = await factory.auth_check(context)
             if reason is not None:
                 unauthenticated[name] = reason
         return unauthenticated

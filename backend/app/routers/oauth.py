@@ -38,7 +38,7 @@ async def get_oauth_status(
             OAuthStatusEntry(
                 integration=name,
                 configured=config is not None and config.is_configured,
-                connected=oauth_service.is_connected(current_user.id, name),
+                connected=await oauth_service.is_connected(current_user.id, name),
             )
         )
     return OAuthStatusResponse(integrations=entries)
@@ -222,7 +222,7 @@ async def disconnect_integration(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     """Disconnect an OAuth integration by removing stored tokens."""
-    deleted = oauth_service.delete_token(current_user.id, integration)
+    deleted = await oauth_service.delete_token(current_user.id, integration)
     if not deleted:
         raise HTTPException(status_code=404, detail="No connection found for this integration")
     return {"status": "disconnected", "integration": integration}

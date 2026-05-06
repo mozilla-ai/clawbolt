@@ -2,9 +2,9 @@
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.tools.heartbeat_tools import create_heartbeat_tools
+from backend.app.database import db_session_async
 from backend.app.models import User
 
 
@@ -145,16 +145,13 @@ async def test_get_heartbeat_usage_hint_does_not_promise_reminders(
 @pytest.mark.asyncio()
 async def test_heartbeat_scoped_to_user(test_user: User) -> None:
     """Each user's heartbeat text is independent."""
-    db = _db_module.SessionLocal()
-    try:
+    async with db_session_async() as db:
         other_user = User(user_id="hb-other-99", phone="+15559999999")
         db.add(other_user)
-        db.commit()
-        db.refresh(other_user)
+        await db.commit()
+        await db.refresh(other_user)
         other_id = other_user.id
         db.expunge(other_user)
-    finally:
-        db.close()
 
     # Set heartbeat for both users
     tools_a = create_heartbeat_tools(test_user.id)

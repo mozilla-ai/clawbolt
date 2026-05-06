@@ -4,7 +4,7 @@ Replaces HeartbeatStore, MediaStore, IdempotencyStore, LLMUsageStore, and
 ToolConfigStore from file_store.py. Uses the corresponding ORM models for
 persistence, while keeping Pydantic DTOs as the public API surface.
 
-Follows the same SessionLocal() / try-finally pattern used in session_db.py.
+Follows the same AsyncSessionLocal() / try-finally pattern used in session_db.py.
 """
 
 from __future__ import annotations

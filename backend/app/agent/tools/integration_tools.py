@@ -92,9 +92,9 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
         if action == "disable":
             return await _handle_disable(user_id, target, default_registry)
         if action == "connect":
-            return _handle_connect(user_id, target)
+            return await _handle_connect(user_id, target)
         if action == "disconnect":
-            return _handle_disconnect(user_id, target)
+            return await _handle_disconnect(user_id, target)
 
         valid_actions = "status, enable, disable, connect, disconnect"
         return ToolResult(
@@ -160,7 +160,7 @@ async def _handle_status(
             if oauth_name:
                 config = get_oauth_config(oauth_name)
                 if config is not None and config.is_configured:
-                    connected = oauth_service.is_connected(user_id, oauth_name)
+                    connected = await oauth_service.is_connected(user_id, oauth_name)
                     status_parts.append("connected" if connected else "not connected")
                 else:
                     status_parts.append("not configured by admin")
@@ -255,7 +255,7 @@ async def _handle_disable(
     )
 
 
-def _handle_connect(user_id: str, target: str) -> ToolResult:
+async def _handle_connect(user_id: str, target: str) -> ToolResult:
     """Generate an OAuth authorization URL for an integration."""
     # Check if target is a tool group name that maps to an OAuth integration
     oauth_name = _TOOL_OAUTH_MAP.get(target, target)
@@ -282,7 +282,7 @@ def _handle_connect(user_id: str, target: str) -> ToolResult:
             error_kind=ToolErrorKind.AUTH,
         )
 
-    if oauth_service.is_connected(user_id, oauth_name):
+    if await oauth_service.is_connected(user_id, oauth_name):
         display = _DISPLAY_NAMES.get(target, target)
         return ToolResult(
             content=f"{display} is already connected. Use action='disconnect' first to reconnect.",
@@ -300,7 +300,7 @@ def _handle_connect(user_id: str, target: str) -> ToolResult:
     )
 
 
-def _handle_disconnect(user_id: str, target: str) -> ToolResult:
+async def _handle_disconnect(user_id: str, target: str) -> ToolResult:
     """Remove OAuth tokens for an integration."""
     oauth_name = _TOOL_OAUTH_MAP.get(target, target)
 
@@ -314,7 +314,7 @@ def _handle_disconnect(user_id: str, target: str) -> ToolResult:
             error_kind=ToolErrorKind.VALIDATION,
         )
 
-    if not oauth_service.is_connected(user_id, oauth_name):
+    if not await oauth_service.is_connected(user_id, oauth_name):
         display = _DISPLAY_NAMES.get(target, target)
         return ToolResult(
             content=f"{display} is not currently connected.",
@@ -322,7 +322,7 @@ def _handle_disconnect(user_id: str, target: str) -> ToolResult:
             error_kind=ToolErrorKind.NOT_FOUND,
         )
 
-    oauth_service.delete_token(user_id, oauth_name)
+    await oauth_service.delete_token(user_id, oauth_name)
     display = _DISPLAY_NAMES.get(target, target)
     logger.info("User %s disconnected OAuth for '%s' via chat", user_id, oauth_name)
     return ToolResult(

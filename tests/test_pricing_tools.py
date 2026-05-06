@@ -482,20 +482,20 @@ class TestPricingFactory:
         assert len(result) == 1
         assert result[0].name == "supplier_search_products"
 
-    def test_auth_check_always_passes(self) -> None:
+    async def test_auth_check_always_passes(self) -> None:
         from backend.app.integrations.supplier_pricing.factory import _pricing_auth_check
 
         ctx = MagicMock()
-        assert _pricing_auth_check(ctx) is None
+        assert await _pricing_auth_check(ctx) is None
 
         with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = ""
-            assert _pricing_auth_check(ctx) is None
+            assert await _pricing_auth_check(ctx) is None
 
-    def test_auth_check_returns_none_when_key_set(self) -> None:
+    async def test_auth_check_returns_none_when_key_set(self) -> None:
         from backend.app.integrations.supplier_pricing.factory import _pricing_auth_check
 
         ctx = MagicMock()
         with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = "key"
-            assert _pricing_auth_check(ctx) is None
+            assert await _pricing_auth_check(ctx) is None

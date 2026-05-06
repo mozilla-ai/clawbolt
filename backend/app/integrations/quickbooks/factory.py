@@ -662,7 +662,7 @@ async def _get_quickbooks_service_for_user(user_id: str) -> QuickBooksService | 
     return None
 
 
-def _quickbooks_auth_check(ctx: ToolContext) -> str | None:
+async def _quickbooks_auth_check(ctx: ToolContext) -> str | None:
     """Check whether QuickBooks is configured and the user has authenticated.
 
     Returns ``None`` when ready, or a reason string when auth is missing.
@@ -671,7 +671,7 @@ def _quickbooks_auth_check(ctx: ToolContext) -> str | None:
     """
     if not settings.quickbooks_client_id or not settings.quickbooks_client_secret:
         return None
-    token = oauth_service.load_token(ctx.user.id, "quickbooks")
+    token = await oauth_service.load_token(ctx.user.id, "quickbooks")
     if token and token.access_token and token.realm_id:
         return None
     return (

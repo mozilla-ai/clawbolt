@@ -928,7 +928,7 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
 # ---------------------------------------------------------------------------
 
 
-def _calendar_auth_check(ctx: ToolContext) -> str | None:
+async def _calendar_auth_check(ctx: ToolContext) -> str | None:
     """Check whether Google Calendar is configured and the user has authenticated.
 
     Returns ``None`` when ready, or a reason string when auth is missing.
@@ -937,7 +937,7 @@ def _calendar_auth_check(ctx: ToolContext) -> str | None:
     """
     if not settings.google_calendar_client_id or not settings.google_calendar_client_secret:
         return None
-    token = oauth_service.load_token(ctx.user.id, "google_calendar")
+    token = await oauth_service.load_token(ctx.user.id, "google_calendar")
     if token is not None and token.access_token:
         return None
     return (

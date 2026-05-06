@@ -268,7 +268,7 @@ async def run_agent(
     # Ensure PERMISSIONS.json exists with all tools backfilled so the
     # agent can read/edit it and the approval store resolves from it.
 
-    await get_approval_store().ensure_complete_async(user.id)
+    await get_approval_store().ensure_complete(user.id)
 
     # Shared mutable set so the list_capabilities tool closure and the
     # agent loop both see the same activation state.  This prevents the
@@ -314,10 +314,10 @@ async def run_agent(
     )
     tools.extend(ready_specialist_tools)
     activated_specialists |= ready_specialist_names
-    specialist_summaries = default_registry.get_available_specialist_summaries(
+    specialist_summaries = await default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=disabled_groups or None
     )
-    unauthenticated = default_registry.get_unauthenticated_specialists(
+    unauthenticated = await default_registry.get_unauthenticated_specialists(
         tool_context, excluded_factories=disabled_groups or None
     )
     disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(
@@ -353,7 +353,7 @@ async def run_agent(
         )
         store = get_approval_store()
         for tool_name in _onboarding_auto_tools:
-            await store.set_permission_async(user.id, tool_name, PermissionLevel.ALWAYS)
+            await store.set_permission(user.id, tool_name, PermissionLevel.ALWAYS)
 
     logger.debug(
         "Agent initialized for user %s, message seq=%d with %d core tools, "

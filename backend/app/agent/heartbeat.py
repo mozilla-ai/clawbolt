@@ -597,10 +597,10 @@ async def execute_heartbeat_tasks(
         if tool.name in _HEARTBEAT_AUTO_APPROVE:
             tool.approval_policy = None
 
-    specialist_summaries = default_registry.get_available_specialist_summaries(
+    specialist_summaries = await default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=excluded
     )
-    unauthenticated = default_registry.get_unauthenticated_specialists(
+    unauthenticated = await default_registry.get_unauthenticated_specialists(
         tool_context, excluded_factories=excluded
     )
     disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(

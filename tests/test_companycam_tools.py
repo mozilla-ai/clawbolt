@@ -271,7 +271,8 @@ class TestTagsJsonStringCoercion:
         assert p.tags == ["before", "kitchen"]
 
 
-def test_companycam_auth_check_not_connected() -> None:
+@pytest.mark.asyncio()
+async def test_companycam_auth_check_not_connected() -> None:
     """Auth check should return a reason when OAuth is not connected."""
     from backend.app.config import settings
     from backend.app.integrations.companycam.factory import _companycam_auth_check
@@ -286,15 +287,16 @@ def test_companycam_auth_check_not_connected() -> None:
         patch.object(settings, "companycam_client_secret", "csec"),
         patch("backend.app.integrations.companycam.factory.oauth_service") as mock_oauth,
     ):
-        mock_oauth.is_connected.return_value = False
-        result = _companycam_auth_check(ctx)
+        mock_oauth.is_connected = AsyncMock(return_value=False)
+        result = await _companycam_auth_check(ctx)
 
     assert result is not None
     assert "not connected" in result.lower()
     assert "manage_integration" in result
 
 
-def test_companycam_auth_check_connected() -> None:
+@pytest.mark.asyncio()
+async def test_companycam_auth_check_connected() -> None:
     """Auth check should return None when OAuth is connected."""
     from backend.app.config import settings
     from backend.app.integrations.companycam.factory import _companycam_auth_check
@@ -309,13 +311,14 @@ def test_companycam_auth_check_connected() -> None:
         patch.object(settings, "companycam_client_secret", "csec"),
         patch("backend.app.integrations.companycam.factory.oauth_service") as mock_oauth,
     ):
-        mock_oauth.is_connected.return_value = True
-        result = _companycam_auth_check(ctx)
+        mock_oauth.is_connected = AsyncMock(return_value=True)
+        result = await _companycam_auth_check(ctx)
 
     assert result is None
 
 
-def test_companycam_auth_check_not_configured() -> None:
+@pytest.mark.asyncio()
+async def test_companycam_auth_check_not_configured() -> None:
     """Auth check should return None (hide tools) when OAuth creds are not configured."""
     from backend.app.config import settings
     from backend.app.integrations.companycam.factory import _companycam_auth_check
@@ -329,7 +332,7 @@ def test_companycam_auth_check_not_configured() -> None:
         patch.object(settings, "companycam_client_id", ""),
         patch.object(settings, "companycam_client_secret", ""),
     ):
-        result = _companycam_auth_check(ctx)
+        result = await _companycam_auth_check(ctx)
 
     assert result is None
 

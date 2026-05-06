@@ -1,5 +1,6 @@
 """Tests for GET /api/user/llm-usage endpoint."""
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,42 +21,42 @@ def _create_usage(
     cost: float = 0.001,
     created_at: datetime | None = None,
 ) -> None:
-    db = _db_module.SessionLocal()
-    try:
-        db.add(
-            LLMUsageLog(
-                user_id=user_id,
-                provider="test",
-                model=model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=input_tokens + output_tokens,
-                cost=Decimal(str(cost)),
-                purpose=purpose,
-                created_at=created_at or datetime.now(UTC),
+    async def _write() -> None:
+        async with _db_module.db_session_async() as db:
+            db.add(
+                LLMUsageLog(
+                    user_id=user_id,
+                    provider="test",
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
+                    cost=Decimal(str(cost)),
+                    purpose=purpose,
+                    created_at=created_at or datetime.now(UTC),
+                )
             )
-        )
-        db.commit()
-    finally:
-        db.close()
+            await db.commit()
+
+    asyncio.run(_write())
 
 
 def _create_other_user() -> str:
-    db = _db_module.SessionLocal()
-    try:
-        other = User(
-            id=str(uuid.uuid4()),
-            user_id="other-llm-user",
-            phone="+15550002222",
-            channel_identifier="777777777",
-            preferred_channel="telegram",
-        )
-        db.add(other)
-        db.commit()
-        db.refresh(other)
-        return other.id
-    finally:
-        db.close()
+    async def _write() -> str:
+        async with _db_module.db_session_async() as db:
+            other = User(
+                id=str(uuid.uuid4()),
+                user_id="other-llm-user",
+                phone="+15550002222",
+                channel_identifier="777777777",
+                preferred_channel="telegram",
+            )
+            db.add(other)
+            await db.commit()
+            await db.refresh(other)
+            return other.id
+
+    return asyncio.run(_write())
 
 
 def test_llm_usage_empty(client: TestClient) -> None:

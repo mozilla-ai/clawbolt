@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
@@ -51,7 +51,7 @@ class GoogleCalendarService:
         refresh_token: str,
         client_id: str,
         client_secret: str,
-        on_token_refresh: Callable[[str, str, float], None] | None = None,
+        on_token_refresh: Callable[[str, str, float], Awaitable[None]] | None = None,
         token_expires_at: float = 0.0,
     ) -> None:
         self._access_token = access_token
@@ -85,7 +85,9 @@ class GoogleCalendarService:
         if "expires_in" in data:
             self._token_expires_at = time.time() + data["expires_in"]
         if self._on_token_refresh:
-            self._on_token_refresh(self._access_token, self._refresh_token, self._token_expires_at)
+            await self._on_token_refresh(
+                self._access_token, self._refresh_token, self._token_expires_at
+            )
 
     async def _ensure_valid_token(self, client: httpx.AsyncClient) -> None:
         """Proactively refresh the token if it is about to expire."""

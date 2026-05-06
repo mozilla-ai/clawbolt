@@ -211,7 +211,7 @@ async def test_approval_cache_coalesces_repeat_ask(test_user: User) -> None:
 
     # Make sure ASK is the effective level (no persisted override).
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
+    await store.reset_permissions(test_user.id)
 
     async def _publish(_msg: object) -> None:
         return None
@@ -264,7 +264,7 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
     from backend.app.agent.tools.file_tools import create_file_tools
 
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
+    await store.reset_permissions(test_user.id)
 
     gate = get_approval_gate()
     gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_ALLOW)  # type: ignore[method-assign]
@@ -303,10 +303,10 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
     # Permission should now be ALWAYS for upload_to_storage globally, not
     # scoped to David Graham only. A subsequent upload for a different
     # client should auto-approve without another prompt.
-    level_global = store.check_permission(
+    level_global = await store.check_permission(
         test_user.id, "upload_to_storage", default=PermissionLevel.ASK
     )
-    level_different_client = store.check_permission(
+    level_different_client = await store.check_permission(
         test_user.id, "upload_to_storage", resource="Other Client", default=PermissionLevel.ASK
     )
     assert level_global == PermissionLevel.ALWAYS
@@ -324,7 +324,7 @@ async def test_always_deny_does_not_emit_synthetic_tool_record(test_user: User) 
     from backend.app.agent.tools.file_tools import create_file_tools
 
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
+    await store.reset_permissions(test_user.id)
 
     gate = get_approval_gate()
     gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_DENY)  # type: ignore[method-assign]
@@ -360,7 +360,9 @@ async def test_always_deny_does_not_emit_synthetic_tool_record(test_user: User) 
     perm_records = [r for r in records if r.args.get("path") == "PERMISSIONS.json"]
     assert perm_records == []
     # And the DENY must be persisted.
-    level = store.check_permission(test_user.id, "upload_to_storage", default=PermissionLevel.ASK)
+    level = await store.check_permission(
+        test_user.id, "upload_to_storage", default=PermissionLevel.ASK
+    )
     assert level == PermissionLevel.DENY
 
 
@@ -375,8 +377,8 @@ async def test_permissions_path_match_is_case_insensitive(test_user: User) -> No
 
     # Seed via ApprovalStore.
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
-    store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
+    await store.reset_permissions(test_user.id)
+    await store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
 
     for variant in ("permissions.json", "Permissions.json", "PERMISSIONS.JSON"):
         result = await read_tool.function(path=variant)
@@ -397,7 +399,7 @@ async def test_always_allow_does_not_emit_synthetic_tool_record(test_user: User)
     from backend.app.agent.tools.file_tools import create_file_tools
 
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
+    await store.reset_permissions(test_user.id)
 
     gate = get_approval_gate()
     gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_ALLOW)  # type: ignore[method-assign]
@@ -437,7 +439,9 @@ async def test_always_allow_does_not_emit_synthetic_tool_record(test_user: User)
     perm_records = [r for r in records if r.args.get("path") == "PERMISSIONS.json"]
     assert perm_records == []
     # And the permission must still be persisted.
-    level = store.check_permission(test_user.id, "upload_to_storage", default=PermissionLevel.ASK)
+    level = await store.check_permission(
+        test_user.id, "upload_to_storage", default=PermissionLevel.ASK
+    )
     assert level == PermissionLevel.ALWAYS
 
 
@@ -478,7 +482,7 @@ async def test_always_allow_short_circuits_sibling_ask_entries_in_same_round(
     )
 
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
+    await store.reset_permissions(test_user.id)
 
     async def _publish(_msg: object) -> None:
         return None
@@ -549,7 +553,7 @@ async def test_denied_short_circuits_sibling_ask_entries(test_user: User) -> Non
     )
 
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
+    await store.reset_permissions(test_user.id)
 
     async def _publish(_msg: object) -> None:
         return None
@@ -592,8 +596,8 @@ async def test_permissions_json_readable_via_workspace_tools(test_user: User) ->
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
-    store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
+    await store.reset_permissions(test_user.id)
+    await store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
 
     tools = create_workspace_tools(test_user.id)
     read_tool = next(t for t in tools if t.name == "read_file")
@@ -613,8 +617,8 @@ async def test_permissions_json_write_flows_into_approval_store(test_user: User)
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
-    store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
+    await store.reset_permissions(test_user.id)
+    await store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
 
     tools = create_workspace_tools(test_user.id)
     read_tool = next(t for t in tools if t.name == "read_file")
@@ -630,7 +634,7 @@ async def test_permissions_json_write_flows_into_approval_store(test_user: User)
     )
     assert edit_result.is_error is False
 
-    level = store.check_permission(
+    level = await store.check_permission(
         test_user.id, "qb_query", resource="Invoice", default=PermissionLevel.ASK
     )
     assert level == PermissionLevel.DENY
@@ -643,7 +647,7 @@ async def test_permissions_write_normalizes_minified_json(test_user: User) -> No
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
     store = get_approval_store()
-    store.reset_permissions(test_user.id)
+    await store.reset_permissions(test_user.id)
 
     tools = create_workspace_tools(test_user.id)
     write_tool = next(t for t in tools if t.name == "write_file")
