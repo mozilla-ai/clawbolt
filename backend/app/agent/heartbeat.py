@@ -19,7 +19,7 @@ import json
 import logging
 import random
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -699,22 +699,25 @@ async def get_daily_heartbeat_count(user_id: str) -> int:
 # Post-heartbeat usage hooks
 # ---------------------------------------------------------------------------
 
-HeartbeatUsageHook = Callable[[str, int, int, bool], None]
+HeartbeatUsageHook = Callable[[str, int, int, bool], Awaitable[None]]
 
 _heartbeat_usage_hooks: list[HeartbeatUsageHook] = []
 
 
 def register_heartbeat_usage_hook(hook: HeartbeatUsageHook) -> None:
-    """Register a callback invoked after each heartbeat LLM run.
+    """Register an async callback invoked after each heartbeat LLM run.
 
     Called with ``(user_id, input_tokens, output_tokens, sent_reply)`` once
     Phase 1 (plus any Phase 2) has completed. Premium layers subscribe to
     this hook to reflect heartbeat LLM spend in per-tenant usage counters.
+
+    Hooks must be ``async def`` so they can use the async DB stack without
+    blocking the heartbeat event loop on a sync session.
     """
     _heartbeat_usage_hooks.append(hook)
 
 
-def _dispatch_heartbeat_usage(
+async def _dispatch_heartbeat_usage(
     user_id: str,
     input_tokens: int,
     output_tokens: int,
@@ -723,7 +726,7 @@ def _dispatch_heartbeat_usage(
     """Fire all registered usage hooks, isolating failures per hook."""
     for hook in _heartbeat_usage_hooks:
         try:
-            hook(user_id, input_tokens, output_tokens, sent_reply)
+            await hook(user_id, input_tokens, output_tokens, sent_reply)
         except Exception:
             logger.exception("heartbeat usage hook failed for user %s", user_id)
 
@@ -1031,7 +1034,9 @@ async def run_heartbeat_for_user(
         )
     finally:
         if total_input_tokens or total_output_tokens:
-            _dispatch_heartbeat_usage(user.id, total_input_tokens, total_output_tokens, sent_reply)
+            await _dispatch_heartbeat_usage(
+                user.id, total_input_tokens, total_output_tokens, sent_reply
+            )
         # The heartbeat fires a typing indicator before Phase 1. If we exit
         # without delivering a reply (skip, empty tasks, no Phase 2 output,
         # or exception), the indicator is orphaned. Cancel it explicitly so

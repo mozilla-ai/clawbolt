@@ -1528,7 +1528,7 @@ class TestHeartbeatUsageHooks:
 
         calls: list[tuple[str, int, int, bool]] = []
 
-        def _hook(user_id: str, in_tok: int, out_tok: int, sent: bool) -> None:
+        async def _hook(user_id: str, in_tok: int, out_tok: int, sent: bool) -> None:
             calls.append((user_id, in_tok, out_tok, sent))
 
         register_heartbeat_usage_hook(_hook)
@@ -1586,7 +1586,11 @@ class TestHeartbeatUsageHooks:
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
         calls: list[tuple[str, int, int, bool]] = []
-        register_heartbeat_usage_hook(lambda uid, i, o, s: calls.append((uid, i, o, s)))
+
+        async def _hook(uid: str, i: int, o: int, s: bool) -> None:
+            calls.append((uid, i, o, s))
+
+        register_heartbeat_usage_hook(_hook)
 
         await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
 
@@ -1618,7 +1622,7 @@ class TestHeartbeatUsageHooks:
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
-        def _boom(*_args: object) -> None:
+        async def _boom(*_args: object) -> None:
             raise RuntimeError("hook exploded")
 
         register_heartbeat_usage_hook(_boom)
@@ -1631,7 +1635,11 @@ class TestHeartbeatUsageHooks:
     async def test_hook_not_called_when_no_llm_ran(self, clear_heartbeat_hooks: object) -> None:
         """Early-return paths (not onboarded, rate-limited, etc.) skip the hook."""
         calls: list[tuple[str, int, int, bool]] = []
-        register_heartbeat_usage_hook(lambda uid, i, o, s: calls.append((uid, i, o, s)))
+
+        async def _hook(uid: str, i: int, o: int, s: bool) -> None:
+            calls.append((uid, i, o, s))
+
+        register_heartbeat_usage_hook(_hook)
 
         u = User(id="99", user_id="hb-early", phone="+15550000099", onboarding_complete=False)
         await run_heartbeat_for_user(u, "telegram", u.phone, 5)
