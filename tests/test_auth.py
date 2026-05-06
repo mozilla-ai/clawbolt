@@ -106,13 +106,10 @@ async def test_scoping_returns_404_for_wrong_user() -> None:
         db.close()
 
     # User 1 should not be able to access user 2
-    db = _db_module.SessionLocal()
-    try:
+    async with _db_module.AsyncSessionLocal() as db:
         with pytest.raises(HTTPException) as exc_info:
             await get_scoped_user(user1, user2.id, db)
         assert exc_info.value.status_code == 404
-    finally:
-        db.close()
 
 
 @pytest.mark.asyncio()
@@ -128,9 +125,6 @@ async def test_scoping_returns_user_for_correct_user() -> None:
     finally:
         db.close()
 
-    db = _db_module.SessionLocal()
-    try:
+    async with _db_module.AsyncSessionLocal() as db:
         result = await get_scoped_user(user, user.id, db)
         assert result.id == user.id
-    finally:
-        db.close()

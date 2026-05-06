@@ -316,7 +316,7 @@ class TelegramChannel(BaseChannel):
             )
         return media
 
-    def is_allowed(self, sender_id: str, username: str) -> bool:
+    async def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return ``True`` if the sender passes the Telegram allowlist gate.
 
         In premium mode, approval is based on whether a ``ChannelRoute``
@@ -324,7 +324,7 @@ class TelegramChannel(BaseChannel):
         is used: empty rejects all, ``"*"`` allows all, or a specific
         chat ID must match.
         """
-        return self._check_static_allowlist(settings.telegram_allowed_chat_id, sender_id)
+        return await self._check_static_allowlist(settings.telegram_allowed_chat_id, sender_id)
 
     @staticmethod
     def parse_update(update: TelegramUpdate) -> InboundMessage | None:

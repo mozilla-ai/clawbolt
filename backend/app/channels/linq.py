@@ -250,7 +250,7 @@ class LinqChannel(BaseChannel):
         ).hexdigest()
         return hmac.compare_digest(expected, signature)
 
-    def is_allowed(self, sender_id: str, username: str) -> bool:
+    async def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return True if the sender passes the Linq allowlist.
 
         In premium mode, approval is based on whether a ``ChannelRoute``
@@ -258,7 +258,7 @@ class LinqChannel(BaseChannel):
         number) is checked against ``settings.linq_allowed_numbers``:
         empty denies all, ``"*"`` allows all, or a specific number must match.
         """
-        return self._check_static_allowlist(settings.linq_allowed_numbers, sender_id)
+        return await self._check_static_allowlist(settings.linq_allowed_numbers, sender_id)
 
     @staticmethod
     def _guess_mime(url: str) -> str:

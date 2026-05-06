@@ -87,7 +87,7 @@ async def test_async_prune_noop_at_exact_max(
     with patch("backend.app.agent.stores._SEEN_MAX", small_max):
         for i in range(small_max):
             await store.try_mark_seen_async(f"exact-{i}")
-        await store._prune_async()
+        await store._prune()
 
     assert await _row_count(async_db) == small_max
     for i in range(small_max):
@@ -102,7 +102,7 @@ async def test_async_prune_noop_when_below_max(
     for i in range(5):
         await store.try_mark_seen_async(f"below-{i}")
 
-    await store._prune_async()
+    await store._prune()
 
     assert await _row_count(async_db) == 5
     for i in range(5):
@@ -114,7 +114,7 @@ async def test_async_prune_on_empty_table(
 ) -> None:
     """``_prune_async`` on an empty table does not raise."""
     store = IdempotencyStore()
-    await store._prune_async()
+    await store._prune()
     assert await _row_count(async_db) == 0
 
 
@@ -152,7 +152,7 @@ async def test_async_prune_exception_does_not_block_return(
 
     with patch.object(
         store,
-        "_prune_async",
+        "_prune",
         new=AsyncMock(side_effect=RuntimeError("db exploded")),
     ):
         result = await store.try_mark_seen_async("safe-1")

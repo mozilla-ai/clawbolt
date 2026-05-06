@@ -37,7 +37,7 @@ class _StubChannel(BaseChannel):
     def get_router(self) -> APIRouter:
         return APIRouter()
 
-    def is_allowed(self, sender_id: str, username: str) -> bool:
+    async def is_allowed(self, sender_id: str, username: str) -> bool:
         return True
 
     async def send_text(self, to: str, body: str) -> str:

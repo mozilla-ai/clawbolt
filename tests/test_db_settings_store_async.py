@@ -39,22 +39,14 @@ async def _db_store(
     _kek_provider: LocalKEKProvider,
     async_db: async_sessionmaker,
 ) -> AsyncGenerator[DbSettingsStore]:
-    """Construct a store wired to the per-test sync and async factories.
+    """Construct a store wired to the per-test async session factory.
 
-    The autouse ``_isolate_stores`` fixture rebinds ``SessionLocal`` to
-    a per-test connection in a rolled-back transaction. The ``async_db``
-    fixture rebinds ``_async_session_factory`` for the async path.
-    Passing the rebound async factory explicitly (rather than relying
-    on the deferred ``AsyncSessionLocal`` lookup) makes the test wiring
-    obvious at the call site.
+    The ``async_db`` fixture rebinds ``_async_session_factory`` for the
+    async path. Passing the rebound factory explicitly (rather than
+    relying on the deferred ``AsyncSessionLocal`` lookup) makes the
+    test wiring obvious at the call site.
     """
-    import backend.app.database as _db_module
-
-    yield DbSettingsStore(
-        _db_module.SessionLocal,
-        _kek_provider,
-        async_session_factory=async_db,
-    )
+    yield DbSettingsStore(_kek_provider, async_session_factory=async_db)
 
 
 # ---------------------------------------------------------------------------
@@ -260,9 +252,6 @@ async def test_async_load_raises_on_missing_table(
     )
     try:
         store = DbSettingsStore(
-            session_factory=lambda: (_ for _ in ()).throw(  # never used in this test
-                AssertionError("sync path should not be touched here")
-            ),
             kek_provider=_kek_provider,
             async_session_factory=bad_factory,
         )

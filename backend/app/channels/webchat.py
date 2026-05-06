@@ -195,7 +195,7 @@ class WebChatChannel(BaseChannel):
 
         return router
 
-    def is_allowed(self, sender_id: str, username: str) -> bool:
+    async def is_allowed(self, sender_id: str, username: str) -> bool:
         return True
 
     async def send_text(self, to: str, body: str) -> str:

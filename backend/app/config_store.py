@@ -33,7 +33,6 @@ from typing import Any, Protocol
 
 from sqlalchemy import Row, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import TextClause
 
 from backend.app.config import (
@@ -148,7 +147,7 @@ class ConfigStoreError(RuntimeError):
 class SettingsStore(Protocol):
     """Persistent backend for runtime-configurable settings."""
 
-    def load(self) -> dict[str, str]:
+    async def load(self) -> dict[str, str]:
         """Return all persisted settings.
 
         An empty dict means the backend is reachable but has no rows.
@@ -158,7 +157,7 @@ class SettingsStore(Protocol):
         """
         ...
 
-    def save(self, updates: Mapping[str, str], *, actor_user_id: str | None = None) -> None:
+    async def save(self, updates: Mapping[str, str], *, actor_user_id: str | None = None) -> None:
         """Atomically merge *updates* into persisted state.
 
         ``actor_user_id`` is recorded against each updated row so the
@@ -167,7 +166,7 @@ class SettingsStore(Protocol):
         """
         ...
 
-    def delete(self, keys: Iterable[str]) -> None:
+    async def delete(self, keys: Iterable[str]) -> None:
         """Remove keys, reverting them to env or Pydantic default."""
         ...
 
@@ -294,21 +293,11 @@ class DbSettingsStore:
     the configured ``KEKProvider`` before insertion. Decryption happens
     on read. Non-secret keys are stored verbatim.
 
-    Uses ``SessionLocal`` so writes share the same connection pool (and
-    in tests, the same bound transaction) as the rest of the app. That
-    keeps FK references like ``updated_by_user_id`` consistent with
-    rows the route handler just inserted in the same request.
-
-    Dual-API store (issue #1175). Each public method has an ``*_async``
-    peer with identical semantics; the two share validation, encryption,
-    and SQL construction via the module-level ``_build_save_rows`` /
-    ``_decode_load_rows`` / ``_load_select_sql`` / ``_save_upsert_sql`` /
-    ``_delete_sql`` helpers above. Sync callers (lifespan boot, admin
-    routes still on sync) keep working unchanged while async callers
-    can opt into the ``*_async`` peers without falling back to a sync
-    DB call from async context. Follows the IdempotencyStore pilot
-    pattern (#1199) and mirrors the per-store conversions in #1200,
-    #1201, #1203.
+    Async-only as of issue #1160. The store resolves
+    ``AsyncSessionLocal`` lazily so a store instantiated at import time
+    picks up test rebinding of the ``async_db`` fixture's session
+    factory. ``*_async`` aliases are kept as thin wrappers in case
+    out-of-tree callers still reference the suffix.
     """
 
     _CONTEXT_TABLE = "app_settings"
@@ -316,34 +305,27 @@ class DbSettingsStore:
 
     def __init__(
         self,
-        session_factory: Callable[[], Session],
         kek_provider: KEKProvider,
         async_session_factory: Callable[[], AsyncSession] | None = None,
     ) -> None:
-        """Construct a store bound to the given session factories.
+        """Construct a store bound to *async_session_factory*.
 
-        ``session_factory`` is the existing sync factory. The optional
-        ``async_session_factory`` is used by the ``*_async`` methods.
-        When omitted, the async methods resolve the singleton
-        ``AsyncSessionLocal`` factory at call time. Tests that drive
-        the async API through a per-test transaction can pass the
-        rebound ``async_sessionmaker`` from the ``async_db`` fixture
-        explicitly, mirroring how sync tests pass ``SessionLocal``
-        rebound by the autouse ``_isolate_stores`` fixture.
+        When the factory is ``None`` (the production default), each
+        call resolves the singleton ``AsyncSessionLocal`` at call time
+        so test fixtures rebinding ``_async_session_factory`` are
+        picked up. Tests that drive the API through a per-test
+        transaction can pass the rebound ``async_sessionmaker`` from
+        the ``async_db`` fixture explicitly.
         """
-        self._session_factory = session_factory
         self._kek = kek_provider
         self._async_session_factory = async_session_factory
 
-    def _resolve_async_factory(self) -> Callable[[], AsyncSession]:
+    def _resolve_factory(self) -> Callable[[], AsyncSession]:
         """Return the async session factory to use for this call.
 
         Deferred lookup: the constructor default is ``None`` so that a
         store instantiated before the async engine has booted (e.g. at
-        import time) doesn't capture a stale factory. The first
-        ``*_async`` call resolves the factory from
-        ``backend.app.database`` (which honors test rebinding of the
-        module-level ``_async_session_factory``).
+        import time) doesn't capture a stale factory.
         """
         if self._async_session_factory is not None:
             return self._async_session_factory
@@ -354,18 +336,8 @@ class DbSettingsStore:
 
         return AsyncSessionLocal
 
-    def load(self) -> dict[str, str]:
-        try:
-            with self._session_factory() as db:
-                rows = db.execute(_load_select_sql()).all()
-        except Exception as exc:
-            raise ConfigStoreError(f"Failed to query app_settings: {exc}") from exc
-
-        return _decode_load_rows(rows, self._kek)
-
-    async def load_async(self) -> dict[str, str]:
-        """Async peer of ``load``."""
-        factory = self._resolve_async_factory()
+    async def load(self) -> dict[str, str]:
+        factory = self._resolve_factory()
         try:
             async with factory() as db:
                 rows = (await db.execute(_load_select_sql())).all()
@@ -374,54 +346,42 @@ class DbSettingsStore:
 
         return _decode_load_rows(rows, self._kek)
 
-    def save(self, updates: Mapping[str, str], *, actor_user_id: str | None = None) -> None:
+    async def load_async(self) -> dict[str, str]:
+        """Deprecated alias of :meth:`load`."""
+        return await self.load()
+
+    async def save(self, updates: Mapping[str, str], *, actor_user_id: str | None = None) -> None:
         if not updates:
             return
         rows = _build_save_rows(updates, self._kek, actor_user_id=actor_user_id)
-        with self._session_factory() as db:
-            db.execute(_save_upsert_sql(), rows)
-            db.commit()
-
-    async def save_async(
-        self, updates: Mapping[str, str], *, actor_user_id: str | None = None
-    ) -> None:
-        """Async peer of ``save``.
-
-        Same persistable-key validation, same encryption-on-write, same
-        single-statement upsert. ``ValueError`` for non-persistable
-        keys is raised before any IO, matching the sync path.
-        """
-        if not updates:
-            return
-        rows = _build_save_rows(updates, self._kek, actor_user_id=actor_user_id)
-        factory = self._resolve_async_factory()
+        factory = self._resolve_factory()
         async with factory() as db:
             await db.execute(_save_upsert_sql(), rows)
             await db.commit()
 
-    def delete(self, keys: Iterable[str]) -> None:
-        keys_list = list(keys)
-        if not keys_list:
-            return
-        with self._session_factory() as db:
-            db.execute(_delete_sql(), {"keys": keys_list})
-            db.commit()
+    async def save_async(
+        self, updates: Mapping[str, str], *, actor_user_id: str | None = None
+    ) -> None:
+        """Deprecated alias of :meth:`save`."""
+        await self.save(updates, actor_user_id=actor_user_id)
 
-    async def delete_async(self, keys: Iterable[str]) -> None:
-        """Async peer of ``delete``."""
+    async def delete(self, keys: Iterable[str]) -> None:
         keys_list = list(keys)
         if not keys_list:
             return
-        factory = self._resolve_async_factory()
+        factory = self._resolve_factory()
         async with factory() as db:
             await db.execute(_delete_sql(), {"keys": keys_list})
             await db.commit()
 
+    async def delete_async(self, keys: Iterable[str]) -> None:
+        """Deprecated alias of :meth:`delete`."""
+        await self.delete(keys)
+
     def _encryption_context(self) -> _encryption.EncryptionContext:
         # Kept for backward-compat with any subclass / external caller
         # that may have referenced the instance method directly. The
-        # module-level ``_encryption_context()`` is the source of truth
-        # for both sync and async paths.
+        # module-level ``_encryption_context()`` is the source of truth.
         return _encryption_context()
 
 
@@ -446,7 +406,7 @@ class JsonFileSettingsStore:
         self._path = path
         self._allow_missing = allow_missing
 
-    def load(self) -> dict[str, str]:
+    async def load(self) -> dict[str, str]:
         if not self._path.is_file():
             if self._allow_missing:
                 return {}
@@ -463,7 +423,7 @@ class JsonFileSettingsStore:
             raise ConfigStoreError(f"{self._path} is not a JSON object at the top level")
         return {k: str(v) for k, v in data.items()}
 
-    def save(self, updates: Mapping[str, str], *, actor_user_id: str | None = None) -> None:
+    async def save(self, updates: Mapping[str, str], *, actor_user_id: str | None = None) -> None:
         del actor_user_id  # JSON file has no audit column
         if not updates:
             return
@@ -477,7 +437,7 @@ class JsonFileSettingsStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
-    def delete(self, keys: Iterable[str]) -> None:
+    async def delete(self, keys: Iterable[str]) -> None:
         keys_list = list(keys)
         if not keys_list or not self._path.is_file():
             return
@@ -525,14 +485,11 @@ def get_settings_store() -> SettingsStore:
     if backend == "file":
         _store = JsonFileSettingsStore(_config_json_path())
     elif backend == "db":
-        import backend.app.database as _db_module
         from backend.app.auth.loader import get_kek_provider
 
-        # Use SessionLocal (a bound sessionmaker) so writes ride the
-        # same connection pool the rest of the app uses, and so tests
-        # that bind SessionLocal to a rolled-back transaction also
-        # roll back our writes.
-        _store = DbSettingsStore(_db_module.SessionLocal, get_kek_provider())
+        # Async session factory is resolved lazily on each call so test
+        # rebinding of ``_async_session_factory`` is picked up.
+        _store = DbSettingsStore(get_kek_provider())
     else:
         raise ConfigStoreError(
             f"Unknown SETTINGS_STORE value: {backend!r} (expected 'db' or 'file')"
@@ -546,7 +503,7 @@ def reset_settings_store() -> None:
     _store = None
 
 
-def import_legacy_config_json(store: SettingsStore) -> dict[str, str]:
+async def import_legacy_config_json(store: SettingsStore) -> dict[str, str]:
     """One-shot import of legacy ``data/config.json`` into the store.
 
     Idempotent: a no-op if the store already has any persistable rows
@@ -561,7 +518,7 @@ def import_legacy_config_json(store: SettingsStore) -> dict[str, str]:
         return {}
 
     try:
-        current = store.load()
+        current = await store.load()
     except ConfigStoreError:
         # Store unreachable. Don't import; let the caller surface the
         # underlying failure.
@@ -590,7 +547,7 @@ def import_legacy_config_json(store: SettingsStore) -> dict[str, str]:
     if not to_import:
         return {}
 
-    store.save(to_import)
+    await store.save(to_import)
     logger.info(
         "Imported %d setting(s) from legacy %s into the settings store: %s",
         len(to_import),

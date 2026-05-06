@@ -20,7 +20,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -214,7 +213,7 @@ async def test_already_seen_messages_are_deduped(
 
 @pytest.mark.asyncio
 async def test_webhook_processed_message_is_not_replayed_after_restart(
-    bluebubbles_client: TestClient,
+    bluebubbles_client: httpx.AsyncClient,
     async_db: object,
 ) -> None:
     """End-to-end production scenario: the live webhook delivered a message,
@@ -254,7 +253,7 @@ async def test_webhook_processed_message_is_not_replayed_after_restart(
         # Step 1: live webhook delivers the message via the running app.
         # Goes through the real router -> handle_webhook_inbound ->
         # IdempotencyStore.try_mark_seen, which commits the seen-row.
-        webhook_resp = bluebubbles_client.post(
+        webhook_resp = await bluebubbles_client.post(
             f"/api/webhooks/bluebubbles?token={token}", json=webhook_payload
         )
         assert webhook_resp.status_code == 200

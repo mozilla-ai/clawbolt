@@ -24,9 +24,9 @@ async def get_current_user(db: AsyncSession = Depends(get_async_db)) -> User:
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    # ``provision_user`` is the sync seed-and-bootstrap path. The user row
-    # is committed above so it is visible to a fresh sync session; passing
-    # ``db=None`` lets ``provision_user`` open its own ``SessionLocal()``
-    # rather than trying to share the AsyncSession.
-    provision_user(user)
+    # The user row is committed above so it is visible to a fresh
+    # AsyncSession; passing ``db=None`` lets ``provision_user`` open its
+    # own ``db_session_async()`` rather than reusing the dependency's
+    # session.
+    await provision_user(user)
     return user

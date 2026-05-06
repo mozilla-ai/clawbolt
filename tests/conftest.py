@@ -3,9 +3,11 @@ from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from httpx import ASGITransport
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -484,12 +486,16 @@ def _stub_unknown_sender_reply() -> Generator[AsyncMock]:
     unknown_sender_module.reset_unknown_sender_cache()
 
 
-@pytest.fixture()
-def linq_client(test_user: User) -> Generator[TestClient]:
+@pytest_asyncio.fixture()
+async def linq_client(test_user: User) -> AsyncGenerator[httpx.AsyncClient]:
     """FastAPI test client with Linq channel available.
 
     The Linq channel is always registered at module level in main.py.
     This fixture patches settings to allow all numbers and disable HMAC.
+
+    Uses ``httpx.AsyncClient`` over ``ASGITransport`` so the FastAPI request
+    runs on the same event loop as the async DB fixtures, allowing webhook
+    handlers to share the per-test asyncpg session.
     """
 
     def _override_get_current_user() -> User:
@@ -515,17 +521,23 @@ def linq_client(test_user: User) -> Generator[TestClient]:
         patch("backend.app.channels.telegram.settings.telegram_allowed_chat_id", "*"),
         patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
         patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
-        TestClient(app) as c,
     ):
-        yield c
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as c:
+            yield c
     app.dependency_overrides.clear()
 
 
-@pytest.fixture()
-def bluebubbles_client(test_user: User) -> Generator[TestClient]:
+@pytest_asyncio.fixture()
+async def bluebubbles_client(test_user: User) -> AsyncGenerator[httpx.AsyncClient]:
     """FastAPI test client with BlueBubbles channel available.
 
     Patches settings to allow all numbers and disable password validation.
+
+    Uses ``httpx.AsyncClient`` over ``ASGITransport`` so the FastAPI request
+    runs on the same event loop as the async DB fixtures, allowing webhook
+    handlers to share the per-test asyncpg session.
     """
 
     def _override_get_current_user() -> User:
@@ -553,9 +565,11 @@ def bluebubbles_client(test_user: User) -> Generator[TestClient]:
         patch("backend.app.channels.linq.settings.linq_allowed_numbers", "*"),
         patch("backend.app.channels.linq.settings.linq_webhook_signing_secret", ""),
         patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
-        TestClient(app) as c,
     ):
-        yield c
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as c:
+            yield c
     app.dependency_overrides.clear()
 
 

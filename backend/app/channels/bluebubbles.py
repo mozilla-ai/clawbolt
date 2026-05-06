@@ -327,7 +327,7 @@ class BlueBubblesChannel(BaseChannel):
 
     # -- Inbound ---------------------------------------------------------------
 
-    def is_allowed(self, sender_id: str, username: str) -> bool:
+    async def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return True if the sender passes the BlueBubbles allowlist.
 
         In premium mode, approval is based on whether a ``ChannelRoute``
@@ -335,7 +335,7 @@ class BlueBubblesChannel(BaseChannel):
         or email) is checked against ``settings.bluebubbles_allowed_numbers``:
         empty denies all, ``"*"`` allows all, or a specific value must match.
         """
-        return self._check_static_allowlist(settings.bluebubbles_allowed_numbers, sender_id)
+        return await self._check_static_allowlist(settings.bluebubbles_allowed_numbers, sender_id)
 
     @staticmethod
     def parse_webhook(payload: BBWebhookPayload) -> InboundMessage | None:
