@@ -1069,9 +1069,9 @@ class ApprovalEventStore:
             rows = (
                 (
                     await db.execute(
-                        stmt.order_by(
-                            ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc()
-                        ).limit(limit)
+                        stmt.order_by(ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc()).limit(
+                            limit
+                        )
                     )
                 )
                 .scalars()
