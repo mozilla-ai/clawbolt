@@ -26,7 +26,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from any_llm import RateLimitError, amessages
 from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import select
+from sqlalchemy import Select, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
@@ -44,7 +45,7 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.bus import OutboundMessage, message_bus
 from backend.app.channels import get_channel
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
@@ -773,12 +774,12 @@ def _is_atx_heading(stripped_line: str) -> bool:
     return i == len(stripped_line) or stripped_line[i] in (" ", "\t")
 
 
-def _user_messaged_within(user_id: str, minutes: int) -> bool:
+async def _user_messaged_within(user_id: str, minutes: int) -> bool:
     """Return True if the user sent an inbound message in the last *minutes*.
 
     Backs the heartbeat quiet-period gate. Used to skip the heartbeat
     LLM call for users in an active conversation, where the scheduler
-    would otherwise tick → LLM call → "skip" decision once per interval
+    would otherwise tick -> LLM call -> "skip" decision once per interval
     until the user goes quiet. Cheap point lookup against the indexed
     ``messages`` table (filtered to the user's sessions).
 
@@ -789,20 +790,20 @@ def _user_messaged_within(user_id: str, minutes: int) -> bool:
     from backend.app.models import ChatSession, Message
 
     cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=minutes)
-    db = SessionLocal()
+    db = AsyncSessionLocal()
     try:
-        latest = db.execute(
+        latest = await db.scalar(
             select(Message.timestamp)
             .join(ChatSession, ChatSession.id == Message.session_id)
             .where(ChatSession.user_id == user_id, Message.direction == "inbound")
             .order_by(Message.timestamp.desc())
             .limit(1)
-        ).scalar()
+        )
     except Exception:
         logger.exception("Failed to check recent-message gate for user %s", user_id)
         return False
     finally:
-        db.close()
+        await db.close()
     return latest is not None and latest >= cutoff
 
 
@@ -850,7 +851,7 @@ async def run_heartbeat_for_user(
     # LLM call every tick that adds nothing the user will see. Cheap DB
     # lookup, runs after the in-memory gates and before the LLM call.
     quiet_minutes = settings.heartbeat_user_quiet_period_minutes
-    if quiet_minutes > 0 and _user_messaged_within(user.id, quiet_minutes):
+    if quiet_minutes > 0 and await _user_messaged_within(user.id, quiet_minutes):
         logger.debug(
             "Heartbeat skip user %s: messaged within last %d min",
             user.id,
@@ -1046,6 +1047,33 @@ async def run_heartbeat_for_user(
 _NON_PUSHABLE_CHANNELS: frozenset[str] = frozenset({"webchat"})
 
 
+def _heartbeat_route_select(user: User) -> Select[tuple[ChannelRoute]]:
+    """Pure builder shared by sync and async ``resolve_heartbeat_route`` peers."""
+    return select(ChannelRoute).where(
+        ChannelRoute.user_id == user.id,
+        ChannelRoute.enabled.is_(True),
+        ChannelRoute.channel.notin_(list(_NON_PUSHABLE_CHANNELS)),
+    )
+
+
+def _check_route_is_registered(user: User, route: ChannelRoute) -> tuple[str, ChannelRoute] | None:
+    """Verify the channel is registered in this process and return the result tuple.
+
+    Pure helper shared between the sync and async ``resolve_heartbeat_route``
+    peers so the post-query branching cannot drift.
+    """
+    try:
+        get_channel(route.channel)
+    except KeyError:
+        logger.debug(
+            "Heartbeat skipped for user %s: channel %s not registered",
+            user.id,
+            route.channel,
+        )
+        return None
+    return route.channel, route
+
+
 def resolve_heartbeat_route(
     user: User,
     db: Session,
@@ -1060,13 +1088,7 @@ def resolve_heartbeat_route(
     that flip ``enabled`` are responsible for keeping ``User.preferred_channel``
     in sync.
     """
-    route = db.execute(
-        select(ChannelRoute).where(
-            ChannelRoute.user_id == user.id,
-            ChannelRoute.enabled.is_(True),
-            ChannelRoute.channel.notin_(list(_NON_PUSHABLE_CHANNELS)),
-        )
-    ).scalar_one_or_none()
+    route = db.execute(_heartbeat_route_select(user)).scalar_one_or_none()
 
     if route is None:
         logger.debug(
@@ -1075,18 +1097,27 @@ def resolve_heartbeat_route(
         )
         return None
 
-    # Verify the channel is actually registered in this process.
-    try:
-        get_channel(route.channel)
-    except KeyError:
+    return _check_route_is_registered(user, route)
+
+
+async def resolve_heartbeat_route_async(
+    user: User,
+    db: AsyncSession,
+) -> tuple[str, ChannelRoute] | None:
+    """Async peer of :func:`resolve_heartbeat_route`.
+
+    Same shape and semantics as the sync version; only the IO is async.
+    """
+    route = (await db.execute(_heartbeat_route_select(user))).scalar_one_or_none()
+
+    if route is None:
         logger.debug(
-            "Heartbeat skipped for user %s: channel %s not registered",
+            "Heartbeat skipped for user %s: no pushable route configured",
             user.id,
-            route.channel,
         )
         return None
 
-    return route.channel, route
+    return _check_route_is_registered(user, route)
 
 
 # ---------------------------------------------------------------------------
@@ -1196,13 +1227,15 @@ class HeartbeatScheduler:
 
     async def tick(self) -> None:
         """Single heartbeat pass: evaluate due users concurrently."""
-        db = SessionLocal()
+        db = AsyncSessionLocal()
         try:
-            users = (
-                db.execute(
-                    select(User).where(
-                        User.onboarding_complete.is_(True),
-                        User.is_active.is_(True),
+            users = list(
+                (
+                    await db.execute(
+                        select(User).where(
+                            User.onboarding_complete.is_(True),
+                            User.is_active.is_(True),
+                        )
                     )
                 )
                 .scalars()
@@ -1211,7 +1244,7 @@ class HeartbeatScheduler:
             for u in users:
                 db.expunge(u)
         finally:
-            db.close()
+            await db.close()
 
         if not users:
             return
@@ -1234,11 +1267,11 @@ class HeartbeatScheduler:
             """Process a single user."""
             async with semaphore:
                 try:
-                    db = SessionLocal()
+                    db = AsyncSessionLocal()
                     try:
-                        result = resolve_heartbeat_route(user, db)
+                        result = await resolve_heartbeat_route_async(user, db)
                     finally:
-                        db.close()
+                        await db.close()
 
                     if result is None:
                         return

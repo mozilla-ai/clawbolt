@@ -261,7 +261,7 @@ class ClawboltAgent:
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", mask_pii(self._chat_id))
 
-    def _get_tool_permission(
+    async def _get_tool_permission(
         self,
         tool_obj: Tool,
         validated_args: dict[str, Any],
@@ -282,7 +282,7 @@ class ClawboltAgent:
             resource = policy.resource_extractor(validated_args)
 
         store = get_approval_store()
-        level = store.check_permission(
+        level = await store.check_permission_async(
             self.user.id, tool_obj.name, resource=resource, default=policy.default_level
         )
 
@@ -762,7 +762,7 @@ class ClawboltAgent:
 
         for entry in pre_validated:
             _i, tool_obj, v_args = entry
-            level, resource, description = self._get_tool_permission(tool_obj, v_args)
+            level, resource, description = await self._get_tool_permission(tool_obj, v_args)
             if level == PermissionLevel.ALWAYS:
                 auto_entries.append(entry)
             elif level == PermissionLevel.DENY:
@@ -854,7 +854,7 @@ class ClawboltAgent:
                     approved_entries.append(entry)
                     if decision == ApprovalDecision.ALWAYS_ALLOW:
                         try:
-                            store.set_permission(
+                            await store.set_permission_async(
                                 self.user.id, tool_obj.name, PermissionLevel.ALWAYS, resource
                             )
                         except Exception:
@@ -892,7 +892,7 @@ class ClawboltAgent:
                 else:  # DENIED / ALWAYS_DENY
                     if decision == ApprovalDecision.ALWAYS_DENY:
                         try:
-                            store.set_permission(
+                            await store.set_permission_async(
                                 self.user.id, tool_obj.name, PermissionLevel.DENY, resource
                             )
                         except Exception:

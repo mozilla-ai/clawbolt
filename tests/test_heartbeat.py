@@ -1687,10 +1687,10 @@ def _seed_message(
 
 
 class TestUserMessagedWithinIntegration:
-    def test_returns_false_when_no_messages(self, user: User) -> None:
-        assert _user_messaged_within(user.id, minutes=5) is False
+    async def test_returns_false_when_no_messages(self, user: User) -> None:
+        assert await _user_messaged_within(user.id, minutes=5) is False
 
-    def test_returns_true_for_recent_inbound(self, user: User) -> None:
+    async def test_returns_true_for_recent_inbound(self, user: User) -> None:
         now = datetime.datetime.now(datetime.UTC)
         db = _db_module.SessionLocal()
         try:
@@ -1702,9 +1702,9 @@ class TestUserMessagedWithinIntegration:
             )
         finally:
             db.close()
-        assert _user_messaged_within(user.id, minutes=5) is True
+        assert await _user_messaged_within(user.id, minutes=5) is True
 
-    def test_returns_false_for_old_inbound(self, user: User) -> None:
+    async def test_returns_false_for_old_inbound(self, user: User) -> None:
         now = datetime.datetime.now(datetime.UTC)
         db = _db_module.SessionLocal()
         try:
@@ -1716,9 +1716,9 @@ class TestUserMessagedWithinIntegration:
             )
         finally:
             db.close()
-        assert _user_messaged_within(user.id, minutes=5) is False
+        assert await _user_messaged_within(user.id, minutes=5) is False
 
-    def test_ignores_outbound_messages(self, user: User) -> None:
+    async def test_ignores_outbound_messages(self, user: User) -> None:
         """Outbound (assistant-authored) messages must not satisfy the gate.
 
         The gate exists to detect that the *user* is mid-conversation,
@@ -1737,9 +1737,9 @@ class TestUserMessagedWithinIntegration:
             )
         finally:
             db.close()
-        assert _user_messaged_within(user.id, minutes=5) is False
+        assert await _user_messaged_within(user.id, minutes=5) is False
 
-    def test_other_users_messages_do_not_leak(self, user: User) -> None:
+    async def test_other_users_messages_do_not_leak(self, user: User) -> None:
         """A different user's recent inbound must not trigger this user's gate."""
         other_db = _db_module.SessionLocal()
         try:
@@ -1767,7 +1767,7 @@ class TestUserMessagedWithinIntegration:
             )
         finally:
             db.close()
-        assert _user_messaged_within(user.id, minutes=5) is False
+        assert await _user_messaged_within(user.id, minutes=5) is False
 
 
 # ---------------------------------------------------------------------------
@@ -2224,7 +2224,11 @@ class TestHeartbeatScheduler:
         ) -> None:
             captured_sql.append(statement)
 
-        engine = _db_module.get_engine()
+        # tick() runs against the async engine, so attach the listener to
+        # its underlying sync engine. SQLAlchemy core events fire on the
+        # sync_engine of an AsyncEngine; listening on the async engine
+        # itself (or the sync engine) would miss the SQL emitted here.
+        engine = _db_module.get_async_engine().sync_engine
         event.listen(engine, "before_cursor_execute", _capture)
         try:
             scheduler = HeartbeatScheduler()
