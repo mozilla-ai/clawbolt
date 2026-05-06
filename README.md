@@ -69,9 +69,8 @@ Webhooks are registered automatically via a Cloudflare Tunnel. Text the Linq pho
 - [Storage Providers](./docs/self-host/storage.md) -- local, Dropbox, or Google Drive
 - Messaging channels: [Linq](./docs/self-host/linq-setup.md), [BlueBubbles](./docs/self-host/bluebubbles-setup.md), [Telegram](./docs/self-host/telegram-setup.md)
 
-### Architecture and development
+### Development
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) -- system design, request flow, tech stack
 - [CONTRIBUTING.md](./CONTRIBUTING.md) -- local dev setup, tests, code standards, PR guidelines
 
 ## Contributing

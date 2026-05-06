@@ -161,7 +161,6 @@ uv run ty check --python .venv backend/ tests/    # type checking passes
 
 ## Architecture notes
 
-- See [ARCHITECTURE.md](./ARCHITECTURE.md) for the system design overview
 - Every data class and endpoint uses `user_id` scoping
 - External services are abstracted behind service classes in `backend/app/services/`
 - Config uses Pydantic `BaseSettings` with `extra="ignore"`
