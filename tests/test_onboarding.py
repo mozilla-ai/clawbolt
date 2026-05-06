@@ -122,22 +122,21 @@ def test_is_onboarding_needed_respects_flag() -> None:
     assert is_onboarding_needed(user) is False
 
 
-def test_provision_user_creates_bootstrap_and_seeds_db() -> None:
+async def test_provision_user_creates_bootstrap_and_seeds_db() -> None:
     """provision_user should seed DB text columns and create BOOTSTRAP.md."""
     from backend.app.agent.user_db import provision_user
-    from backend.app.database import SessionLocal
+    from backend.app.database import db_session_async
 
-    db = SessionLocal()
-    try:
+    async with db_session_async() as db:
         user = User(id="provision-test", user_id="provision-user")
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
 
-        provision_user(user, db)
+        await provision_user(user, db)
 
         # DB columns should be seeded (except heartbeat, which waits for onboarding)
-        db.refresh(user)
+        await db.refresh(user)
         assert user.soul_text
         assert user.user_text
         assert not user.heartbeat_text
@@ -146,29 +145,24 @@ def test_provision_user_creates_bootstrap_and_seeds_db() -> None:
         user_dir = Path(settings.data_dir) / str(user.id)
         assert (user_dir / "BOOTSTRAP.md").exists()
         assert is_onboarding_needed(user) is True
-    finally:
-        db.close()
 
 
-def test_provision_skips_bootstrap_when_onboarding_complete() -> None:
+async def test_provision_skips_bootstrap_when_onboarding_complete() -> None:
     """provision_user should not create BOOTSTRAP.md for onboarded users."""
     from backend.app.agent.user_db import provision_user
-    from backend.app.database import SessionLocal
+    from backend.app.database import db_session_async
 
-    db = SessionLocal()
-    try:
+    async with db_session_async() as db:
         user = User(id="provision-complete", user_id="done-user", onboarding_complete=True)
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
 
-        provision_user(user, db)
+        await provision_user(user, db)
 
         user_dir = Path(settings.data_dir) / str(user.id)
         assert not (user_dir / "BOOTSTRAP.md").exists()
         assert is_onboarding_needed(user) is False
-    finally:
-        db.close()
 
 
 def test_is_onboarding_needed_bootstrap_deleted_selfheals() -> None:

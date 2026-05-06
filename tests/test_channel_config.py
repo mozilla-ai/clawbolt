@@ -1,7 +1,7 @@
 """Tests for channel config GET/PUT endpoints."""
 
 from collections.abc import Iterator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,11 +35,15 @@ def _stub_store() -> Iterator[MagicMock]:
     mutation, not actual persistence. The mock captures ``save`` calls
     so individual tests can assert on them when relevant.
     """
+    store = MagicMock()
+    store.save = AsyncMock()
+    store.delete = AsyncMock()
+    store.load = AsyncMock(return_value={})
     with patch(
         "backend.app.routers.user_profile.get_settings_store",
-        return_value=MagicMock(),
-    ) as factory:
-        yield factory.return_value
+        return_value=store,
+    ):
+        yield store
 
 
 def test_get_channel_config_token_set(client: TestClient, _set_bot_token: None) -> None:

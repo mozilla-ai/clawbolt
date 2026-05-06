@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter
@@ -22,8 +22,10 @@ logger = logging.getLogger(__name__)
 
 # Type for the pluggable allowlist override. The callback receives
 # (channel_name, sender_id) and returns True/False. When set, channels
-# delegate to this instead of their static allowlist.
-IsAllowedOverride = Callable[[str, str], bool]
+# delegate to this instead of their static allowlist. Async so the
+# implementation can use the async DB stack without blocking the event
+# loop on a sync session.
+IsAllowedOverride = Callable[[str, str], Awaitable[bool]]
 
 # Module-level override set by premium during plugin initialization.
 _is_allowed_override: IsAllowedOverride | None = None
@@ -75,10 +77,10 @@ class BaseChannel(ABC):
         """Return a FastAPI ``APIRouter`` that handles inbound webhooks."""
 
     @abstractmethod
-    def is_allowed(self, sender_id: str, username: str) -> bool:
+    async def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return ``True`` if the sender passes the channel's allowlist."""
 
-    def _check_premium_route(self, sender_id: str) -> bool | None:
+    async def _check_premium_route(self, sender_id: str) -> bool | None:
         """Check if a plugin-level allowlist override handles this sender.
 
         Returns ``True``/``False`` if an override is registered (e.g. premium
@@ -88,15 +90,15 @@ class BaseChannel(ABC):
         override = _is_allowed_override
         if override is None:
             return None
-        return override(self.name, sender_id)
+        return await override(self.name, sender_id)
 
-    def _check_static_allowlist(self, setting_value: str, sender_id: str) -> bool:
+    async def _check_static_allowlist(self, setting_value: str, sender_id: str) -> bool:
         """Check premium route first, then fall back to a static allowlist setting.
 
         Consolidates the common pattern used by Telegram, BlueBubbles, and Linq:
         premium override -> empty denies all -> ``"*"`` allows all -> exact match.
         """
-        premium = self._check_premium_route(sender_id)
+        premium = await self._check_premium_route(sender_id)
         if premium is not None:
             return premium
         allowed = setting_value.strip()
@@ -184,7 +186,7 @@ async def handle_webhook_inbound(
     if inbound is None:
         return JSONResponse(content={"ok": True})
 
-    if not channel.is_allowed(inbound.sender_id, inbound.sender_username or ""):
+    if not await channel.is_allowed(inbound.sender_id, inbound.sender_username or ""):
         logger.debug(
             "%s: sender not in allowlist, ignoring",
             channel.name,
@@ -200,7 +202,7 @@ async def handle_webhook_inbound(
 
     if inbound.external_message_id:
         idempotency = get_idempotency_store()
-        if not idempotency.try_mark_seen(inbound.external_message_id):
+        if not await idempotency.try_mark_seen(inbound.external_message_id):
             logger.info(
                 "%s: duplicate webhook for %s, skipping",
                 channel.name,

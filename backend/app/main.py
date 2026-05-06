@@ -30,7 +30,7 @@ from backend.app.config_store import (
     get_settings_store,
     import_legacy_config_json,
 )
-from backend.app.database import db_session_async, get_engine
+from backend.app.database import db_session_async, get_async_engine
 from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
 from backend.app.routers import (
@@ -178,15 +178,15 @@ async def _verify_llm_settings() -> None:
             )
 
 
-def _verify_database() -> None:
+async def _verify_database() -> None:
     """Verify database connectivity at startup.
 
     Creates the engine and runs a simple SELECT 1 to surface connection
     errors early rather than at first user request.
     """
-    engine = get_engine()
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
+    engine = get_async_engine()
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
     logger.info("Database connection verified: %s", engine.url)
 
 
@@ -198,13 +198,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # missing migration, decryption failure) so a misconfigured
     # production environment fails the lifespan loudly rather than
     # booting with empty defaults and crashing 30 lines deeper.
-    _verify_database()
+    await _verify_database()
     store = get_settings_store()
     # One-shot migration from the legacy data/config.json into the DB
     # store. No-op once the table has any persistable rows, so safe to
     # leave in place across releases.
-    import_legacy_config_json(store)
-    persisted = store.load()
+    await import_legacy_config_json(store)
+    persisted = await store.load()
     applied = apply_to_settings(persisted)
     if applied:
         logger.info(

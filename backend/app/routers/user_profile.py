@@ -226,7 +226,7 @@ async def update_channel_config(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    get_settings_store().save(updates, actor_user_id=current_user.id)
+    await get_settings_store().save(updates, actor_user_id=current_user.id)
 
     reset_channel_clients(updates)
 
@@ -426,7 +426,7 @@ async def update_model_config(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    get_settings_store().save(updates, actor_user_id=current_user.id)
+    await get_settings_store().save(updates, actor_user_id=current_user.id)
     return _build_model_config_response()
 
 
@@ -484,7 +484,7 @@ async def update_storage_config(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    get_settings_store().save(updates, actor_user_id=current_user.id)
+    await get_settings_store().save(updates, actor_user_id=current_user.id)
     return _build_storage_config_response()
 
 
