@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from backend.app.models import User
-from backend.app.query_helpers import get_or_404_async
+from backend.app.query_helpers import get_or_404
 
 
 @pytest.mark.asyncio()

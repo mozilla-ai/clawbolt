@@ -2,7 +2,6 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 from any_llm import AuthenticationError, ContentFilterError
 
 from backend.app.agent.approval import PermissionLevel, get_approval_store
@@ -13,7 +12,6 @@ from backend.app.agent.router import (
     handle_inbound_message,
 )
 from backend.app.bus import message_bus
-from backend.app.database import db_session_async
 from backend.app.models import User
 from tests.conftest import create_test_session
 from tests.db_test_utils import open_test_db_session
@@ -21,9 +19,9 @@ from tests.mocks.llm import make_error_response, make_text_response, make_tool_c
 from tests.mocks.storage import MockStorageBackend
 
 
-@pytest_asyncio.fixture()
-async def conversation(test_user: User) -> SessionState:
-    return await create_test_session(
+@pytest.fixture()
+def conversation(test_user: User) -> SessionState:
+    return create_test_session(
         user_id=test_user.id,
         session_id="test-conv",
         messages=[
@@ -687,9 +685,11 @@ async def test_empty_to_address_returns_early(
             phone="",
         )
         db.add(no_addr)
-        await db.commit()
-        await db.refresh(no_addr)
+        db.commit()
+        db.refresh(no_addr)
         db.expunge(no_addr)
+    finally:
+        db.close()
 
     response = await handle_inbound_message(
         user=no_addr,
@@ -1179,14 +1179,14 @@ async def test_to_address_uses_channel_specific_identifier(
             onboarding_complete=True,
         )
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.commit()
+        db.refresh(user)
         user_id = user.id
         # Link the real Telegram chat_id in the channel routes
         db.add(
             ChannelRoute(user_id=user_id, channel="telegram", channel_identifier=telegram_chat_id)
         )
-        await db.commit()
+        db.commit()
         # Eagerly load all scalar attributes before expunging
         _ = (
             user.phone,
@@ -1198,6 +1198,8 @@ async def test_to_address_uses_channel_specific_identifier(
             user.onboarding_complete,
         )
         db.expunge(user)
+    finally:
+        db.close()
 
     # Create file-store directories for this user (hybrid period)
     from pathlib import Path
@@ -1209,7 +1211,7 @@ async def test_to_address_uses_channel_specific_identifier(
 
     from tests.conftest import create_test_session
 
-    session = await create_test_session(user_id=user_id, session_id="s")
+    session = create_test_session(user_id=user_id, session_id="s")
     message = StoredMessage(direction="inbound", body="hello from telegram", seq=1)
 
     mock_amessages.return_value = make_text_response("Cross-channel reply!")  # type: ignore[union-attr]

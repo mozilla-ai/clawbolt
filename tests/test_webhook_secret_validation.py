@@ -1,6 +1,5 @@
 """Tests for runtime webhook secret validation."""
 
-import asyncio
 from collections.abc import Generator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
@@ -15,7 +14,6 @@ from backend.app.config import (
     get_effective_webhook_secret,
     settings,
 )
-from backend.app.database import db_session_async
 from backend.app.main import app
 from backend.app.models import User
 from backend.app.services.rate_limiter import check_webhook_rate_limit

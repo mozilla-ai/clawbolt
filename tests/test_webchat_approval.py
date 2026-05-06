@@ -30,7 +30,6 @@ from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage, message_bus
-from backend.app.database import db_session_async
 from backend.app.main import app
 from backend.app.models import User
 from tests.db_test_utils import open_test_db_session
@@ -187,9 +186,11 @@ async def approval_user() -> User:
     try:
         user = User(user_id="approval-test-user")
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.commit()
+        db.refresh(user)
         db.expunge(user)
+    finally:
+        db.close()
     return user
 
 

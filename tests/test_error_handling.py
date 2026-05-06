@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import pytest_asyncio
 
 from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.router import handle_inbound_message
@@ -11,9 +10,9 @@ from tests.conftest import create_test_session
 from tests.mocks.llm import make_text_response
 
 
-@pytest_asyncio.fixture()
-async def conversation(test_user: User) -> SessionState:
-    return await create_test_session(
+@pytest.fixture()
+def conversation(test_user: User) -> SessionState:
+    return create_test_session(
         user_id=test_user.id,
         session_id="test-conv",
         messages=[

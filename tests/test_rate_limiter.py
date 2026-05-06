@@ -1,6 +1,5 @@
 """Tests for webhook rate limiting."""
 
-import asyncio
 import time
 from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
@@ -12,7 +11,6 @@ from fastapi.testclient import TestClient
 from backend.app.agent.file_store import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
-from backend.app.database import db_session_async
 from backend.app.main import app
 from backend.app.models import User
 from backend.app.services.rate_limiter import InMemoryRateLimiter, check_webhook_rate_limit

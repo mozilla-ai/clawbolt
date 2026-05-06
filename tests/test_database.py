@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import inspect, select
+from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -13,51 +13,49 @@ from sqlalchemy.ext.asyncio import (
 )
 
 import backend.app.database as _db_module
-from backend.app.database import db_session_async
 from backend.app.models import ChannelRoute, User
 from tests.db_test_utils import open_test_db_session
 
 
-async def test_create_and_read_user() -> None:
+def test_create_and_read_user() -> None:
     """Insert a User row and read it back."""
     db = open_test_db_session()
     try:
         user = User(user_id="alice@example.com", phone="+15551234567")
         db.add(user)
-        await db.flush()
+        db.flush()
 
-        result = (
-            await db.execute(select(User).filter_by(user_id="alice@example.com"))
-        ).scalar_one()
+        result = db.query(User).filter_by(user_id="alice@example.com").one()
         assert result.user_id == "alice@example.com"
         assert result.phone == "+15551234567"
         assert result.is_active is True
         assert result.onboarding_complete is False
         assert result.id is not None
+    finally:
+        db.close()
 
 
-async def test_channel_route_unique_constraint() -> None:
+def test_channel_route_unique_constraint() -> None:
     """Duplicate (channel, channel_identifier) raises IntegrityError."""
     db = open_test_db_session()
     try:
         user = User(user_id="bob@example.com")
         db.add(user)
-        await db.flush()
+        db.flush()
 
         route1 = ChannelRoute(user_id=user.id, channel="telegram", channel_identifier="12345")
         db.add(route1)
-        await db.flush()
+        db.flush()
 
         route2 = ChannelRoute(user_id=user.id, channel="telegram", channel_identifier="12345")
         db.add(route2)
         with pytest.raises(IntegrityError):
-            await db.flush()
-        # Roll back so the session is usable on context exit; the failed
-        # flush put the transaction into an aborted state.
-        await db.rollback()
+            db.flush()
+    finally:
+        db.close()
 
 
-async def test_all_tables_created(_pg_async_engine_session: AsyncEngine) -> None:
+def test_all_tables_created(_pg_engine: Engine) -> None:
     """All expected tables should exist after create_all."""
     expected = {
         "users",
@@ -71,8 +69,9 @@ async def test_all_tables_created(_pg_async_engine_session: AsyncEngine) -> None
         "llm_usage_logs",
         "tool_configs",
     }
-    async with _pg_async_engine_session.connect() as conn:
-        actual = set(await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names()))
+    with _pg_engine.connect() as conn:
+        result = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'"))
+        actual = {row[0] for row in result}
     assert expected <= actual
 
 
@@ -196,13 +195,13 @@ async def test_db_session_async_rollback_on_exception() -> None:
         await engine.dispose()
 
 
-async def test_user_defaults() -> None:
+def test_user_defaults() -> None:
     """User model has correct defaults."""
     db = open_test_db_session()
     try:
         user = User(user_id="defaults@test.com")
         db.add(user)
-        await db.flush()
+        db.flush()
 
         assert user.preferred_channel == "telegram"
         assert user.heartbeat_opt_in is True
@@ -212,3 +211,5 @@ async def test_user_defaults() -> None:
         assert user.heartbeat_text == ""
         assert user.created_at is not None
         assert user.updated_at is not None
+    finally:
+        db.close()

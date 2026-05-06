@@ -282,7 +282,7 @@ class ClawboltAgent:
             resource = policy.resource_extractor(validated_args)
 
         store = get_approval_store()
-        level = await store.check_permission(
+        level = await store.check_permission_async(
             self.user.id, tool_obj.name, resource=resource, default=policy.default_level
         )
 
@@ -854,7 +854,7 @@ class ClawboltAgent:
                     approved_entries.append(entry)
                     if decision == ApprovalDecision.ALWAYS_ALLOW:
                         try:
-                            await store.set_permission(
+                            await store.set_permission_async(
                                 self.user.id, tool_obj.name, PermissionLevel.ALWAYS, resource
                             )
                         except Exception:
@@ -892,7 +892,7 @@ class ClawboltAgent:
                 else:  # DENIED / ALWAYS_DENY
                     if decision == ApprovalDecision.ALWAYS_DENY:
                         try:
-                            await store.set_permission(
+                            await store.set_permission_async(
                                 self.user.id, tool_obj.name, PermissionLevel.DENY, resource
                             )
                         except Exception:
@@ -1206,7 +1206,7 @@ class ClawboltAgent:
         if all_dropped:
             from backend.app.agent.context import trigger_compaction_for_dropped
 
-            await trigger_compaction_for_dropped(self.user.id, all_dropped)
+            trigger_compaction_for_dropped(self.user.id, all_dropped)
 
         total_duration = (time.monotonic() - agent_start_time) * 1000
         logger.debug(

@@ -8,13 +8,12 @@ from backend.app.agent.core import AgentResponse
 from backend.app.agent.dto import StoredMessage
 from backend.app.agent.router import PipelineContext, persist_system_prompt_step
 from backend.app.agent.session_db import get_session_store
-from backend.app.database import db_session_async
 from backend.app.models import ChatSession, Message, User
 from tests.conftest import create_test_session
 from tests.db_test_utils import open_test_db_session
 
 
-async def _create_session_with_prompt(
+def _create_session_with_prompt(
     user: User,
     session_id: str,
     initial_system_prompt: str = "",
@@ -32,7 +31,7 @@ async def _create_session_with_prompt(
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )
         db.add(cs)
-        await db.flush()
+        db.flush()
         for msg_data in messages or []:
             ts_str = str(msg_data.get("timestamp", ""))
             ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(UTC)
@@ -45,12 +44,14 @@ async def _create_session_with_prompt(
                     timestamp=ts,
                 )
             )
-        await db.commit()
+        db.commit()
+    finally:
+        db.close()
 
 
 async def test_system_prompt_stored_on_first_message(test_user: User) -> None:
     """persist_system_prompt_step stores the system prompt on first message."""
-    session = await create_test_session(test_user.id, "prompt-sess-1")
+    session = create_test_session(test_user.id, "prompt-sess-1")
 
     msg = session.messages[0] if session.messages else StoredMessage(seq=1)
     ctx = PipelineContext(
@@ -71,7 +72,7 @@ async def test_system_prompt_stored_on_first_message(test_user: User) -> None:
 
 async def test_system_prompt_not_overwritten(test_user: User) -> None:
     """persist_system_prompt_step does not overwrite an existing system prompt."""
-    await _create_session_with_prompt(
+    _create_session_with_prompt(
         test_user,
         "prompt-sess-2",
         initial_system_prompt="Original prompt",
@@ -95,9 +96,9 @@ async def test_system_prompt_not_overwritten(test_user: User) -> None:
     assert loaded.initial_system_prompt == "Original prompt"
 
 
-async def test_api_includes_system_prompt(client: TestClient, test_user: User) -> None:
+def test_api_includes_system_prompt(client: TestClient, test_user: User) -> None:
     """GET /api/user/conversation includes initial_system_prompt."""
-    await _create_session_with_prompt(
+    _create_session_with_prompt(
         test_user,
         "debug-sess-1",
         initial_system_prompt="You are a trades assistant.",
@@ -112,9 +113,9 @@ async def test_api_includes_system_prompt(client: TestClient, test_user: User) -
     assert data["initial_system_prompt"] == "You are a trades assistant."
 
 
-async def test_api_empty_prompt_for_new_session(client: TestClient, test_user: User) -> None:
+def test_api_empty_prompt_for_new_session(client: TestClient, test_user: User) -> None:
     """Sessions without a system prompt return empty string."""
-    await _create_session_with_prompt(
+    _create_session_with_prompt(
         test_user,
         "debug-sess-2",
         messages=[

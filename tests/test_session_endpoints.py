@@ -10,13 +10,12 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 from backend.app.models import ChatSession, Message, User
 from tests.db_test_utils import open_test_db_session
 
 
-async def _create_session(
+def _create_session(
     user: User,
     messages: list[dict[str, object]],
     *,
@@ -38,7 +37,7 @@ async def _create_session(
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )
         db.add(cs)
-        await db.flush()
+        db.flush()
         for msg_data in messages:
             ts_str = str(msg_data.get("timestamp", ""))
             ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(UTC)
@@ -52,8 +51,10 @@ async def _create_session(
                     timestamp=ts,
                 )
             )
-        await db.commit()
+        db.commit()
         return session_id
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +62,7 @@ async def _create_session(
 # ---------------------------------------------------------------------------
 
 
-async def test_get_conversation_empty_when_no_session(client: TestClient, test_user: User) -> None:
+def test_get_conversation_empty_when_no_session(client: TestClient, test_user: User) -> None:
     """First-time users get an empty shape, not a 404, so the chat UI renders."""
     resp = client.get("/api/user/conversation")
     assert resp.status_code == 200
@@ -70,9 +71,9 @@ async def test_get_conversation_empty_when_no_session(client: TestClient, test_u
     assert data["messages"] == []
 
 
-async def test_get_conversation_full_detail(client: TestClient, test_user: User) -> None:
+def test_get_conversation_full_detail(client: TestClient, test_user: User) -> None:
     tool_json = json.dumps([{"tool": "save_fact", "input": {"key": "rate"}, "result": "saved"}])
-    await _create_session(
+    _create_session(
         test_user,
         [
             {
@@ -100,9 +101,7 @@ async def test_get_conversation_full_detail(client: TestClient, test_user: User)
     assert data["messages"][1]["tool_interactions"][0]["tool"] == "save_fact"
 
 
-async def test_get_conversation_appends_receipts_to_outbound(
-    client: TestClient, test_user: User
-) -> None:
+def test_get_conversation_appends_receipts_to_outbound(client: TestClient, test_user: User) -> None:
     """Outbound messages with tool receipts include the rendered receipt block."""
     tool_json = json.dumps(
         [
@@ -120,7 +119,7 @@ async def test_get_conversation_appends_receipts_to_outbound(
             },
         ]
     )
-    await _create_session(
+    _create_session(
         test_user,
         [
             {
@@ -148,7 +147,7 @@ async def test_get_conversation_appends_receipts_to_outbound(
     assert "https://" not in body
 
 
-async def test_get_conversation_inbound_body_unchanged(client: TestClient, test_user: User) -> None:
+def test_get_conversation_inbound_body_unchanged(client: TestClient, test_user: User) -> None:
     """Receipt append must only apply to outbound messages, never inbound."""
     tool_json = json.dumps(
         [
@@ -166,7 +165,7 @@ async def test_get_conversation_inbound_body_unchanged(client: TestClient, test_
             },
         ]
     )
-    await _create_session(
+    _create_session(
         test_user,
         [
             {
@@ -190,9 +189,9 @@ async def test_get_conversation_inbound_body_unchanged(client: TestClient, test_
     assert body == "Create a project for Smith"
 
 
-async def test_get_conversation_includes_channel(client: TestClient, test_user: User) -> None:
+def test_get_conversation_includes_channel(client: TestClient, test_user: User) -> None:
     """Channel field is exposed when present."""
-    await _create_session(
+    _create_session(
         test_user,
         [{"direction": "inbound", "body": "Hello", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
         channel="webchat",
@@ -202,9 +201,9 @@ async def test_get_conversation_includes_channel(client: TestClient, test_user: 
     assert resp.json()["channel"] == "webchat"
 
 
-async def test_get_conversation_channel_defaults_empty(client: TestClient, test_user: User) -> None:
+def test_get_conversation_channel_defaults_empty(client: TestClient, test_user: User) -> None:
     """Sessions without channel metadata return empty string."""
-    await _create_session(
+    _create_session(
         test_user,
         [{"direction": "inbound", "body": "Hey", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
     )
@@ -213,9 +212,7 @@ async def test_get_conversation_channel_defaults_empty(client: TestClient, test_
     assert resp.json()["channel"] == ""
 
 
-async def test_get_conversation_scoped_to_authenticated_user(
-    client: TestClient, test_user: User
-) -> None:
+def test_get_conversation_scoped_to_authenticated_user(client: TestClient, test_user: User) -> None:
     """A different user's session is invisible to this user's GET."""
     db = open_test_db_session()
     try:
@@ -227,11 +224,13 @@ async def test_get_conversation_scoped_to_authenticated_user(
             onboarding_complete=True,
         )
         db.add(other)
-        await db.commit()
-        await db.refresh(other)
+        db.commit()
+        db.refresh(other)
         db.expunge(other)
+    finally:
+        db.close()
 
-    await _create_session(
+    _create_session(
         other,
         [{"direction": "inbound", "body": "secret", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
     )
@@ -247,9 +246,9 @@ async def test_get_conversation_scoped_to_authenticated_user(
 # ---------------------------------------------------------------------------
 
 
-async def test_system_prompt_post_onboarding(client: TestClient, test_user: User) -> None:
+def test_system_prompt_post_onboarding(client: TestClient, test_user: User) -> None:
     """Post-onboarding users get the regular agent system prompt."""
-    await _create_session(
+    _create_session(
         test_user,
         [
             {
@@ -276,7 +275,7 @@ async def test_system_prompt_post_onboarding(client: TestClient, test_user: User
     assert "first conversation with them" not in data["system_prompt"]
 
 
-async def test_system_prompt_during_onboarding(client: TestClient) -> None:
+def test_system_prompt_during_onboarding(client: TestClient) -> None:
     """A user still in onboarding gets the bootstrap-flavored prompt."""
     db = open_test_db_session()
     try:
@@ -288,9 +287,11 @@ async def test_system_prompt_during_onboarding(client: TestClient) -> None:
             onboarding_complete=False,
         )
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.commit()
+        db.refresh(user)
         db.expunge(user)
+    finally:
+        db.close()
 
     from pathlib import Path
 
@@ -306,7 +307,7 @@ async def test_system_prompt_during_onboarding(client: TestClient) -> None:
 
     _app.dependency_overrides[get_current_user] = lambda: user
     try:
-        await _create_session(
+        _create_session(
             user,
             [{"direction": "inbound", "body": "hey", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
             channel="webchat",
@@ -320,21 +321,21 @@ async def test_system_prompt_during_onboarding(client: TestClient) -> None:
         _app.dependency_overrides.pop(get_current_user, None)
 
 
-async def test_system_prompt_no_conversation_yet(client: TestClient, test_user: User) -> None:
+def test_system_prompt_no_conversation_yet(client: TestClient, test_user: User) -> None:
     """Without a session row, the system-prompt endpoint 404s."""
     resp = client.get("/api/user/conversation/system-prompt")
     assert resp.status_code == 404
 
 
-async def test_system_prompt_empty_messages(client: TestClient, test_user: User) -> None:
+def test_system_prompt_empty_messages(client: TestClient, test_user: User) -> None:
     """A session with no messages still returns a valid prompt."""
-    await _create_session(test_user, [], channel="webchat")
+    _create_session(test_user, [], channel="webchat")
     resp = client.get("/api/user/conversation/system-prompt")
     assert resp.status_code == 200
     assert resp.json()["system_prompt"]
 
 
-async def test_system_prompt_omits_storage_and_outbound_tool_usage_hints(
+def test_system_prompt_omits_storage_and_outbound_tool_usage_hints(
     client: TestClient, test_user: User
 ) -> None:
     """Pin the documented preview/runtime divergence for storage/outbound tool hints.
@@ -345,7 +346,7 @@ async def test_system_prompt_omits_storage_and_outbound_tool_usage_hints(
     its per-tool ``usage_hint`` does not appear in the rendered Tool
     Guidelines section.
     """
-    await _create_session(
+    _create_session(
         test_user,
         [{"direction": "inbound", "body": "hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
         channel="webchat",
@@ -363,9 +364,9 @@ async def test_system_prompt_omits_storage_and_outbound_tool_usage_hints(
 # ---------------------------------------------------------------------------
 
 
-async def test_delete_single_message(client: TestClient, test_user: User) -> None:
+def test_delete_single_message(client: TestClient, test_user: User) -> None:
     """Deleting a single message removes only that message."""
-    await _create_session(
+    _create_session(
         test_user,
         [
             {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
@@ -387,15 +388,15 @@ async def test_delete_single_message(client: TestClient, test_user: User) -> Non
     assert seqs == [1, 3]
 
 
-async def test_delete_single_message_no_conversation(client: TestClient, test_user: User) -> None:
+def test_delete_single_message_no_conversation(client: TestClient, test_user: User) -> None:
     """Deleting a message before any conversation exists returns 404."""
     resp = client.delete("/api/user/conversation/messages/1")
     assert resp.status_code == 404
 
 
-async def test_delete_single_message_not_found_seq(client: TestClient, test_user: User) -> None:
+def test_delete_single_message_not_found_seq(client: TestClient, test_user: User) -> None:
     """Deleting a nonexistent seq from a valid conversation returns 404."""
-    await _create_session(
+    _create_session(
         test_user,
         [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
     )
@@ -408,9 +409,9 @@ async def test_delete_single_message_not_found_seq(client: TestClient, test_user
 # ---------------------------------------------------------------------------
 
 
-async def test_delete_batch_messages(client: TestClient, test_user: User) -> None:
+def test_delete_batch_messages(client: TestClient, test_user: User) -> None:
     """Batch deleting specific messages removes only those messages."""
-    await _create_session(
+    _create_session(
         test_user,
         [
             {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
@@ -431,9 +432,9 @@ async def test_delete_batch_messages(client: TestClient, test_user: User) -> Non
     assert seqs == [1, 5]
 
 
-async def test_delete_batch_partial(client: TestClient, test_user: User) -> None:
+def test_delete_batch_partial(client: TestClient, test_user: User) -> None:
     """Batch delete with some nonexistent seqs deletes only existing ones."""
-    await _create_session(
+    _create_session(
         test_user,
         [
             {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
@@ -452,9 +453,9 @@ async def test_delete_batch_partial(client: TestClient, test_user: User) -> None
     assert seqs == [3]
 
 
-async def test_delete_batch_empty_seqs(client: TestClient, test_user: User) -> None:
+def test_delete_batch_empty_seqs(client: TestClient, test_user: User) -> None:
     """Batch delete with empty seqs returns 422 validation error."""
-    await _create_session(
+    _create_session(
         test_user,
         [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
     )
@@ -462,13 +463,13 @@ async def test_delete_batch_empty_seqs(client: TestClient, test_user: User) -> N
     assert resp.status_code == 422
 
 
-async def test_delete_batch_no_conversation(client: TestClient, test_user: User) -> None:
+def test_delete_batch_no_conversation(client: TestClient, test_user: User) -> None:
     """Batch delete before any conversation exists returns 404."""
     resp = client.request("DELETE", "/api/user/conversation/messages/batch", json={"seqs": [1, 2]})
     assert resp.status_code == 404
 
 
-async def test_delete_batch_large(client: TestClient, test_user: User) -> None:
+def test_delete_batch_large(client: TestClient, test_user: User) -> None:
     """Batch delete handles a large number of messages."""
     msgs = [
         {
@@ -479,7 +480,7 @@ async def test_delete_batch_large(client: TestClient, test_user: User) -> None:
         }
         for i in range(1, 51)
     ]
-    await _create_session(test_user, msgs)
+    _create_session(test_user, msgs)
     resp = client.request(
         "DELETE",
         "/api/user/conversation/messages/batch",
@@ -497,9 +498,9 @@ async def test_delete_batch_large(client: TestClient, test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_delete_conversation_history(client: TestClient, test_user: User) -> None:
+def test_delete_conversation_history(client: TestClient, test_user: User) -> None:
     """Deleting conversation history removes messages but preserves the session."""
-    await _create_session(
+    _create_session(
         test_user,
         [
             {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
@@ -521,13 +522,11 @@ async def test_delete_conversation_history(client: TestClient, test_user: User) 
     assert detail["initial_system_prompt"] == ""
 
 
-async def test_delete_conversation_history_preserves_memory(
-    client: TestClient, test_user: User
-) -> None:
+def test_delete_conversation_history_preserves_memory(client: TestClient, test_user: User) -> None:
     """Memory documents are not affected by conversation history deletion."""
     from backend.app.models import MemoryDocument
 
-    await _create_session(
+    _create_session(
         test_user,
         [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
     )
@@ -542,7 +541,9 @@ async def test_delete_conversation_history_preserves_memory(
             history_text="",
         )
         db.add(doc)
-        await db.commit()
+        db.commit()
+    finally:
+        db.close()
 
     resp = client.delete("/api/user/conversation/messages")
     assert resp.status_code == 200
@@ -555,25 +556,21 @@ async def test_delete_conversation_history_preserves_memory(
         db.close()
 
 
-async def test_delete_conversation_history_no_conversation(
-    client: TestClient, test_user: User
-) -> None:
+def test_delete_conversation_history_no_conversation(client: TestClient, test_user: User) -> None:
     """Delete-all before any conversation exists returns 404."""
     resp = client.delete("/api/user/conversation/messages")
     assert resp.status_code == 404
 
 
-async def test_delete_conversation_history_empty_session(
-    client: TestClient, test_user: User
-) -> None:
+def test_delete_conversation_history_empty_session(client: TestClient, test_user: User) -> None:
     """Delete-all on an empty session returns 0 deleted, not 404."""
-    await _create_session(test_user, [])
+    _create_session(test_user, [])
     resp = client.delete("/api/user/conversation/messages")
     assert resp.status_code == 200
     assert resp.json()["messages_deleted"] == 0
 
 
-async def test_delete_does_not_affect_other_users(client: TestClient, test_user: User) -> None:
+def test_delete_does_not_affect_other_users(client: TestClient, test_user: User) -> None:
     """Authenticated DELETE only touches the caller's conversation."""
     db = open_test_db_session()
     try:
@@ -585,11 +582,13 @@ async def test_delete_does_not_affect_other_users(client: TestClient, test_user:
             onboarding_complete=True,
         )
         db.add(other)
-        await db.commit()
-        await db.refresh(other)
+        db.commit()
+        db.refresh(other)
         db.expunge(other)
+    finally:
+        db.close()
 
-    other_session_id = await _create_session(
+    other_session_id = _create_session(
         other,
         [{"direction": "inbound", "body": "secret", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
     )
@@ -602,5 +601,7 @@ async def test_delete_does_not_affect_other_users(client: TestClient, test_user:
     try:
         cs = db.query(ChatSession).filter_by(session_id=other_session_id).first()
         assert cs is not None
-        count = (await db.execute(select(Message).filter_by(session_id=cs.id))).scalars().all()
-        assert len(count) == 1
+        count = db.query(Message).filter_by(session_id=cs.id).count()
+        assert count == 1
+    finally:
+        db.close()

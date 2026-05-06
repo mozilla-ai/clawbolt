@@ -16,16 +16,20 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import threading
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import Engine, text
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.orm import Session
 
 from backend.app.agent.inbound_recovery import (
-    _build_dispatch_inputs_async,
-    _find_orphaned_inbounds_async,
+    _RECOVERY_LOCK_KEY,
+    _build_dispatch_inputs,
+    _find_orphaned_inbounds,
     _parse_media_refs,
     recover_orphan_inbound_messages,
 )
@@ -164,7 +168,7 @@ def _make_user(db: Session) -> User:
     return user
 
 
-async def _make_session(db: AsyncSession, user: User, channel: str = "bluebubbles") -> ChatSession:
+def _make_session(db: Session, user: User, channel: str = "bluebubbles") -> ChatSession:
     now = datetime.datetime.now(datetime.UTC)
     cs = ChatSession(
         session_id=f"sess-{uuid.uuid4().hex[:8]}",
@@ -180,8 +184,8 @@ async def _make_session(db: AsyncSession, user: User, channel: str = "bluebubble
     return cs
 
 
-async def _add_message(
-    db: AsyncSession,
+def _add_message(
+    db: Session,
     cs: ChatSession,
     direction: str,
     seq: int,
@@ -249,7 +253,7 @@ def test_inbound_followed_by_outbound_is_not_orphan() -> None:
     assert rows == []
 
 
-async def test_inbound_outside_lookback_is_ignored() -> None:
+def test_inbound_outside_lookback_is_ignored() -> None:
     """Messages older than the cutoff are excluded so we don't dispatch a
     stale reply for something the user has long since moved past."""
     db = open_test_db_session()
@@ -268,7 +272,7 @@ async def test_inbound_outside_lookback_is_ignored() -> None:
     assert rows == []
 
 
-async def test_orphan_detection_is_per_session() -> None:
+def test_orphan_detection_is_per_session() -> None:
     """A second session's outbound must not satisfy the first session's
     inbound. Without the per-session join the EXISTS would let one user's
     activity declare another user's inbound 'processed'."""
@@ -279,10 +283,8 @@ async def test_orphan_detection_is_per_session() -> None:
         cs_a = _make_session(db, user_a)
         cs_b = _make_session(db, user_b)
 
-        await _add_message(db, cs_a, MessageDirection.INBOUND, seq=1, body="A asks", minutes_ago=2)
-        await _add_message(
-            db, cs_b, MessageDirection.OUTBOUND, seq=1, body="B reply", minutes_ago=1
-        )
+        _add_message(db, cs_a, MessageDirection.INBOUND, seq=1, body="A asks", minutes_ago=2)
+        _add_message(db, cs_b, MessageDirection.OUTBOUND, seq=1, body="B reply", minutes_ago=1)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
         rows = _run(
@@ -326,7 +328,7 @@ def test_build_dispatch_inputs_round_trips_message_fields() -> None:
     assert stored.direction == MessageDirection.INBOUND
 
 
-async def test_build_dispatch_inputs_returns_none_when_user_missing() -> None:
+def test_build_dispatch_inputs_returns_none_when_user_missing() -> None:
     """Defense in depth: if the user row was deleted in the window between
     persist and recovery, log and skip rather than crash."""
     db = open_test_db_session()
@@ -336,8 +338,8 @@ async def test_build_dispatch_inputs_returns_none_when_user_missing() -> None:
         msg = _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="x", minutes_ago=1)
 
         # Hard-delete user row so the rebuild lookup misses.
-        await db.delete(user)
-        await db.commit()
+        db.delete(user)
+        db.commit()
 
         result = _run(_build_dispatch_inputs_with_async_db(msg, cs))
     finally:
@@ -476,7 +478,7 @@ async def test_recover_continues_past_individual_dispatch_failure(
 # ---------------------------------------------------------------------------
 
 
-async def test_freshness_floor_excludes_brand_new_inbounds() -> None:
+def test_freshness_floor_excludes_brand_new_inbounds() -> None:
     """A message that landed milliseconds ago is the normal ingestion
     path's responsibility, not recovery. Without this floor a worker
     could race the in-flight MessageBatcher and double-dispatch a message
@@ -497,7 +499,7 @@ async def test_freshness_floor_excludes_brand_new_inbounds() -> None:
     assert rows == []
 
 
-async def test_freshness_floor_includes_messages_older_than_floor() -> None:
+def test_freshness_floor_includes_messages_older_than_floor() -> None:
     """Sanity: floor at +0s (now) includes messages from the past."""
     db = open_test_db_session()
     try:
@@ -520,7 +522,7 @@ async def test_freshness_floor_includes_messages_older_than_floor() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_orphan_is_no_longer_detected_after_outbound_lands() -> None:
+def test_orphan_is_no_longer_detected_after_outbound_lands() -> None:
     """The whole design rests on this invariant: once the agent loop runs
     and persists an outbound, the next sweep doesn't see the inbound as
     an orphan anymore. Simulate that by adding the outbound by hand and
@@ -537,7 +539,7 @@ async def test_orphan_is_no_longer_detected_after_outbound_lands() -> None:
         assert len(before) == 1
 
         # Simulate the agent loop running and persisting its reply.
-        await _add_message(db, cs, MessageDirection.OUTBOUND, seq=2, body="ok", minutes_ago=1)
+        _add_message(db, cs, MessageDirection.OUTBOUND, seq=2, body="ok", minutes_ago=1)
 
         after = _run(_find_orphaned_inbounds_with_async_db(cutoff, floor))
     finally:

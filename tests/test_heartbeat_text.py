@@ -1,7 +1,6 @@
 """Tests for heartbeat_text field via the profile endpoint (HEARTBEAT.md)."""
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 from backend.app.models import User
 from tests.db_test_utils import open_test_db_session
@@ -40,10 +39,12 @@ async def test_heartbeat_text_round_trip_via_db() -> None:
     try:
         user = User(user_id="heartbeat-test", phone="+15551112222")
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.commit()
+        db.refresh(user)
         user_id = user.id
         db.expunge(user)
+    finally:
+        db.close()
 
     # Update with heartbeat text
     db = open_test_db_session()
@@ -51,10 +52,12 @@ async def test_heartbeat_text_round_trip_via_db() -> None:
         db_user = db.query(User).filter_by(id=user_id).first()
         assert db_user is not None
         db_user.heartbeat_text = "- [ ] Test item"
-        await db.commit()
-        await db.refresh(db_user)
+        db.commit()
+        db.refresh(db_user)
         db.expunge(db_user)
         updated = db_user
+    finally:
+        db.close()
     assert updated.heartbeat_text == "- [ ] Test item"
 
     # Re-read from DB
@@ -63,6 +66,8 @@ async def test_heartbeat_text_round_trip_via_db() -> None:
         reloaded = db.query(User).filter_by(id=user_id).first()
         assert reloaded is not None
         db.expunge(reloaded)
+    finally:
+        db.close()
     assert reloaded.heartbeat_text == "- [ ] Test item"
 
 
@@ -72,7 +77,9 @@ async def test_new_user_heartbeat_text_empty() -> None:
     try:
         user = User(user_id="default-heartbeat-test", phone="+15559998888")
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.commit()
+        db.refresh(user)
         db.expunge(user)
+    finally:
+        db.close()
     assert user.heartbeat_text == ""

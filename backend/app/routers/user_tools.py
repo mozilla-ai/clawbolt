@@ -107,7 +107,9 @@ async def _build_tool_list(
     # Load permission data once to avoid repeated file reads per sub-tool.
     approval_store = get_approval_store() if user_id else None
     perm_data = (
-        await approval_store.load_user_permissions(user_id) if approval_store and user_id else None
+        await approval_store.load_user_permissions_async(user_id)
+        if approval_store and user_id
+        else None
     )
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):

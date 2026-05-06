@@ -1,6 +1,5 @@
 """Tests for GET /api/user/llm-usage endpoint."""
 
-import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -35,9 +34,10 @@ def _create_usage(
                 purpose=purpose,
                 created_at=created_at or datetime.now(UTC),
             )
-            await db.commit()
-
-    asyncio.run(_write())
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 def _create_other_user() -> str:

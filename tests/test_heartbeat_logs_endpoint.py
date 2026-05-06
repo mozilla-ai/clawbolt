@@ -9,7 +9,7 @@ from backend.app.models import HeartbeatLog, User
 from tests.db_test_utils import open_test_db_session
 
 
-async def _create_heartbeat_log(
+def _create_heartbeat_log(
     user_id: str,
     action_type: str = "send",
     message_text: str = "",
@@ -30,10 +30,12 @@ async def _create_heartbeat_log(
                 created_at=datetime.now(UTC),
             )
         )
-        await db.commit()
+        db.commit()
+    finally:
+        db.close()
 
 
-async def _create_other_user() -> str:
+def _create_other_user() -> str:
     """Create a second user and return their id."""
     db = open_test_db_session()
     try:
@@ -45,12 +47,14 @@ async def _create_other_user() -> str:
             preferred_channel="telegram",
         )
         db.add(other)
-        await db.commit()
-        await db.refresh(other)
+        db.commit()
+        db.refresh(other)
         return other.id
+    finally:
+        db.close()
 
 
-async def test_heartbeat_logs_empty(client: TestClient) -> None:
+def test_heartbeat_logs_empty(client: TestClient) -> None:
     """Returns empty list when no heartbeat logs exist."""
     resp = client.get("/api/user/heartbeat-logs")
     assert resp.status_code == 200
@@ -59,10 +63,10 @@ async def test_heartbeat_logs_empty(client: TestClient) -> None:
     assert data["items"] == []
 
 
-async def test_heartbeat_logs_with_data(client: TestClient, test_user: User) -> None:
+def test_heartbeat_logs_with_data(client: TestClient, test_user: User) -> None:
     """Returns heartbeat logs for the current user."""
-    await _create_heartbeat_log(test_user.id)
-    await _create_heartbeat_log(test_user.id)
+    _create_heartbeat_log(test_user.id)
+    _create_heartbeat_log(test_user.id)
 
     resp = client.get("/api/user/heartbeat-logs")
     assert resp.status_code == 200
@@ -74,10 +78,10 @@ async def test_heartbeat_logs_with_data(client: TestClient, test_user: User) -> 
     assert data["items"][0]["user_id"] == test_user.id
 
 
-async def test_heartbeat_logs_limit(client: TestClient, test_user: User) -> None:
+def test_heartbeat_logs_limit(client: TestClient, test_user: User) -> None:
     """Respects the limit query parameter."""
     for _ in range(5):
-        await _create_heartbeat_log(test_user.id)
+        _create_heartbeat_log(test_user.id)
 
     resp = client.get("/api/user/heartbeat-logs?limit=2")
     assert resp.status_code == 200
@@ -86,11 +90,11 @@ async def test_heartbeat_logs_limit(client: TestClient, test_user: User) -> None
     assert len(data["items"]) == 2
 
 
-async def test_heartbeat_logs_scoped_to_user(client: TestClient, test_user: User) -> None:
+def test_heartbeat_logs_scoped_to_user(client: TestClient, test_user: User) -> None:
     """Only returns logs for the authenticated user, not other users."""
-    other_id = await _create_other_user()
-    await _create_heartbeat_log(test_user.id)
-    await _create_heartbeat_log(other_id)
+    other_id = _create_other_user()
+    _create_heartbeat_log(test_user.id)
+    _create_heartbeat_log(other_id)
 
     resp = client.get("/api/user/heartbeat-logs")
     assert resp.status_code == 200
@@ -99,9 +103,9 @@ async def test_heartbeat_logs_scoped_to_user(client: TestClient, test_user: User
     assert all(item["user_id"] == test_user.id for item in data["items"])
 
 
-async def test_heartbeat_logs_enriched_fields(client: TestClient, test_user: User) -> None:
+def test_heartbeat_logs_enriched_fields(client: TestClient, test_user: User) -> None:
     """Returns enriched fields (action_type, message_text, channel, reasoning, tasks)."""
-    await _create_heartbeat_log(
+    _create_heartbeat_log(
         test_user.id,
         action_type="send",
         message_text="Hello there!",
@@ -109,7 +113,7 @@ async def test_heartbeat_logs_enriched_fields(client: TestClient, test_user: Use
         reasoning="User has a pending task",
         tasks="Check invoice status",
     )
-    await _create_heartbeat_log(
+    _create_heartbeat_log(
         test_user.id,
         action_type="skip",
         reasoning="Nothing to do right now",
@@ -140,11 +144,11 @@ async def test_heartbeat_logs_enriched_fields(client: TestClient, test_user: Use
 # ---------------------------------------------------------------------------
 
 
-async def test_delete_heartbeat_logs(client: TestClient, test_user: User) -> None:
+def test_delete_heartbeat_logs(client: TestClient, test_user: User) -> None:
     """Deletes all heartbeat logs for the current user and returns count."""
-    await _create_heartbeat_log(test_user.id, message_text="msg1")
-    await _create_heartbeat_log(test_user.id, message_text="msg2")
-    await _create_heartbeat_log(test_user.id, action_type="skip")
+    _create_heartbeat_log(test_user.id, message_text="msg1")
+    _create_heartbeat_log(test_user.id, message_text="msg2")
+    _create_heartbeat_log(test_user.id, action_type="skip")
 
     resp = client.delete("/api/user/heartbeat-logs")
     assert resp.status_code == 200
@@ -157,7 +161,7 @@ async def test_delete_heartbeat_logs(client: TestClient, test_user: User) -> Non
     assert get_resp.json()["total"] == 0
 
 
-async def test_delete_heartbeat_logs_empty(client: TestClient) -> None:
+def test_delete_heartbeat_logs_empty(client: TestClient) -> None:
     """Returns 0 when there are no logs to delete."""
     resp = client.delete("/api/user/heartbeat-logs")
     assert resp.status_code == 200
@@ -166,15 +170,11 @@ async def test_delete_heartbeat_logs_empty(client: TestClient) -> None:
     assert data["deleted"] == 0
 
 
-async def test_delete_heartbeat_logs_cross_user_isolation(
-    client: TestClient, test_user: User
-) -> None:
+def test_delete_heartbeat_logs_cross_user_isolation(client: TestClient, test_user: User) -> None:
     """Only deletes logs belonging to the authenticated user."""
-    from sqlalchemy import select
-
-    other_id = await _create_other_user()
-    await _create_heartbeat_log(test_user.id, message_text="mine")
-    await _create_heartbeat_log(other_id, message_text="theirs")
+    other_id = _create_other_user()
+    _create_heartbeat_log(test_user.id, message_text="mine")
+    _create_heartbeat_log(other_id, message_text="theirs")
 
     resp = client.delete("/api/user/heartbeat-logs")
     assert resp.status_code == 200

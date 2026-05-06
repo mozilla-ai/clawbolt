@@ -268,7 +268,7 @@ async def run_agent(
     # Ensure PERMISSIONS.json exists with all tools backfilled so the
     # agent can read/edit it and the approval store resolves from it.
 
-    await get_approval_store().ensure_complete(user.id)
+    await get_approval_store().ensure_complete_async(user.id)
 
     # Shared mutable set so the list_capabilities tool closure and the
     # agent loop both see the same activation state.  This prevents the
@@ -353,7 +353,7 @@ async def run_agent(
         )
         store = get_approval_store()
         for tool_name in _onboarding_auto_tools:
-            await store.set_permission(user.id, tool_name, PermissionLevel.ALWAYS)
+            await store.set_permission_async(user.id, tool_name, PermissionLevel.ALWAYS)
 
     logger.debug(
         "Agent initialized for user %s, message seq=%d with %d core tools, "

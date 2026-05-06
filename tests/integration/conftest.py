@@ -3,7 +3,6 @@
 import os
 
 import pytest
-import pytest_asyncio
 
 from backend.app.models import User
 from tests.db_test_utils import open_test_db_session
@@ -16,8 +15,8 @@ skip_without_anthropic_key = pytest.mark.skipif(
 )
 
 
-@pytest_asyncio.fixture()
-async def integration_user() -> User:
+@pytest.fixture()
+def integration_user() -> User:
     """Test user for integration tests (via DB)."""
     db = open_test_db_session()
     try:
@@ -26,14 +25,16 @@ async def integration_user() -> User:
             phone="+15559999999",
         )
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.commit()
+        db.refresh(user)
         db.expunge(user)
         return user
+    finally:
+        db.close()
 
 
-@pytest_asyncio.fixture()
-async def onboarded_user() -> User:
+@pytest.fixture()
+def onboarded_user() -> User:
     """Onboarded user for heartbeat tests (via DB)."""
     db = open_test_db_session()
     try:
@@ -43,7 +44,9 @@ async def onboarded_user() -> User:
             onboarding_complete=True,
         )
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.commit()
+        db.refresh(user)
         db.expunge(user)
         return user
+    finally:
+        db.close()
