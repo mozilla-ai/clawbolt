@@ -1206,7 +1206,7 @@ class ClawboltAgent:
         if all_dropped:
             from backend.app.agent.context import trigger_compaction_for_dropped
 
-            trigger_compaction_for_dropped(self.user.id, all_dropped)
+            await trigger_compaction_for_dropped(self.user.id, all_dropped)
 
         total_duration = (time.monotonic() - agent_start_time) * 1000
         logger.debug(
