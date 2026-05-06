@@ -6,7 +6,6 @@ reactive 401 retry, and no dependency on google-api-python-client.
 
 from __future__ import annotations
 
-import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -33,12 +32,6 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _REFRESH_BUFFER_SECONDS = 300
 
 
-async def _await_if_needed(result: object) -> None:
-    """Await callback results only when the callback returned an awaitable."""
-    if inspect.isawaitable(result):
-        await result
-
-
 def _encode_cal_id(calendar_id: str) -> str:
     """URL-encode a calendar ID for use in API paths.
 
@@ -58,7 +51,7 @@ class GoogleCalendarService:
         refresh_token: str,
         client_id: str,
         client_secret: str,
-        on_token_refresh: Callable[[str, str, float], None | Awaitable[None]] | None = None,
+        on_token_refresh: Callable[[str, str, float], Awaitable[None]] | None = None,
         token_expires_at: float = 0.0,
     ) -> None:
         self._access_token = access_token
@@ -92,12 +85,8 @@ class GoogleCalendarService:
         if "expires_in" in data:
             self._token_expires_at = time.time() + data["expires_in"]
         if self._on_token_refresh:
-            await _await_if_needed(
-                self._on_token_refresh(
-                    self._access_token,
-                    self._refresh_token,
-                    self._token_expires_at,
-                )
+            await self._on_token_refresh(
+                self._access_token, self._refresh_token, self._token_expires_at
             )
 
     async def _ensure_valid_token(self, client: httpx.AsyncClient) -> None:

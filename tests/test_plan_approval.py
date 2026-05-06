@@ -326,8 +326,8 @@ class TestBatchApproval:
 
         # Both should now be ALWAYS in the store
         store = get_approval_store()
-        assert await store.check_permission_async(test_user.id, "writer") == PermissionLevel.ALWAYS
-        assert await store.check_permission_async(test_user.id, "sender") == PermissionLevel.ALWAYS
+        assert await store.check_permission(test_user.id, "writer") == PermissionLevel.ALWAYS
+        assert await store.check_permission(test_user.id, "sender") == PermissionLevel.ALWAYS
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -374,8 +374,8 @@ class TestBatchApproval:
         await task
 
         store = get_approval_store()
-        assert await store.check_permission_async(test_user.id, "writer") == PermissionLevel.DENY
-        assert await store.check_permission_async(test_user.id, "sender") == PermissionLevel.DENY
+        assert await store.check_permission(test_user.id, "writer") == PermissionLevel.DENY
+        assert await store.check_permission(test_user.id, "sender") == PermissionLevel.DENY
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -490,8 +490,8 @@ class TestBatchApproval:
 
         # No permissions should have been persisted
         store = get_approval_store()
-        assert await store.check_permission_async(test_user.id, "writer") == PermissionLevel.ASK
-        assert await store.check_permission_async(test_user.id, "sender") == PermissionLevel.ASK
+        assert await store.check_permission(test_user.id, "writer") == PermissionLevel.ASK
+        assert await store.check_permission(test_user.id, "sender") == PermissionLevel.ASK
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -552,7 +552,7 @@ class TestBatchApproval:
         mock_publish = AsyncMock()
 
         store = get_approval_store()
-        await store.set_permission_async(test_user.id, "writer", PermissionLevel.ALWAYS)
+        await store.set_permission(test_user.id, "writer", PermissionLevel.ALWAYS)
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response(
@@ -675,12 +675,12 @@ class TestBatchApproval:
         # "invoices" resource should be ALWAYS
         store = get_approval_store()
         assert (
-            await store.check_permission_async(test_user.id, "fetcher", resource="invoices")
+            await store.check_permission(test_user.id, "fetcher", resource="invoices")
             == PermissionLevel.ALWAYS
         )
         # Different resource should still be ASK (the default)
         assert (
-            await store.check_permission_async(test_user.id, "fetcher", resource="customers")
+            await store.check_permission(test_user.id, "fetcher", resource="customers")
             == PermissionLevel.ASK
         )
 
@@ -699,7 +699,7 @@ class TestBatchApproval:
         """
         mock_publish = AsyncMock()
         session_id = "test-approval-persist"
-        create_test_session(test_user.id, session_id=session_id, channel="linq")
+        await create_test_session(test_user.id, session_id=session_id, channel="linq")
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response(

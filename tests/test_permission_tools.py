@@ -47,7 +47,7 @@ async def test_read_permissions_json(tmp_path: object) -> None:
     user_id = "test-ws-perm-read"
     # Create the PERMISSIONS.json file first
     store = get_approval_store()
-    await store.ensure_complete_async(user_id)
+    await store.ensure_complete(user_id)
 
     tools = create_workspace_tools(user_id)
     read_tool = next(t for t in tools if t.name == ToolName.READ_FILE)
@@ -63,7 +63,7 @@ async def test_edit_permissions_json(tmp_path: object) -> None:
     """edit_file on PERMISSIONS.json flows through ApprovalStore's DB row."""
     user_id = "test-ws-perm-edit"
     store = get_approval_store()
-    await store.ensure_complete_async(user_id)
+    await store.ensure_complete(user_id)
 
     tools = create_workspace_tools(user_id)
     read_tool = next(t for t in tools if t.name == ToolName.READ_FILE)
@@ -92,7 +92,7 @@ async def test_write_permissions_json(tmp_path: object) -> None:
     """write_file can overwrite PERMISSIONS.json; content is normalized."""
     user_id = "test-ws-perm-write"
     store = get_approval_store()
-    await store.ensure_complete_async(user_id)
+    await store.ensure_complete(user_id)
 
     tools = create_workspace_tools(user_id)
     write_tool = next(t for t in tools if t.name == ToolName.WRITE_FILE)
@@ -116,7 +116,7 @@ async def test_delete_permissions_json_blocked(tmp_path: object) -> None:
     """PERMISSIONS.json cannot be deleted (protected file)."""
     user_id = "test-ws-perm-delete"
     store = get_approval_store()
-    await store.ensure_complete_async(user_id)
+    await store.ensure_complete(user_id)
 
     tools = create_workspace_tools(user_id)
     delete_tool = next(t for t in tools if t.name == ToolName.DELETE_FILE)

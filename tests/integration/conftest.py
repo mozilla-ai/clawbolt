@@ -3,9 +3,10 @@
 import os
 
 import pytest
+import pytest_asyncio
 
+from backend.app.database import db_session_async
 from backend.app.models import User
-from tests.db_test_utils import open_test_db_session
 
 _ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
@@ -15,38 +16,32 @@ skip_without_anthropic_key = pytest.mark.skipif(
 )
 
 
-@pytest.fixture()
-def integration_user() -> User:
+@pytest_asyncio.fixture()
+async def integration_user() -> User:
     """Test user for integration tests (via DB)."""
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         user = User(
             user_id="integration-test-user",
             phone="+15559999999",
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
         return user
-    finally:
-        db.close()
 
 
-@pytest.fixture()
-def onboarded_user() -> User:
+@pytest_asyncio.fixture()
+async def onboarded_user() -> User:
     """Onboarded user for heartbeat tests (via DB)."""
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         user = User(
             user_id="heartbeat-integration-user",
             phone="+15559990000",
             onboarding_complete=True,
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
         return user
-    finally:
-        db.close()

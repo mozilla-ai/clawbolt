@@ -67,6 +67,7 @@ from backend.app.models import ChatSession, Message, User
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +89,9 @@ def _orphaned_inbounds_select(
 ) -> Select[tuple[Message, ChatSession]]:
     """Pure builder for the orphan-inbound query.
 
-    Used by ``_find_orphaned_inbounds``. See that helper for the
-    rationale on each filter.
+    Shared between sync and async recovery paths so the query shape and
+    filter semantics stay identical. See ``_find_orphaned_inbounds``
+    for the rationale on each filter.
     """
     OutboundAfter = Message.__table__.alias("ob")
     has_outbound_after = exists().where(
@@ -112,8 +114,8 @@ def _orphaned_inbounds_select(
     )
 
 
-async def _find_orphaned_inbounds(
-    db: AsyncSession,
+def _find_orphaned_inbounds(
+    db: Session,
     cutoff_utc: datetime.datetime,
     freshness_floor_utc: datetime.datetime,
 ) -> list[tuple[Message, ChatSession]]:
@@ -130,6 +132,18 @@ async def _find_orphaned_inbounds(
     the sweep doesn't race the normal ingestion path on a brand-new
     inbound that arrived during the sweep itself.
     """
+    rows = db.execute(_orphaned_inbounds_select(cutoff_utc, freshness_floor_utc)).all()
+    # Convert Row objects to plain tuples so callers don't need to know
+    # the Row API.
+    return [(row[0], row[1]) for row in rows]
+
+
+async def _find_orphaned_inbounds_async(
+    db: AsyncSession,
+    cutoff_utc: datetime.datetime,
+    freshness_floor_utc: datetime.datetime,
+) -> list[tuple[Message, ChatSession]]:
+    """Async peer of ``_find_orphaned_inbounds``."""
     rows = (await db.execute(_orphaned_inbounds_select(cutoff_utc, freshness_floor_utc))).all()
     return [(row[0], row[1]) for row in rows]
 
@@ -137,8 +151,8 @@ async def _find_orphaned_inbounds(
 def _select_user_by_id(user_id: str) -> Select[tuple[User]]:
     """Pure builder for the per-orphan user lookup.
 
-    Used by ``_build_dispatch_inputs`` so the lookup shape stays in one
-    place.
+    Shared between sync and async ``_build_dispatch_inputs`` peers so
+    they cannot drift on filter shape.
     """
     return select(User).filter_by(id=user_id)
 
@@ -151,7 +165,7 @@ def _orphan_to_stored_and_state(
     ``ChatSession`` to the (stored_message, session_state) the dispatch
     pipeline expects.
 
-    No DB access, so it stays fully testable without a live session.
+    No DB access; safe to share between sync and async peers.
     """
     stored = StoredMessage(
         direction=msg.direction,
@@ -176,8 +190,8 @@ def _orphan_to_stored_and_state(
     return stored, state
 
 
-async def _build_dispatch_inputs(
-    db: AsyncSession,
+def _build_dispatch_inputs(
+    db: Session,
     msg: Message,
     chat_session: ChatSession,
 ) -> tuple[User, SessionState, StoredMessage] | None:
@@ -195,6 +209,26 @@ async def _build_dispatch_inputs(
     Returns None when the user row is missing (extremely unlikely outside
     of a manual delete during the recovery window).
     """
+    user = db.execute(_select_user_by_id(chat_session.user_id)).scalar_one_or_none()
+    if user is None:
+        logger.warning(
+            "Skipping orphan recovery for message %d: user %s not found",
+            msg.id,
+            chat_session.user_id,
+        )
+        return None
+    db.expunge(user)
+
+    stored, state = _orphan_to_stored_and_state(msg, chat_session)
+    return user, state, stored
+
+
+async def _build_dispatch_inputs_async(
+    db: AsyncSession,
+    msg: Message,
+    chat_session: ChatSession,
+) -> tuple[User, SessionState, StoredMessage] | None:
+    """Async peer of ``_build_dispatch_inputs``."""
     user = (await db.execute(_select_user_by_id(chat_session.user_id))).scalar_one_or_none()
     if user is None:
         logger.warning(
@@ -228,8 +262,40 @@ def _parse_media_refs(media_urls_json: str) -> list[tuple[str, str]]:
     return [(str(fid), "") for fid in ids]
 
 
-async def _try_acquire_lock(conn: AsyncConnection) -> bool:
+def _try_acquire_lock(db: Session) -> bool:
     """Acquire the per-process recovery lock, mirroring approval cleanup.
+
+    ``pg_try_advisory_lock`` returns True on first acquisition, False if
+    another connection (i.e. another worker on a rolling restart) holds
+    the lock. We commit immediately to release the implicit read
+    transaction; the advisory lock itself is session-scoped and survives.
+    """
+    try:
+        got_lock = db.execute(
+            text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+            {"k": _RECOVERY_LOCK_KEY},
+        ).scalar()
+        db.commit()
+    except Exception:
+        logger.exception("Failed to acquire inbound-recovery advisory lock")
+        return False
+    return bool(got_lock)
+
+
+def _release_lock(db: Session) -> None:
+    """Best-effort release of the recovery lock."""
+    try:
+        db.execute(
+            text("SELECT pg_advisory_unlock(hashtext(:k))"),
+            {"k": _RECOVERY_LOCK_KEY},
+        )
+        db.commit()
+    except Exception:
+        logger.exception("Failed to release inbound-recovery advisory lock")
+
+
+async def _try_acquire_lock_async(conn: AsyncConnection) -> bool:
+    """Async peer of ``_try_acquire_lock``.
 
     ``conn`` MUST be an ``AsyncConnection`` (not an ``AsyncSession``):
     ``AsyncSession.commit()`` returns the underlying connection to the
@@ -258,12 +324,12 @@ async def _try_acquire_lock(conn: AsyncConnection) -> bool:
     return bool(got_lock)
 
 
-async def _release_lock(conn: AsyncConnection) -> None:
-    """Best-effort release of the recovery lock.
+async def _release_lock_async(conn: AsyncConnection) -> None:
+    """Async peer of ``_release_lock``.
 
     Must run on the same ``AsyncConnection`` that took the lock or
     Postgres returns ``False`` and the unlock silently no-ops. See
-    ``_try_acquire_lock`` for the connection-coupling rationale.
+    ``_try_acquire_lock_async`` for the connection-coupling rationale.
     """
     try:
         await conn.execute(
@@ -307,7 +373,7 @@ async def recover_orphan_inbound_messages() -> int:
     lock_conn = await get_async_engine().connect()
     lock_acquired = False
     try:
-        if not await _try_acquire_lock(lock_conn):
+        if not await _try_acquire_lock_async(lock_conn):
             logger.info("Another worker is running inbound recovery; skipping on this boot")
             return 0
         lock_acquired = True
@@ -317,7 +383,7 @@ async def recover_orphan_inbound_messages() -> int:
         # ``lock_conn`` holds across the whole sweep.
         db: AsyncSession = AsyncSessionLocal()
         try:
-            rows = await _find_orphaned_inbounds(db, cutoff, freshness_floor)
+            rows = await _find_orphaned_inbounds_async(db, cutoff, freshness_floor)
             if not rows:
                 return 0
 
@@ -330,7 +396,7 @@ async def recover_orphan_inbound_messages() -> int:
 
             dispatched = 0
             for msg, chat_session in rows:
-                inputs = await _build_dispatch_inputs(db, msg, chat_session)
+                inputs = await _build_dispatch_inputs_async(db, msg, chat_session)
                 if inputs is None:
                     continue
                 user, state, stored = inputs
@@ -344,11 +410,13 @@ async def recover_orphan_inbound_messages() -> int:
                     # directly so the recovery sweep stays fully async
                     # (the sync ``get_or_create_conversation`` would
                     # block the event loop on the DB call).
-                    refreshed_state, _ = await get_session_store(user.id).get_or_create_session()
+                    refreshed_state, _ = await get_session_store(
+                        user.id
+                    ).get_or_create_session_async()
                     state = refreshed_state if refreshed_state is not None else state
                 except Exception:
                     logger.exception(
-                        "get_or_create_session failed during inbound recovery for user %s",
+                        "get_or_create_session_async failed during inbound recovery for user %s",
                         user.id,
                     )
 
@@ -383,7 +451,7 @@ async def recover_orphan_inbound_messages() -> int:
             await db.close()
     finally:
         if lock_acquired:
-            await _release_lock(lock_conn)
+            await _release_lock_async(lock_conn)
         await lock_conn.close()
 
 

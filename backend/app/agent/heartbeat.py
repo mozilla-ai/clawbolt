@@ -28,6 +28,7 @@ from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.dto import HeartbeatLogEntry
@@ -1054,7 +1055,7 @@ _NON_PUSHABLE_CHANNELS: frozenset[str] = frozenset({"webchat"})
 
 
 def _heartbeat_route_select(user: User) -> Select[tuple[ChannelRoute]]:
-    """Pure builder for ``resolve_heartbeat_route``."""
+    """Pure builder shared by sync and async ``resolve_heartbeat_route`` peers."""
     return select(ChannelRoute).where(
         ChannelRoute.user_id == user.id,
         ChannelRoute.enabled.is_(True),
@@ -1065,8 +1066,8 @@ def _heartbeat_route_select(user: User) -> Select[tuple[ChannelRoute]]:
 def _check_route_is_registered(user: User, route: ChannelRoute) -> tuple[str, ChannelRoute] | None:
     """Verify the channel is registered in this process and return the result tuple.
 
-    Pure helper so the post-query branching stays testable without
-    coupling to the DB session type.
+    Pure helper shared between the sync and async ``resolve_heartbeat_route``
+    peers so the post-query branching cannot drift.
     """
     try:
         get_channel(route.channel)
@@ -1080,11 +1081,40 @@ def _check_route_is_registered(user: User, route: ChannelRoute) -> tuple[str, Ch
     return route.channel, route
 
 
-async def resolve_heartbeat_route(
+def resolve_heartbeat_route(
+    user: User,
+    db: Session,
+) -> tuple[str, ChannelRoute] | None:
+    """Pick the user's single active messaging channel for heartbeat delivery.
+
+    Returns ``(channel_name, route)`` on success, or ``None`` when no
+    pushable route can be found.
+
+    Pure lookup: never mutates the database. Under single-channel enforcement
+    each user has at most one enabled non-webchat route, and the write paths
+    that flip ``enabled`` are responsible for keeping ``User.preferred_channel``
+    in sync.
+    """
+    route = db.execute(_heartbeat_route_select(user)).scalar_one_or_none()
+
+    if route is None:
+        logger.debug(
+            "Heartbeat skipped for user %s: no pushable route configured",
+            user.id,
+        )
+        return None
+
+    return _check_route_is_registered(user, route)
+
+
+async def resolve_heartbeat_route_async(
     user: User,
     db: AsyncSession,
 ) -> tuple[str, ChannelRoute] | None:
-    """Pick the user's single active messaging channel for heartbeat delivery."""
+    """Async peer of :func:`resolve_heartbeat_route`.
+
+    Same shape and semantics as the sync version; only the IO is async.
+    """
     route = (await db.execute(_heartbeat_route_select(user))).scalar_one_or_none()
 
     if route is None:
@@ -1246,7 +1276,7 @@ class HeartbeatScheduler:
                 try:
                     db = AsyncSessionLocal()
                     try:
-                        result = await resolve_heartbeat_route(user, db)
+                        result = await resolve_heartbeat_route_async(user, db)
                     finally:
                         await db.close()
 

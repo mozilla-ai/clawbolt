@@ -5,12 +5,13 @@ from typing import TypeVar
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 T = TypeVar("T")
 
 
-async def get_or_404(
-    db: AsyncSession,
+def get_or_404(
+    db: Session,
     model: type[T],
     detail: str = "Not found",
     **filters: object,
@@ -19,7 +20,25 @@ async def get_or_404(
 
     Usage::
 
-        user = await get_or_404(db, User, detail="User not found", id=user_id)
+        user = get_or_404(db, User, detail="User not found", id=user_id)
+    """
+    row = db.execute(select(model).filter_by(**filters)).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail=detail)
+    return row
+
+
+async def get_or_404_async(
+    db: AsyncSession,
+    model: type[T],
+    detail: str = "Not found",
+    **filters: object,
+) -> T:
+    """Async peer of :func:`get_or_404`.
+
+    Usage::
+
+        user = await get_or_404_async(db, User, detail="User not found", id=user_id)
     """
     row = (await db.execute(select(model).filter_by(**filters))).scalar_one_or_none()
     if row is None:

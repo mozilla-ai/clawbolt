@@ -6,7 +6,6 @@ that calls the QBO REST API via httpx.
 
 from __future__ import annotations
 
-import inspect
 import logging
 import time
 import uuid
@@ -20,12 +19,6 @@ logger = logging.getLogger(__name__)
 
 QBO_SANDBOX_BASE = "https://sandbox-quickbooks.api.intuit.com"
 QBO_PRODUCTION_BASE = "https://quickbooks.api.intuit.com"
-
-
-async def _await_if_needed(result: object) -> None:
-    """Await callback results only when the callback returned an awaitable."""
-    if inspect.isawaitable(result):
-        await result
 
 
 class QuickBooksService(ABC):
@@ -61,7 +54,7 @@ class QuickBooksOnlineService(QuickBooksService):
         access_token: str,
         refresh_token: str,
         environment: str = "sandbox",
-        on_token_refresh: Callable[[str, str, float], None | Awaitable[None]] | None = None,
+        on_token_refresh: Callable[[str, str, float], Awaitable[None]] | None = None,
         token_url: str = "",
     ) -> None:
         self._client_id = client_id
@@ -94,12 +87,8 @@ class QuickBooksOnlineService(QuickBooksService):
         if "expires_in" in data:
             self._token_expires_at = time.time() + data["expires_in"]
         if self._on_token_refresh:
-            await _await_if_needed(
-                self._on_token_refresh(
-                    self._access_token,
-                    self._refresh_token,
-                    self._token_expires_at,
-                )
+            await self._on_token_refresh(
+                self._access_token, self._refresh_token, self._token_expires_at
             )
 
     @staticmethod

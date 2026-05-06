@@ -107,9 +107,7 @@ async def _build_tool_list(
     # Load permission data once to avoid repeated file reads per sub-tool.
     approval_store = get_approval_store() if user_id else None
     perm_data = (
-        await approval_store.load_user_permissions_async(user_id)
-        if approval_store and user_id
-        else None
+        await approval_store.load_user_permissions(user_id) if approval_store and user_id else None
     )
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
@@ -171,7 +169,17 @@ async def _get_auth_status(user: UserData | None = None) -> dict[str, str]:
     if user is not None:
         orm_user = User(id=user.id, user_id=user.user_id)
     ctx = ToolContext(user=orm_user)  # type: ignore[arg-type]
-    return await default_registry.get_unauthenticated_specialists(ctx)
+    status: dict[str, str] = {}
+    for name in default_registry.specialist_factory_names:
+        factory = default_registry._factories.get(name)
+        if factory and factory.auth_check:
+            try:
+                reason = await factory.auth_check(ctx)
+            except AttributeError:
+                reason = None
+            if reason:
+                status[name] = reason
+    return status
 
 
 def _entry_to_response(

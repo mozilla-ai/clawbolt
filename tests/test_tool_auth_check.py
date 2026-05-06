@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -30,6 +30,14 @@ def _make_tool(name: str) -> Tool:
     return Tool(name=name, description=f"test {name}", function=noop, params_model=_EmptyParams)
 
 
+async def _auth_ok(ctx: ToolContext) -> str | None:
+    return None
+
+
+async def _auth_fail_qb(ctx: ToolContext) -> str | None:
+    return "QuickBooks is not connected. Authenticate via web dashboard."
+
+
 def _build_auth_test_registry() -> ToolRegistry:
     """Build a registry with auth_check-enabled specialists."""
     registry = ToolRegistry()
@@ -40,7 +48,7 @@ def _build_auth_test_registry() -> ToolRegistry:
         lambda ctx: [_make_tool("get_heartbeat")],
         core=False,
         summary="Manage heartbeats",
-        auth_check=lambda ctx: None,  # always authenticated
+        auth_check=_auth_ok,  # always authenticated
     )
     # Specialist that fails auth (not authenticated)
     registry.register(
@@ -48,7 +56,7 @@ def _build_auth_test_registry() -> ToolRegistry:
         lambda ctx: [],
         core=False,
         summary="QuickBooks accounting tools",
-        auth_check=lambda ctx: "QuickBooks is not connected. Authenticate via web dashboard.",
+        auth_check=_auth_fail_qb,
     )
     # Specialist without auth_check (legacy, always available)
     registry.register(
@@ -64,7 +72,7 @@ def _build_auth_test_registry() -> ToolRegistry:
 class TestGetAvailableSpecialistSummaries:
     """get_available_specialist_summaries excludes unauthenticated factories."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_excludes_unauthenticated_specialist(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=MagicMock())
@@ -73,14 +81,14 @@ class TestGetAvailableSpecialistSummaries:
         assert "file" in summaries
         assert "quickbooks" not in summaries
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_includes_factory_without_auth_check(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=MagicMock())
         summaries = await registry.get_available_specialist_summaries(ctx)
         assert "file" in summaries
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_includes_factory_with_passing_auth_check(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"))
@@ -91,7 +99,7 @@ class TestGetAvailableSpecialistSummaries:
 class TestGetUnauthenticatedSpecialists:
     """get_unauthenticated_specialists returns only auth-failing factories."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_returns_unauthenticated_factory(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=MagicMock())
@@ -99,28 +107,28 @@ class TestGetUnauthenticatedSpecialists:
         assert "quickbooks" in unauth
         assert "not connected" in unauth["quickbooks"].lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_excludes_authenticated_factory(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"))
         unauth = await registry.get_unauthenticated_specialists(ctx)
         assert "heartbeat" not in unauth
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_excludes_factory_without_auth_check(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=MagicMock())
         unauth = await registry.get_unauthenticated_specialists(ctx)
         assert "file" not in unauth
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_excludes_core_factories(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"))
         unauth = await registry.get_unauthenticated_specialists(ctx)
         assert "workspace" not in unauth
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_respects_excluded_factories(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"))
@@ -129,7 +137,7 @@ class TestGetUnauthenticatedSpecialists:
         )
         assert "quickbooks" not in unauth
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_empty_when_all_authenticated(self) -> None:
         registry = ToolRegistry()
         registry.register(
@@ -137,7 +145,7 @@ class TestGetUnauthenticatedSpecialists:
             lambda ctx: [_make_tool("get_heartbeat")],
             core=False,
             summary="Manage heartbeats",
-            auth_check=lambda ctx: None,
+            auth_check=_auth_ok,
         )
         ctx = ToolContext(user=User(id="1"))
         unauth = await registry.get_unauthenticated_specialists(ctx)
@@ -204,7 +212,7 @@ class TestListCapabilitiesWithUnauthenticated:
 class TestQuickBooksAuthCheck:
     """QuickBooks auth_check function works correctly."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_returns_none_when_not_configured(self) -> None:
         from unittest.mock import patch
 
@@ -216,9 +224,9 @@ class TestQuickBooksAuthCheck:
             ctx = ToolContext(user=User(id="test-user"))
             assert await _quickbooks_auth_check(ctx) is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_returns_none_when_authenticated(self) -> None:
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, patch
 
         from backend.app.integrations.quickbooks.factory import _quickbooks_auth_check
 
@@ -235,9 +243,9 @@ class TestQuickBooksAuthCheck:
             ctx = ToolContext(user=User(id="test-user"))
             assert await _quickbooks_auth_check(ctx) is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_returns_reason_when_no_token(self) -> None:
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, patch
 
         from backend.app.integrations.quickbooks.factory import _quickbooks_auth_check
 
@@ -257,7 +265,7 @@ class TestQuickBooksAuthCheck:
 class TestCalendarAuthCheck:
     """Google Calendar auth_check function works correctly."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_returns_none_when_not_configured(self) -> None:
         from unittest.mock import patch
 
@@ -269,9 +277,9 @@ class TestCalendarAuthCheck:
             ctx = ToolContext(user=User(id="test-user"))
             assert await _calendar_auth_check(ctx) is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_returns_none_when_authenticated(self) -> None:
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, patch
 
         from backend.app.integrations.calendar.factory import _calendar_auth_check
 
@@ -287,9 +295,9 @@ class TestCalendarAuthCheck:
             ctx = ToolContext(user=User(id="test-user"))
             assert await _calendar_auth_check(ctx) is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio()
     async def test_returns_reason_when_no_token(self) -> None:
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, patch
 
         from backend.app.integrations.calendar.factory import _calendar_auth_check
 

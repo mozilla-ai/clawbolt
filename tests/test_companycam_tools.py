@@ -271,7 +271,7 @@ class TestTagsJsonStringCoercion:
         assert p.tags == ["before", "kitchen"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_companycam_auth_check_not_connected() -> None:
     """Auth check should return a reason when OAuth is not connected."""
     from backend.app.config import settings
@@ -295,7 +295,7 @@ async def test_companycam_auth_check_not_connected() -> None:
     assert "manage_integration" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_companycam_auth_check_connected() -> None:
     """Auth check should return None when OAuth is connected."""
     from backend.app.config import settings
@@ -317,7 +317,7 @@ async def test_companycam_auth_check_connected() -> None:
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_companycam_auth_check_not_configured() -> None:
     """Auth check should return None (hide tools) when OAuth creds are not configured."""
     from backend.app.config import settings

@@ -33,7 +33,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.bus import OutboundMessage
 from backend.app.config import settings
-from backend.app.database import AsyncSessionLocal, db_session_async, get_async_engine
+from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import ApprovalEvent, PendingApprovalRow, UserPermissionSet
 
 logger = logging.getLogger(__name__)
@@ -45,23 +45,20 @@ logger = logging.getLogger(__name__)
 
 
 def _user_permissions_lock_key(user_id: str) -> str:
-    """Stable string key for the per-user permissions advisory lock.
-
-    Shared between sync and async callers so the two paths contend on
-    the same key.
-    """
+    """Stable string key for the per-user permissions advisory lock."""
     return f"user_permissions:{user_id}"
 
 
-async def _lock_user_permissions_async(db: Any, user_id: str) -> None:
-    """Async peer of ``_lock_user_permissions``.
+async def _lock_user_permissions(db: Any, user_id: str) -> None:
+    """Acquire a transaction-scoped Postgres advisory lock for this user's
+    permissions row.
 
-    Same ``pg_advisory_xact_lock`` semantics: the lock is bound to the
-    surrounding transaction and released only on COMMIT / ROLLBACK of
-    that transaction. ``db`` is an ``AsyncSession`` (or any handle that
-    awaits ``execute(...)``); the caller must hold the lock and the
-    matching read+write inside a single ``async with db.begin()`` /
-    ``async with db_session_async()`` block so the autobegun
+    Serializes concurrent read-modify-write sequences across workers and
+    requests. The lock is bound to the surrounding transaction and
+    released only on COMMIT / ROLLBACK of that transaction. ``db`` is
+    an ``AsyncSession`` (or any handle that awaits ``execute(...)``);
+    the caller must hold the lock and the matching read+write inside a
+    single ``async with db_session_async()`` block so the autobegun
     transaction owns the lock.
     """
     await db.execute(
@@ -86,11 +83,6 @@ def _parse_row_data(row: UserPermissionSet | None) -> dict[str, Any]:
 
 
 def _select_user_permissions(user_id: str) -> Any:
-    """Select the ``UserPermissionSet`` row for one user.
-
-    Shared between sync and async paths so the query shape stays in
-    lockstep across the dual-API surface.
-    """
     return select(UserPermissionSet).filter_by(user_id=user_id)
 
 
@@ -232,16 +224,24 @@ class ApprovalStore:
     """
 
     async def _load(self, user_id: str) -> dict[str, Any]:
-        """Load the raw permissions blob for one user."""
         async with db_session_async() as db:
             row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             return _parse_row_data(row)
 
     async def _save(self, user_id: str, data: dict[str, Any]) -> None:
-        """Wholesale replace guarded by the per-user advisory lock."""
+        """Wholesale replace. Serialized against concurrent writers via an
+        advisory lock keyed on the user so the dashboard PUT can't race
+        with set_permission or a workspace_tools write on the same row.
+
+        Acquires the per-user ``pg_advisory_xact_lock`` on the same
+        AsyncSession that performs the read+write. The lock and the
+        DML share one autobegun transaction, so the lock is released
+        only when ``await db.commit()`` (handled by
+        ``db_session_async``) ends that transaction.
+        """
         payload = json.dumps(data, indent=2, default=str)
         async with db_session_async() as db:
-            await _lock_user_permissions_async(db, user_id)
+            await _lock_user_permissions(db, user_id)
             row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             if row is None:
                 db.add(UserPermissionSet(user_id=user_id, data=payload))
@@ -249,8 +249,12 @@ class ApprovalStore:
                 row.data = payload
             await db.commit()
 
-    async def load_user_permissions_async(self, user_id: str) -> dict[str, Any]:
-        """Load the raw permission data for a user."""
+    async def load_user_permissions(self, user_id: str) -> dict[str, Any]:
+        """Load the raw permission data for a user.
+
+        Use with :meth:`resolve_permission` for bulk lookups to avoid
+        repeated DB reads.
+        """
         return await self._load(user_id)
 
     @staticmethod
@@ -280,14 +284,17 @@ class ApprovalStore:
 
         return default
 
-    async def check_permission_async(
+    async def check_permission(
         self,
         user_id: str,
         tool_name: str,
         resource: str | None = None,
         default: PermissionLevel = PermissionLevel.ASK,
     ) -> PermissionLevel:
-        """Check the stored permission for a tool (and optional resource)."""
+        """Check the stored permission for a tool (and optional resource).
+
+        Resolution order: resource match (exact then glob) > tool match > default.
+        """
         data = await self._load(user_id)
         return self.resolve_permission(data, tool_name, resource, default)
 
@@ -305,7 +312,7 @@ class ApprovalStore:
                 tools[st.name] = st.default_permission
         return {"version": _PERMISSIONS_VERSION, "tools": tools, "resources": {}}
 
-    async def ensure_complete_async(self, user_id: str) -> dict[str, Any]:
+    async def ensure_complete(self, user_id: str) -> dict[str, Any]:
         """Load permissions, backfilling any missing tools with defaults."""
         data = await self._load(user_id)
         defaults = self.generate_defaults(user_id)
@@ -318,20 +325,36 @@ class ApprovalStore:
             await self._save(user_id, data)
         return data
 
-    async def reset_permissions_async(self, user_id: str) -> None:
+    async def reset_permissions(self, user_id: str) -> None:
         """Reset all permissions to defaults."""
         await self._save(user_id, self.generate_defaults(user_id))
 
-    async def set_permission_async(
+    async def set_permission(
         self,
         user_id: str,
         tool_name: str,
         level: PermissionLevel,
         resource: str | None = None,
     ) -> None:
-        """Store a permission override atomically."""
+        """Store a permission override atomically.
+
+        Runs the read-modify-write inside a single transaction guarded by
+        a Postgres advisory lock keyed on the user. Otherwise two
+        concurrent callers (the approval gate persisting an Always, the
+        dashboard PUT, and/or an agent edit_file) could read the same
+        snapshot and overwrite each other -- classic lost update. The
+        lock plus same-transaction read+write closes the window.
+
+        Backfills the complete tool list before writing so setting one
+        permission doesn't drop other entries.
+
+        ``db_session_async`` calls ``await db.commit()`` implicitly via
+        its context manager exit only on success; rollback on exception
+        drops the lock too. Either way the transaction-scoped lock
+        cannot leak past this method.
+        """
         async with db_session_async() as db:
-            await _lock_user_permissions_async(db, user_id)
+            await _lock_user_permissions(db, user_id)
             row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             data = _parse_row_data(row)
 
@@ -638,12 +661,12 @@ async def cleanup_orphaned_approvals(
       * Fresh rows whose publish fails stay in the table for a later
         restart to retry. The age gate caps how long that can loop.
     """
-    lock_conn = await get_async_engine().connect()
+    db = AsyncSessionLocal()
     lock_acquired = False
     try:
         try:
             got_lock = (
-                await lock_conn.execute(
+                await db.execute(
                     text("SELECT pg_try_advisory_lock(hashtext(:k))"),
                     {"k": _CLEANUP_LOCK_KEY},
                 )
@@ -651,7 +674,7 @@ async def cleanup_orphaned_approvals(
             # Close the implicit read transaction so we aren't idle-in-
             # transaction through publish_outbound below. The advisory
             # lock is session-scoped and survives the commit.
-            await lock_conn.commit()
+            await db.commit()
         except Exception:
             logger.exception("Failed to acquire orphan-cleanup advisory lock")
             return 0
@@ -661,14 +684,9 @@ async def cleanup_orphaned_approvals(
         lock_acquired = True
 
         try:
-            db = AsyncSessionLocal()
-            try:
-                rows = (await db.execute(select(PendingApprovalRow))).scalars().all()
-                snapshot = [
-                    (r.user_id, r.tool_name, r.channel, r.chat_id, r.created_at) for r in rows
-                ]
-            finally:
-                await db.close()
+            rows = (await db.execute(select(PendingApprovalRow))).scalars().all()
+            snapshot = [(r.user_id, r.tool_name, r.channel, r.chat_id, r.created_at) for r in rows]
+            await db.commit()
         except Exception:
             logger.exception("Failed to load orphaned approvals on startup")
             return 0
@@ -729,14 +747,14 @@ async def cleanup_orphaned_approvals(
     finally:
         if lock_acquired:
             try:
-                await lock_conn.execute(
+                await db.execute(
                     text("SELECT pg_advisory_unlock(hashtext(:k))"),
                     {"k": _CLEANUP_LOCK_KEY},
                 )
-                await lock_conn.commit()
+                await db.commit()
             except Exception:
                 logger.exception("Failed to release orphan-cleanup advisory lock")
-        await lock_conn.close()
+        await db.close()
 
 
 # ---------------------------------------------------------------------------

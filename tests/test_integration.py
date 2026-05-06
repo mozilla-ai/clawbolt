@@ -6,6 +6,7 @@ InboundMessage -> process_inbound_from_bus -> agent pipeline -> outbound
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
 
 from backend.app.agent.file_store import (
     StoredMessage,
@@ -14,8 +15,8 @@ from backend.app.agent.file_store import (
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.session_db import get_session_store
 from backend.app.bus import message_bus
+from backend.app.database import db_session_async
 from backend.app.models import User
-from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import make_text_response
 
 
@@ -97,19 +98,20 @@ async def test_full_message_round_trip_new_user() -> None:
     # User was auto-created
     from backend.app.models import ChannelRoute
 
-    db = open_test_db_session()
-    try:
-        route = db.query(ChannelRoute).filter_by(channel_identifier="777888999").first()
+    async with db_session_async() as db:
+        route = (
+            await db.execute(select(ChannelRoute).filter_by(channel_identifier="777888999"))
+        ).scalar_one_or_none()
         if route:
-            user = db.query(User).filter_by(id=route.user_id).first()
+            user = (await db.execute(select(User).filter_by(id=route.user_id))).scalar_one_or_none()
             if user:
                 db.expunge(user)
         else:
-            user = db.query(User).filter_by(channel_identifier="777888999").first()
+            user = (
+                await db.execute(select(User).filter_by(channel_identifier="777888999"))
+            ).scalar_one_or_none()
             if user:
                 db.expunge(user)
-    finally:
-        db.close()
     assert user is not None
 
     # Messages stored

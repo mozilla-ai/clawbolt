@@ -1,5 +1,6 @@
 """Tests for runtime webhook secret validation."""
 
+import asyncio
 from collections.abc import Generator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
@@ -14,10 +15,10 @@ from backend.app.config import (
     get_effective_webhook_secret,
     settings,
 )
+from backend.app.database import db_session_async
 from backend.app.main import app
 from backend.app.models import User
 from backend.app.services.rate_limiter import check_webhook_rate_limit
-from tests.db_test_utils import open_test_db_session
 from tests.mocks.telegram import make_telegram_update_payload
 
 _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
@@ -35,20 +36,21 @@ def _make_client(
     with patch.object(settings, "data_dir", data_dir):
         reset_stores()
 
-        db = open_test_db_session()
-        try:
-            user = User(
-                user_id="secret-test-user",
-                phone="+15550000000",
-                channel_identifier="999999",
-                preferred_channel="telegram",
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            db.expunge(user)
-        finally:
-            db.close()
+        async def _create_user() -> User:
+            async with db_session_async() as db:
+                user = User(
+                    user_id="secret-test-user",
+                    phone="+15550000000",
+                    channel_identifier="999999",
+                    preferred_channel="telegram",
+                )
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+                db.expunge(user)
+                return user
+
+        user = asyncio.run(_create_user())
 
         def _override_get_current_user() -> User:
             return user

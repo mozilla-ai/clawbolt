@@ -25,7 +25,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.config import settings
-from backend.app.database import AsyncSessionLocal, db_session_async, get_async_engine
+from backend.app.database import db_session_async, get_async_engine
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ _LOCK_MAX_WAIT_S = 5.0
 
 
 async def _try_acquire_advisory_lock_async(conn: Any, lock_key: str) -> bool:
-    """Async-safe bounded acquire of a session-scoped advisory lock.
+    """Bounded acquire of a session-scoped advisory lock.
 
     Returns True on acquire, False if the wait expires. Uses
     ``await asyncio.sleep`` between polls so the event loop stays
@@ -302,28 +302,6 @@ class OAuthService:
             self._http = httpx.AsyncClient(timeout=30.0)
         return self._http
 
-    @staticmethod
-    def _row_to_token(row: Any) -> OAuthTokenData:
-        try:
-            scopes = json.loads(row.scopes_json) if row.scopes_json else []
-        except json.JSONDecodeError:
-            scopes = []
-
-        try:
-            extra = json.loads(row.extra_json) if row.extra_json else {}
-        except json.JSONDecodeError:
-            extra = {}
-
-        return OAuthTokenData(
-            access_token=row.access_token,
-            refresh_token=row.refresh_token,
-            token_type=row.token_type,
-            expires_at=row.expires_at,
-            scopes=scopes,
-            realm_id=row.realm_id,
-            extra=extra,
-        )
-
     # -- Authorization URL generation ------------------------------------------
 
     def get_authorization_url(
@@ -515,8 +493,7 @@ class OAuthService:
             user_id,
             integration,
         )
-        db = AsyncSessionLocal()
-        try:
+        async with db_session_async() as db:
             row = (
                 await db.execute(
                     select(OAuthToken).where(
@@ -525,19 +502,35 @@ class OAuthService:
                     )
                 )
             ).scalar_one_or_none()
-        finally:
-            await db.close()
 
-        if row is None:
-            self._token_cache[cache_key] = (
-                None,
-                now + _NEGATIVE_TOKEN_CACHE_TTL_SECONDS,
+            if row is None:
+                self._token_cache[cache_key] = (
+                    None,
+                    now + _NEGATIVE_TOKEN_CACHE_TTL_SECONDS,
+                )
+                return None
+
+            try:
+                scopes = json.loads(row.scopes_json) if row.scopes_json else []
+            except json.JSONDecodeError:
+                scopes = []
+
+            try:
+                extra = json.loads(row.extra_json) if row.extra_json else {}
+            except json.JSONDecodeError:
+                extra = {}
+
+            token = OAuthTokenData(
+                access_token=row.access_token,
+                refresh_token=row.refresh_token,
+                token_type=row.token_type,
+                expires_at=row.expires_at,
+                scopes=scopes,
+                realm_id=row.realm_id,
+                extra=extra,
             )
-            return None
-
-        token = self._row_to_token(row)
-        self._token_cache[cache_key] = (token, now + _TOKEN_CACHE_TTL_SECONDS)
-        return token
+            self._token_cache[cache_key] = (token, now + _TOKEN_CACHE_TTL_SECONDS)
+            return token
 
     async def _load_token_uncached(
         self,
@@ -609,7 +602,7 @@ class OAuthService:
         user_id: str,
         integration: str,
     ) -> Callable[[str, str, float], Awaitable[None]]:
-        """Return a callback that persists tokens refreshed mid-call by a service.
+        """Return an async callback that persists tokens refreshed mid-call by a service.
 
         Provider services (QuickBooks, Google Calendar) refresh on 401 and
         rotate ``refresh_token`` for some providers. Without persisting, the
@@ -619,15 +612,17 @@ class OAuthService:
         The callback preserves fields the service does not know about
         (realm_id, scopes, extra) by loading the current row before saving.
 
-        The callback is async because provider services now run on the
-        async-only DB surface. The load + save runs under a session-scoped
-        advisory lock keyed on ``(user_id, integration)`` so two concurrent
-        service refreshes can't both read the old row and overwrite each
-        other (losing the rotated refresh_token from whichever callback runs
-        second).
+        The load + save runs under a session-scoped advisory lock keyed on
+        ``(user_id, integration)`` so two concurrent service refreshes can't
+        both read the old row and overwrite each other (losing the rotated
+        refresh_token from whichever callback runs second).
         """
 
         async def _persist(access_token: str, refresh_token: str, expires_at: float) -> None:
+            # See ``refresh_token`` for why the lock must live on a
+            # ``Connection``, not a ``Session``: ``Session.commit()``
+            # returns the underlying connection to the pool and lets a
+            # peer enter the critical section.
             lock_conn = await get_async_engine().connect()
             lock_key = _refresh_lock_key(user_id, integration)
             try:
@@ -745,7 +740,9 @@ class OAuthService:
         # connection to the pool, where a peer coroutine can check it
         # out and call ``pg_try_advisory_lock`` on it (locks are
         # reentrant per PG session), letting both callers enter the
-        # critical section.
+        # critical section. The advisory lock must stay pinned to the
+        # same physical connection from acquire through unlock; only
+        # ``AsyncConnection`` provides that pinning.
         lock_conn = await get_async_engine().connect()
         lock_key = _refresh_lock_key(user_id, integration)
         try:
@@ -935,8 +932,7 @@ class OAuthService:
             from backend.app.bus import OutboundMessage, message_bus
             from backend.app.models import ChannelRoute
 
-            db = AsyncSessionLocal()
-            try:
+            async with db_session_async() as db:
                 route = (
                     (
                         await db.execute(
@@ -949,8 +945,6 @@ class OAuthService:
                     .scalars()
                     .first()
                 )
-            finally:
-                await db.close()
 
             if route is None:
                 logger.debug(
@@ -1116,8 +1110,7 @@ class OAuthRefreshScheduler:
             .where(ChannelRoute.last_inbound_at.is_not(None))
             .where(ChannelRoute.last_inbound_at > activity_cutoff)
         )
-        db = AsyncSessionLocal()
-        try:
+        async with db_session_async() as db:
             rows = (
                 await db.execute(
                     select(OAuthToken.user_id, OAuthToken.integration)
@@ -1127,8 +1120,6 @@ class OAuthRefreshScheduler:
                     .where(OAuthToken.user_id.in_(active_user_ids))
                 )
             ).all()
-        finally:
-            await db.close()
         if not rows:
             return 0
         logger.info("OAuth refresh sweep: %d token(s) due for refresh", len(rows))

@@ -1416,43 +1416,6 @@ async def test_process_message_injects_summary_when_trimming(
     assert "[Summary of earlier conversation:" in sent_messages[0]["content"]
 
 
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_process_message_awaits_trim_compaction_hook(
-    mock_amessages: AsyncMock,
-    test_user: User,
-) -> None:
-    """Successful trimmed turns must await the compaction hook."""
-    mock_amessages.return_value = make_text_response("Ok!")
-
-    big_content = "x" * 4000
-    long_history: list[AgentMessage] = [
-        UserMessage(content=f"Topic {i}: {big_content}")
-        if i % 2 == 0
-        else AssistantMessage(content=big_content)
-        for i in range(150)
-    ]
-
-    agent = ClawboltAgent(user=test_user)
-    agent._last_input_tokens = 1_200_000
-
-    with patch(
-        "backend.app.agent.context.trigger_compaction_for_dropped",
-        new_callable=AsyncMock,
-    ) as mock_trigger:
-        await agent.process_message(
-            "Current message",
-            conversation_history=long_history,
-            system_prompt_override="Short system prompt",
-        )
-
-    mock_trigger.assert_awaited_once()
-    awaited_args = mock_trigger.await_args
-    assert awaited_args is not None
-    assert awaited_args.args[0] == test_user.id
-    assert awaited_args.args[1], "trimmed history should be passed to compaction"
-
-
 # ---------------------------------------------------------------------------
 # Dict-based tool registry tests (issue #282)
 # ---------------------------------------------------------------------------

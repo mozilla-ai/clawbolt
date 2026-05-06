@@ -3,6 +3,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import select
 
 from backend.app.agent.file_store import (
     SessionState,
@@ -18,8 +20,8 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.models import User
-from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import extract_system_text, make_text_response, make_tool_call_response
 
 
@@ -147,6 +149,34 @@ async def test_provision_user_creates_bootstrap_and_seeds_db() -> None:
         assert is_onboarding_needed(user) is True
 
 
+async def test_provision_user_commit_false_leaves_commit_to_caller() -> None:
+    """provision_user(commit=False) should not commit the caller's transaction."""
+    from backend.app.agent.user_db import provision_user
+    from backend.app.database import db_session_async
+
+    user_id = "provision-no-commit"
+    async with db_session_async() as db:
+        user = User(id=user_id, user_id="provision-no-commit-user")
+        db.add(user)
+        await db.flush()
+
+        await provision_user(user, db, commit=False)
+
+        assert user.soul_text
+        assert user.user_text
+        assert (
+            await db.execute(select(User).where(User.id == user_id))
+        ).scalar_one_or_none() is not None
+
+        await db.rollback()
+
+    async with db_session_async() as verify_db:
+        persisted = (
+            await verify_db.execute(select(User).where(User.id == user_id))
+        ).scalar_one_or_none()
+        assert persisted is None
+
+
 async def test_provision_skips_bootstrap_when_onboarding_complete() -> None:
     """provision_user should not create BOOTSTRAP.md for onboarded users."""
     from backend.app.agent.user_db import provision_user
@@ -246,13 +276,11 @@ def test_build_onboarding_system_prompt_includes_instructions() -> None:
 # --- Fixtures ---
 
 
-@pytest.fixture()
-def new_user() -> User:
+@pytest_asyncio.fixture()
+async def new_user() -> User:
     """User with no profile, needs onboarding."""
-
     # Create in DB so onboarding subscriber can find it
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db_user = User(
             id="20",
             user_id="new-user-onboard",
@@ -260,9 +288,7 @@ def new_user() -> User:
             channel_identifier="999999999",
         )
         db.add(db_user)
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="20",
@@ -374,13 +400,10 @@ async def test_onboarding_completes_when_bootstrap_deleted(
         channel="telegram",
     )
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=new_user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=new_user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
     # Heartbeat items remain empty; users add them as needed
@@ -441,8 +464,7 @@ async def test_prepopulated_user_gets_onboarding_complete(
     """
     user_md = "# User\n\n- Name: Alice\n- Timezone: America/New_York\n- Trade: GC\n"
     soul_md = "# Soul\n\nDirect and practical."
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db.add(
             User(
                 id="30",
@@ -454,9 +476,7 @@ async def test_prepopulated_user_gets_onboarding_complete(
                 soul_text=soul_md,
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="30",
@@ -502,13 +522,10 @@ async def test_prepopulated_user_gets_onboarding_complete(
         channel="telegram",
     )
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -525,8 +542,7 @@ async def test_empty_user_without_bootstrap_self_heals_and_onboards(
     real bug where BOOTSTRAP.md had been wiped (e.g. OAuth re-login after
     admin delete) and silently skipped onboarding forever.
     """
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db.add(
             User(
                 id="30b",
@@ -535,9 +551,7 @@ async def test_empty_user_without_bootstrap_self_heals_and_onboards(
                 preferred_channel="telegram",
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="30b",
@@ -571,13 +585,10 @@ async def test_empty_user_without_bootstrap_self_heals_and_onboards(
     # BOOTSTRAP.md should have been re-created by the self-heal
     assert (Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md").exists()
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     # Still onboarding: flag was NOT auto-flipped
     assert refreshed.onboarding_complete is False
@@ -595,8 +606,7 @@ async def test_prepopulated_user_included_in_heartbeat(
 
     user_md = "# User\n\n- Name: Alice\n- Timezone: America/Denver\n- Trade: roofer\n"
     soul_md = "# Soul\n\nFriendly and direct."
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db.add(
             User(
                 id="31",
@@ -610,9 +620,7 @@ async def test_prepopulated_user_included_in_heartbeat(
                 soul_text=soul_md,
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="31",
@@ -657,13 +665,10 @@ async def test_prepopulated_user_included_in_heartbeat(
         channel="telegram",
     )
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -911,8 +916,7 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     name + timezone + custom soul are present AND the user has sent at
     least MIN_ONBOARDING_USER_MESSAGES messages.
     """
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         # Timezone is set via the dashboard / browser PUT /user/profile flow,
         # not by an in-conversation tool. Pre-populate it so the heuristic
         # has the timezone signal it expects from the DB column.
@@ -925,9 +929,7 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
                 timezone="America/New_York",
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="140",
@@ -997,13 +999,10 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert not bootstrap.exists()
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
     # Heartbeat items remain empty; users add them as needed
@@ -1024,8 +1023,7 @@ async def test_heuristic_does_not_fire_when_only_name_set_early(
     collected. With AND-logic + the user-message gate, this turn must
     leave the user still in onboarding.
     """
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db.add(
             User(
                 id="141",
@@ -1034,9 +1032,7 @@ async def test_heuristic_does_not_fire_when_only_name_set_early(
                 preferred_channel="telegram",
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="141",
@@ -1090,13 +1086,10 @@ async def test_heuristic_does_not_fire_when_only_name_set_early(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert bootstrap.exists()
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is False
 
@@ -1113,8 +1106,7 @@ async def test_heuristic_blocked_by_message_count_gate(
     onboarding until at least MIN_ONBOARDING_USER_MESSAGES turns have
     happened. This is the second layer of defense.
     """
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db.add(
             User(
                 id="142",
@@ -1123,9 +1115,7 @@ async def test_heuristic_blocked_by_message_count_gate(
                 preferred_channel="telegram",
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="142",
@@ -1184,13 +1174,10 @@ async def test_heuristic_blocked_by_message_count_gate(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert bootstrap.exists()
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is False
 
@@ -1209,8 +1196,7 @@ async def test_onboarding_force_completes_at_max_user_messages(
     """
     from backend.app.agent.onboarding import MAX_ONBOARDING_USER_MESSAGES
 
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db.add(
             User(
                 id="143",
@@ -1219,9 +1205,7 @@ async def test_onboarding_force_completes_at_max_user_messages(
                 preferred_channel="telegram",
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="143",
@@ -1271,13 +1255,10 @@ async def test_onboarding_force_completes_at_max_user_messages(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert not bootstrap.exists()
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -1303,8 +1284,7 @@ async def test_auto_exit_when_name_tz_captured_and_min_turns_reached(
     """
     from backend.app.agent.onboarding import MIN_USER_MESSAGES_FOR_AUTO_EXIT
 
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db.add(
             User(
                 id="201",
@@ -1314,9 +1294,7 @@ async def test_auto_exit_when_name_tz_captured_and_min_turns_reached(
                 timezone="America/Chicago",
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="201",
@@ -1375,13 +1353,10 @@ async def test_auto_exit_when_name_tz_captured_and_min_turns_reached(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert not bootstrap.exists(), "auto-exit should remove BOOTSTRAP.md"
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -1393,8 +1368,7 @@ async def test_auto_exit_does_not_fire_below_min_turns(
 ) -> None:
     """Even with name + timezone captured, auto-exit waits for the message
     floor so the conversation has texture beyond data capture."""
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         db.add(
             User(
                 id="202",
@@ -1404,9 +1378,7 @@ async def test_auto_exit_does_not_fire_below_min_turns(
                 timezone="America/Chicago",
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="202",
@@ -1455,13 +1427,10 @@ async def test_auto_exit_does_not_fire_below_min_turns(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert bootstrap.exists(), "auto-exit should NOT fire on turn 1"
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is False
 
@@ -1474,8 +1443,7 @@ async def test_auto_exit_does_not_fire_without_timezone(
     """Auto-exit requires both name AND timezone. Name alone is not enough."""
     from backend.app.agent.onboarding import MIN_USER_MESSAGES_FOR_AUTO_EXIT
 
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         # Note: no timezone set on the user row.
         db.add(
             User(
@@ -1485,9 +1453,7 @@ async def test_auto_exit_does_not_fire_without_timezone(
                 preferred_channel="telegram",
             )
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     user = User(
         id="203",
@@ -1542,13 +1508,10 @@ async def test_auto_exit_does_not_fire_without_timezone(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert bootstrap.exists(), "auto-exit must NOT fire without timezone"
 
-    db = open_test_db_session()
-    try:
-        refreshed = db.query(User).filter_by(id=user.id).first()
+    async with db_session_async() as db:
+        refreshed = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if refreshed:
             db.expunge(refreshed)
-    finally:
-        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is False
 
@@ -1573,21 +1536,18 @@ async def test_oauth_user_provisioned_on_first_chat() -> None:
     from backend.app.config import settings as app_settings
 
     # Simulate OAuth signup: create a bare User row (no provision_user call)
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         user = User(
             id="oauth-premium-user",
             user_id="google_12345",
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         # Confirm: no soul_text, no user_text, no BOOTSTRAP.md
         assert not user.soul_text
         assert not user.user_text
         assert not user.onboarding_complete
-    finally:
-        db.close()
 
     bootstrap_path = Path(app_settings.data_dir) / "oauth-premium-user" / "BOOTSTRAP.md"
     assert not bootstrap_path.exists()
@@ -1618,8 +1578,7 @@ async def test_preferred_channel_updates_on_channel_switch() -> None:
     from backend.app.models import ChannelRoute
 
     # Create a user who signed up via Telegram
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         user = User(
             id="channel-switch-user",
             user_id="google_switch",
@@ -1627,12 +1586,10 @@ async def test_preferred_channel_updates_on_channel_switch() -> None:
             onboarding_complete=True,
         )
         db.add(user)
-        db.flush()
+        await db.flush()
         db.add(ChannelRoute(user_id=user.id, channel="telegram", channel_identifier="tg_123"))
         db.add(ChannelRoute(user_id=user.id, channel="linq", channel_identifier="linq_456"))
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     # User sends a message via linq (iMessage)
     resolved = await _get_or_create_user("linq", "linq_456")

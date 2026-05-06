@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import Engine, select, text
+from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -13,49 +13,48 @@ from sqlalchemy.ext.asyncio import (
 )
 
 import backend.app.database as _db_module
+from backend.app.database import db_session_async
 from backend.app.models import ChannelRoute, User
-from tests.db_test_utils import get_test_async_db_url, open_test_db_session
 
 
-def test_create_and_read_user() -> None:
+async def test_create_and_read_user() -> None:
     """Insert a User row and read it back."""
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         user = User(user_id="alice@example.com", phone="+15551234567")
         db.add(user)
-        db.flush()
+        await db.flush()
 
-        result = db.query(User).filter_by(user_id="alice@example.com").one()
+        result = (
+            await db.execute(select(User).filter_by(user_id="alice@example.com"))
+        ).scalar_one()
         assert result.user_id == "alice@example.com"
         assert result.phone == "+15551234567"
         assert result.is_active is True
         assert result.onboarding_complete is False
         assert result.id is not None
-    finally:
-        db.close()
 
 
-def test_channel_route_unique_constraint() -> None:
+async def test_channel_route_unique_constraint() -> None:
     """Duplicate (channel, channel_identifier) raises IntegrityError."""
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         user = User(user_id="bob@example.com")
         db.add(user)
-        db.flush()
+        await db.flush()
 
         route1 = ChannelRoute(user_id=user.id, channel="telegram", channel_identifier="12345")
         db.add(route1)
-        db.flush()
+        await db.flush()
 
         route2 = ChannelRoute(user_id=user.id, channel="telegram", channel_identifier="12345")
         db.add(route2)
         with pytest.raises(IntegrityError):
-            db.flush()
-    finally:
-        db.close()
+            await db.flush()
+        # Roll back so the session is usable on context exit; the failed
+        # flush put the transaction into an aborted state.
+        await db.rollback()
 
 
-def test_all_tables_created(_pg_engine: Engine) -> None:
+async def test_all_tables_created(_pg_async_engine_session: AsyncEngine) -> None:
     """All expected tables should exist after create_all."""
     expected = {
         "users",
@@ -69,38 +68,9 @@ def test_all_tables_created(_pg_engine: Engine) -> None:
         "llm_usage_logs",
         "tool_configs",
     }
-    with _pg_engine.connect() as conn:
-        result = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'"))
-        actual = {row[0] for row in result}
+    async with _pg_async_engine_session.connect() as conn:
+        actual = set(await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names()))
     assert expected <= actual
-
-
-def test_sync_database_url_pins_psycopg3_driver() -> None:
-    """``_sync_database_url`` routes bare and legacy URLs to psycopg3.
-
-    SQLAlchemy 2.x still resolves ``postgresql://`` to psycopg2 even
-    when only psycopg3 is installed, so we translate explicitly.
-    """
-    # Bare scheme is pinned to psycopg3.
-    assert (
-        _db_module._sync_database_url("postgresql://u:p@h:5432/db")
-        == "postgresql+psycopg://u:p@h:5432/db"
-    )
-    # Legacy psycopg2 prefix is rewritten to psycopg3 for forward compat.
-    assert (
-        _db_module._sync_database_url("postgresql+psycopg2://u:p@h:5432/db")
-        == "postgresql+psycopg://u:p@h:5432/db"
-    )
-    # Already-psycopg3 URLs pass through unchanged.
-    assert (
-        _db_module._sync_database_url("postgresql+psycopg://u:p@h:5432/db")
-        == "postgresql+psycopg://u:p@h:5432/db"
-    )
-    # Async URLs are left alone (the async path handles them).
-    assert (
-        _db_module._sync_database_url("postgresql+asyncpg://u:p@h:5432/db")
-        == "postgresql+asyncpg://u:p@h:5432/db"
-    )
 
 
 def test_async_database_url_translates_postgresql_prefix() -> None:
@@ -151,10 +121,15 @@ def test_async_engine_singleton_and_pool_settings() -> None:
 async def test_async_session_can_execute_trivial_select() -> None:
     """End-to-end smoke: an ``AsyncSession`` can run ``select(1)``.
 
-    Builds its own engine so the test only exercises the async runtime
-    wiring in ``backend.app.database``.
+    Builds its own engine so the test does not depend on the conftest
+    sync-rollback fixture (which manipulates ``_engine`` /
+    ``_SessionLocal`` only). This is the foundation-level proof that
+    asyncpg + async_sessionmaker + ``AsyncSession`` are wired
+    correctly. Per-store dual-API conversions live in #1150-1157.
     """
-    url = get_test_async_db_url()
+    url = _db_module._async_database_url(
+        "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+    )
     engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
     factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         bind=engine, autoflush=False, expire_on_commit=False
@@ -173,7 +148,9 @@ async def test_db_session_async_rollback_on_exception() -> None:
     Mirrors the sync ``db_session`` lifecycle contract: exceptions
     trigger rollback before the session closes.
     """
-    url = get_test_async_db_url()
+    url = _db_module._async_database_url(
+        "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+    )
     engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
     factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         bind=engine, autoflush=False, expire_on_commit=False
@@ -191,13 +168,12 @@ async def test_db_session_async_rollback_on_exception() -> None:
         await engine.dispose()
 
 
-def test_user_defaults() -> None:
+async def test_user_defaults() -> None:
     """User model has correct defaults."""
-    db = open_test_db_session()
-    try:
+    async with db_session_async() as db:
         user = User(user_id="defaults@test.com")
         db.add(user)
-        db.flush()
+        await db.flush()
 
         assert user.preferred_channel == "telegram"
         assert user.heartbeat_opt_in is True
@@ -207,5 +183,3 @@ def test_user_defaults() -> None:
         assert user.heartbeat_text == ""
         assert user.created_at is not None
         assert user.updated_at is not None
-    finally:
-        db.close()

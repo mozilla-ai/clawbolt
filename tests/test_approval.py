@@ -1,7 +1,7 @@
 """Tests for the progressive approval system."""
 
 import asyncio
-import time
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -29,8 +29,8 @@ from backend.app.agent.ingestion import (
 )
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage
+from backend.app.database import db_session_async
 from backend.app.models import User
-from tests.db_test_utils import test_db_session
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -74,66 +74,59 @@ def _describe_fetch(args: dict[str, object]) -> str:
 class TestApprovalStore:
     async def test_default_permission(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        level = await store.check_permission_async("1", "web_search", default=PermissionLevel.ASK)
+        level = await store.check_permission("1", "web_search", default=PermissionLevel.ASK)
         assert level == PermissionLevel.ASK
 
     async def test_tool_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        await store.set_permission_async("1", "web_search", PermissionLevel.ALWAYS)
-        level = await store.check_permission_async("1", "web_search", default=PermissionLevel.ASK)
+        await store.set_permission("1", "web_search", PermissionLevel.ALWAYS)
+        level = await store.check_permission("1", "web_search", default=PermissionLevel.ASK)
         assert level == PermissionLevel.ALWAYS
 
     async def test_resource_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        await store.set_permission_async(
-            "1",
-            "web_fetch",
-            PermissionLevel.ALWAYS,
-            resource="homedepot.com",
+        await store.set_permission(
+            "1", "web_fetch", PermissionLevel.ALWAYS, resource="homedepot.com"
         )
-        level = await store.check_permission_async(
+        level = await store.check_permission(
             "1", "web_fetch", resource="homedepot.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.ALWAYS
 
     async def test_glob_matching(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        await store.set_permission_async("1", "web_fetch", PermissionLevel.ALWAYS, resource="*.gov")
-        level = await store.check_permission_async(
+        await store.set_permission("1", "web_fetch", PermissionLevel.ALWAYS, resource="*.gov")
+        level = await store.check_permission(
             "1", "web_fetch", resource="permits.gov", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.ALWAYS
 
     async def test_resource_priority_over_tool(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        await store.set_permission_async("1", "web_fetch", PermissionLevel.DENY)
-        await store.set_permission_async(
-            "1", "web_fetch", PermissionLevel.ALWAYS, resource="safe.com"
-        )
-        level = await store.check_permission_async(
+        await store.set_permission("1", "web_fetch", PermissionLevel.DENY)
+        await store.set_permission("1", "web_fetch", PermissionLevel.ALWAYS, resource="safe.com")
+        level = await store.check_permission(
             "1", "web_fetch", resource="safe.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.ALWAYS
 
     async def test_falls_through_to_tool_when_no_resource_match(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        await store.set_permission_async("1", "web_fetch", PermissionLevel.DENY)
-        level = await store.check_permission_async(
+        await store.set_permission("1", "web_fetch", PermissionLevel.DENY)
+        level = await store.check_permission(
             "1", "web_fetch", resource="unknown.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.DENY
 
     async def test_persistence_round_trip(self, tmp_path: object) -> None:
         store1 = ApprovalStore()
-        await store1.set_permission_async("1", "web_search", PermissionLevel.ALWAYS)
-        await store1.set_permission_async(
-            "1", "web_fetch", PermissionLevel.DENY, resource="evil.com"
-        )
+        await store1.set_permission("1", "web_search", PermissionLevel.ALWAYS)
+        await store1.set_permission("1", "web_fetch", PermissionLevel.DENY, resource="evil.com")
 
         store2 = ApprovalStore()
-        assert await store2.check_permission_async("1", "web_search") == PermissionLevel.ALWAYS
+        assert await store2.check_permission("1", "web_search") == PermissionLevel.ALWAYS
         assert (
-            await store2.check_permission_async("1", "web_fetch", resource="evil.com")
+            await store2.check_permission("1", "web_fetch", resource="evil.com")
             == PermissionLevel.DENY
         )
 
@@ -167,10 +160,9 @@ class TestApprovalStoreComplete:
         store = ApprovalStore()
         # Start with a partial file
         await store._save(
-            "backfill-user",
-            {"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}},
+            "backfill-user", {"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}}
         )
-        data = await store.ensure_complete_async("backfill-user")
+        data = await store.ensure_complete("backfill-user")
         # send_media_reply should keep its override
         assert data["tools"]["send_media_reply"] == "deny"
         # Other tools should have been backfilled
@@ -187,7 +179,7 @@ class TestApprovalStoreComplete:
                 "resources": {"web_fetch": {"evil.com": "deny"}},
             },
         )
-        data = await store.ensure_complete_async("preserve-user")
+        data = await store.ensure_complete("preserve-user")
         assert data["tools"]["send_media_reply"] == "deny"
         assert data["tools"]["read_file"] == "ask"
         assert data["resources"]["web_fetch"]["evil.com"] == "deny"
@@ -195,8 +187,8 @@ class TestApprovalStoreComplete:
     async def test_reset_permissions_writes_defaults(self, tmp_path: object) -> None:
         """reset_permissions replaces everything with defaults."""
         store = ApprovalStore()
-        await store.set_permission_async("reset-user", "send_media_reply", PermissionLevel.DENY)
-        await store.reset_permissions_async("reset-user")
+        await store.set_permission("reset-user", "send_media_reply", PermissionLevel.DENY)
+        await store.reset_permissions("reset-user")
         data = await store._load("reset-user")
         # send_media_reply should be back to its default, not deny
         defaults = store.generate_defaults("reset-user")
@@ -205,15 +197,20 @@ class TestApprovalStoreComplete:
     async def test_set_permission_preserves_complete_file(self, tmp_path: object) -> None:
         """set_permission does not lose other entries."""
         store = ApprovalStore()
-        await store.ensure_complete_async("set-perm-user")
+        await store.ensure_complete("set-perm-user")
         defaults = store.generate_defaults("set-perm-user")
         original_count = len(defaults["tools"])
 
-        await store.set_permission_async("set-perm-user", "send_media_reply", PermissionLevel.DENY)
+        await store.set_permission("set-perm-user", "send_media_reply", PermissionLevel.DENY)
         data = await store._load("set-perm-user")
         # All tools should still be present
         assert len(data["tools"]) >= original_count
         assert data["tools"]["send_media_reply"] == "deny"
+
+
+# ---------------------------------------------------------------------------
+# ApprovalStore: pg_advisory_xact_lock concurrency regression
+# ---------------------------------------------------------------------------
 
 
 # Note: the threaded ``TestApprovalLockSerialization`` class was removed
@@ -221,7 +218,7 @@ class TestApprovalStoreComplete:
 # The async port lives in ``tests/test_approval_async.py::
 # TestApprovalLockSerializationAsync`` and exercises the same matrix
 # (same-user serializes, different-user runs in parallel) against the
-# now-async ``_lock_user_permissions_async`` helper.
+# now-async ``_lock_user_permissions`` helper.
 class _TestApprovalLockSerializationRemoved:
     """Placeholder so this section's docstring stays in repo history."""
 
@@ -436,17 +433,12 @@ class TestApprovalGate:
         mock_publish = AsyncMock()
 
         async def _observe_and_resolve() -> None:
-            deadline = time.monotonic() + 1.0
-            while True:
-                with test_db_session() as db:
-                    row = db.get(PendingApprovalRow, test_user.id)
-                    if row is not None:
-                        assert row.tool_name == "write_file"
-                        assert row.channel == "telegram"
-                        break
-                if time.monotonic() >= deadline:
-                    pytest.fail("row should exist while approval is in flight")
-                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.01)
+            async with db_session_async() as db:
+                row = await db.get(PendingApprovalRow, test_user.id)
+                assert row is not None, "row should exist while approval is in flight"
+                assert row.tool_name == "write_file"
+                assert row.channel == "telegram"
             await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
 
         task = asyncio.create_task(_observe_and_resolve())
@@ -462,8 +454,8 @@ class TestApprovalGate:
         await task
         assert decision == ApprovalDecision.APPROVED
 
-        with test_db_session() as db:
-            assert db.get(PendingApprovalRow, test_user.id) is None, (
+        async with db_session_async() as db:
+            assert await db.get(PendingApprovalRow, test_user.id) is None, (
                 "row must be deleted once the approval resolves"
             )
 
@@ -474,7 +466,7 @@ class TestApprovalGate:
         from backend.app.agent.approval import cleanup_orphaned_approvals
         from backend.app.models import PendingApprovalRow
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             db.add(
                 PendingApprovalRow(
                     user_id=test_user.id,
@@ -484,7 +476,7 @@ class TestApprovalGate:
                     chat_id="chat_99",
                 )
             )
-            db.commit()
+            await db.commit()
 
         published: list[OutboundMessage] = []
 
@@ -497,8 +489,8 @@ class TestApprovalGate:
         assert len(published) == 1
         assert published[0].chat_id == "chat_99"
         assert "interrupted" in published[0].content.lower()
-        with test_db_session() as db:
-            assert db.get(PendingApprovalRow, test_user.id) is None
+        async with db_session_async() as db:
+            assert await db.get(PendingApprovalRow, test_user.id) is None
 
     @pytest.mark.asyncio()
     async def test_cleanup_drops_malformed_rows_without_publishing(self, test_user: User) -> None:
@@ -507,7 +499,7 @@ class TestApprovalGate:
         from backend.app.agent.approval import cleanup_orphaned_approvals
         from backend.app.models import PendingApprovalRow
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             db.add(
                 PendingApprovalRow(
                     user_id=test_user.id,
@@ -517,7 +509,7 @@ class TestApprovalGate:
                     chat_id="",
                 )
             )
-            db.commit()
+            await db.commit()
 
         published: list[OutboundMessage] = []
 
@@ -528,8 +520,8 @@ class TestApprovalGate:
 
         assert recovered == 0
         assert published == [], "no message should be sent for a malformed row"
-        with test_db_session() as db:
-            assert db.get(PendingApprovalRow, test_user.id) is None
+        async with db_session_async() as db:
+            assert await db.get(PendingApprovalRow, test_user.id) is None
 
     @pytest.mark.asyncio()
     async def test_cleanup_drops_expired_rows_when_publish_fails(self, test_user: User) -> None:
@@ -541,7 +533,7 @@ class TestApprovalGate:
         from backend.app.agent.approval import cleanup_orphaned_approvals
         from backend.app.models import PendingApprovalRow
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             db.add(
                 PendingApprovalRow(
                     user_id=test_user.id,
@@ -552,7 +544,7 @@ class TestApprovalGate:
                     created_at=datetime.now(UTC) - timedelta(days=1),
                 )
             )
-            db.commit()
+            await db.commit()
 
         async def _publish(_msg: OutboundMessage) -> None:
             raise RuntimeError("simulated channel failure")
@@ -560,8 +552,8 @@ class TestApprovalGate:
         recovered = await cleanup_orphaned_approvals(_publish)
 
         assert recovered == 0
-        with test_db_session() as db:
-            assert db.get(PendingApprovalRow, test_user.id) is None
+        async with db_session_async() as db:
+            assert await db.get(PendingApprovalRow, test_user.id) is None
 
     @pytest.mark.asyncio()
     async def test_cleanup_keeps_fresh_rows_when_publish_fails(self, test_user: User) -> None:
@@ -570,7 +562,7 @@ class TestApprovalGate:
         from backend.app.agent.approval import cleanup_orphaned_approvals
         from backend.app.models import PendingApprovalRow
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             db.add(
                 PendingApprovalRow(
                     user_id=test_user.id,
@@ -580,7 +572,7 @@ class TestApprovalGate:
                     chat_id="chat_fresh",
                 )
             )
-            db.commit()
+            await db.commit()
 
         async def _publish(_msg: OutboundMessage) -> None:
             raise RuntimeError("transient channel failure")
@@ -588,8 +580,8 @@ class TestApprovalGate:
         recovered = await cleanup_orphaned_approvals(_publish)
 
         assert recovered == 0
-        with test_db_session() as db:
-            assert db.get(PendingApprovalRow, test_user.id) is not None, (
+        async with db_session_async() as db:
+            assert await db.get(PendingApprovalRow, test_user.id) is not None, (
                 "fresh rows must survive a failed publish"
             )
 
@@ -609,8 +601,8 @@ class TestApprovalGate:
             await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
             # Immediately after resolve returns, the DB row must already be
             # gone, without waiting for request_approval's trailing cleanup.
-            with test_db_session() as db:
-                assert db.get(PendingApprovalRow, test_user.id) is None, (
+            async with db_session_async() as db:
+                assert await db.get(PendingApprovalRow, test_user.id) is None, (
                     "resolve() must delete the row before waking the waiter"
                 )
             woke_after_delete.set()
@@ -638,8 +630,8 @@ class TestApprovalGate:
         await _persist_pending_row(test_user.id, "tool_a", "desc a", "telegram", "chat_1")
         await _persist_pending_row(test_user.id, "tool_b", "desc b", "bluebubbles", "chat_2")
 
-        with test_db_session() as db:
-            row = db.get(PendingApprovalRow, test_user.id)
+        async with db_session_async() as db:
+            row = await db.get(PendingApprovalRow, test_user.id)
             assert row is not None
             assert row.tool_name == "tool_b"
             assert row.channel == "bluebubbles"
@@ -656,7 +648,7 @@ class TestApprovalGate:
         from backend.app.agent.approval import cleanup_orphaned_approvals
         from backend.app.models import PendingApprovalRow
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             db.add(
                 PendingApprovalRow(
                     user_id=test_user.id,
@@ -666,27 +658,28 @@ class TestApprovalGate:
                     chat_id="chat_lock",
                 )
             )
-            db.commit()
+            await db.commit()
 
-        class _LockedResult:
-            def scalar(self) -> bool:
-                return False
+        class _LockedAsyncSession:
+            """AsyncSessionLocal stand-in where pg_try_advisory_lock returns False."""
 
-        class _LockedConn:
-            async def execute(self, *_args: object, **_kwargs: object) -> _LockedResult:
-                return _LockedResult()
+            def __init__(self) -> None:
+                self._closed = False
+
+            async def execute(self, *_args: object, **_kwargs: object) -> Any:
+                class _Result:
+                    def scalar(self) -> bool:
+                        return False
+
+                return _Result()
 
             async def commit(self) -> None:
-                return None
+                pass
 
             async def close(self) -> None:
-                return None
+                self._closed = True
 
-        class _LockedEngine:
-            async def connect(self) -> _LockedConn:
-                return _LockedConn()
-
-        monkeypatch.setattr(approval_module, "get_async_engine", lambda: _LockedEngine())
+        monkeypatch.setattr(approval_module, "AsyncSessionLocal", _LockedAsyncSession)
 
         published: list[OutboundMessage] = []
 
@@ -699,8 +692,8 @@ class TestApprovalGate:
         assert published == [], (
             "no message should be sent when another worker owns the cleanup lock"
         )
-        with test_db_session() as db:
-            assert db.get(PendingApprovalRow, test_user.id) is not None, (
+        async with db_session_async() as db:
+            assert await db.get(PendingApprovalRow, test_user.id) is not None, (
                 "the peer worker that owns the lock must remain responsible for the row"
             )
 
@@ -931,7 +924,7 @@ class TestAgentApproval:
         await task
 
         store = get_approval_store()
-        level = await store.check_permission_async(test_user.id, "fetcher")
+        level = await store.check_permission(test_user.id, "fetcher")
         assert level == PermissionLevel.ALWAYS
 
     @pytest.mark.asyncio()
@@ -976,7 +969,7 @@ class TestAgentApproval:
         await task
 
         store = get_approval_store()
-        level = await store.check_permission_async(test_user.id, "fetcher")
+        level = await store.check_permission(test_user.id, "fetcher")
         assert level == PermissionLevel.DENY
 
     @pytest.mark.asyncio()
@@ -1027,7 +1020,7 @@ class TestAgentApproval:
         )
         # No permission should have been persisted
         store = get_approval_store()
-        level = await store.check_permission_async(test_user.id, "fetcher")
+        level = await store.check_permission(test_user.id, "fetcher")
         assert level == PermissionLevel.ASK  # unchanged from default
 
     @pytest.mark.asyncio()
@@ -1076,7 +1069,7 @@ class TestAgentApproval:
 
         # Neither tool-level nor resource-level permission should be stored
         store = get_approval_store()
-        data = await store.load_user_permissions_async(test_user.id)
+        data = await store.load_user_permissions(test_user.id)
         assert "fetcher" not in data.get("tools", {})
         assert "fetcher" not in data.get("resources", {})
 
@@ -1087,7 +1080,7 @@ class TestAgentApproval:
         mock_publish = AsyncMock()
 
         store = get_approval_store()
-        await store.set_permission_async(test_user.id, "fetcher", PermissionLevel.ALWAYS)
+        await store.set_permission(test_user.id, "fetcher", PermissionLevel.ALWAYS)
 
         tool = Tool(
             name="fetcher",
@@ -1492,6 +1485,8 @@ class TestApprovalEvents:
 
     @pytest.mark.asyncio()
     async def test_requested_and_decided_pair_logged(self, test_user: User) -> None:
+        from sqlalchemy import select
+
         from backend.app.agent.approval import get_approval_event_store
         from backend.app.models import ApprovalEvent
 
@@ -1514,11 +1509,16 @@ class TestApprovalEvents:
         )
         await task
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             rows = (
-                db.query(ApprovalEvent)
-                .filter(ApprovalEvent.user_id == test_user.id)
-                .order_by(ApprovalEvent.id.asc())
+                (
+                    await db.execute(
+                        select(ApprovalEvent)
+                        .filter(ApprovalEvent.user_id == test_user.id)
+                        .order_by(ApprovalEvent.id.asc())
+                    )
+                )
+                .scalars()
                 .all()
             )
         assert [r.event_type for r in rows] == ["requested", "decided"]
@@ -1536,6 +1536,8 @@ class TestApprovalEvents:
 
     @pytest.mark.asyncio()
     async def test_timeout_logs_timed_out_event(self, test_user: User) -> None:
+        from sqlalchemy import select
+
         from backend.app.models import ApprovalEvent
 
         gate = ApprovalGate()
@@ -1552,11 +1554,16 @@ class TestApprovalEvents:
         )
         assert decision == ApprovalDecision.DENIED
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             rows = (
-                db.query(ApprovalEvent)
-                .filter(ApprovalEvent.user_id == test_user.id)
-                .order_by(ApprovalEvent.id.asc())
+                (
+                    await db.execute(
+                        select(ApprovalEvent)
+                        .filter(ApprovalEvent.user_id == test_user.id)
+                        .order_by(ApprovalEvent.id.asc())
+                    )
+                )
+                .scalars()
                 .all()
             )
         assert [r.event_type for r in rows] == ["requested", "timed_out"]
@@ -1565,6 +1572,8 @@ class TestApprovalEvents:
 
     @pytest.mark.asyncio()
     async def test_resolve_records_interrupted_decision(self, test_user: User) -> None:
+        from sqlalchemy import select
+
         from backend.app.models import ApprovalEvent
 
         gate = ApprovalGate()
@@ -1586,11 +1595,16 @@ class TestApprovalEvents:
         )
         await task
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             rows = (
-                db.query(ApprovalEvent)
-                .filter(ApprovalEvent.user_id == test_user.id)
-                .order_by(ApprovalEvent.id.asc())
+                (
+                    await db.execute(
+                        select(ApprovalEvent)
+                        .filter(ApprovalEvent.user_id == test_user.id)
+                        .order_by(ApprovalEvent.id.asc())
+                    )
+                )
+                .scalars()
                 .all()
             )
         assert rows[-1].event_type == "decided"
@@ -1598,10 +1612,12 @@ class TestApprovalEvents:
 
     @pytest.mark.asyncio()
     async def test_recovered_event_logged_on_orphan_cleanup(self, test_user: User) -> None:
+        from sqlalchemy import select
+
         from backend.app.agent.approval import cleanup_orphaned_approvals
         from backend.app.models import ApprovalEvent, PendingApprovalRow
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             db.add(
                 PendingApprovalRow(
                     user_id=test_user.id,
@@ -1611,7 +1627,7 @@ class TestApprovalEvents:
                     chat_id="chat_99",
                 )
             )
-            db.commit()
+            await db.commit()
 
         async def _publish(msg: OutboundMessage) -> None:
             return None
@@ -1619,11 +1635,16 @@ class TestApprovalEvents:
         recovered = await cleanup_orphaned_approvals(_publish)
         assert recovered == 1
 
-        with test_db_session() as db:
+        async with db_session_async() as db:
             rows = (
-                db.query(ApprovalEvent)
-                .filter(ApprovalEvent.user_id == test_user.id)
-                .order_by(ApprovalEvent.id.asc())
+                (
+                    await db.execute(
+                        select(ApprovalEvent)
+                        .filter(ApprovalEvent.user_id == test_user.id)
+                        .order_by(ApprovalEvent.id.asc())
+                    )
+                )
+                .scalars()
                 .all()
             )
         assert [r.event_type for r in rows] == ["recovered"]
@@ -1640,7 +1661,7 @@ class TestApprovalEvents:
 
         old = datetime.now(UTC) - timedelta(hours=2)
         recent = datetime.now(UTC)
-        with test_db_session() as db:
+        async with db_session_async() as db:
             db.add_all(
                 [
                     ApprovalEvent(
@@ -1664,7 +1685,7 @@ class TestApprovalEvents:
                     ),
                 ]
             )
-            db.commit()
+            await db.commit()
 
         store = get_approval_event_store()
         only_recent = await store.list_for_user(
