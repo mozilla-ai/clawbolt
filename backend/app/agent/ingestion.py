@@ -34,7 +34,7 @@ from backend.app.agent.router import handle_inbound_message
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.user_db import provision_user
 from backend.app.config import settings
-from backend.app.database import AsyncSessionLocal, db_session_async
+from backend.app.database import db_session_async
 from backend.app.enums import MessageDirection
 from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia
@@ -380,19 +380,17 @@ async def _dispatch_to_pipeline(
                 async with user_locks.acquire(user_id):
                     interrupt_task.cancel()
                     try:
-                        # Defensive User reload to pick up any profile
-                        # changes that landed while we were waiting on the
-                        # per-user lock.
-                        db = AsyncSessionLocal()
-                        try:
+                        # Defensive User reload: pull the latest row so any
+                        # writes from a previous pipeline that was holding
+                        # the lock (e.g. via ingestion or admin updates)
+                        # land on this turn.
+                        async with db_session_async() as db:
                             fresh = (
                                 await db.execute(select(User).filter_by(id=user_id))
                             ).scalar_one_or_none()
                             if fresh is not None:
                                 db.expunge(fresh)
                                 user = fresh
-                        finally:
-                            await db.close()
                         # Reload session messages from DB so we see any
                         # messages persisted by a previous pipeline that
                         # was holding the lock (e.g. tool interactions

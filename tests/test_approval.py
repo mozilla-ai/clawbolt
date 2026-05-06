@@ -107,7 +107,9 @@ class TestApprovalStore:
     async def test_resource_priority_over_tool(self, tmp_path: object) -> None:
         store = ApprovalStore()
         await store.set_permission_async("1", "web_fetch", PermissionLevel.DENY)
-        await store.set_permission_async("1", "web_fetch", PermissionLevel.ALWAYS, resource="safe.com")
+        await store.set_permission_async(
+            "1", "web_fetch", PermissionLevel.ALWAYS, resource="safe.com"
+        )
         level = await store.check_permission_async(
             "1", "web_fetch", resource="safe.com", default=PermissionLevel.ASK
         )
@@ -124,7 +126,9 @@ class TestApprovalStore:
     async def test_persistence_round_trip(self, tmp_path: object) -> None:
         store1 = ApprovalStore()
         await store1.set_permission_async("1", "web_search", PermissionLevel.ALWAYS)
-        await store1.set_permission_async("1", "web_fetch", PermissionLevel.DENY, resource="evil.com")
+        await store1.set_permission_async(
+            "1", "web_fetch", PermissionLevel.DENY, resource="evil.com"
+        )
 
         store2 = ApprovalStore()
         assert await store2.check_permission_async("1", "web_search") == PermissionLevel.ALWAYS
