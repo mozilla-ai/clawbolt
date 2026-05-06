@@ -102,7 +102,8 @@ class TestCreateCoreTools:
 class TestAvailableSpecialistSummaries:
     """get_available_specialist_summaries filters by dependency satisfaction."""
 
-    def test_returns_all_specialists_when_deps_met(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_returns_all_specialists_when_deps_met(self) -> None:
         from unittest.mock import MagicMock
 
         registry = _build_test_registry()
@@ -110,23 +111,25 @@ class TestAvailableSpecialistSummaries:
             user=User(id="1"),
             storage=MagicMock(),
         )
-        summaries = registry.get_available_specialist_summaries(ctx)
+        summaries = await registry.get_available_specialist_summaries(ctx)
         assert "estimate" in summaries
         assert "heartbeat" in summaries
         assert "file" in summaries
 
-    def test_excludes_file_when_no_storage(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_excludes_file_when_no_storage(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=None)
-        summaries = registry.get_available_specialist_summaries(ctx)
+        summaries = await registry.get_available_specialist_summaries(ctx)
         assert "estimate" in summaries
         assert "heartbeat" in summaries
         assert "file" not in summaries
 
-    def test_excludes_core_factories(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_excludes_core_factories(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"))
-        summaries = registry.get_available_specialist_summaries(ctx)
+        summaries = await registry.get_available_specialist_summaries(ctx)
         assert "messaging" not in summaries
         assert "workspace" not in summaries
 
@@ -416,7 +419,7 @@ class TestDynamicToolActivation:
             activated_specialists=activated_set,
         )
 
-        specialist_summaries = registry.get_available_specialist_summaries(ctx)
+        specialist_summaries = await registry.get_available_specialist_summaries(ctx)
         list_cap_tool = create_list_capabilities_tool(
             specialist_summaries,
             activated_specialists=activated_set,

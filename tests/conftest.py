@@ -1,3 +1,5 @@
+import asyncio
+import os
 import uuid
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
@@ -8,13 +10,12 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from httpx import ASGITransport
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import backend.app.database as _db_module
@@ -31,34 +32,94 @@ from backend.app.main import app
 from backend.app.models import ChatSession, Message, User
 from backend.app.services.rate_limiter import webhook_rate_limiter
 
-_TEST_DB_URL = "postgresql+psycopg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
-_ASYNC_TEST_DB_URL = "postgresql+asyncpg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+# Per-worker / per-branch test DB. Several developers or agents can run
+# pytest in parallel against one Postgres without colliding on the
+# shared ``clawbolt_test`` database (TRUNCATEs invalidate each other,
+# DDL during session teardown deadlocks). Resolution order:
+#   1. ``OSS_TEST_DB`` env var (manual override).
+#   2. ``PYTEST_XDIST_WORKER`` (e.g. ``gw0``) when running ``pytest -n auto``;
+#      yields ``clawbolt_test_gw0`` etc. Each worker gets its own DB,
+#      auto-created in ``_pg_schema``.
+#   3. ``clawbolt_test`` (sequential local + CI default).
+_PG_ADMIN_URL = "postgresql://clawbolt:clawbolt@localhost:5432/postgres"
+
+
+def _resolve_test_db_name() -> str:
+    explicit = os.environ.get("OSS_TEST_DB")
+    if explicit:
+        return explicit
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker:
+        return f"clawbolt_test_{worker}"
+    return "clawbolt_test"
+
+
+_TEST_DB_NAME = _resolve_test_db_name()
+_ASYNC_TEST_DB_URL = f"postgresql+asyncpg://clawbolt:clawbolt@localhost:5432/{_TEST_DB_NAME}"
+
+
+def _ensure_test_database_exists() -> None:
+    """Create the per-worker test DB if it doesn't already exist.
+
+    asyncpg can't issue CREATE DATABASE inside a transaction, and
+    pytest-xdist starts each worker in its own process before the
+    fixture chain runs DDL. Connecting to the ``postgres`` admin DB
+    here (psycopg sync, autocommit) creates the worker's database
+    on demand without serializing across workers.
+    """
+    import psycopg
+    from psycopg import sql
+
+    with psycopg.connect(_PG_ADMIN_URL, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (_TEST_DB_NAME,))
+        if cur.fetchone() is None:
+            cur.execute(
+                sql.SQL("CREATE DATABASE {} OWNER clawbolt").format(sql.Identifier(_TEST_DB_NAME))
+            )
 
 
 @pytest.fixture(scope="session")
-def _pg_engine() -> Generator[Engine]:
-    """Session-scoped PostgreSQL engine. Tables are created once per test run."""
-    engine = create_engine(_TEST_DB_URL, pool_pre_ping=True)
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
-    yield engine
-    Base.metadata.drop_all(engine)
-    engine.dispose()
+def _pg_schema() -> Generator[None]:
+    """Create the test schema once per session and drop it at the end.
+
+    Schema lifecycle is run synchronously via ``asyncio.run`` because
+    ``Base.metadata.create_all`` is the only thing in the test suite
+    that needs a SQLAlchemy connection at session scope, and pytest's
+    session scope predates the asyncio event loop. Running the DDL
+    inside its own short-lived loop avoids tying schema creation to
+    a particular pytest-asyncio loop scope.
+    """
+
+    _ensure_test_database_exists()
+
+    async def _setup() -> None:
+        engine = create_async_engine(_ASYNC_TEST_DB_URL)
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+                await conn.run_sync(Base.metadata.create_all)
+        finally:
+            await engine.dispose()
+
+    async def _teardown() -> None:
+        engine = create_async_engine(_ASYNC_TEST_DB_URL)
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_setup())
+    yield
+    asyncio.run(_teardown())
 
 
 @pytest.fixture(scope="session")
-def _pg_async_engine_session() -> Generator[AsyncEngine]:
+def _pg_async_engine_session(_pg_schema: None) -> Generator[AsyncEngine]:
     """Session-scoped async engine pointed at the test DB.
 
-    Distinct from the function-scoped ``_pg_async_engine`` fixture
-    below (which the opt-in ``async_db`` fixture uses for per-test
-    rollback isolation). This one exists so the session-scoped autouse
-    rebinding in ``_isolate_async_engine`` has a stable engine handle
-    to install on ``_db_module._async_engine`` for the duration of the
-    test session.
-
     Uses ``NullPool`` to dodge the asyncpg-vs-event-loop coupling that
-    forces ``_pg_async_engine`` to be function-scoped. Pytest-asyncio
+    forces the function-scoped ``_pg_async_engine`` to exist. Pytest-asyncio
     runs each test on a fresh function-scoped event loop; a pooled
     asyncpg connection opened on test N's loop is unusable on test
     N+1's loop, and disposing the pool from test N+1's loop hits
@@ -67,19 +128,13 @@ def _pg_async_engine_session() -> Generator[AsyncEngine]:
     current loop and closes it when the session closes, so there is
     nothing to carry over.
 
-    The trade-off: tests that exercise the async path pay one TCP +
-    auth round-trip per session (a few ms against localhost). Tests
-    that never touch async pay nothing. The opt-in ``async_db`` fixture
+    The trade-off: every test pays one TCP + auth round-trip per
+    AsyncSession against localhost. The opt-in ``async_db`` fixture
     keeps its own connection-bound factory (per-test SAVEPOINT
     rollback), so this engine is only used for tests that don't
-    request ``async_db``; in practice that's tests that go through a
-    sync ``TestClient`` and only hit async via ``get_current_user``,
-    which is one short-lived async call per request.
+    request ``async_db``.
     """
-    engine = create_async_engine(
-        _ASYNC_TEST_DB_URL,
-        poolclass=NullPool,
-    )
+    engine = create_async_engine(_ASYNC_TEST_DB_URL, poolclass=NullPool)
     yield engine
     # Engine.dispose() with NullPool is a no-op on the pool itself
     # (no checked-in connections to close); we don't need to await it.
@@ -91,15 +146,11 @@ def _isolate_async_engine(
 ) -> Generator[None]:
     """Rebind the OSS async engine + session factory to the test DB.
 
-    Engine-level (session-scoped) analog to the sync ``_isolate_stores``
-    autouse fixture. After PR #1177 converted ``get_current_user`` to
-    ``Depends(get_async_db)``, every authenticated test path indirectly
-    goes through the async engine. The opt-in per-test ``async_db``
-    fixture only rebinds the engine for tests that request it; tests
-    that use a sync ``TestClient`` plus the auth dependency would
-    otherwise fall through to ``settings.database_url`` (which on CI
-    points at the production DB name) and fail with
-    ``InvalidCatalogNameError``.
+    Every test path goes through the async engine. The opt-in per-test
+    ``async_db`` fixture only rebinds the engine for tests that
+    request it; other tests would otherwise fall through to
+    ``settings.database_url`` (which on CI points at the production DB
+    name) and fail with ``InvalidCatalogNameError``.
 
     The opt-in ``async_db`` fixture still provides per-test rollback
     isolation: it saves and restores ``_async_engine`` /
@@ -124,14 +175,12 @@ def _isolate_async_engine(
 
 
 @pytest_asyncio.fixture
-async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
+async def _pg_async_engine(_pg_schema: None) -> AsyncGenerator[AsyncEngine]:
     """Function-scoped async PostgreSQL engine.
 
-    Depends on ``_pg_engine`` so the sync engine fixture has already
-    created (and will later drop) the schema. The async engine only
-    opens connections; it never runs DDL. Both engines target the
-    same database; each maintains its own connection pool, mirroring
-    the production setup in ``backend.app.database``.
+    Depends on ``_pg_schema`` so the schema has been created at
+    session start and will be dropped at session end. The async
+    engine only opens connections; it never runs DDL.
 
     Scope is per-test rather than per-session because asyncpg
     connections bind to the event loop they were created on, and
@@ -140,7 +189,7 @@ async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
     ``RuntimeError: Future attached to a different loop`` on the
     second test. We pay one engine setup per async test (a few ms)
     in exchange for not having to widen the loop scope across the
-    whole suite, which would entangle sync and async tests.
+    whole suite.
     """
     engine = create_async_engine(_ASYNC_TEST_DB_URL, pool_pre_ping=True)
     yield engine
@@ -152,52 +201,30 @@ async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
 # every table the schema knows about; ``CASCADE`` then handles
 # foreign-key chains regardless of order. Cached at import time.
 _TRUNCATE_TABLE_NAMES = [t.name for t in Base.metadata.sorted_tables]
+_TRUNCATE_SQL = (
+    "TRUNCATE TABLE "
+    + ", ".join(f'"{name}"' for name in _TRUNCATE_TABLE_NAMES)
+    + " RESTART IDENTITY CASCADE"
+)
 
 
 @pytest.fixture(autouse=True)
-def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
+def _isolate_stores(_pg_async_engine_session: AsyncEngine, tmp_path: Path) -> Generator[None]:
     """Per-test isolation via real commits + post-test TRUNCATE.
 
-    The earlier design opened a session-long transaction and rebound the
-    sync session factory to ``join_transaction_mode="conditional_savepoint"``,
-    so test commits became savepoint releases inside one outer
-    transaction; teardown rolled the outer transaction back. That kept
-    sync writes invisible to other connections, which broke once
-    production code started doing async DB reads on the same data the
-    tests had inserted via the sync session (cross-API caveat in the
-    comment block below).
+    Tests commit normally (the production code is async-only). After
+    each test we TRUNCATE every table the schema knows about so the
+    next test starts on a clean slate. Code paths like
+    ``cleanup_orphaned_approvals`` take a session-scoped
+    ``pg_advisory_lock``; we run the TRUNCATE on a fresh connection
+    and dispose the engine pool so any leftover advisory lock is
+    dropped before the next test starts.
 
-    The new design lets ``SessionLocal()`` commit normally and TRUNCATEs
-    the schema after each test instead. Sync and async writes are now
-    real commits, so the async session pool sees them and vice versa.
-    Tests that previously relied on the savepoint to hide a partial
-    failure (e.g. ``IntegrityError`` from a flush in a unique-constraint
-    test) need to issue an explicit ``rollback`` after the expected
-    failure.
-
-    The fixture also disposes the sync engine pool on teardown. Code
-    paths like ``cleanup_orphaned_approvals`` take a session-scoped
-    ``pg_advisory_lock`` and return the connection to the pool with the
-    lock still held; the prior savepoint design pinned a single
-    connection per test, so the lock left the pool with the connection.
-    Under TRUNCATE isolation the engine pool is shared across tests, so
-    we close every pooled connection between tests to drop any
-    advisory locks the test left behind.
+    Tests that previously relied on a session-long transaction to
+    hide a partial failure (e.g. ``IntegrityError`` from a flush in a
+    unique-constraint test) need to issue an explicit ``rollback``
+    after the expected failure.
     """
-    test_session_factory = sessionmaker(
-        autocommit=False,
-        autoflush=False,
-        bind=_pg_engine,
-    )
-
-    old_engine = _db_module._engine
-    old_factory = _db_module._SessionLocal
-    old_async_engine = _db_module._async_engine
-    old_async_session_factory = _db_module._async_session_factory
-
-    _db_module._engine = _pg_engine
-    _db_module._SessionLocal = test_session_factory
-
     # Set up per-test file store isolation
     with patch.object(settings, "data_dir", str(tmp_path)):
         reset_stores()
@@ -206,36 +233,16 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
         reset_approval_gate()
         yield
 
-    # TRUNCATE all tables with RESTART IDENTITY + CASCADE so the next
-    # test starts with empty tables and reset sequences.
-    with _pg_engine.begin() as conn:
-        conn.exec_driver_sql(
-            "TRUNCATE TABLE "
-            + ", ".join(f'"{name}"' for name in _TRUNCATE_TABLE_NAMES)
-            + " RESTART IDENTITY CASCADE"
-        )
-    # Drop pooled connections so the next test cannot pick up one that
-    # is still holding a session-scoped advisory lock left by, e.g.,
-    # ``cleanup_orphaned_approvals``.
-    _pg_engine.dispose()
+    async def _truncate() -> None:
+        engine = create_async_engine(_ASYNC_TEST_DB_URL)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(_TRUNCATE_SQL))
+        finally:
+            await engine.dispose()
 
-    # Restore
-    _db_module._engine = old_engine
-    _db_module._SessionLocal = old_factory
-    # Restore the async engine/factory to whatever a session-scoped
-    # fixture (e.g. ``_isolate_async_engine`` from #1210) installed
-    # before this test ran. If nothing installed them, the prior values
-    # are ``None`` and we effectively clear loop-bound async state left
-    # behind by a test's ``async_db`` opt-in. asyncpg connections bind
-    # to the loop they were created on, and pytest-asyncio rotates
-    # loops between tests; a stale global async engine from test A's
-    # loop crashes test B with "Future attached to a different loop".
-    # Tests that opt into ``async_db`` rebind these globals to a
-    # per-test factory and restore the prior values at teardown, so
-    # this no-ops for that path. Sync dispose is fine: the leaked pool
-    # is GC'd after the loop closes (#1178).
-    _db_module._async_engine = old_async_engine
-    _db_module._async_session_factory = old_async_session_factory
+    asyncio.run(_truncate())
+
     reset_stores()
     reset_session_stores()
     reset_memory_stores()
@@ -338,15 +345,14 @@ async def async_db(
         _db_module._async_session_factory = old_async_factory
 
 
-@pytest.fixture()
+@pytest_asyncio.fixture()
 async def test_user(tmp_path: Path) -> User:
-    """Create a test user in the per-test PostgreSQL transaction.
+    """Create a test user via the async session factory.
 
     Also creates the file-store directory structure so per-user stores
-    (sessions, memory, etc.) can still write files during the hybrid period.
+    (sessions, memory, etc.) can still write files.
     """
-    db = _db_module.SessionLocal()
-    try:
+    async with _db_module.db_session_async() as db:
         user = User(
             id=str(uuid.uuid4()),
             user_id="test-user-001",
@@ -356,11 +362,9 @@ async def test_user(tmp_path: Path) -> User:
             onboarding_complete=True,
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
 
     # Ensure the user's file-store directory structure exists for per-user stores
     user_dir = tmp_path / str(user.id)
@@ -407,7 +411,7 @@ async def async_test_user(async_db: async_sessionmaker) -> User:
     return user
 
 
-def create_test_session(
+async def create_test_session(
     user_id: str,
     session_id: str = "test-conv",
     messages: list[StoredMessage] | None = None,
@@ -419,8 +423,7 @@ def create_test_session(
     """
     from datetime import UTC, datetime
 
-    db = _db_module.SessionLocal()
-    try:
+    async with _db_module.db_session_async() as db:
         cs = ChatSession(
             session_id=session_id,
             user_id=user_id,
@@ -429,7 +432,7 @@ def create_test_session(
             last_message_at=datetime.now(UTC),
         )
         db.add(cs)
-        db.flush()
+        await db.flush()
 
         for msg in messages or []:
             ts = datetime.fromisoformat(msg.timestamp) if msg.timestamp else datetime.now(UTC)
@@ -447,8 +450,8 @@ def create_test_session(
                 )
             )
 
-        db.commit()
-        db.refresh(cs)
+        await db.commit()
+        await db.refresh(cs)
         return SessionState(
             session_id=session_id,
             user_id=user_id,
@@ -457,8 +460,6 @@ def create_test_session(
             last_message_at=cs.last_message_at.isoformat(),
             channel=channel,
         )
-    finally:
-        db.close()
 
 
 @pytest.fixture(autouse=True)

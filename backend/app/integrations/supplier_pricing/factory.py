@@ -180,7 +180,7 @@ def _pricing_factory(ctx: ToolContext) -> list[Tool]:
     return tools
 
 
-def _pricing_auth_check(ctx: ToolContext) -> str | None:
+async def _pricing_auth_check(ctx: ToolContext) -> str | None:
     """Auth check for the registry. Returns None when ready."""
     return None
 

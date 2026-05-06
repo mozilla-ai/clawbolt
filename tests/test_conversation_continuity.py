@@ -2,6 +2,7 @@ import datetime
 import json
 
 import pytest
+import pytest_asyncio
 
 from backend.app.agent.context import (
     get_or_create_conversation,
@@ -16,14 +17,12 @@ from backend.app.agent.messages import (
 from backend.app.models import User
 
 
-@pytest.fixture()
-def conversation(test_user: User) -> SessionState:
-    import asyncio
-
+@pytest_asyncio.fixture()
+async def conversation(test_user: User) -> SessionState:
     from backend.app.agent.session_db import get_session_store
 
     store = get_session_store(test_user.id)
-    session, _is_new = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
+    session, _is_new = await store.get_or_create_session()
     return session
 
 
@@ -157,11 +156,10 @@ async def test_get_or_create_conversation_reuses_old_session(
     old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=48)
     old_session_id = "old-conv"
 
-    import backend.app.database as _db_module
+    from backend.app.database import db_session_async
     from backend.app.models import ChatSession
 
-    db = _db_module.SessionLocal()
-    try:
+    async with db_session_async() as db:
         cs = ChatSession(
             session_id=old_session_id,
             user_id=test_user.id,
@@ -170,9 +168,7 @@ async def test_get_or_create_conversation_reuses_old_session(
             last_message_at=old_time,
         )
         db.add(cs)
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is False
