@@ -36,6 +36,7 @@ from backend.app.models import ChatSession, Message, OAuthToken, User
 from backend.app.security.encryption import (
     ENVELOPE_PREFIX,
     EncryptionContext,
+    EncryptionError,
     KEKProvider,
     LocalKEKProvider,
     decrypt,
@@ -177,10 +178,61 @@ def test_recording_provider_threads_context_end_to_end() -> None:
 
 
 def test_malformed_envelope_raises(local_provider: LocalKEKProvider) -> None:
-    with pytest.raises(ValueError, match="Malformed envelope"):
+    """Structural corruption surfaces as ``EncryptionError``, not the
+    generic ``ValueError`` used pre-#1223. The dedicated type lets
+    callers catch decryption problems deliberately without snagging
+    unrelated programming errors that happen to use ``ValueError``.
+    """
+    with pytest.raises(EncryptionError, match="Malformed envelope"):
         decrypt("not-an-envelope", local_provider, {})
-    with pytest.raises(ValueError, match="Malformed envelope"):
+    with pytest.raises(EncryptionError, match="Malformed envelope"):
         decrypt("clw1.local.only-three-parts", local_provider, {})
+
+
+def test_corrupt_envelope_ciphertext_raises_encryption_error(
+    local_provider: LocalKEKProvider,
+) -> None:
+    """A structurally valid envelope whose ciphertext was tampered with
+    must raise ``EncryptionError``, not silently return empty/partial
+    data. Issue #1223: the multi-append memory bug (#1200) leaned on
+    silent-empty decrypts to mask its real symptom.
+
+    Three corruption modes are exercised:
+    1. Bad base64 in the wrapped DEK (caught by ``_parse``).
+    2. A wrapped DEK that base64-decodes but isn't a valid Fernet
+       token (``InvalidToken`` from ``provider.unwrap``).
+    3. A flipped byte inside an otherwise valid ciphertext segment
+       (``InvalidToken`` from the inner Fernet decrypt).
+
+    All three paths must raise ``EncryptionError`` and chain the
+    underlying cause via ``__cause__`` so logs keep the original
+    diagnostic text.
+    """
+    # 1. Bad base64 in the wrapped DEK position.
+    with pytest.raises(EncryptionError, match="Malformed envelope"):
+        decrypt("clw1.local.!!!not-base64!!!.something", local_provider, {})
+
+    # Build a real envelope, then corrupt pieces of it.
+    good_envelope = encrypt("super secret", local_provider, {"table": "t", "column": "c"})
+    parts = good_envelope.split(".", 3)
+    assert len(parts) == 4
+    prefix, kek_id, wrapped_b64, ciphertext = parts
+
+    # 2. Wrapped DEK is valid base64 but not a real Fernet token.
+    bogus_wrapped = base64.urlsafe_b64encode(b"\x00" * 64).decode()
+    bad_wrap_envelope = ".".join([prefix, kek_id, bogus_wrapped, ciphertext])
+    with pytest.raises(EncryptionError, match="failed authenticated decryption") as wrap_info:
+        decrypt(bad_wrap_envelope, local_provider, {"table": "t", "column": "c"})
+    assert wrap_info.value.__cause__ is not None  # original cause preserved
+
+    # 3. Flip a byte inside the inner Fernet ciphertext. Decoding the
+    # wrapped DEK still works; the inner Fernet.decrypt raises
+    # InvalidToken which decrypt() must wrap as EncryptionError.
+    flipped = ciphertext[:-1] + ("A" if ciphertext[-1] != "A" else "B")
+    flipped_envelope = ".".join([prefix, kek_id, wrapped_b64, flipped])
+    with pytest.raises(EncryptionError, match="failed authenticated decryption") as inner_info:
+        decrypt(flipped_envelope, local_provider, {"table": "t", "column": "c"})
+    assert inner_info.value.__cause__ is not None
 
 
 def test_kek_id_with_dot_is_rejected(local_provider: LocalKEKProvider) -> None:
