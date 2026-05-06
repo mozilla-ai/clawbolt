@@ -1688,7 +1688,7 @@ class TestApprovalEvents:
         assert rows[1].decision == "approved"
 
         # Read-side store returns them in chronological order.
-        events = get_approval_event_store().list_for_user(test_user.id)
+        events = await get_approval_event_store().list_for_user(test_user.id)
         assert [e.event_type for e in events] == ["requested", "decided"]
         assert events[1].decision == "approved"
 
@@ -1829,10 +1829,10 @@ class TestApprovalEvents:
             db.commit()
 
         store = get_approval_event_store()
-        only_recent = store.list_for_user(
+        only_recent = await store.list_for_user(
             test_user.id, since=datetime.now(UTC) - timedelta(minutes=5)
         )
         assert [e.event_type for e in only_recent] == ["decided"]
 
-        capped = store.list_for_user(test_user.id, limit=1)
+        capped = await store.list_for_user(test_user.id, limit=1)
         assert len(capped) == 1
