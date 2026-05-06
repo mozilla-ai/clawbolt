@@ -26,11 +26,13 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import SecretStr
+from sqlalchemy import select
 from sqlalchemy import text as _sa_text
 
 import backend.app.auth.loader as auth_loader
 from alembic import op as _alembic_op
 from backend.app.config import settings as _app_settings
+from backend.app.database import db_session_async
 from backend.app.models import ChatSession, Message, OAuthToken, User
 from backend.app.security.encryption import (
     ENVELOPE_PREFIX,
@@ -259,7 +261,7 @@ def install_recording_provider() -> Generator[_RecordingProvider]:
     auth_loader.reset_kek_provider()
 
 
-def test_encrypted_string_round_trip_through_orm(
+async def test_encrypted_string_round_trip_through_orm(
     install_recording_provider: _RecordingProvider,
 ) -> None:
     """An OAuthToken row's encrypted columns round-trip through PostgreSQL."""
@@ -267,7 +269,7 @@ def test_encrypted_string_round_trip_through_orm(
     try:
         user = User(id=str(uuid.uuid4()), user_id="enc-test", onboarding_complete=True)
         db.add(user)
-        db.flush()
+        await db.flush()
 
         row = OAuthToken(
             user_id=user.id,
@@ -276,10 +278,8 @@ def test_encrypted_string_round_trip_through_orm(
             refresh_token="refresh-plaintext",
         )
         db.add(row)
-        db.commit()
+        await db.commit()
         token_id = row.id
-    finally:
-        db.close()
 
     db = open_test_db_session()
     try:
@@ -287,8 +287,6 @@ def test_encrypted_string_round_trip_through_orm(
         assert loaded is not None
         assert loaded.access_token == "access-plaintext"
         assert loaded.refresh_token == "refresh-plaintext"
-    finally:
-        db.close()
 
     contexts = install_recording_provider.wrap_calls
     columns_wrapped = sorted(c.get("column", "") for c in contexts)
@@ -296,7 +294,7 @@ def test_encrypted_string_round_trip_through_orm(
     assert all(c.get("table") == "oauth_tokens" for c in contexts)
 
 
-def test_message_body_round_trip_through_orm(
+async def test_message_body_round_trip_through_orm(
     install_recording_provider: _RecordingProvider,
 ) -> None:
     """A Message row's encrypted body / processed_context round-trip
@@ -306,13 +304,13 @@ def test_message_body_round_trip_through_orm(
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-enc-test", onboarding_complete=True)
         db.add(user)
-        db.flush()
+        await db.flush()
         cs = ChatSession(
             session_id=f"sess-{uuid.uuid4().hex[:8]}",
             user_id=user.id,
         )
         db.add(cs)
-        db.flush()
+        await db.flush()
         row = Message(
             session_id=cs.id,
             seq=1,
@@ -321,10 +319,8 @@ def test_message_body_round_trip_through_orm(
             processed_context="hello-plaintext-with-image-description",
         )
         db.add(row)
-        db.commit()
+        await db.commit()
         message_id = row.id
-    finally:
-        db.close()
 
     # Round-trip: plaintext on read.
     db = open_test_db_session()
@@ -333,8 +329,6 @@ def test_message_body_round_trip_through_orm(
         assert loaded is not None
         assert loaded.body == "hello-plaintext-body"
         assert loaded.processed_context == "hello-plaintext-with-image-description"
-    finally:
-        db.close()
 
     # Disk-form: the underlying column stores an envelope, not the
     # plaintext we wrote. This is the at-rest guarantee the migration
@@ -352,8 +346,6 @@ def test_message_body_round_trip_through_orm(
         assert raw_body.startswith(ENVELOPE_PREFIX + ".")
         assert raw_processed != "hello-plaintext-with-image-description"
         assert raw_processed.startswith(ENVELOPE_PREFIX + ".")
-    finally:
-        db.close()
 
     contexts = install_recording_provider.wrap_calls
     columns_wrapped = sorted(c.get("column", "") for c in contexts)
@@ -366,7 +358,7 @@ def test_message_body_round_trip_through_orm(
     )
 
 
-def test_tool_interactions_json_round_trip_through_orm(
+async def test_tool_interactions_json_round_trip_through_orm(
     install_recording_provider: _RecordingProvider,
 ) -> None:
     """A Message row's encrypted tool_interactions_json round-trips
@@ -382,13 +374,13 @@ def test_tool_interactions_json_round_trip_through_orm(
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-tool-enc-test", onboarding_complete=True)
         db.add(user)
-        db.flush()
+        await db.flush()
         cs = ChatSession(
             session_id=f"sess-{uuid.uuid4().hex[:8]}",
             user_id=user.id,
         )
         db.add(cs)
-        db.flush()
+        await db.flush()
         row = Message(
             session_id=cs.id,
             seq=1,
@@ -396,18 +388,14 @@ def test_tool_interactions_json_round_trip_through_orm(
             tool_interactions_json=plaintext,
         )
         db.add(row)
-        db.commit()
+        await db.commit()
         message_id = row.id
-    finally:
-        db.close()
 
     db = open_test_db_session()
     try:
         loaded = db.get(Message, message_id)
         assert loaded is not None
         assert loaded.tool_interactions_json == plaintext
-    finally:
-        db.close()
 
     db = open_test_db_session()
     try:
@@ -419,8 +407,6 @@ def test_tool_interactions_json_round_trip_through_orm(
         (raw_tool_json,) = rows[0]
         assert raw_tool_json != plaintext
         assert raw_tool_json.startswith(ENVELOPE_PREFIX + ".")
-    finally:
-        db.close()
 
     contexts = install_recording_provider.wrap_calls
     tool_contexts = [c for c in contexts if c.get("column") == "tool_interactions_json"]
@@ -428,7 +414,7 @@ def test_tool_interactions_json_round_trip_through_orm(
     assert tool_contexts[0].get("table") == "messages"
 
 
-def test_message_body_empty_string_passes_through(
+async def test_message_body_empty_string_passes_through(
     install_recording_provider: _RecordingProvider,
 ) -> None:
     """Empty bodies are passed through without invoking the KEK provider.
@@ -443,13 +429,13 @@ def test_message_body_empty_string_passes_through(
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-empty-test", onboarding_complete=True)
         db.add(user)
-        db.flush()
+        await db.flush()
         cs = ChatSession(
             session_id=f"sess-{uuid.uuid4().hex[:8]}",
             user_id=user.id,
         )
         db.add(cs)
-        db.flush()
+        await db.flush()
         row = Message(
             session_id=cs.id,
             seq=1,
@@ -459,10 +445,8 @@ def test_message_body_empty_string_passes_through(
             tool_interactions_json="",
         )
         db.add(row)
-        db.commit()
+        await db.commit()
         message_id = row.id
-    finally:
-        db.close()
 
     msg_columns = [
         c.get("column", "")
@@ -480,11 +464,9 @@ def test_message_body_empty_string_passes_through(
         assert loaded.body == ""
         assert loaded.processed_context == ""
         assert loaded.tool_interactions_json == ""
-    finally:
-        db.close()
 
 
-def test_encrypted_string_read_of_non_envelope_raises(
+async def test_encrypted_string_read_of_non_envelope_raises(
     install_recording_provider: _RecordingProvider,
 ) -> None:
     """Reading a row whose ciphertext was not migrated to envelope format
@@ -493,12 +475,12 @@ def test_encrypted_string_read_of_non_envelope_raises(
     try:
         user = User(id=str(uuid.uuid4()), user_id="enc-pre", onboarding_complete=True)
         db.add(user)
-        db.flush()
+        await db.flush()
         # Bypass the type decorator with a raw INSERT to simulate a row
         # left over from before migration 018.
         from sqlalchemy import text
 
-        db.execute(
+        await db.execute(
             text(
                 "INSERT INTO oauth_tokens (user_id, integration, access_token, "
                 "refresh_token, token_type, expires_at, scopes_json, realm_id, "
@@ -507,9 +489,7 @@ def test_encrypted_string_read_of_non_envelope_raises(
             ),
             {"u": user.id},
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     db = open_test_db_session()
     try:
@@ -517,9 +497,9 @@ def test_encrypted_string_read_of_non_envelope_raises(
         # loading, so the EncryptedString check fires on .one() rather
         # than on attribute access.
         with pytest.raises(RuntimeError, match="non-envelope value"):
-            db.query(OAuthToken).filter(OAuthToken.integration == "test").one()
-    finally:
-        db.close()
+            (
+                await db.execute(select(OAuthToken).where(OAuthToken.integration == "test"))
+            ).scalar_one()
 
 
 def test_get_kek_provider_defaults_to_local() -> None:
@@ -695,7 +675,25 @@ def test_migration_020_processed_context_uses_distinct_column_context() -> None:
     )
 
 
-def test_migration_020_full_upgrade_loop_against_real_db(
+async def _run_migration_upgrade(migration: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run a migration's ``upgrade()`` against the test DB.
+
+    Bridges async to sync via ``conn.run_sync``: the migration code
+    uses sync SQLAlchemy via ``op.get_bind()``, so we patch ``op.get_bind``
+    to return the sync proxy connection that ``run_sync`` provides.
+    """
+    async with db_session_async() as db:
+        conn = await db.connection()
+
+        def _do(sync_conn: object) -> None:
+            monkeypatch.setattr(_alembic_op, "get_bind", lambda: sync_conn)
+            migration.upgrade()  # type: ignore[attr-defined]
+
+        await conn.run_sync(_do)
+        await db.commit()
+
+
+async def test_migration_020_full_upgrade_loop_against_real_db(
     install_recording_provider: _RecordingProvider,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -723,10 +721,10 @@ def test_migration_020_full_upgrade_loop_against_real_db(
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-mig-e2e-test", onboarding_complete=True)
         db.add(user)
-        db.flush()
+        await db.flush()
         cs = ChatSession(session_id=f"sess-{uuid.uuid4().hex[:8]}", user_id=user.id)
         db.add(cs)
-        db.flush()
+        await db.flush()
         # Capture the FK id as a plain int while the session is still
         # open so the assertions below don't trigger a refresh on a
         # detached instance after ``db.close()``.
@@ -737,7 +735,7 @@ def test_migration_020_full_upgrade_loop_against_real_db(
             (2, "second plaintext body", ""),
             (3, "", ""),  # all-empty: must skip without error
         ]:
-            db.execute(
+            await db.execute(
                 _sa_text(
                     "INSERT INTO messages (session_id, seq, direction, body, "
                     "processed_context, tool_interactions_json, external_message_id, "
@@ -746,9 +744,7 @@ def test_migration_020_full_upgrade_loop_against_real_db(
                 ),
                 {"s": chat_session_id, "seq": seq, "b": body, "pc": ctx},
             )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     # Run the migration's ``upgrade()`` against the same connection
     # alembic would use. ``op.get_bind()`` resolves to the configured
@@ -785,8 +781,6 @@ def test_migration_020_full_upgrade_loop_against_real_db(
         # Row 3: both empty, must remain empty (no envelope on empty).
         assert rows[2].body == ""
         assert rows[2].processed_context == ""
-    finally:
-        db.close()
 
     # Idempotent re-run: a second ``upgrade()`` on the now-encrypted
     # rows must NOT issue any UPDATE (every row is already in envelope
@@ -862,7 +856,7 @@ def test_migration_022_rekey_helper_envelopes_plaintext_per_table_column() -> No
         assert migration._rekey(None, provider, table, column) is None
 
 
-def test_migration_022_full_upgrade_loop_against_real_db(
+async def test_migration_022_full_upgrade_loop_against_real_db(
     install_recording_provider: _RecordingProvider,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -881,10 +875,10 @@ def test_migration_022_full_upgrade_loop_against_real_db(
             onboarding_complete=True,
         )
         db.add(user)
-        db.flush()
+        await db.flush()
 
         # MemoryDocument: one row with non-empty text.
-        db.execute(
+        await db.execute(
             _sa_text(
                 "INSERT INTO memory_documents (user_id, memory_text, history_text, "
                 "created_at, updated_at) VALUES (:u, :m, :h, NOW(), NOW())"
@@ -901,7 +895,7 @@ def test_migration_022_full_upgrade_loop_against_real_db(
             ],
             start=1,
         ):
-            db.execute(
+            await db.execute(
                 _sa_text(
                     "INSERT INTO heartbeat_logs (user_id, action_type, message_text, "
                     "channel, reasoning, tasks, created_at) VALUES "
@@ -910,10 +904,8 @@ def test_migration_022_full_upgrade_loop_against_real_db(
                 {"u": user.id, "m": msg, "r": reason, "t": tasks_},
             )
             assert i  # silence unused var
-        db.commit()
+        await db.commit()
         user_id = user.id
-    finally:
-        db.close()
 
     migration = _load_migration_022()
     db = open_test_db_session()
@@ -934,12 +926,14 @@ def test_migration_022_full_upgrade_loop_against_real_db(
         assert mem.memory_text.startswith(ENVELOPE_PREFIX + ".")
         assert mem.history_text.startswith(ENVELOPE_PREFIX + ".")
 
-        hb_rows = db.execute(
-            _sa_text(
-                "SELECT message_text, reasoning, tasks FROM heartbeat_logs "
-                "WHERE user_id = :u ORDER BY id"
-            ),
-            {"u": user_id},
+        hb_rows = (
+            await db.execute(
+                _sa_text(
+                    "SELECT message_text, reasoning, tasks FROM heartbeat_logs "
+                    "WHERE user_id = :u ORDER BY id"
+                ),
+                {"u": user_id},
+            )
         ).all()
         # Row 1: all three columns envelope-encrypted.
         assert hb_rows[0].message_text.startswith(ENVELOPE_PREFIX + ".")
@@ -953,8 +947,6 @@ def test_migration_022_full_upgrade_loop_against_real_db(
         assert hb_rows[2].message_text == ""
         assert hb_rows[2].reasoning == ""
         assert hb_rows[2].tasks == ""
-    finally:
-        db.close()
 
     # Idempotent re-run terminates instead of looping forever (regression
     # for the cursor reach-around at end of batch).
@@ -967,7 +959,7 @@ def test_migration_022_full_upgrade_loop_against_real_db(
         db.close()
 
 
-def test_migration_022_refuses_when_encryption_key_unset_and_data_exists(
+async def test_migration_022_refuses_when_encryption_key_unset_and_data_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Operator preflight: a non-empty target table + unset
@@ -983,8 +975,8 @@ def test_migration_022_refuses_when_encryption_key_unset_and_data_exists(
             onboarding_complete=True,
         )
         db.add(user)
-        db.flush()
-        db.execute(
+        await db.flush()
+        await db.execute(
             _sa_text(
                 "INSERT INTO heartbeat_logs (user_id, action_type, message_text, "
                 "channel, reasoning, tasks, created_at) VALUES "
@@ -992,9 +984,7 @@ def test_migration_022_refuses_when_encryption_key_unset_and_data_exists(
             ),
             {"u": user.id},
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     migration = _load_migration_022()
     db = open_test_db_session()
@@ -1032,7 +1022,7 @@ def test_migration_024_rekey_helper_envelopes_plaintext() -> None:
     assert migration._rekey(None, provider) is None
 
 
-def test_migration_024_full_upgrade_loop_against_real_db(
+async def test_migration_024_full_upgrade_loop_against_real_db(
     install_recording_provider: _RecordingProvider,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1046,17 +1036,17 @@ def test_migration_024_full_upgrade_loop_against_real_db(
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-tool-mig-test", onboarding_complete=True)
         db.add(user)
-        db.flush()
+        await db.flush()
         cs = ChatSession(session_id=f"sess-{uuid.uuid4().hex[:8]}", user_id=user.id)
         db.add(cs)
-        db.flush()
+        await db.flush()
         chat_session_id: int = cs.id
         for seq, tool_json in [
             (1, '[{"tool_call_id":"t1","name":"qb_query","args":{},"result":"ok"}]'),
             (2, '[{"tool_call_id":"t2","name":"send_reply","args":{"text":"ok"},"result":""}]'),
             (3, ""),
         ]:
-            db.execute(
+            await db.execute(
                 _sa_text(
                     "INSERT INTO messages (session_id, seq, direction, body, "
                     "processed_context, tool_interactions_json, external_message_id, "
@@ -1065,9 +1055,7 @@ def test_migration_024_full_upgrade_loop_against_real_db(
                 ),
                 {"s": chat_session_id, "seq": seq, "t": tool_json},
             )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     migration = _load_migration_024()
     db = open_test_db_session()
@@ -1092,8 +1080,6 @@ def test_migration_024_full_upgrade_loop_against_real_db(
         assert rows[1].tool_interactions_json.startswith(ENVELOPE_PREFIX + ".")
         # Empty stays empty.
         assert rows[2].tool_interactions_json == ""
-    finally:
-        db.close()
 
     # Idempotent re-run terminates instead of looping forever.
     db = open_test_db_session()
@@ -1105,7 +1091,7 @@ def test_migration_024_full_upgrade_loop_against_real_db(
         db.close()
 
 
-def test_migration_024_refuses_when_encryption_key_unset_and_data_exists(
+async def test_migration_024_refuses_when_encryption_key_unset_and_data_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Operator preflight: a non-empty messages table + unset
@@ -1117,11 +1103,11 @@ def test_migration_024_refuses_when_encryption_key_unset_and_data_exists(
     try:
         user = User(id=str(uuid.uuid4()), user_id="msg-tool-preflight", onboarding_complete=True)
         db.add(user)
-        db.flush()
+        await db.flush()
         cs = ChatSession(session_id=f"sess-{uuid.uuid4().hex[:8]}", user_id=user.id)
         db.add(cs)
-        db.flush()
-        db.execute(
+        await db.flush()
+        await db.execute(
             _sa_text(
                 "INSERT INTO messages (session_id, seq, direction, body, "
                 "processed_context, tool_interactions_json, external_message_id, "
@@ -1130,9 +1116,7 @@ def test_migration_024_refuses_when_encryption_key_unset_and_data_exists(
             ),
             {"s": cs.id},
         )
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     migration = _load_migration_024()
     db = open_test_db_session()

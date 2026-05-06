@@ -9,9 +9,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from any_llm.types.messages import MessageResponse, MessageUsage, ToolUseBlock
 from pydantic import BaseModel
-from sqlalchemy import event
+from sqlalchemy import event, select
 
 import backend.app.database as _db_module
 from backend.app.agent.dto import HeartbeatLogEntry
@@ -37,6 +38,7 @@ from backend.app.agent.heartbeat import (
     run_heartbeat_for_user,
 )
 from backend.app.agent.system_prompt import to_local_time
+from backend.app.database import db_session_async
 from backend.app.models import ChannelRoute, ChatSession, Message, User
 from tests.db_test_utils import open_test_db_session
 from tests.mocks.llm import (
@@ -60,12 +62,10 @@ def user() -> User:
             onboarding_complete=True,
         )
         db.add(u)
-        db.commit()
-        db.refresh(u)
+        await db.commit()
+        await db.refresh(u)
         db.expunge(u)
         return u
-    finally:
-        db.close()
 
 
 @pytest.fixture()
@@ -79,12 +79,10 @@ def user_with_timezone() -> User:
             onboarding_complete=True,
         )
         db.add(u)
-        db.commit()
-        db.refresh(u)
+        await db.commit()
+        await db.refresh(u)
         db.expunge(u)
         return u
-    finally:
-        db.close()
 
 
 def _make_heartbeat_tool_call(
@@ -1666,7 +1664,7 @@ class TestHeartbeatUsageHooks:
 # ---------------------------------------------------------------------------
 
 
-def _seed_message(
+async def _seed_message(
     db: Any,
     *,
     user_id: str,
@@ -1682,7 +1680,7 @@ def _seed_message(
         channel="telegram",
     )
     db.add(cs)
-    db.flush()
+    await db.flush()
     msg = Message(
         session_id=cs.id,
         seq=seq,
@@ -1691,7 +1689,7 @@ def _seed_message(
         timestamp=timestamp,
     )
     db.add(msg)
-    db.commit()
+    await db.commit()
     return msg.id
 
 
@@ -1709,8 +1707,6 @@ class TestUserMessagedWithinIntegration:
                 direction="inbound",
                 timestamp=now - datetime.timedelta(minutes=1),
             )
-        finally:
-            db.close()
         assert await _user_messaged_within(user.id, minutes=5) is True
 
     async def test_returns_false_for_old_inbound(self, user: User) -> None:
@@ -1723,8 +1719,6 @@ class TestUserMessagedWithinIntegration:
                 direction="inbound",
                 timestamp=now - datetime.timedelta(minutes=30),
             )
-        finally:
-            db.close()
         assert await _user_messaged_within(user.id, minutes=5) is False
 
     async def test_ignores_outbound_messages(self, user: User) -> None:
@@ -1744,8 +1738,6 @@ class TestUserMessagedWithinIntegration:
                 direction="outbound",
                 timestamp=now - datetime.timedelta(minutes=1),
             )
-        finally:
-            db.close()
         assert await _user_messaged_within(user.id, minutes=5) is False
 
     async def test_other_users_messages_do_not_leak(self, user: User) -> None:
@@ -1758,11 +1750,9 @@ class TestUserMessagedWithinIntegration:
                 onboarding_complete=True,
             )
             other_db.add(other)
-            other_db.commit()
-            other_db.refresh(other)
+            await other_db.commit()
+            await other_db.refresh(other)
             other_id = other.id
-        finally:
-            other_db.close()
 
         now = datetime.datetime.now(datetime.UTC)
         db = open_test_db_session()
@@ -1774,8 +1764,6 @@ class TestUserMessagedWithinIntegration:
                 timestamp=now - datetime.timedelta(minutes=1),
                 session_external_id="sess-other-1",
             )
-        finally:
-            db.close()
         assert await _user_messaged_within(user.id, minutes=5) is False
 
 
@@ -1803,9 +1791,7 @@ class TestGetDailyHeartbeatCount:
         db = open_test_db_session()
         try:
             db.add(HeartbeatLogModel(user_id=user.id, created_at=yesterday))
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         assert await get_daily_heartbeat_count(user.id) == 1
 
@@ -1833,12 +1819,10 @@ class TestGetDailyHeartbeatCount:
                 onboarding_complete=True,
             )
             db.add(other_user)
-            db.commit()
-            db.refresh(other_user)
+            await db.commit()
+            await db.refresh(other_user)
             other_id = other_user.id
             db.expunge(other_user)
-        finally:
-            db.close()
 
         other_store = HeartbeatStore(other_id)
         await other_store.log_heartbeat()
@@ -1910,8 +1894,8 @@ class TestExecuteHeartbeatTasks:
             MockAgent.return_value = mock_agent_instance
             mock_registry.create_core_tools = AsyncMock(return_value=[])
             mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
-            mock_registry.get_available_specialist_summaries.return_value = {}
-            mock_registry.get_unauthenticated_specialists.return_value = {}
+            mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
+            mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
             mock_registry.get_disabled_specialist_sub_tools.return_value = {}
             mock_bus.publish_outbound = AsyncMock()
 
@@ -1942,8 +1926,8 @@ class TestExecuteHeartbeatTasks:
             MockAgent.return_value = mock_agent_instance
             mock_registry.create_core_tools = AsyncMock(return_value=[])
             mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
-            mock_registry.get_available_specialist_summaries.return_value = {}
-            mock_registry.get_unauthenticated_specialists.return_value = {}
+            mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
+            mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
             mock_registry.get_disabled_specialist_sub_tools.return_value = {}
             mock_bus.publish_outbound = AsyncMock()
 
@@ -1976,8 +1960,8 @@ class TestExecuteHeartbeatTasks:
             MockAgent.return_value = mock_agent_instance
             mock_registry.create_core_tools = AsyncMock(return_value=[])
             mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
-            mock_registry.get_available_specialist_summaries.return_value = {}
-            mock_registry.get_unauthenticated_specialists.return_value = {}
+            mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
+            mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
             mock_registry.get_disabled_specialist_sub_tools.return_value = {}
             mock_bus.publish_outbound = AsyncMock()
 
@@ -2012,10 +1996,10 @@ class TestExecuteHeartbeatTasks:
             MockAgent.return_value = mock_agent_instance
             mock_registry.create_core_tools = AsyncMock(return_value=[])
             mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
-            mock_registry.get_available_specialist_summaries.return_value = {
-                "quickbooks": "QB tools"
-            }
-            mock_registry.get_unauthenticated_specialists.return_value = {}
+            mock_registry.get_available_specialist_summaries = AsyncMock(
+                return_value={"quickbooks": "QB tools"}
+            )
+            mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
             mock_registry.get_disabled_specialist_sub_tools.return_value = {}
             mock_bus.publish_outbound = AsyncMock()
 
@@ -2159,7 +2143,7 @@ class TestHeartbeatScheduler:
                 channel_identifier="",
             )
             db.add(user)
-            db.flush()
+            await db.flush()
             db.add(
                 ChannelRoute(
                     user_id=user.id,
@@ -2167,9 +2151,7 @@ class TestHeartbeatScheduler:
                     channel_identifier="inactive-chat-id",
                 )
             )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         scheduler = HeartbeatScheduler()
         await scheduler.tick()
@@ -2207,7 +2189,7 @@ class TestHeartbeatScheduler:
                     channel_identifier="",
                 )
                 db.add(user)
-                db.flush()
+                await db.flush()
                 db.add(
                     ChannelRoute(
                         user_id=user.id,
@@ -2215,9 +2197,7 @@ class TestHeartbeatScheduler:
                         channel_identifier=f"sql-filter-{i}",
                     )
                 )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         mock_run.return_value = None
 
@@ -2287,7 +2267,7 @@ class TestHeartbeatScheduler:
                     channel_identifier="",
                 )
                 db.add(user)
-                db.flush()
+                await db.flush()
                 db.add(
                     ChannelRoute(
                         user_id=user.id,
@@ -2295,9 +2275,7 @@ class TestHeartbeatScheduler:
                         channel_identifier=str(i),
                     )
                 )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         mock_run.return_value = None
 
@@ -2331,7 +2309,7 @@ class TestHeartbeatScheduler:
                     channel_identifier="",
                 )
                 db.add(user)
-                db.flush()
+                await db.flush()
                 db.add(
                     ChannelRoute(
                         user_id=user.id,
@@ -2339,9 +2317,7 @@ class TestHeartbeatScheduler:
                         channel_identifier=str(i),
                     )
                 )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         # Second user raises, others succeed
         mock_run.side_effect = [
@@ -2382,7 +2358,7 @@ class TestHeartbeatScheduler:
                     channel_identifier="",
                 )
                 db.add(user)
-                db.flush()
+                await db.flush()
                 db.add(
                     ChannelRoute(
                         user_id=user.id,
@@ -2390,9 +2366,7 @@ class TestHeartbeatScheduler:
                         channel_identifier=str(i),
                     )
                 )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         # Track max concurrent executions
         import asyncio
@@ -2501,7 +2475,7 @@ class TestPerUserFrequencyScheduling:
                 heartbeat_frequency="1h",
             )
             db.add(user)
-            db.flush()
+            await db.flush()
             db.add(
                 ChannelRoute(
                     user_id=user.id,
@@ -2509,10 +2483,8 @@ class TestPerUserFrequencyScheduling:
                     channel_identifier="tg-skip",
                 )
             )
-            db.commit()
+            await db.commit()
             db.expunge(user)
-        finally:
-            db.close()
 
         mock_run.return_value = None
 
@@ -2551,7 +2523,7 @@ class TestPerUserFrequencyScheduling:
                 heartbeat_frequency="15m",
             )
             db.add(user)
-            db.flush()
+            await db.flush()
             db.add(
                 ChannelRoute(
                     user_id=user.id,
@@ -2559,12 +2531,10 @@ class TestPerUserFrequencyScheduling:
                     channel_identifier="tg-elapsed",
                 )
             )
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
             user_id = user.id
             db.expunge(user)
-        finally:
-            db.close()
 
         mock_run.return_value = None
 
@@ -2608,7 +2578,7 @@ class TestPerUserFrequencyScheduling:
                 heartbeat_frequency="invalid",
             )
             db.add(user)
-            db.flush()
+            await db.flush()
             db.add(
                 ChannelRoute(
                     user_id=user.id,
@@ -2616,12 +2586,10 @@ class TestPerUserFrequencyScheduling:
                     channel_identifier="tg-freq",
                 )
             )
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
             user_id = user.id
             db.expunge(user)
-        finally:
-            db.close()
 
         mock_run.return_value = None
 
@@ -2659,30 +2627,38 @@ class TestGetChannelIdentifier:
         try:
             user = User(user_id="ch-id-test-1")
             db.add(user)
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
             db.add(ChannelRoute(user_id=user.id, channel="webchat", channel_identifier="web-1"))
             db.add(ChannelRoute(user_id=user.id, channel="telegram", channel_identifier="99887766"))
-            db.commit()
-            route = db.query(ChannelRoute).filter_by(user_id=user.id, channel="telegram").first()
+            await db.commit()
+            route = (
+                await db.execute(
+                    select(ChannelRoute).where(
+                        ChannelRoute.user_id == user.id, ChannelRoute.channel == "telegram"
+                    )
+                )
+            ).scalar_one_or_none()
             assert route is not None
             assert route.channel_identifier == "99887766"
-        finally:
-            db.close()
 
     def test_returns_none_when_no_match(self) -> None:
         db = open_test_db_session()
         try:
             user = User(user_id="ch-id-test-2")
             db.add(user)
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
             db.add(ChannelRoute(user_id=user.id, channel="webchat", channel_identifier="web-1"))
-            db.commit()
-            route = db.query(ChannelRoute).filter_by(user_id=user.id, channel="telegram").first()
+            await db.commit()
+            route = (
+                await db.execute(
+                    select(ChannelRoute).where(
+                        ChannelRoute.user_id == user.id, ChannelRoute.channel == "telegram"
+                    )
+                )
+            ).scalar_one_or_none()
             assert route is None
-        finally:
-            db.close()
 
     def test_does_not_return_other_users_identifier(self) -> None:
         db = open_test_db_session()
@@ -2691,18 +2667,22 @@ class TestGetChannelIdentifier:
             user_b = User(user_id="ch-id-test-b")
             db.add(user_a)
             db.add(user_b)
-            db.commit()
-            db.refresh(user_a)
-            db.refresh(user_b)
+            await db.commit()
+            await db.refresh(user_a)
+            await db.refresh(user_b)
             db.add(
                 ChannelRoute(user_id=user_a.id, channel="telegram", channel_identifier="tg-for-a")
             )
             db.add(ChannelRoute(user_id=user_b.id, channel="webchat", channel_identifier="b-1"))
-            db.commit()
-            route = db.query(ChannelRoute).filter_by(user_id=user_b.id, channel="telegram").first()
+            await db.commit()
+            route = (
+                await db.execute(
+                    select(ChannelRoute).where(
+                        ChannelRoute.user_id == user_b.id, ChannelRoute.channel == "telegram"
+                    )
+                )
+            ).scalar_one_or_none()
             assert route is None
-        finally:
-            db.close()
 
 
 class TestTickChatIdLookup:
@@ -2733,14 +2713,12 @@ class TestTickChatIdLookup:
                 channel_identifier="web-1",
             )
             db.add(user)
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
             route = ChannelRoute(user_id=user.id, channel="telegram", channel_identifier="tg-12345")
             db.add(route)
-            db.commit()
+            await db.commit()
             db.expunge(user)
-        finally:
-            db.close()
 
         mock_run.return_value = None
 
@@ -2775,10 +2753,8 @@ class TestTickChatIdLookup:
                 channel_identifier="web-1",
             )
             db.add(user)
-            db.commit()
+            await db.commit()
             db.expunge(user)
-        finally:
-            db.close()
 
         mock_run.return_value = None
 
@@ -2820,8 +2796,8 @@ class TestPerUserMaxDaily:
                 heartbeat_max_daily=10,
             )
             db.add(user)
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
             db.add(
                 ChannelRoute(
                     user_id=user.id,
@@ -2829,10 +2805,8 @@ class TestPerUserMaxDaily:
                     channel_identifier="tg-custom",
                 )
             )
-            db.commit()
+            await db.commit()
             db.expunge(user)
-        finally:
-            db.close()
 
         mock_run.return_value = None
 
@@ -2865,8 +2839,8 @@ class TestPerUserMaxDaily:
                 heartbeat_max_daily=0,
             )
             db.add(user)
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
             db.add(
                 ChannelRoute(
                     user_id=user.id,
@@ -2874,10 +2848,8 @@ class TestPerUserMaxDaily:
                     channel_identifier="tg-default",
                 )
             )
-            db.commit()
+            await db.commit()
             db.expunge(user)
-        finally:
-            db.close()
 
         mock_run.return_value = None
 
@@ -3660,8 +3632,10 @@ async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: Use
     mock_registry = MagicMock()
     mock_registry.create_core_tools = AsyncMock(return_value=[MagicMock(name="core_tool")])
     mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
-    mock_registry.get_available_specialist_summaries.return_value = {"quickbooks": "QB tools"}
-    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_available_specialist_summaries = AsyncMock(
+        return_value={"quickbooks": "QB tools"}
+    )
+    mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
     mock_registry.get_disabled_specialist_sub_tools.return_value = {}
 
     mock_tool_config = MagicMock()
@@ -3718,8 +3692,8 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
     mock_registry = MagicMock()
     mock_registry.create_core_tools = AsyncMock(return_value=[])
     mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
-    mock_registry.get_available_specialist_summaries.return_value = {}
-    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
+    mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
     mock_registry.get_disabled_specialist_sub_tools.return_value = {}
 
     mock_tool_config = MagicMock()
@@ -3775,8 +3749,8 @@ async def test_execute_heartbeat_task_context_includes_cleanup_instruction(
     mock_registry = MagicMock()
     mock_registry.create_core_tools = AsyncMock(return_value=[])
     mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
-    mock_registry.get_available_specialist_summaries.return_value = {}
-    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
+    mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
     mock_registry.get_disabled_specialist_sub_tools.return_value = {}
 
     mock_tool_config = MagicMock()
@@ -4017,8 +3991,8 @@ async def test_heartbeat_auto_approves_send_media_reply(user: User) -> None:
     mock_registry = MagicMock()
     mock_registry.create_core_tools = AsyncMock(return_value=core_tools)
     mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
-    mock_registry.get_available_specialist_summaries.return_value = {}
-    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
+    mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
     mock_registry.get_disabled_specialist_sub_tools.return_value = {}
 
     mock_tool_config = MagicMock()

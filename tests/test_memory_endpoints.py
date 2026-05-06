@@ -1,6 +1,6 @@
 """Tests for memory endpoint (freeform MEMORY.md)."""
 
-from fastapi.testclient import TestClient
+import asyncio
 
 from backend.app.models import MemoryDocument, User
 from tests.db_test_utils import open_test_db_session
@@ -9,9 +9,8 @@ from tests.db_test_utils import open_test_db_session
 def _seed_memory(user: User) -> None:
     """Create memory with test data via direct ORM write.
 
-    The MemoryStore API is async-only now (issue #1160 follow-up); sync
-    test helpers seed the row directly so they can run from inside a
-    sync ``TestClient`` test without spinning up an event loop.
+    Runs the async write through ``asyncio.run`` so sync ``TestClient``
+    tests can call it without spinning their own event loop.
     """
     db = open_test_db_session()
     try:

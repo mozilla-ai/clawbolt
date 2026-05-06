@@ -10,6 +10,7 @@ from backend.app.agent.onboarding import is_onboarding_needed
 from backend.app.auth.dependencies import LOCAL_USER_ID, get_current_user
 from backend.app.auth.scoping import get_scoped_user
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.models import User
 from tests.db_test_utils import open_test_db_session
 
@@ -95,16 +96,14 @@ async def test_scoping_returns_404_for_wrong_user() -> None:
     try:
         user1 = User(user_id="user-1")
         db.add(user1)
-        db.commit()
-        db.refresh(user1)
+        await db.commit()
+        await db.refresh(user1)
         db.expunge(user1)
         user2 = User(user_id="user-2")
         db.add(user2)
-        db.commit()
-        db.refresh(user2)
+        await db.commit()
+        await db.refresh(user2)
         db.expunge(user2)
-    finally:
-        db.close()
 
     # User 1 should not be able to access user 2
     async with _db_module.AsyncSessionLocal() as db:
@@ -120,11 +119,9 @@ async def test_scoping_returns_user_for_correct_user() -> None:
     try:
         user = User(user_id="user-1")
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
 
     async with _db_module.AsyncSessionLocal() as db:
         result = await get_scoped_user(user, user.id, db)

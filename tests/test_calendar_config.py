@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -16,15 +17,13 @@ def test_user() -> User:
     try:
         user = User(user_id="cal-config-test-user", onboarding_complete=True)
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
     return user
 
 
-def test_create_calendar_config(test_user: User) -> None:
+async def test_create_calendar_config(test_user: User) -> None:
     """Should create a CalendarConfig row."""
     db = open_test_db_session()
     try:
@@ -36,8 +35,8 @@ def test_create_calendar_config(test_user: User) -> None:
             enabled=True,
         )
         db.add(config)
-        db.commit()
-        db.refresh(config)
+        await db.commit()
+        await db.refresh(config)
 
         assert config.id is not None
         assert config.provider == "google_calendar"
@@ -45,11 +44,9 @@ def test_create_calendar_config(test_user: User) -> None:
         assert config.calendar_id == "primary"
         assert config.enabled is True
         assert config.created_at is not None
-    finally:
-        db.close()
 
 
-def test_unique_constraint_user_provider_calendar(test_user: User) -> None:
+async def test_unique_constraint_user_provider_calendar(test_user: User) -> None:
     """Should enforce unique (user_id, provider, calendar_id) constraint."""
     db = open_test_db_session()
     try:
@@ -59,7 +56,7 @@ def test_unique_constraint_user_provider_calendar(test_user: User) -> None:
             calendar_id="primary",
         )
         db.add(config1)
-        db.commit()
+        await db.commit()
 
         # Same user, provider, AND calendar_id should fail
         config2 = CalendarConfig(
@@ -69,13 +66,11 @@ def test_unique_constraint_user_provider_calendar(test_user: User) -> None:
         )
         db.add(config2)
         with pytest.raises(IntegrityError):
-            db.commit()
-        db.rollback()
-    finally:
-        db.close()
+            await db.commit()
+        await db.rollback()
 
 
-def test_multiple_calendars_per_user(test_user: User) -> None:
+async def test_multiple_calendars_per_user(test_user: User) -> None:
     """Same user+provider but different calendar_ids should be allowed."""
     db = open_test_db_session()
     try:
@@ -93,21 +88,25 @@ def test_multiple_calendars_per_user(test_user: User) -> None:
         )
         db.add(config1)
         db.add(config2)
-        db.commit()
+        await db.commit()
 
         configs = (
-            db.query(CalendarConfig)
-            .filter_by(user_id=test_user.id, provider="google_calendar")
+            (
+                await db.execute(
+                    select(CalendarConfig).filter_by(
+                        user_id=test_user.id, provider="google_calendar"
+                    )
+                )
+            )
+            .scalars()
             .all()
         )
         assert len(configs) == 2
         cal_ids = {c.calendar_id for c in configs}
         assert cal_ids == {"primary", "jobs@example.com"}
-    finally:
-        db.close()
 
 
-def test_cascade_delete_with_user(test_user: User) -> None:
+async def test_cascade_delete_with_user(test_user: User) -> None:
     """CalendarConfig should be deleted when user is deleted."""
     db = open_test_db_session()
     try:
@@ -116,19 +115,17 @@ def test_cascade_delete_with_user(test_user: User) -> None:
             provider="google_calendar",
         )
         db.add(config)
-        db.commit()
+        await db.commit()
         config_id = config.id
 
         # Delete the user
-        user = db.get(User, test_user.id)
+        user = await db.get(User, test_user.id)
         assert user is not None
-        db.delete(user)
-        db.commit()
+        await db.delete(user)
+        await db.commit()
 
         # Config should be gone
-        remaining = db.execute(
-            select(CalendarConfig).where(CalendarConfig.id == config_id)
+        remaining = (
+            await db.execute(select(CalendarConfig).where(CalendarConfig.id == config_id))
         ).scalar_one_or_none()
         assert remaining is None
-    finally:
-        db.close()

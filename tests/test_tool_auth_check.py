@@ -30,6 +30,14 @@ def _make_tool(name: str) -> Tool:
     return Tool(name=name, description=f"test {name}", function=noop, params_model=_EmptyParams)
 
 
+async def _auth_ok(ctx: ToolContext) -> str | None:
+    return None
+
+
+async def _auth_fail_qb(ctx: ToolContext) -> str | None:
+    return "QuickBooks is not connected. Authenticate via web dashboard."
+
+
 def _build_auth_test_registry() -> ToolRegistry:
     """Build a registry with auth_check-enabled specialists."""
     registry = ToolRegistry()
@@ -40,7 +48,7 @@ def _build_auth_test_registry() -> ToolRegistry:
         lambda ctx: [_make_tool("get_heartbeat")],
         core=False,
         summary="Manage heartbeats",
-        auth_check=lambda ctx: None,  # always authenticated
+        auth_check=_auth_ok,  # always authenticated
     )
     # Specialist that fails auth (not authenticated)
     registry.register(
@@ -48,7 +56,7 @@ def _build_auth_test_registry() -> ToolRegistry:
         lambda ctx: [],
         core=False,
         summary="QuickBooks accounting tools",
-        auth_check=lambda ctx: "QuickBooks is not connected. Authenticate via web dashboard.",
+        auth_check=_auth_fail_qb,
     )
     # Specialist without auth_check (legacy, always available)
     registry.register(
@@ -137,7 +145,7 @@ class TestGetUnauthenticatedSpecialists:
             lambda ctx: [_make_tool("get_heartbeat")],
             core=False,
             summary="Manage heartbeats",
-            auth_check=lambda ctx: None,
+            auth_check=_auth_ok,
         )
         ctx = ToolContext(user=User(id="1"))
         unauth = await registry.get_unauthenticated_specialists(ctx)

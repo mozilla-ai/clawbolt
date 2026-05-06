@@ -45,11 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 def _user_permissions_lock_key(user_id: str) -> str:
-    """Stable string key for the per-user permissions advisory lock.
-
-    Shared between sync and async callers so the two paths contend on
-    the same key.
-    """
+    """Stable string key for the per-user permissions advisory lock."""
     return f"user_permissions:{user_id}"
 
 
@@ -86,11 +82,6 @@ def _parse_row_data(row: UserPermissionSet | None) -> dict[str, Any]:
 
 
 def _select_user_permissions(user_id: str) -> Any:
-    """Select the ``UserPermissionSet`` row for one user.
-
-    Shared between sync and async paths so the query shape stays in
-    lockstep across the dual-API surface.
-    """
     return select(UserPermissionSet).filter_by(user_id=user_id)
 
 
@@ -241,7 +232,7 @@ class ApprovalStore:
         """Wholesale replace guarded by the per-user advisory lock."""
         payload = json.dumps(data, indent=2, default=str)
         async with db_session_async() as db:
-            await _lock_user_permissions_async(db, user_id)
+            await _lock_user_permissions(db, user_id)
             row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             if row is None:
                 db.add(UserPermissionSet(user_id=user_id, data=payload))
@@ -331,7 +322,7 @@ class ApprovalStore:
     ) -> None:
         """Store a permission override atomically."""
         async with db_session_async() as db:
-            await _lock_user_permissions_async(db, user_id)
+            await _lock_user_permissions(db, user_id)
             row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             data = _parse_row_data(row)
 

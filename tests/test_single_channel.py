@@ -8,6 +8,7 @@ unknown channel rejection) and startup migration.
 import asyncio
 import uuid
 
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -18,7 +19,7 @@ from backend.app.models import ChannelRoute, User
 from tests.db_test_utils import open_test_db_session
 
 
-def _create_user_with_routes(
+async def _create_user_with_routes(
     routes: list[tuple[str, str, bool]],
     preferred_channel: str = "telegram",
 ) -> str:
@@ -36,7 +37,7 @@ def _create_user_with_routes(
             onboarding_complete=True,
         )
         db.add(user)
-        db.flush()
+        await db.flush()
         for channel, identifier, enabled in routes:
             db.add(
                 ChannelRoute(
@@ -46,11 +47,8 @@ def _create_user_with_routes(
                     enabled=enabled,
                 )
             )
-        db.commit()
-        uid = user.id
-    finally:
-        db.close()
-    return uid
+        await db.commit()
+        return str(user.id)
 
 
 async def _create_user_with_routes_async(
@@ -58,13 +56,11 @@ async def _create_user_with_routes_async(
     routes: list[tuple[str, str, bool]],
     preferred_channel: str = "telegram",
 ) -> str:
-    """Async peer of ``_create_user_with_routes``.
+    """Async peer of ``_create_user_with_routes`` using the per-test factory.
 
     Writes through the per-test async connection so rows are visible to
     ``_enforce_single_channel`` (which uses ``db_session_async()``) under
-    the same outer transaction. The cross-API caveat in AGENTS.md
-    prevents the sync helper above from being used for async-native
-    tests.
+    the same outer transaction.
     """
     async with async_db() as db:
         user = User(
@@ -103,7 +99,7 @@ def _resolve_heartbeat_route_sync(user: User) -> tuple[str, ChannelRoute] | None
 class TestAutoDisableOnEnable:
     """PATCH /user/channels/routes/{channel} with enabled=true disables others."""
 
-    def test_enable_telegram_disables_linq(self, client) -> None:  # noqa: ANN001
+    async def test_enable_telegram_disables_linq(self, client) -> None:  # noqa: ANN001
         # Get the test user's ID
         db = open_test_db_session()
         try:
@@ -126,9 +122,7 @@ class TestAutoDisableOnEnable:
                     enabled=True,
                 )
             )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         resp = client.patch(
             "/api/user/channels/routes/telegram",
@@ -142,8 +136,6 @@ class TestAutoDisableOnEnable:
             linq_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="linq").first()
             assert linq_route is not None
             assert linq_route.enabled is False
-        finally:
-            db.close()
 
     def test_enable_preserves_webchat(self, client) -> None:  # noqa: ANN001
         db = open_test_db_session()
@@ -167,9 +159,7 @@ class TestAutoDisableOnEnable:
                     enabled=True,
                 )
             )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         resp = client.patch(
             "/api/user/channels/routes/telegram",
@@ -180,12 +170,10 @@ class TestAutoDisableOnEnable:
         db = open_test_db_session()
         try:
             webchat_route = (
-                db.query(ChannelRoute).filter_by(user_id=user_id, channel="webchat").first()
-            )
+                await db.execute(select(ChannelRoute).filter_by(user_id=user_id, channel="webchat"))
+            ).scalar_one_or_none()
             assert webchat_route is not None
             assert webchat_route.enabled is True
-        finally:
-            db.close()
 
     def test_enable_updates_preferred_channel(self, client) -> None:  # noqa: ANN001
         db = open_test_db_session()
@@ -194,9 +182,7 @@ class TestAutoDisableOnEnable:
             assert user is not None
             user_id = user.id
             user.preferred_channel = "linq"
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         resp = client.patch(
             "/api/user/channels/routes/telegram",
@@ -209,8 +195,6 @@ class TestAutoDisableOnEnable:
             user = db.query(User).filter_by(id=user_id).first()
             assert user is not None
             assert user.preferred_channel == "telegram"
-        finally:
-            db.close()
 
     def test_disable_does_not_affect_others(self, client) -> None:  # noqa: ANN001
         db = open_test_db_session()
@@ -234,9 +218,7 @@ class TestAutoDisableOnEnable:
                     enabled=True,
                 )
             )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         resp = client.patch(
             "/api/user/channels/routes/telegram",
@@ -249,8 +231,6 @@ class TestAutoDisableOnEnable:
             linq_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="linq").first()
             assert linq_route is not None
             assert linq_route.enabled is True
-        finally:
-            db.close()
 
 
 class TestGuardRails:
@@ -277,7 +257,7 @@ class TestIngestionNoAutoDisable:
     """Inbound messages must NOT auto-disable other channels."""
 
     async def test_inbound_does_not_disable_existing_routes(self) -> None:
-        user_id = _create_user_with_routes(
+        user_id = await _create_user_with_routes(
             [
                 ("telegram", "ingest-111", True),
                 ("linq", "+15559999999", True),
@@ -293,8 +273,6 @@ class TestIngestionNoAutoDisable:
             linq_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="linq").first()
             assert linq_route is not None
             assert linq_route.enabled is True
-        finally:
-            db.close()
 
     async def test_webchat_does_not_overwrite_preferred_channel(self) -> None:
         uid = str(uuid.uuid4())
@@ -308,7 +286,7 @@ class TestIngestionNoAutoDisable:
                 onboarding_complete=True,
             )
             db.add(user)
-            db.flush()
+            await db.flush()
             db.add(
                 ChannelRoute(
                     user_id=uid,
@@ -325,9 +303,7 @@ class TestIngestionNoAutoDisable:
                     enabled=True,
                 )
             )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         resolved_user = await _get_or_create_user("webchat", uid)
         assert resolved_user.id == uid
@@ -337,8 +313,6 @@ class TestIngestionNoAutoDisable:
             u = db.query(User).filter_by(id=uid).first()
             assert u is not None
             assert u.preferred_channel == "telegram"
-        finally:
-            db.close()
 
 
 class TestStaleRouteCleanup:
@@ -349,7 +323,7 @@ class TestStaleRouteCleanup:
         channel should be deleted so outbound dispatching uses the current
         address.  Regression test for BlueBubbles UUID-handle bug.
         """
-        user_id = _create_user_with_routes(
+        user_id = await _create_user_with_routes(
             [
                 ("bluebubbles", "old-uuid-handle", True),
             ],
@@ -367,15 +341,13 @@ class TestStaleRouteCleanup:
             # The stale UUID route should be gone; only the real number remains.
             assert identifiers == {"+15551234567"}
 
-            user = db.query(User).filter_by(id=user_id).first()
+            user = (await db.execute(select(User).filter_by(id=user_id))).scalar_one_or_none()
             assert user is not None
             assert user.channel_identifier == "+15551234567"
-        finally:
-            db.close()
 
     async def test_stale_route_cleanup_preserves_other_channels(self) -> None:
         """Stale route cleanup must not touch routes for other channels."""
-        user_id = _create_user_with_routes(
+        user_id = await _create_user_with_routes(
             [
                 ("bluebubbles", "old-uuid-handle", True),
                 ("telegram", "tg-12345", True),
@@ -390,15 +362,13 @@ class TestStaleRouteCleanup:
             tg_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="telegram").first()
             assert tg_route is not None
             assert tg_route.channel_identifier == "tg-12345"
-        finally:
-            db.close()
 
 
 class TestHeartbeatRouting:
     """Heartbeat uses preferred channel with single fallback."""
 
-    def test_uses_preferred_channel(self) -> None:
-        uid = _create_user_with_routes(
+    async def test_uses_preferred_channel(self) -> None:
+        uid = await _create_user_with_routes(
             [
                 ("telegram", "hb-111", True),
             ],
@@ -414,16 +384,14 @@ class TestHeartbeatRouting:
             channel_name, route = result
             assert channel_name == "telegram"
             assert route.channel_identifier == "hb-111"
-        finally:
-            db.close()
 
-    def test_fallback_when_preferred_disabled(self) -> None:
+    async def test_fallback_when_preferred_disabled(self) -> None:
         """Resolve returns an enabled route even if preferred_channel drifted.
 
         The lookup is pure: it does not rewrite preferred_channel. Write
         paths are responsible for keeping preferred_channel aligned.
         """
-        uid = _create_user_with_routes(
+        uid = await _create_user_with_routes(
             [
                 ("telegram", "hb-222", False),
                 ("linq", "+15551234567", True),
@@ -440,13 +408,11 @@ class TestHeartbeatRouting:
             channel_name, _route = result
             assert channel_name == "linq"
 
-            db.refresh(user)
+            await db.refresh(user)
             assert user.preferred_channel == "telegram"
-        finally:
-            db.close()
 
-    def test_returns_none_when_all_disabled(self) -> None:
-        uid = _create_user_with_routes(
+    async def test_returns_none_when_all_disabled(self) -> None:
+        uid = await _create_user_with_routes(
             [
                 ("telegram", "hb-333", False),
             ],
@@ -459,8 +425,6 @@ class TestHeartbeatRouting:
             assert user is not None
             result = _resolve_heartbeat_route_sync(user)
             assert result is None
-        finally:
-            db.close()
 
 
 class TestStartupMigration:
@@ -469,8 +433,7 @@ class TestStartupMigration:
     These tests opt in to the ``async_db`` fixture: setup writes go
     through the per-test async connection so the rows are visible to
     ``_enforce_single_channel`` (which uses ``db_session_async()``)
-    under the same outer transaction. Mixing sync setup with the async
-    helper would hit the cross-API caveat documented in AGENTS.md.
+    under the same outer transaction.
     """
 
     async def test_disables_non_preferred_routes(self, async_db: async_sessionmaker) -> None:
@@ -591,7 +554,7 @@ class TestStartupMigration:
 class TestPatchDisableSyncsPreferred:
     """Disabling the currently-preferred channel via PATCH updates preferred_channel."""
 
-    def test_disable_preferred_no_other(self, client) -> None:  # noqa: ANN001
+    async def test_disable_preferred_no_other(self, client) -> None:  # noqa: ANN001
         """Disabling the only messaging channel is a no-op for preferred_channel.
 
         There is no other enabled route to repoint to, and resolve now
@@ -611,9 +574,7 @@ class TestPatchDisableSyncsPreferred:
                     enabled=True,
                 )
             )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         resp = client.patch(
             "/api/user/channels/routes/telegram",
@@ -626,10 +587,8 @@ class TestPatchDisableSyncsPreferred:
             user = db.query(User).filter_by(id=user_id).first()
             assert user is not None
             assert user.preferred_channel == "telegram"
-        finally:
-            db.close()
 
-    def test_disable_preferred_repoints_to_other_enabled(self, client) -> None:  # noqa: ANN001
+    async def test_disable_preferred_repoints_to_other_enabled(self, client: TestClient) -> None:
         """If another enabled route exists, disabling preferred repoints to it.
 
         This state is unusual under single-channel enforcement, but it can
@@ -658,9 +617,7 @@ class TestPatchDisableSyncsPreferred:
                     enabled=True,
                 )
             )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
         resp = client.patch(
             "/api/user/channels/routes/telegram",
@@ -673,5 +630,3 @@ class TestPatchDisableSyncsPreferred:
             user = db.query(User).filter_by(id=user_id).first()
             assert user is not None
             assert user.preferred_channel == "linq"
-        finally:
-            db.close()

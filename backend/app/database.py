@@ -22,12 +22,8 @@ _lock = threading.RLock()
 # Pool tuning is defensive against silent connection drops in cloud
 # environments. Hosted Postgres setups (Railway, RDS proxies, NAT
 # gateways) routinely close idle TCP sockets without sending a FIN,
-# leaving the client end half-open. A sync DB call from an async route
-# that hits such a socket can block the event loop for the kernel's
-# default ~2h TCP retransmit window: zero CPU, no logs, no crash, and
-# the platform's liveness probe still passes because /health/live
-# never touches the DB. ``pool_recycle`` rotates connections before
-# any reasonable NAT timeout.
+# leaving the client end half-open. ``pool_recycle`` rotates
+# connections before any reasonable NAT timeout.
 _POOL_RECYCLE_SECONDS = 1800
 # 30s is well above the tail of legitimate queries observed in prod
 # (<1s) but bounded enough that an orphaned advisory-lock wait or
@@ -38,15 +34,13 @@ _STATEMENT_TIMEOUT_MS = 30000
 def _sync_database_url(url: str) -> str:
     """Translate a postgres URL to its psycopg3 sync equivalent.
 
-    SQLAlchemy 2.x still resolves the bare ``postgresql://`` scheme to
-    psycopg2 even when only psycopg3 is installed. We pin the sync
-    driver to psycopg3 explicitly so deployments can keep their
-    existing ``postgresql://...`` ``DATABASE_URL`` values without
-    needing a rewrite, and so any explicit ``postgresql+psycopg2://``
-    URLs still land on the new driver.
-
-    Async-prefixed URLs are left alone: the async engine path handles
-    them via ``_async_database_url``.
+    Used only by alembic (offline + online migrations); no path in the
+    running app uses a sync engine. SQLAlchemy 2.x still resolves the
+    bare ``postgresql://`` scheme to psycopg2 even when only psycopg3
+    is installed, so we pin the sync driver to psycopg3 explicitly.
+    Deployments can keep their existing ``postgresql://...``
+    ``DATABASE_URL`` values without needing a rewrite, and any explicit
+    ``postgresql+psycopg2://`` URLs still land on the new driver.
     """
     if url.startswith("postgresql+asyncpg://"):
         return url
@@ -65,14 +59,10 @@ sync_database_url = _sync_database_url
 
 
 def _async_database_url(url: str) -> str:
-    """Translate a sync postgres URL to its asyncpg equivalent.
+    """Translate any postgres URL flavor to its asyncpg equivalent.
 
-    SQLAlchemy uses driver-specific URL prefixes. Sync paths use
-    ``postgresql://`` or ``postgresql+psycopg://`` (psycopg3); the
-    async path uses ``postgresql+asyncpg://``. Settings ship one
-    ``database_url`` value; we derive the async form here so callers
-    don't need to know which driver they are picking up.
-
+    Settings ship one ``database_url`` value; we derive the async form
+    here so callers don't need to know which driver they are picking up.
     The legacy ``postgresql+psycopg2://`` prefix is also translated for
     forward compatibility with environments still pinned to psycopg2 in
     their ``DATABASE_URL``.
@@ -102,11 +92,6 @@ def get_async_engine() -> AsyncEngine:
                     _async_database_url(settings.database_url),
                     pool_pre_ping=True,
                     pool_recycle=_POOL_RECYCLE_SECONDS,
-                    # asyncpg uses a different connect_args shape than
-                    # the sync psycopg driver. ``server_settings`` maps
-                    # to libpq's ``options`` parameter; keepalives are
-                    # on by default in asyncpg so we don't repeat them
-                    # here.
                     connect_args={
                         "server_settings": {
                             "statement_timeout": str(_STATEMENT_TIMEOUT_MS),

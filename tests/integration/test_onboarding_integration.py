@@ -21,6 +21,7 @@ from backend.app.agent.onboarding import (
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.models import User
 from tests.db_test_utils import open_test_db_session
 
@@ -48,11 +49,9 @@ async def test_onboarding_extracts_profile_from_intro() -> None:
             preferred_channel="telegram",
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
 
     _create_bootstrap(user)
     assert is_onboarding_needed(user)

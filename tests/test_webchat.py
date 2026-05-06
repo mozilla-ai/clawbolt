@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.bus import OutboundMessage, message_bus
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.main import app
 from backend.app.models import User
 from tests.db_test_utils import open_test_db_session
@@ -21,11 +22,9 @@ async def webchat_user() -> User:
     try:
         user = User(user_id="webchat-test-user")
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
     return user
 
 
@@ -289,7 +288,7 @@ def test_sse_streams_tool_call_events(
     assert text.index("search_clients") < text.index("Done!")
 
 
-def test_sse_rejects_wrong_user(
+async def test_sse_rejects_wrong_user(
     webchat_user: User,
 ) -> None:
     """A different user must not be able to subscribe to another user's SSE stream."""
@@ -298,11 +297,9 @@ def test_sse_rejects_wrong_user(
     try:
         user_b = User(user_id="webchat-other-user")
         db.add(user_b)
-        db.commit()
-        db.refresh(user_b)
+        await db.commit()
+        await db.refresh(user_b)
         db.expunge(user_b)
-    finally:
-        db.close()
 
     # We need to switch get_current_user between requests, so track which
     # user should be returned.

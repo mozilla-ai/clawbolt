@@ -1,3 +1,5 @@
+import asyncio
+import os
 import uuid
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
@@ -53,18 +55,11 @@ def _pg_engine() -> Generator[Engine]:
 
 
 @pytest.fixture(scope="session")
-def _pg_async_engine_session() -> Generator[AsyncEngine]:
+def _pg_async_engine_session(_pg_schema: None) -> Generator[AsyncEngine]:
     """Session-scoped async engine pointed at the test DB.
 
-    Distinct from the function-scoped ``_pg_async_engine`` fixture
-    below (which the opt-in ``async_db`` fixture uses for per-test
-    rollback isolation). This one exists so the session-scoped autouse
-    rebinding in ``_isolate_async_engine`` has a stable engine handle
-    to install on ``_db_module._async_engine`` for the duration of the
-    test session.
-
     Uses ``NullPool`` to dodge the asyncpg-vs-event-loop coupling that
-    forces ``_pg_async_engine`` to be function-scoped. Pytest-asyncio
+    forces the function-scoped ``_pg_async_engine`` to exist. Pytest-asyncio
     runs each test on a fresh function-scoped event loop; a pooled
     asyncpg connection opened on test N's loop is unusable on test
     N+1's loop, and disposing the pool from test N+1's loop hits
@@ -73,19 +68,13 @@ def _pg_async_engine_session() -> Generator[AsyncEngine]:
     current loop and closes it when the session closes, so there is
     nothing to carry over.
 
-    The trade-off: tests that exercise the async path pay one TCP +
-    auth round-trip per session (a few ms against localhost). Tests
-    that never touch async pay nothing. The opt-in ``async_db`` fixture
+    The trade-off: every test pays one TCP + auth round-trip per
+    AsyncSession against localhost. The opt-in ``async_db`` fixture
     keeps its own connection-bound factory (per-test SAVEPOINT
     rollback), so this engine is only used for tests that don't
-    request ``async_db``; in practice that's tests that go through a
-    sync ``TestClient`` and only hit async via ``get_current_user``,
-    which is one short-lived async call per request.
+    request ``async_db``.
     """
-    engine = create_async_engine(
-        _ASYNC_TEST_DB_URL,
-        poolclass=NullPool,
-    )
+    engine = create_async_engine(_ASYNC_TEST_DB_URL, poolclass=NullPool)
     yield engine
     # Engine.dispose() with NullPool is a no-op on the pool itself
     # (no checked-in connections to close); we don't need to await it.
@@ -97,15 +86,11 @@ def _isolate_async_engine(
 ) -> Generator[None]:
     """Rebind the OSS async engine + session factory to the test DB.
 
-    Engine-level (session-scoped) analog to the sync ``_isolate_stores``
-    autouse fixture. After PR #1177 converted ``get_current_user`` to
-    ``Depends(get_async_db)``, every authenticated test path indirectly
-    goes through the async engine. The opt-in per-test ``async_db``
-    fixture only rebinds the engine for tests that request it; tests
-    that use a sync ``TestClient`` plus the auth dependency would
-    otherwise fall through to ``settings.database_url`` (which on CI
-    points at the production DB name) and fail with
-    ``InvalidCatalogNameError``.
+    Every test path goes through the async engine. The opt-in per-test
+    ``async_db`` fixture only rebinds the engine for tests that
+    request it; other tests would otherwise fall through to
+    ``settings.database_url`` (which on CI points at the production DB
+    name) and fail with ``InvalidCatalogNameError``.
 
     The opt-in ``async_db`` fixture still provides per-test rollback
     isolation: it saves and restores ``_async_engine`` /
@@ -130,14 +115,12 @@ def _isolate_async_engine(
 
 
 @pytest_asyncio.fixture
-async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
+async def _pg_async_engine(_pg_schema: None) -> AsyncGenerator[AsyncEngine]:
     """Function-scoped async PostgreSQL engine.
 
-    Depends on ``_pg_engine`` so the sync engine fixture has already
-    created (and will later drop) the schema. The async engine only
-    opens connections; it never runs DDL. Both engines target the
-    same database; each maintains its own connection pool, mirroring
-    the production setup in ``backend.app.database``.
+    Depends on ``_pg_schema`` so the schema has been created at
+    session start and will be dropped at session end. The async
+    engine only opens connections; it never runs DDL.
 
     Scope is per-test rather than per-session because asyncpg
     connections bind to the event loop they were created on, and
@@ -146,7 +129,7 @@ async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
     ``RuntimeError: Future attached to a different loop`` on the
     second test. We pay one engine setup per async test (a few ms)
     in exchange for not having to widen the loop scope across the
-    whole suite, which would entangle sync and async tests.
+    whole suite.
     """
     engine = create_async_engine(_ASYNC_TEST_DB_URL, pool_pre_ping=True)
     yield engine
@@ -158,10 +141,15 @@ async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
 # every table the schema knows about; ``CASCADE`` then handles
 # foreign-key chains regardless of order. Cached at import time.
 _TRUNCATE_TABLE_NAMES = [t.name for t in Base.metadata.sorted_tables]
+_TRUNCATE_SQL = (
+    "TRUNCATE TABLE "
+    + ", ".join(f'"{name}"' for name in _TRUNCATE_TABLE_NAMES)
+    + " RESTART IDENTITY CASCADE"
+)
 
 
 @pytest.fixture(autouse=True)
-def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
+def _isolate_stores(_pg_async_engine_session: AsyncEngine, tmp_path: Path) -> Generator[None]:
     """Per-test isolation via real commits + post-test TRUNCATE.
 
     Production DB access is async-only, but many tests still use a
@@ -187,18 +175,15 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
         reset_approval_gate()
         yield
 
-    # TRUNCATE all tables with RESTART IDENTITY + CASCADE so the next
-    # test starts with empty tables and reset sequences.
-    with _pg_engine.begin() as conn:
-        conn.exec_driver_sql(
-            "TRUNCATE TABLE "
-            + ", ".join(f'"{name}"' for name in _TRUNCATE_TABLE_NAMES)
-            + " RESTART IDENTITY CASCADE"
-        )
-    # Drop pooled connections so the next test cannot pick up one that
-    # is still holding a session-scoped advisory lock left by, e.g.,
-    # ``cleanup_orphaned_approvals``.
-    _pg_engine.dispose()
+    async def _truncate() -> None:
+        engine = create_async_engine(_ASYNC_TEST_DB_URL)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(_TRUNCATE_SQL))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_truncate())
 
     # Restore the async engine/factory to whatever a session-scoped
     # fixture (e.g. ``_isolate_async_engine`` from #1210) installed
@@ -316,12 +301,12 @@ async def async_db(
         _db_module._async_session_factory = old_async_factory
 
 
-@pytest.fixture()
+@pytest_asyncio.fixture()
 async def test_user(tmp_path: Path) -> User:
-    """Create a test user in the per-test PostgreSQL transaction.
+    """Create a test user via the async session factory.
 
     Also creates the file-store directory structure so per-user stores
-    (sessions, memory, etc.) can still write files during the hybrid period.
+    (sessions, memory, etc.) can still write files.
     """
     db = open_test_db_session()
     try:
@@ -334,11 +319,9 @@ async def test_user(tmp_path: Path) -> User:
             onboarding_complete=True,
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
 
     # Ensure the user's file-store directory structure exists for per-user stores
     user_dir = tmp_path / str(user.id)
@@ -385,7 +368,7 @@ async def async_test_user(async_db: async_sessionmaker) -> User:
     return user
 
 
-def create_test_session(
+async def create_test_session(
     user_id: str,
     session_id: str = "test-conv",
     messages: list[StoredMessage] | None = None,
@@ -407,7 +390,7 @@ def create_test_session(
             last_message_at=datetime.now(UTC),
         )
         db.add(cs)
-        db.flush()
+        await db.flush()
 
         for msg in messages or []:
             ts = datetime.fromisoformat(msg.timestamp) if msg.timestamp else datetime.now(UTC)
@@ -425,8 +408,8 @@ def create_test_session(
                 )
             )
 
-        db.commit()
-        db.refresh(cs)
+        await db.commit()
+        await db.refresh(cs)
         return SessionState(
             session_id=session_id,
             user_id=user_id,
@@ -435,8 +418,6 @@ def create_test_session(
             last_message_at=cs.last_message_at.isoformat(),
             channel=channel,
         )
-    finally:
-        db.close()
 
 
 @pytest.fixture(autouse=True)

@@ -17,6 +17,14 @@ from backend.app.agent.tools.registry import (
 )
 
 
+async def _auth_ok(_ctx: ToolContext) -> str | None:
+    return None
+
+
+async def _auth_not_connected(_ctx: ToolContext) -> str | None:
+    return "Not connected"
+
+
 @pytest.fixture(autouse=True)
 def _reset_import_guard() -> None:
     """Reset the once-only guard so each test triggers fresh discovery."""
@@ -104,14 +112,14 @@ async def test_create_ready_specialist_tools_skips_unauthenticated() -> None:
         _build_calendar,
         core=False,
         summary="Calendar tools",
-        auth_check=lambda _ctx: None,  # connected
+        auth_check=_auth_ok,  # connected
     )
     reg.register(
         "quickbooks",
         _build_qb,
         core=False,
         summary="QuickBooks tools",
-        auth_check=lambda _ctx: "Not connected",  # NOT connected
+        auth_check=_auth_not_connected,  # NOT connected
     )
 
     ctx = MagicMock(spec=ToolContext)
@@ -143,7 +151,7 @@ async def test_create_ready_specialist_tools_returns_empty_when_none_ready() -> 
         _build,
         core=False,
         summary="QB",
-        auth_check=lambda _ctx: "Not connected",
+        auth_check=_auth_not_connected,
     )
 
     ctx = MagicMock(spec=ToolContext)
@@ -171,7 +179,7 @@ async def test_create_ready_specialist_tools_respects_excluded_factories() -> No
         _build,
         core=False,
         summary="Calendar",
-        auth_check=lambda _ctx: None,
+        auth_check=_auth_ok,
     )
 
     ctx = MagicMock(spec=ToolContext)

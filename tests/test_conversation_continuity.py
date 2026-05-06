@@ -2,6 +2,7 @@ import datetime
 import json
 
 import pytest
+import pytest_asyncio
 
 from backend.app.agent.context import (
     get_or_create_conversation,
@@ -17,14 +18,12 @@ from backend.app.models import User
 from tests.db_test_utils import open_test_db_session
 
 
-@pytest.fixture()
-def conversation(test_user: User) -> SessionState:
-    import asyncio
-
+@pytest_asyncio.fixture()
+async def conversation(test_user: User) -> SessionState:
     from backend.app.agent.session_db import get_session_store
 
     store = get_session_store(test_user.id)
-    session, _is_new = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
+    session, _is_new = await store.get_or_create_session()
     return session
 
 
@@ -107,6 +106,53 @@ async def test_load_history_prefers_processed_context(
 
 
 @pytest.mark.asyncio()
+async def test_load_history_skips_blank_inbound_placeholder_rows(
+    conversation: SessionState,
+) -> None:
+    """Blank inbounds from batched attachment-only turns should not reach the LLM."""
+    conversation.messages.append(StoredMessage(direction="inbound", body="", seq=1))
+    conversation.messages.append(
+        StoredMessage(
+            direction="inbound",
+            body="Save this receipt for later",
+            processed_context=(
+                "[Text message]: 'Save this receipt for later'\n\n"
+                "[Photo 1, handle=media_test123]: "
+                "(staged, call analyze_photo(handle='media_test123') if you need a description)"
+            ),
+            seq=2,
+        )
+    )
+
+    history = await load_conversation_history(conversation)
+    assert history == []
+
+
+@pytest.mark.asyncio()
+async def test_load_history_keeps_processed_attachment_only_turns(
+    conversation: SessionState,
+) -> None:
+    """A processed photo-only turn still carries useful context and must survive."""
+    conversation.messages.append(
+        StoredMessage(
+            direction="inbound",
+            body="",
+            processed_context=(
+                "[Photo 1, handle=media_test123]: "
+                "(staged, call analyze_photo(handle='media_test123') if you need a description)"
+            ),
+            seq=1,
+        )
+    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=2))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 1
+    assert isinstance(history[0], UserMessage)
+    assert "Photo 1" in (history[0].content or "")
+
+
+@pytest.mark.asyncio()
 async def test_load_history_empty_conversation(
     conversation: SessionState,
 ) -> None:
@@ -170,9 +216,7 @@ async def test_get_or_create_conversation_reuses_old_session(
             last_message_at=old_time,
         )
         db.add(cs)
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is False

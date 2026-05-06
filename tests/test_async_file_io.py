@@ -19,6 +19,7 @@ from backend.app.agent.dto import UserData
 from backend.app.agent.session_db import SessionStore
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
+from backend.app.database import db_session_async
 from backend.app.models import User
 from tests.db_test_utils import open_test_db_session
 
@@ -95,9 +96,7 @@ async def test_workspace_read_file_db_backed(
         user = db.query(User).filter_by(id=str(test_user.id)).first()
         assert user is not None
         user.user_text = "# User\n\n- Name: Jake\n"
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     tools = create_workspace_tools(str(test_user.id))
     read_fn = next(t.function for t in tools if t.name == "read_file")
@@ -121,8 +120,6 @@ async def test_workspace_write_file_db_backed(
         user = db.query(User).filter_by(id=str(test_user.id)).first()
         assert user is not None
         assert "Sarah" in user.user_text
-    finally:
-        db.close()
 
 
 @pytest.mark.asyncio()
@@ -136,9 +133,7 @@ async def test_workspace_edit_file_db_backed(
         user = db.query(User).filter_by(id=str(test_user.id)).first()
         assert user is not None
         user.user_text = "- Rate: $85/hr\n"
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     tools = create_workspace_tools(str(test_user.id))
     edit_fn = next(t.function for t in tools if t.name == "edit_file")
@@ -150,5 +145,3 @@ async def test_workspace_edit_file_db_backed(
         user = db.query(User).filter_by(id=str(test_user.id)).first()
         assert user is not None
         assert "$100/hr" in user.user_text
-    finally:
-        db.close()

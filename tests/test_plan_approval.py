@@ -699,7 +699,7 @@ class TestBatchApproval:
         """
         mock_publish = AsyncMock()
         session_id = "test-approval-persist"
-        create_test_session(test_user.id, session_id=session_id, channel="linq")
+        await create_test_session(test_user.id, session_id=session_id, channel="linq")
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response(

@@ -51,7 +51,7 @@ _LOCK_MAX_WAIT_S = 5.0
 
 
 async def _try_acquire_advisory_lock_async(conn: Any, lock_key: str) -> bool:
-    """Async-safe bounded acquire of a session-scoped advisory lock.
+    """Bounded acquire of a session-scoped advisory lock.
 
     Returns True on acquire, False if the wait expires. Uses
     ``await asyncio.sleep`` between polls so the event loop stays

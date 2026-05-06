@@ -1,6 +1,6 @@
 """Tests for the manage_integration chat tool."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -121,7 +121,7 @@ async def test_status_shows_oauth_connection_state(test_user: User) -> None:
         ),
         patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth,
     ):
-        mock_oauth.is_connected.return_value = False
+        mock_oauth.is_connected = AsyncMock(return_value=False)
         result = await _call(test_user, "status")
         assert not result.is_error
         assert "not connected" in result.content
@@ -224,7 +224,7 @@ async def test_connect_returns_oauth_url(test_user: User) -> None:
         ),
         patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth,
     ):
-        mock_oauth.is_connected.return_value = False
+        mock_oauth.is_connected = AsyncMock(return_value=False)
         mock_oauth.get_authorization_url.return_value = (
             "https://accounts.google.com/o/oauth2/auth?client_id=test"
         )
@@ -255,7 +255,7 @@ async def test_connect_via_tool_group_name(test_user: User) -> None:
         ),
         patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth,
     ):
-        mock_oauth.is_connected.return_value = False
+        mock_oauth.is_connected = AsyncMock(return_value=False)
         mock_oauth.get_authorization_url.return_value = "https://example.com/auth"
 
         result = await _call(test_user, "connect", "calendar")
@@ -301,7 +301,7 @@ async def test_connect_already_connected(test_user: User) -> None:
         ),
         patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth,
     ):
-        mock_oauth.is_connected.return_value = True
+        mock_oauth.is_connected = AsyncMock(return_value=True)
 
         result = await _call(test_user, "connect", "google_calendar")
         assert not result.is_error
@@ -317,8 +317,8 @@ async def test_connect_already_connected(test_user: User) -> None:
 async def test_disconnect_removes_tokens(test_user: User) -> None:
     """Disconnecting should call delete_token on the OAuth service."""
     with patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth:
-        mock_oauth.is_connected.return_value = True
-        mock_oauth.delete_token.return_value = True
+        mock_oauth.is_connected = AsyncMock(return_value=True)
+        mock_oauth.delete_token = AsyncMock(return_value=True)
 
         result = await _call(test_user, "disconnect", "google_calendar")
         assert not result.is_error
@@ -330,7 +330,7 @@ async def test_disconnect_removes_tokens(test_user: User) -> None:
 async def test_disconnect_not_connected(test_user: User) -> None:
     """Disconnecting a not-connected integration should return an error."""
     with patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth:
-        mock_oauth.is_connected.return_value = False
+        mock_oauth.is_connected = AsyncMock(return_value=False)
 
         result = await _call(test_user, "disconnect", "google_calendar")
         assert result.is_error

@@ -14,6 +14,8 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import select
 
 from backend.app.agent.ingestion import (
     InboundMessage,
@@ -21,6 +23,7 @@ from backend.app.agent.ingestion import (
     process_inbound_from_bus,
 )
 from backend.app.bus import message_bus
+from backend.app.database import db_session_async
 from backend.app.models import ChatSession, Message, ReportedConversation, User
 from tests.db_test_utils import open_test_db_session
 
@@ -83,8 +86,8 @@ class TestParseReportCommand:
 class TestReportInterception:
     """End-to-end behavior: /report short-circuits the agent pipeline."""
 
-    @pytest.fixture()
-    def report_user(self) -> User:
+    @pytest_asyncio.fixture()
+    async def report_user(self) -> User:
         """Create a User that exists in the test database."""
         db = open_test_db_session()
         try:
@@ -95,12 +98,10 @@ class TestReportInterception:
                 onboarding_complete=True,
             )
             db.add(user)
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
             db.expunge(user)
             return user
-        finally:
-            db.close()
 
     @pytest.mark.asyncio
     async def test_report_persists_row_and_sends_ack(self, report_user: User) -> None:
@@ -140,16 +141,20 @@ class TestReportInterception:
         db = open_test_db_session()
         try:
             rows = (
-                db.query(ReportedConversation)
-                .filter(ReportedConversation.user_id == report_user.id)
+                (
+                    await db.execute(
+                        select(ReportedConversation).where(
+                            ReportedConversation.user_id == report_user.id
+                        )
+                    )
+                )
+                .scalars()
                 .all()
             )
             assert len(rows) == 1
             assert rows[0].reason == "the bot said something rude"
             assert rows[0].dismissed_at is None
             assert rows[0].reviewed_admin_user_id is None
-        finally:
-            db.close()
 
         # One ack on the bus, with the canonical body.
         assert not message_bus.outbound.empty()
@@ -179,17 +184,15 @@ class TestReportInterception:
                 channel="telegram",
             )
             db.add(cs)
-            db.flush()
+            await db.flush()
             db.add_all(
                 [
                     Message(session_id=cs.id, seq=1, direction="inbound", body="hi"),
                     Message(session_id=cs.id, seq=2, direction="outbound", body="hello!"),
                 ]
             )
-            db.commit()
+            await db.commit()
             session_db_id = cs.id
-        finally:
-            db.close()
 
         # Drain the bus.
         while not message_bus.outbound.empty():
@@ -217,15 +220,14 @@ class TestReportInterception:
         db = open_test_db_session()
         try:
             row = (
-                db.query(ReportedConversation)
-                .filter(ReportedConversation.user_id == report_user.id)
-                .filter(ReportedConversation.session_id == session_db_id)
-                .one()
-            )
+                await db.execute(
+                    select(ReportedConversation)
+                    .where(ReportedConversation.user_id == report_user.id)
+                    .where(ReportedConversation.session_id == session_db_id)
+                )
+            ).scalar_one()
             assert row.anchor_seq == 2
             assert row.reason == ""
-        finally:
-            db.close()
 
     @pytest.mark.asyncio
     async def test_non_report_message_is_not_intercepted(self, report_user: User) -> None:
@@ -277,6 +279,4 @@ class TestReportInterception:
                 .filter(ReportedConversation.user_id == report_user.id)
                 .count()
             )
-            assert count == 0
-        finally:
-            db.close()
+            assert len(rows) == 0
