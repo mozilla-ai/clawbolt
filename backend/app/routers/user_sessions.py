@@ -21,7 +21,7 @@ from backend.app.agent.system_prompt import build_agent_system_prompt
 from backend.app.agent.tool_assembly import build_initial_turn_tools
 from backend.app.agent.tool_summary import append_receipts
 from backend.app.auth.dependencies import get_current_user
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal
 from backend.app.models import ChatSession, User
 from backend.app.schemas import (
     BatchDeleteRequest,
@@ -35,14 +35,14 @@ from backend.app.schemas import (
 router = APIRouter()
 
 
-def _user_session_id(user_id: str) -> str | None:
+async def _user_session_id(user_id: str) -> str | None:
     """Return the user's session_id, or None if they have no conversation yet."""
-    db = SessionLocal()
+    db = AsyncSessionLocal()
     try:
-        cs = db.execute(select(ChatSession).filter_by(user_id=user_id)).scalar_one_or_none()
+        cs = (await db.execute(select(ChatSession).filter_by(user_id=user_id))).scalar_one_or_none()
         return cs.session_id if cs is not None else None
     finally:
-        db.close()
+        await db.close()
 
 
 def _empty_conversation(user_id: str) -> SessionDetailResponse:
@@ -68,12 +68,12 @@ async def get_conversation(
     The session row is created by the agent pipeline on the first
     inbound message, not by this endpoint.
     """
-    session_id = _user_session_id(current_user.id)
+    session_id = await _user_session_id(current_user.id)
     if session_id is None:
         return _empty_conversation(current_user.id)
 
     store = get_session_store(current_user.id)
-    session = store.load_session(session_id)
+    session = await store.load_session_async(session_id)
     if session is None:
         # Race: session row was deleted between the queries above.
         return _empty_conversation(current_user.id)
@@ -150,11 +150,11 @@ async def get_conversation_system_prompt(
       out of onboarding mode while this preview still reports
       ``is_onboarding=true`` based on the in-memory heuristic.
     """
-    session_id = _user_session_id(current_user.id)
+    session_id = await _user_session_id(current_user.id)
     if session_id is None:
         raise HTTPException(status_code=404, detail="No conversation yet")
     store = get_session_store(current_user.id)
-    session = store.load_session(session_id)
+    session = await store.load_session_async(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="No conversation yet")
 
@@ -194,12 +194,12 @@ async def delete_messages_batch(
     current_user: User = Depends(get_current_user),
 ) -> DeleteMessagesResponse:
     """Delete specific messages from the user's conversation by sequence number."""
-    session_id = _user_session_id(current_user.id)
+    session_id = await _user_session_id(current_user.id)
     if session_id is None:
         raise HTTPException(status_code=404, detail="No conversation yet")
     store = get_session_store(current_user.id)
     async with user_locks.acquire(current_user.id):
-        deleted = store.delete_messages_by_seqs(session_id, body.seqs)
+        deleted = await store.delete_messages_by_seqs_async(session_id, body.seqs)
     return DeleteMessagesResponse(status="deleted", messages_deleted=deleted)
 
 
@@ -212,12 +212,12 @@ async def delete_single_message(
     current_user: User = Depends(get_current_user),
 ) -> DeleteMessageResponse:
     """Delete a single message from the user's conversation by sequence number."""
-    session_id = _user_session_id(current_user.id)
+    session_id = await _user_session_id(current_user.id)
     if session_id is None:
         raise HTTPException(status_code=404, detail="No conversation yet")
     store = get_session_store(current_user.id)
     async with user_locks.acquire(current_user.id):
-        deleted = store.delete_message(session_id, seq)
+        deleted = await store.delete_message_async(session_id, seq)
         if not deleted:
             raise HTTPException(status_code=404, detail="Message not found")
     return DeleteMessageResponse(status="deleted", seq=seq)
@@ -235,10 +235,10 @@ async def delete_conversation_history(
     Resets the initial system prompt so the conversation continues with
     a clean slate while retaining compacted memory.
     """
-    session_id = _user_session_id(current_user.id)
+    session_id = await _user_session_id(current_user.id)
     if session_id is None:
         raise HTTPException(status_code=404, detail="No conversation yet")
     store = get_session_store(current_user.id)
     async with user_locks.acquire(current_user.id):
-        deleted = store.delete_messages(session_id)
+        deleted = await store.delete_messages_async(session_id)
     return DeleteMessagesResponse(status="deleted", messages_deleted=deleted)

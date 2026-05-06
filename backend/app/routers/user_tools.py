@@ -86,7 +86,7 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
 }
 
 
-def _build_tool_list(
+async def _build_tool_list(
     disabled_names: set[str],
     disabled_sub_tools_map: dict[str, list[str]] | None = None,
     user_id: str | None = None,
@@ -107,7 +107,9 @@ def _build_tool_list(
     # Load permission data once to avoid repeated file reads per sub-tool.
     approval_store = get_approval_store() if user_id else None
     perm_data = (
-        approval_store.load_user_permissions(user_id) if approval_store and user_id else None
+        await approval_store.load_user_permissions_async(user_id)
+        if approval_store and user_id
+        else None
     )
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
@@ -220,7 +222,7 @@ async def get_tool_config(
     saved = await store.load()
     disabled_names = {e.name for e in saved if not e.enabled}
     disabled_sub_map = {e.name: e.disabled_sub_tools for e in saved if e.disabled_sub_tools}
-    entries = _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
+    entries = await _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
     auth_issues = _get_auth_status(current_user)
     return ToolConfigResponse(tools=[_entry_to_response(e, auth_issues) for e in entries])
 
@@ -275,7 +277,7 @@ async def update_tool_config(
                 disabled_sub_map.pop(name, None)
 
     # Build and save the full config
-    entries = _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
+    entries = await _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
     await store.save(entries)
 
     auth_issues = _get_auth_status(current_user)

@@ -24,7 +24,7 @@ from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import MemoryDocument, User
 
 if TYPE_CHECKING:
@@ -137,37 +137,25 @@ def _resolve_path(user_id: str, relative_path: str) -> tuple[Path, str | None]:
     return resolved, None
 
 
-def _db_read_sync(user_id: str, column: str) -> str:
-    """Read a DB-backed virtual file column (synchronous)."""
-    db = SessionLocal()
+async def _db_read(user_id: str, column: str) -> str:
+    """Read a DB-backed virtual file column."""
+    db = AsyncSessionLocal()
     try:
-        user = db.execute(select(User).filter_by(id=user_id)).scalar_one_or_none()
+        user = (await db.execute(select(User).filter_by(id=user_id))).scalar_one_or_none()
         if user is None:
             return ""
         return getattr(user, column, "") or ""
     finally:
-        db.close()
-
-
-async def _db_read(user_id: str, column: str) -> str:
-    """Read a DB-backed virtual file column."""
-    return await asyncio.to_thread(_db_read_sync, user_id, column)
-
-
-def _db_write_sync(user_id: str, column: str, content: str) -> None:
-    """Write a DB-backed virtual file column (synchronous)."""
-    from backend.app.database import db_session
-
-    with db_session() as db:
-        user = db.execute(select(User).filter_by(id=user_id)).scalar_one_or_none()
-        if user is not None:
-            setattr(user, column, content)
-            db.commit()
+        await db.close()
 
 
 async def _db_write(user_id: str, column: str, content: str) -> None:
     """Write a DB-backed virtual file column."""
-    await asyncio.to_thread(_db_write_sync, user_id, column, content)
+    async with db_session_async() as db:
+        user = (await db.execute(select(User).filter_by(id=user_id))).scalar_one_or_none()
+        if user is not None:
+            setattr(user, column, content)
+            await db.commit()
 
 
 def _canonical_name(relative_path: str) -> str | None:
@@ -203,40 +191,32 @@ def _memory_doc_column(relative_path: str) -> str | None:
     return _MEMORY_DOC_COLUMN[name]
 
 
-def _memory_doc_read_sync(user_id: str, column: str) -> str:
-    """Read a MemoryDocument column (synchronous)."""
-    db = SessionLocal()
+async def _memory_doc_read(user_id: str, column: str) -> str:
+    """Read a MemoryDocument column."""
+    db = AsyncSessionLocal()
     try:
-        doc = db.execute(select(MemoryDocument).filter_by(user_id=user_id)).scalar_one_or_none()
+        doc = (
+            await db.execute(select(MemoryDocument).filter_by(user_id=user_id))
+        ).scalar_one_or_none()
         if doc is None:
             return ""
         return getattr(doc, column, "") or ""
     finally:
-        db.close()
-
-
-async def _memory_doc_read(user_id: str, column: str) -> str:
-    """Read a MemoryDocument column."""
-    return await asyncio.to_thread(_memory_doc_read_sync, user_id, column)
-
-
-def _memory_doc_write_sync(user_id: str, column: str, content: str) -> None:
-    """Write a MemoryDocument column (synchronous)."""
-    from backend.app.database import db_session
-
-    with db_session() as db:
-        doc = db.execute(select(MemoryDocument).filter_by(user_id=user_id)).scalar_one_or_none()
-        if doc is None:
-            doc = MemoryDocument(user_id=user_id, memory_text="", history_text="")
-            db.add(doc)
-            db.flush()
-        setattr(doc, column, content)
-        db.commit()
+        await db.close()
 
 
 async def _memory_doc_write(user_id: str, column: str, content: str) -> None:
     """Write a MemoryDocument column."""
-    await asyncio.to_thread(_memory_doc_write_sync, user_id, column, content)
+    async with db_session_async() as db:
+        doc = (
+            await db.execute(select(MemoryDocument).filter_by(user_id=user_id))
+        ).scalar_one_or_none()
+        if doc is None:
+            doc = MemoryDocument(user_id=user_id, memory_text="", history_text="")
+            db.add(doc)
+            await db.flush()
+        setattr(doc, column, content)
+        await db.commit()
 
 
 def _is_permissions_path(relative_path: str) -> bool:
@@ -256,24 +236,22 @@ def _is_permissions_path(relative_path: str) -> bool:
     return not ("/" in stripped or relative_path.startswith(".."))
 
 
-def _permissions_read_sync(user_id: str) -> str:
+async def _permissions_read(user_id: str) -> str:
     from backend.app.models import UserPermissionSet
 
-    db = SessionLocal()
+    db = AsyncSessionLocal()
     try:
-        row = db.execute(select(UserPermissionSet).filter_by(user_id=user_id)).scalar_one_or_none()
+        row = (
+            await db.execute(select(UserPermissionSet).filter_by(user_id=user_id))
+        ).scalar_one_or_none()
         if row is None:
             return ""
         return row.data or ""
     finally:
-        db.close()
+        await db.close()
 
 
-async def _permissions_read(user_id: str) -> str:
-    return await asyncio.to_thread(_permissions_read_sync, user_id)
-
-
-def _permissions_write_sync(user_id: str, content: str) -> None:
+async def _permissions_write(user_id: str, content: str) -> None:
     """Persist PERMISSIONS.json content, normalizing to indented JSON.
 
     Stable pretty-printing matters: ApprovalStore pretty-prints on every
@@ -287,8 +265,7 @@ def _permissions_write_sync(user_id: str, content: str) -> None:
     """
     import json as _json
 
-    from backend.app.agent.approval import _lock_user_permissions
-    from backend.app.database import db_session
+    from backend.app.agent.approval import _lock_user_permissions_async
     from backend.app.models import UserPermissionSet
 
     try:
@@ -298,21 +275,19 @@ def _permissions_write_sync(user_id: str, content: str) -> None:
     else:
         payload = _json.dumps(parsed, indent=2, default=str)
 
-    with db_session() as db:
-        _lock_user_permissions(db, user_id)
-        row = db.execute(select(UserPermissionSet).filter_by(user_id=user_id)).scalar_one_or_none()
+    async with db_session_async() as db:
+        await _lock_user_permissions_async(db, user_id)
+        row = (
+            await db.execute(select(UserPermissionSet).filter_by(user_id=user_id))
+        ).scalar_one_or_none()
         if row is None:
             db.add(UserPermissionSet(user_id=user_id, data=payload))
         else:
             row.data = payload
-        db.commit()
+        await db.commit()
 
 
-async def _permissions_write(user_id: str, content: str) -> None:
-    await asyncio.to_thread(_permissions_write_sync, user_id, content)
-
-
-def _permissions_edit_sync(user_id: str, old_text: str, new_text: str) -> tuple[bool, str]:
+async def _permissions_edit(user_id: str, old_text: str, new_text: str) -> tuple[bool, str]:
     """Atomic text replace on PERMISSIONS.json.
 
     Returns ``(ok, detail)``: ``ok=True`` with ``detail=""`` on success,
@@ -323,13 +298,14 @@ def _permissions_edit_sync(user_id: str, old_text: str, new_text: str) -> tuple[
     """
     import json as _json
 
-    from backend.app.agent.approval import _lock_user_permissions
-    from backend.app.database import db_session
+    from backend.app.agent.approval import _lock_user_permissions_async
     from backend.app.models import UserPermissionSet
 
-    with db_session() as db:
-        _lock_user_permissions(db, user_id)
-        row = db.execute(select(UserPermissionSet).filter_by(user_id=user_id)).scalar_one_or_none()
+    async with db_session_async() as db:
+        await _lock_user_permissions_async(db, user_id)
+        row = (
+            await db.execute(select(UserPermissionSet).filter_by(user_id=user_id))
+        ).scalar_one_or_none()
         current = (row.data if row is not None else "") or ""
 
         if old_text not in current:
@@ -349,12 +325,8 @@ def _permissions_edit_sync(user_id: str, old_text: str, new_text: str) -> tuple[
             db.add(UserPermissionSet(user_id=user_id, data=payload))
         else:
             row.data = payload
-        db.commit()
+        await db.commit()
     return (True, "")
-
-
-async def _permissions_edit(user_id: str, old_text: str, new_text: str) -> tuple[bool, str]:
-    return await asyncio.to_thread(_permissions_edit_sync, user_id, old_text, new_text)
 
 
 def create_workspace_tools(user_id: str) -> list[Tool]:
