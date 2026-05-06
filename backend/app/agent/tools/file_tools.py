@@ -214,6 +214,7 @@ def create_file_tools(
     user: User,
     storage: StorageBackend,
     pending_media: dict[str, bytes] | None = None,
+    turn_text: str = "",
 ) -> list[Tool]:
     """Create file cataloging tools for the agent.
 
@@ -223,6 +224,7 @@ def create_file_tools(
         pending_media: Dict of original_url -> file bytes available for upload.
             Includes bytes from the current message and any recent staged
             media bytes from prior turns (populated by ``_file_factory``).
+        turn_text: Current turn text, used as fallback analysis context.
     """
     media_map = pending_media or {}
     saved_analysis_cache: dict[str, str] = {}
@@ -458,7 +460,7 @@ def create_file_tools(
                 error_kind=ToolErrorKind.SERVICE,
             )
 
-        effective_context = context or "Describe this saved image."
+        effective_context = context or turn_text or "Describe this saved image."
         description = await run_vision_on_media(content, mime_type, effective_context)
         saved_analysis_cache[cache_key] = description
         logger.info(
@@ -540,7 +542,7 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
     # agent defers the call to a later turn with no attachments of its own.
     for url, content in media_staging.get_all_for_user(ctx.user.id).items():
         pending_media.setdefault(url, content)
-    return create_file_tools(ctx.user, ctx.storage, pending_media)
+    return create_file_tools(ctx.user, ctx.storage, pending_media, ctx.turn_text)
 
 
 def _register() -> None:

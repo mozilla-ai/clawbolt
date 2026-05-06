@@ -515,6 +515,40 @@ async def test_analyze_saved_file_reads_from_durable_storage(
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.agent.tools.file_tools.run_vision_on_media", new_callable=AsyncMock)
+async def test_analyze_saved_file_uses_turn_text_when_context_omitted(
+    mock_vision: AsyncMock,
+    test_user: User,
+) -> None:
+    """analyze_saved_file should fall back to the current turn text like analyze_photo."""
+    mock_vision.return_value = "The receipt total is $29.91."
+
+    storage = MockStorageBackend()
+    await storage.upload_file(b"saved-image-bytes", "/Loeffler/documents", "receipt_001.jpg")
+    media_store = MediaStore(test_user.id)
+    created = await media_store.create(
+        original_url="bb_receipt",
+        mime_type="image/jpeg",
+        processed_text="receipt for fasteners",
+        storage_url="https://mock-storage.example.com/Loeffler/documents/receipt_001.jpg",
+        storage_path="/Loeffler/documents/receipt_001.jpg",
+    )
+
+    tools = create_file_tools(test_user, storage, turn_text="What was the total on this receipt?")
+    analyze_saved = next(t for t in tools if t.name == ToolName.ANALYZE_SAVED_FILE).function
+
+    result = await analyze_saved(file_ref=created.id)
+
+    assert result.is_error is False
+    assert result.content == "The receipt total is $29.91."
+    mock_vision.assert_awaited_once_with(
+        b"saved-image-bytes",
+        "image/jpeg",
+        "What was the total on this receipt?",
+    )
+
+
+@pytest.mark.asyncio()
 async def test_analyze_saved_file_rejects_non_image(
     test_user: User,
 ) -> None:
