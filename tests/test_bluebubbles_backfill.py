@@ -30,11 +30,10 @@ from backend.app.channels.bluebubbles import (
     _release_backfill_lock,
     _try_acquire_backfill_lock,
 )
+from tests.db_test_utils import get_test_async_db_url
 from tests.mocks.bluebubbles import make_bluebubbles_webhook_payload
 
 _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
-
-_ASYNC_TEST_DB_URL = "postgresql+asyncpg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
 
 
 def _make_query_response(messages: list[dict[str, Any]], status_code: int = 200) -> MagicMock:
@@ -472,7 +471,7 @@ class TestBackfillLockConnectionPinning:
         same-connection coupling breaks again. This test fails
         immediately in that case.
         """
-        engine = create_async_engine(_ASYNC_TEST_DB_URL, pool_pre_ping=True)
+        engine = create_async_engine(get_test_async_db_url(), pool_pre_ping=True)
         try:
             holder_conn = await engine.connect()
             wrong_conn = await engine.connect()
@@ -550,7 +549,7 @@ class TestBackfillLockConnectionPinning:
         from backend.app import database as _db_module
 
         engine = create_async_engine(
-            _ASYNC_TEST_DB_URL, pool_size=1, max_overflow=0, pool_pre_ping=True
+            get_test_async_db_url(), pool_size=1, max_overflow=0, pool_pre_ping=True
         )
         old_async_engine = _db_module._async_engine
         old_async_factory = _db_module._async_session_factory
@@ -687,7 +686,7 @@ class TestBackfillLockConnectionPinning:
         B can acquire. This is the steady-state behavior production
         relies on for rolling restarts.
         """
-        engine = create_async_engine(_ASYNC_TEST_DB_URL, pool_pre_ping=True)
+        engine = create_async_engine(get_test_async_db_url(), pool_pre_ping=True)
         try:
             conn_a = await engine.connect()
             conn_b = await engine.connect()

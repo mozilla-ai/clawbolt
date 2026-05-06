@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import (
 
 import backend.app.database as _db_module
 from backend.app.models import ChannelRoute, User
-from tests.db_test_utils import open_test_db_session
+from tests.db_test_utils import get_test_async_db_url, open_test_db_session
 
 
 def test_create_and_read_user() -> None:
@@ -154,9 +154,7 @@ async def test_async_session_can_execute_trivial_select() -> None:
     Builds its own engine so the test only exercises the async runtime
     wiring in ``backend.app.database``.
     """
-    url = _db_module._async_database_url(
-        "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
-    )
+    url = get_test_async_db_url()
     engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
     factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         bind=engine, autoflush=False, expire_on_commit=False
@@ -175,9 +173,7 @@ async def test_db_session_async_rollback_on_exception() -> None:
     Mirrors the sync ``db_session`` lifecycle contract: exceptions
     trigger rollback before the session closes.
     """
-    url = _db_module._async_database_url(
-        "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
-    )
+    url = get_test_async_db_url()
     engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
     factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         bind=engine, autoflush=False, expire_on_commit=False

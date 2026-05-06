@@ -29,9 +29,11 @@ from backend.app.database import Base
 from backend.app.main import app
 from backend.app.models import ChatSession, Message, User
 from backend.app.services.rate_limiter import webhook_rate_limiter
-from tests.db_test_utils import get_test_sync_engine, open_test_db_session
-
-_ASYNC_TEST_DB_URL = "postgresql+asyncpg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+from tests.db_test_utils import (
+    get_test_async_db_url,
+    get_test_sync_engine,
+    open_test_db_session,
+)
 
 
 def _reset_public_schema(engine: Engine) -> None:
@@ -83,7 +85,7 @@ def _pg_async_engine_session() -> Generator[AsyncEngine]:
     which is one short-lived async call per request.
     """
     engine = create_async_engine(
-        _ASYNC_TEST_DB_URL,
+        get_test_async_db_url(),
         poolclass=NullPool,
     )
     yield engine
@@ -148,7 +150,7 @@ async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
     in exchange for not having to widen the loop scope across the
     whole suite, which would entangle sync and async tests.
     """
-    engine = create_async_engine(_ASYNC_TEST_DB_URL, pool_pre_ping=True)
+    engine = create_async_engine(get_test_async_db_url(), pool_pre_ping=True)
     yield engine
     await engine.dispose()
 
