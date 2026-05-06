@@ -1050,7 +1050,7 @@ class ApprovalEventStore:
     the premium repo.
     """
 
-    def list_for_user(
+    async def list_for_user(
         self,
         user_id: str,
         limit: int = 500,
@@ -1062,14 +1062,16 @@ class ApprovalEventStore:
         cannot OOM the response. ``since`` is an inclusive lower bound
         on ``created_at``; pass it to scope to a recent window.
         """
-        with db_session() as db:
+        async with db_session_async() as db:
             stmt = select(ApprovalEvent).where(ApprovalEvent.user_id == user_id)
             if since is not None:
                 stmt = stmt.where(ApprovalEvent.created_at >= since)
             rows = (
-                db.execute(
-                    stmt.order_by(ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc()).limit(
-                        limit
+                (
+                    await db.execute(
+                        stmt.order_by(ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc()).limit(
+                            limit
+                        )
                     )
                 )
                 .scalars()
