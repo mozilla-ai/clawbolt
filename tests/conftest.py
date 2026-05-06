@@ -32,13 +32,50 @@ from backend.app.main import app
 from backend.app.models import ChatSession, Message, User
 from backend.app.services.rate_limiter import webhook_rate_limiter
 
-# Per-branch / per-agent test DB override. Several developers or agents
-# can run pytest in parallel against one Postgres without colliding on
-# the shared ``clawbolt_test`` database (TRUNCATEs invalidate each other,
-# DDL during session teardown deadlocks). Defaults to ``clawbolt_test``
-# so CI and the standard local flow are unaffected.
-_TEST_DB_NAME = os.environ.get("OSS_TEST_DB", "clawbolt_test")
+# Per-worker / per-branch test DB. Several developers or agents can run
+# pytest in parallel against one Postgres without colliding on the
+# shared ``clawbolt_test`` database (TRUNCATEs invalidate each other,
+# DDL during session teardown deadlocks). Resolution order:
+#   1. ``OSS_TEST_DB`` env var (manual override).
+#   2. ``PYTEST_XDIST_WORKER`` (e.g. ``gw0``) when running ``pytest -n auto``;
+#      yields ``clawbolt_test_gw0`` etc. Each worker gets its own DB,
+#      auto-created in ``_pg_schema``.
+#   3. ``clawbolt_test`` (sequential local + CI default).
+_PG_ADMIN_URL = "postgresql://clawbolt:clawbolt@localhost:5432/postgres"
+
+
+def _resolve_test_db_name() -> str:
+    explicit = os.environ.get("OSS_TEST_DB")
+    if explicit:
+        return explicit
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker:
+        return f"clawbolt_test_{worker}"
+    return "clawbolt_test"
+
+
+_TEST_DB_NAME = _resolve_test_db_name()
 _ASYNC_TEST_DB_URL = f"postgresql+asyncpg://clawbolt:clawbolt@localhost:5432/{_TEST_DB_NAME}"
+
+
+def _ensure_test_database_exists() -> None:
+    """Create the per-worker test DB if it doesn't already exist.
+
+    asyncpg can't issue CREATE DATABASE inside a transaction, and
+    pytest-xdist starts each worker in its own process before the
+    fixture chain runs DDL. Connecting to the ``postgres`` admin DB
+    here (psycopg sync, autocommit) creates the worker's database
+    on demand without serializing across workers.
+    """
+    import psycopg
+    from psycopg import sql
+
+    with psycopg.connect(_PG_ADMIN_URL, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (_TEST_DB_NAME,))
+        if cur.fetchone() is None:
+            cur.execute(
+                sql.SQL("CREATE DATABASE {} OWNER clawbolt").format(sql.Identifier(_TEST_DB_NAME))
+            )
 
 
 @pytest.fixture(scope="session")
@@ -52,6 +89,8 @@ def _pg_schema() -> Generator[None]:
     inside its own short-lived loop avoids tying schema creation to
     a particular pytest-asyncio loop scope.
     """
+
+    _ensure_test_database_exists()
 
     async def _setup() -> None:
         engine = create_async_engine(_ASYNC_TEST_DB_URL)

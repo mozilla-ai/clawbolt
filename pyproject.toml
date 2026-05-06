@@ -37,6 +37,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-timeout>=2.3",
+    "pytest-xdist>=3.5",
     "ruff>=0.5",
     "pre-commit>=3.0",
     "ty>=0.0.1a0",

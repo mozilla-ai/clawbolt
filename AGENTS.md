@@ -69,13 +69,9 @@ Key store modules:
 
 File storage for uploads uses the local filesystem under `data/` (configurable via `DATA_DIR`).
 
-## Database access (async-only)
+## Database access
 
-OSS uses asyncpg for every database call. The sync engine, sync session factory, and sync `db_session()` / `get_db` helpers were removed once the migration epic (#1139) completed. New code MUST use the async API; do not reintroduce a sync DB path.
-
-### Async session lifecycle
-
-Both the singleton engine and session factory live in `backend/app/database.py`. The async session factory ships with `expire_on_commit=False` so attribute access after commit does not trigger `MissingGreenlet`. Pool tuning (`pool_recycle`, `pool_pre_ping`, statement timeout) is on the engine.
+The singleton engine and session factory live in `backend/app/database.py`. The session factory ships with `expire_on_commit=False` so attribute access after commit does not trigger `MissingGreenlet`. Pool tuning (`pool_recycle`, `pool_pre_ping`, statement timeout) is on the engine.
 
 - READ-only methods: `db = AsyncSessionLocal()` + `try / finally await db.close()`. Lighter weight, no rollback wrapper. Reference `IdempotencyStore.has_seen` in `backend/app/agent/stores.py`.
 - WRITE methods: `async with db_session_async() as db: ...`. Auto-rollback on exception, auto-close. Reference `IdempotencyStore.try_mark_seen` in `backend/app/agent/stores.py`.
@@ -85,13 +81,12 @@ Pool sizing is currently SQLAlchemy default (`pool_size=5`, `max_overflow=10`). 
 
 ### Common SQLAlchemy 2.0 patterns
 
-PR #1190 converted all `db.query()` call sites; do not reintroduce the 1.x Query API in new code.
-
 - Read: `(await db.execute(select(X).where(...))).scalar_one_or_none()`. For a scalar count use `await db.scalar(select(func.count(...)))`.
 - DML rowcount: at runtime `(await db.execute(update/delete)).rowcount` returns `int`, but the stubs say `Result`. Cast to access cleanly: `cast("CursorResult[object]", await db.execute(...)).rowcount`. Reference `SessionStore.delete_message` in `backend/app/agent/session_db.py`.
 - Bulk DML `synchronize_session`: the kwarg moved off `update()`/`delete()` constructors. Use `.execution_options(synchronize_session="fetch")` on the executable. Reference `_append_history_update` in `backend/app/agent/memory_db.py`.
 - Row-level lock: `(await db.execute(select(M).filter_by(id=x).with_for_update())).scalar_one_or_none()`.
 - `.scalars().all()` returns `Sequence[T]`, not `list[T]`. Wrap with `list(...)` only when the consumer is typed for `list`.
+- Do not use the SQLAlchemy 1.x `db.query()` API.
 
 ### Encrypted columns: do not concat on the SQL side
 
@@ -107,22 +102,20 @@ Session-scoped advisory locks (`pg_advisory_lock` / `pg_try_advisory_lock`) are 
 
 Concurrency tests for advisory locks: spin per-task `AsyncConnection` handles so the lock primitive is actually exercised, not the connection serialization. Coordinate via `asyncio.Event`. Do not assert on `time.monotonic()` deltas across tasks; sub-millisecond races make the comparisons flake. Reference `TestInboundRecoveryLockSerialization` in `tests/test_inbound_recovery.py`.
 
-### Test fixture: async DB isolation
+### Test DB isolation
 
-The `async_db` fixture in `tests/conftest.py` runs each opt-in async test inside a per-test `AsyncConnection` with a wrapping transaction; it rebinds `backend.app.database._async_session_factory` so store calls to `AsyncSessionLocal()` and `db_session_async()` pick up the test connection. Two non-obvious choices documented in the design comment block above the fixture:
+The session-scoped autouse `_isolate_async_engine` fixture rebinds the OSS engine to a `NullPool` async engine pointed at the test database. The default `_isolate_stores` autouse fixture TRUNCATEs every table in `Base.metadata.sorted_tables` after each test (RESTART IDENTITY + CASCADE) so the next test starts on a clean slate. The standard `test_user` fixture writes through `db_session_async()` against that engine.
 
-- **Function-scoped engine.** asyncpg connections bind to the event loop they were created on; pytest-asyncio rotates loops between tests by default. A session-scoped async engine surfaces as `RuntimeError: Future attached to a different loop` on the second test. We pay one engine setup per opt-in test in exchange for not having to widen the loop scope across the whole suite.
+The opt-in `async_db` fixture (in `tests/conftest.py`) gives a stricter SAVEPOINT-based rollback for tests that need it: each test runs inside a per-test `AsyncConnection` with a wrapping transaction, and the fixture rebinds `_async_session_factory` so store calls pick up the test connection. Two non-obvious choices documented in the design comment block above the fixture:
+
+- **Function-scoped engine.** asyncpg connections bind to the event loop they were created on; pytest-asyncio rotates loops between tests by default. A session-scoped engine surfaces as `RuntimeError: Future attached to a different loop` on the second test.
 - **`join_transaction_mode="create_savepoint"`.** Forces every session into its own SAVEPOINT under the outer transaction so an `IntegrityError` rolls back to the savepoint without detaching the outer transaction.
 
-The session-scoped autouse `_isolate_async_engine` fixture rebinds the OSS engine to a `NullPool` async engine pointed at the test database, so non-opt-in tests still execute against the test DB. The default `_isolate_stores` autouse fixture TRUNCATEs every table in `Base.metadata.sorted_tables` after each test (RESTART IDENTITY + CASCADE) to give the next test a clean slate.
-
-The shared `async_test_user` fixture inserts a test user through the per-test connection (only useful with `async_db`); the standard `test_user` fixture writes through `db_session_async()` against the session-scoped engine.
-
-End every async-isolation test file with an iso-canary pair to prove rollback isolation. The `_part_a` test writes a fixed-id row; the `_part_b` test asserts the row is gone. Reference `test_async_isolation_rolls_back_between_tests_part_a` and `_part_b` in `tests/test_idempotency_pruning_async.py`.
+Pair `async_db` with the `async_test_user` fixture, which inserts the test user through the per-test connection so it is visible inside the same outer transaction. End every `async_db`-using test file with an iso-canary pair (`_part_a` writes a fixed-id row, `_part_b` asserts it is gone) to prove rollback isolation. Reference `test_async_isolation_rolls_back_between_tests_part_a` and `_part_b` in `tests/test_idempotency_pruning_async.py`.
 
 ### Premium
 
-Premium imports OSS via the editable `../clawbolt` path. Premium fixtures rebind the OSS async engine module attributes for per-test isolation; see premium `tests/conftest.py` for the analog of `async_db`.
+Premium imports OSS via the editable `../clawbolt` path. Premium fixtures rebind the OSS engine module attributes for per-test isolation; see premium `tests/conftest.py`.
 
 ## Backwards Compatibility
 
@@ -283,7 +276,13 @@ su - postgres -c "psql -c \"CREATE USER clawbolt WITH PASSWORD 'clawbolt' CREATE
 su - postgres -c "psql -c \"CREATE DATABASE clawbolt_test OWNER clawbolt;\""
 ```
 
-The test suite connects to `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test`. The conftest.py handles table creation and per-test transaction rollback automatically.
+The test suite connects to `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test`. The conftest.py handles table creation and per-test TRUNCATE automatically.
+
+### Parallel pytest with xdist
+
+`pytest -n auto` (or any `-n <N>`) is supported. Each xdist worker writes to its own database (`clawbolt_test_gw0`, `clawbolt_test_gw1`, …); the conftest auto-creates them on demand by connecting to the `postgres` admin DB (so the `clawbolt` role needs `CREATEDB`, which the install command above grants). Sequential runs and CI continue to use `clawbolt_test` unchanged.
+
+Set `OSS_TEST_DB=<name>` to override the database name explicitly (useful when several agents or branches run pytest at the same time and you want stable per-branch DBs).
 
 ### Git operations
 
