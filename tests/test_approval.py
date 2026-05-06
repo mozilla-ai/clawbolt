@@ -430,28 +430,37 @@ class TestApprovalGate:
         from backend.app.models import PendingApprovalRow
 
         gate = ApprovalGate()
-        mock_publish = AsyncMock()
+        prompt_sent = asyncio.Event()
+        release_publish = asyncio.Event()
 
-        async def _observe_and_resolve() -> None:
-            await asyncio.sleep(0.01)
-            async with db_session_async() as db:
-                row = await db.get(PendingApprovalRow, test_user.id)
-                assert row is not None, "row should exist while approval is in flight"
-                assert row.tool_name == "write_file"
-                assert row.channel == "telegram"
-            await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+        async def _publish(_msg: OutboundMessage) -> None:
+            # request_approval() only calls publish_outbound after the
+            # pending_approvals row has been persisted.
+            prompt_sent.set()
+            await release_publish.wait()
 
-        task = asyncio.create_task(_observe_and_resolve())
-        decision = await gate.request_approval(
-            user_id=test_user.id,
-            tool_name="write_file",
-            description="write a file",
-            publish_outbound=mock_publish,
-            channel="telegram",
-            chat_id="chat_1",
-            timeout=5.0,
+        request_task = asyncio.create_task(
+            gate.request_approval(
+                user_id=test_user.id,
+                tool_name="write_file",
+                description="write a file",
+                publish_outbound=_publish,
+                channel="telegram",
+                chat_id="chat_1",
+                timeout=5.0,
+            )
         )
-        await task
+        await asyncio.wait_for(prompt_sent.wait(), timeout=1.0)
+
+        async with db_session_async() as db:
+            row = await db.get(PendingApprovalRow, test_user.id)
+            assert row is not None, "row should exist while approval is in flight"
+            assert row.tool_name == "write_file"
+            assert row.channel == "telegram"
+
+        release_publish.set()
+        await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+        decision = await asyncio.wait_for(request_task, timeout=1.0)
         assert decision == ApprovalDecision.APPROVED
 
         async with db_session_async() as db:
@@ -593,32 +602,43 @@ class TestApprovalGate:
         from backend.app.models import PendingApprovalRow
 
         gate = ApprovalGate()
-        mock_publish = AsyncMock()
-        woke_after_delete = asyncio.Event()
+        prompt_sent = asyncio.Event()
+        release_publish = asyncio.Event()
 
-        async def _resolve_and_check() -> None:
-            await asyncio.sleep(0.01)
-            await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
-            # Immediately after resolve returns, the DB row must already be
-            # gone, without waiting for request_approval's trailing cleanup.
-            async with db_session_async() as db:
-                assert await db.get(PendingApprovalRow, test_user.id) is None, (
-                    "resolve() must delete the row before waking the waiter"
-                )
-            woke_after_delete.set()
+        async def _publish(_msg: OutboundMessage) -> None:
+            prompt_sent.set()
+            await release_publish.wait()
 
-        task = asyncio.create_task(_resolve_and_check())
-        await gate.request_approval(
-            user_id=test_user.id,
-            tool_name="write_file",
-            description="write",
-            publish_outbound=mock_publish,
-            channel="telegram",
-            chat_id="chat_1",
-            timeout=5.0,
+        request_task = asyncio.create_task(
+            gate.request_approval(
+                user_id=test_user.id,
+                tool_name="write_file",
+                description="write",
+                publish_outbound=_publish,
+                channel="telegram",
+                chat_id="chat_1",
+                timeout=5.0,
+            )
         )
-        await task
-        assert woke_after_delete.is_set()
+        await asyncio.wait_for(prompt_sent.wait(), timeout=1.0)
+
+        async with db_session_async() as db:
+            assert await db.get(PendingApprovalRow, test_user.id) is not None, (
+                "row must exist before resolve deletes it"
+            )
+
+        release_publish.set()
+        await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+
+        # Immediately after resolve returns, the DB row must already be
+        # gone, without waiting for request_approval's trailing cleanup.
+        async with db_session_async() as db:
+            assert await db.get(PendingApprovalRow, test_user.id) is None, (
+                "resolve() must delete the row before waking the waiter"
+            )
+
+        decision = await asyncio.wait_for(request_task, timeout=1.0)
+        assert decision == ApprovalDecision.APPROVED
 
     @pytest.mark.asyncio()
     async def test_persist_pending_row_upsert_is_idempotent(self, test_user: User) -> None:
