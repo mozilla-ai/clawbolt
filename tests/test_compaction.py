@@ -926,6 +926,7 @@ async def test_trigger_compaction_for_dropped_fires_background_task(
     test_user: UserData,
 ) -> None:
     """trigger_compaction_for_dropped should fire a background compaction task."""
+    from backend.app.agent import context as _context_module
     from backend.app.agent.context import trigger_compaction_for_dropped
 
     # Dropped messages must carry seq so the trigger can advance the
@@ -943,7 +944,14 @@ async def test_trigger_compaction_for_dropped_fires_background_task(
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await trigger_compaction_for_dropped(test_user.id, dropped)
-        await asyncio.sleep(0.2)
+        # Wait deterministically for the background task to finish rather
+        # than sleeping a fixed window. ``-n auto`` workers contend for CPU
+        # and a 200ms sleep flakes; gather() resolves as soon as the
+        # compaction task completes.
+        if _context_module._background_tasks:
+            await asyncio.gather(
+                *list(_context_module._background_tasks), return_exceptions=True
+            )
 
     store = get_memory_store(test_user.id)
     content = await store.read_memory_async()
