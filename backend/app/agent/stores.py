@@ -158,21 +158,21 @@ def _today_window_utc() -> tuple[datetime.datetime, datetime.datetime]:
 class HeartbeatStore:
     """Database-backed heartbeat storage using User.heartbeat_text and HeartbeatLog ORM models.
 
-    Dual-API store (issue #1154). Each public method has an ``*_async``
-    peer with identical semantics; the two share query construction via
-    the ``_heartbeat_user_select`` / ``_heartbeat_daily_count_select`` /
-    ``_recent_heartbeat_logs_select`` builders above. Existing sync
-    callers (the heartbeat scheduler tick that runs outside the event
-    loop) keep working unchanged while OSS-internal hot paths migrate
-    to the async peers. Follows the IdempotencyStore pilot pattern
-    from PR #1199.
+    Async-only API for the methods originally introduced by issue #1154
+    (collapsed in #1160). ``read_heartbeat_md`` retains its sync ``def``
+    signature: premium callers (data export, audit) invoke it from sync
+    code paths and converting them requires premium-side changes.
     """
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
 
     def read_heartbeat_md(self) -> str:
-        """Read freeform heartbeat markdown from User.heartbeat_text."""
+        """Read freeform heartbeat markdown from User.heartbeat_text.
+
+        Sync-only; premium calls this from sync export/audit paths.
+        Async callers should use :meth:`read_heartbeat_md_async`.
+        """
         db = SessionLocal()
         try:
             user = db.execute(_heartbeat_user_select(self.user_id)).scalar_one_or_none()
@@ -183,7 +183,7 @@ class HeartbeatStore:
             db.close()
 
     async def read_heartbeat_md_async(self) -> str:
-        """Async peer of ``read_heartbeat_md``."""
+        """Async peer of :meth:`read_heartbeat_md`."""
         db = AsyncSessionLocal()
         try:
             user = (await db.execute(_heartbeat_user_select(self.user_id))).scalar_one_or_none()
@@ -195,19 +195,15 @@ class HeartbeatStore:
 
     async def write_heartbeat_md(self, text: str) -> None:
         """Write freeform heartbeat markdown to User.heartbeat_text."""
-        with db_session() as db:
-            user = db.execute(_heartbeat_user_select(self.user_id)).scalar_one_or_none()
-            if user is not None:
-                user.heartbeat_text = text
-                db.commit()
-
-    async def write_heartbeat_md_async(self, text: str) -> None:
-        """Async peer of ``write_heartbeat_md``."""
         async with db_session_async() as db:
             user = (await db.execute(_heartbeat_user_select(self.user_id))).scalar_one_or_none()
             if user is not None:
                 user.heartbeat_text = text
                 await db.commit()
+
+    async def write_heartbeat_md_async(self, text: str) -> None:
+        """Deprecated alias of :meth:`write_heartbeat_md`."""
+        await self.write_heartbeat_md(text)
 
     async def log_heartbeat(
         self,
@@ -219,28 +215,6 @@ class HeartbeatStore:
         tasks: str = "",
     ) -> None:
         """Insert a HeartbeatLog row."""
-        with db_session() as db:
-            log = HeartbeatLog(
-                user_id=self.user_id,
-                action_type=action_type,
-                message_text=message_text,
-                channel=channel,
-                reasoning=reasoning,
-                tasks=tasks,
-            )
-            db.add(log)
-            db.commit()
-
-    async def log_heartbeat_async(
-        self,
-        *,
-        action_type: str = "send",
-        message_text: str = "",
-        channel: str = "",
-        reasoning: str = "",
-        tasks: str = "",
-    ) -> None:
-        """Async peer of ``log_heartbeat``."""
         async with db_session_async() as db:
             log = HeartbeatLog(
                 user_id=self.user_id,
@@ -253,6 +227,24 @@ class HeartbeatStore:
             db.add(log)
             await db.commit()
 
+    async def log_heartbeat_async(
+        self,
+        *,
+        action_type: str = "send",
+        message_text: str = "",
+        channel: str = "",
+        reasoning: str = "",
+        tasks: str = "",
+    ) -> None:
+        """Deprecated alias of :meth:`log_heartbeat`."""
+        await self.log_heartbeat(
+            action_type=action_type,
+            message_text=message_text,
+            channel=channel,
+            reasoning=reasoning,
+            tasks=tasks,
+        )
+
     async def get_daily_count(self) -> int:
         """Count HeartbeatLog entries for today (UTC) that consumed the nudge budget.
 
@@ -262,21 +254,6 @@ class HeartbeatStore:
         nudges to the user, so they do not count toward
         ``heartbeat_max_daily_messages``.
         """
-        db = SessionLocal()
-        try:
-            today_start, tomorrow_start = _today_window_utc()
-            count: int = (
-                db.execute(
-                    _heartbeat_daily_count_select(self.user_id, today_start, tomorrow_start)
-                ).scalar()
-                or 0
-            )
-            return count
-        finally:
-            db.close()
-
-    async def get_daily_count_async(self) -> int:
-        """Async peer of ``get_daily_count``."""
         db = AsyncSessionLocal()
         try:
             today_start, tomorrow_start = _today_window_utc()
@@ -289,23 +266,15 @@ class HeartbeatStore:
         finally:
             await db.close()
 
+    async def get_daily_count_async(self) -> int:
+        """Deprecated alias of :meth:`get_daily_count`."""
+        return await self.get_daily_count()
+
     async def get_recent_logs(
         self,
         since: datetime.datetime,
     ) -> list[HeartbeatLogEntry]:
         """Select HeartbeatLog entries where created_at >= since."""
-        db = SessionLocal()
-        try:
-            logs = db.execute(_recent_heartbeat_logs_select(self.user_id, since)).scalars().all()
-            return [_heartbeat_log_to_dto(log) for log in logs]
-        finally:
-            db.close()
-
-    async def get_recent_logs_async(
-        self,
-        since: datetime.datetime,
-    ) -> list[HeartbeatLogEntry]:
-        """Async peer of ``get_recent_logs``."""
         db = AsyncSessionLocal()
         try:
             result = await db.execute(_recent_heartbeat_logs_select(self.user_id, since))
@@ -313,6 +282,13 @@ class HeartbeatStore:
             return [_heartbeat_log_to_dto(log) for log in logs]
         finally:
             await db.close()
+
+    async def get_recent_logs_async(
+        self,
+        since: datetime.datetime,
+    ) -> list[HeartbeatLogEntry]:
+        """Deprecated alias of :meth:`get_recent_logs`."""
+        return await self.get_recent_logs(since)
 
 
 # ---------------------------------------------------------------------------
@@ -395,12 +371,10 @@ def _apply_media_updates(m: MediaFile, fields: dict[str, Any]) -> None:
 class MediaStore:
     """Database-backed media file storage using MediaFile ORM model.
 
-    Dual-API store (issue #1155). Each public method has an ``*_async``
-    peer with identical semantics; the two share query construction via
-    the ``_media_list_select`` / ``_media_existing_ids_select`` /
-    ``_media_by_id_select`` / ``_media_by_url_select`` /
-    ``_media_count_by_prefix_select`` builders above. Follows the
-    IdempotencyStore pilot pattern from PR #1199.
+    Async-only API (issue #1160). The dual sync+async surface from
+    issue #1155 has been collapsed: only the async implementation
+    remains. ``*_async`` aliases stay as thin wrappers so premium
+    continues to compile while it drops the suffix on its own callers.
     """
 
     def __init__(self, user_id: str) -> None:
@@ -408,15 +382,6 @@ class MediaStore:
 
     async def list_all(self) -> list[MediaData]:
         """Query all MediaFile rows, return as DTOs."""
-        db = SessionLocal()
-        try:
-            rows = db.execute(_media_list_select(self.user_id)).scalars().all()
-            return [_media_to_dto(m) for m in rows]
-        finally:
-            db.close()
-
-    async def list_all_async(self) -> list[MediaData]:
-        """Async peer of ``list_all``."""
         db = AsyncSessionLocal()
         try:
             result = await db.execute(_media_list_select(self.user_id))
@@ -424,6 +389,10 @@ class MediaStore:
             return [_media_to_dto(m) for m in rows]
         finally:
             await db.close()
+
+    async def list_all_async(self) -> list[MediaData]:
+        """Deprecated alias of :meth:`list_all`."""
+        return await self.list_all()
 
     async def create(
         self,
@@ -435,38 +404,6 @@ class MediaStore:
         message_id: str | None = None,
     ) -> MediaData:
         """Insert a new MediaFile row and return it as a DTO."""
-        with db_session() as db:
-            # ID generation: "media-NNN" format -- lock rows to prevent races
-            existing_ids = list(
-                db.execute(_media_existing_ids_select(self.user_id)).scalars().all()
-            )
-            new_id = _next_media_id(existing_ids)
-
-            media = MediaFile(
-                id=new_id,
-                user_id=self.user_id,
-                message_id=message_id or "",
-                original_url=original_url,
-                mime_type=mime_type,
-                processed_text=processed_text,
-                storage_url=storage_url,
-                storage_path=storage_path,
-            )
-            db.add(media)
-            db.commit()
-            db.refresh(media)
-            return _media_to_dto(media)
-
-    async def create_async(
-        self,
-        original_url: str = "",
-        mime_type: str = "",
-        processed_text: str = "",
-        storage_url: str = "",
-        storage_path: str = "",
-        message_id: str | None = None,
-    ) -> MediaData:
-        """Async peer of ``create``."""
         async with db_session_async() as db:
             result = await db.execute(_media_existing_ids_select(self.user_id))
             existing_ids = list(result.scalars().all())
@@ -487,19 +424,27 @@ class MediaStore:
             await db.refresh(media)
             return _media_to_dto(media)
 
+    async def create_async(
+        self,
+        original_url: str = "",
+        mime_type: str = "",
+        processed_text: str = "",
+        storage_url: str = "",
+        storage_path: str = "",
+        message_id: str | None = None,
+    ) -> MediaData:
+        """Deprecated alias of :meth:`create`."""
+        return await self.create(
+            original_url=original_url,
+            mime_type=mime_type,
+            processed_text=processed_text,
+            storage_url=storage_url,
+            storage_path=storage_path,
+            message_id=message_id,
+        )
+
     async def update(self, media_id: str, **fields: Any) -> MediaData | None:
         """Update a MediaFile row by id."""
-        with db_session() as db:
-            m = db.execute(_media_by_id_select(self.user_id, media_id)).scalar_one_or_none()
-            if m is None:
-                return None
-            _apply_media_updates(m, fields)
-            db.commit()
-            db.refresh(m)
-            return _media_to_dto(m)
-
-    async def update_async(self, media_id: str, **fields: Any) -> MediaData | None:
-        """Async peer of ``update``."""
         async with db_session_async() as db:
             m = (await db.execute(_media_by_id_select(self.user_id, media_id))).scalar_one_or_none()
             if m is None:
@@ -508,6 +453,10 @@ class MediaStore:
             await db.commit()
             await db.refresh(m)
             return _media_to_dto(m)
+
+    async def update_async(self, media_id: str, **fields: Any) -> MediaData | None:
+        """Deprecated alias of :meth:`update`."""
+        return await self.update(media_id, **fields)
 
     async def get_by_url(self, original_url: str) -> MediaData | None:
         """Query a MediaFile by any of its stored URLs or paths.
@@ -521,17 +470,6 @@ class MediaStore:
         """
         if not original_url:
             return None
-        db = SessionLocal()
-        try:
-            m = db.execute(_media_by_url_select(self.user_id, original_url)).scalar_one_or_none()
-            return _media_to_dto(m) if m else None
-        finally:
-            db.close()
-
-    async def get_by_url_async(self, original_url: str) -> MediaData | None:
-        """Async peer of ``get_by_url``."""
-        if not original_url:
-            return None
         db = AsyncSessionLocal()
         try:
             m = (
@@ -541,25 +479,22 @@ class MediaStore:
         finally:
             await db.close()
 
+    async def get_by_url_async(self, original_url: str) -> MediaData | None:
+        """Deprecated alias of :meth:`get_by_url`."""
+        return await self.get_by_url(original_url)
+
     async def count_by_path_prefix(self, prefix: str) -> int:
         """Count MediaFile rows where storage_path starts with prefix."""
-        db = SessionLocal()
-        try:
-            count: int = (
-                db.execute(_media_count_by_prefix_select(self.user_id, prefix)).scalar() or 0
-            )
-            return count
-        finally:
-            db.close()
-
-    async def count_by_path_prefix_async(self, prefix: str) -> int:
-        """Async peer of ``count_by_path_prefix``."""
         db = AsyncSessionLocal()
         try:
             count: int = (await db.scalar(_media_count_by_prefix_select(self.user_id, prefix))) or 0
             return count
         finally:
             await db.close()
+
+    async def count_by_path_prefix_async(self, prefix: str) -> int:
+        """Deprecated alias of :meth:`count_by_path_prefix`."""
+        return await self.count_by_path_prefix(prefix)
 
 
 # ---------------------------------------------------------------------------
@@ -606,14 +541,12 @@ class IdempotencyStore:
     Uses the IdempotencyKey ORM model. No user_id scoping -- external_id
     is globally unique.
 
-    Pilot store for the dual-API (sync + async) rollout (issue #1150).
-    Each public sync method has an ``*_async`` peer with identical
-    semantics; the two share query construction via the
-    ``_seen_select`` / ``_count_select`` / ``_prune_delete`` builders
-    above. Sync callers (CLI, Alembic, premium) keep working unchanged
-    while OSS-internal callers migrate to the async API one site at a
-    time. Future store conversions (#1151-#1157) follow the same
-    pattern.
+    Pilot for the dual-API rollout (issue #1150). The sync surface is
+    retained because the webhook entry path runs from a sync TestClient
+    worker thread that cannot share an asyncpg connection with the
+    fixture loop; converting it requires test-infra changes outside the
+    scope of #1160. The ``_async`` peers are the canonical surface for
+    new code.
     """
 
     def has_seen(self, external_id: str) -> bool:
@@ -626,7 +559,7 @@ class IdempotencyStore:
             db.close()
 
     async def has_seen_async(self, external_id: str) -> bool:
-        """Async peer of ``has_seen``."""
+        """Check if an external message ID has been seen."""
         db = AsyncSessionLocal()
         try:
             row = (await db.execute(_seen_select(external_id))).scalar_one_or_none()
@@ -659,7 +592,7 @@ class IdempotencyStore:
         return True
 
     async def try_mark_seen_async(self, external_id: str) -> bool:
-        """Async peer of ``try_mark_seen``.
+        """Async peer of :meth:`try_mark_seen`.
 
         Same TOCTOU-free contract: the unique-constraint violation on
         ``external_id`` is the source of truth for "already seen". A
@@ -705,10 +638,10 @@ class IdempotencyStore:
         db.commit()
 
     async def _prune_async(self, db: AsyncSession | None = None) -> None:
-        """Async peer of ``_prune``. Same semantics, awaitable."""
+        """Async peer of :meth:`_prune`. Same semantics, awaitable."""
         if db is None:
-            async with db_session_async() as db:
-                await self._prune_async(db)
+            async with db_session_async() as fresh:
+                await self._prune_async(fresh)
             return
         count = (await db.scalar(_count_select())) or 0
         if count <= _SEEN_MAX:
@@ -719,14 +652,14 @@ class IdempotencyStore:
     async def mark_seen(self, external_id: str) -> None:
         """Insert an IdempotencyKey row (ignore if it already exists).
 
-        Prefer ``try_mark_seen`` for atomic check-and-insert.
+        Prefer :meth:`try_mark_seen` for atomic check-and-insert.
         """
         self.try_mark_seen(external_id)
 
     async def mark_seen_async(self, external_id: str) -> None:
-        """Async peer of ``mark_seen``.
+        """Async peer of :meth:`mark_seen`.
 
-        Prefer ``try_mark_seen_async`` for atomic check-and-insert.
+        Prefer :meth:`try_mark_seen_async` for atomic check-and-insert.
         """
         await self.try_mark_seen_async(external_id)
 
@@ -949,13 +882,11 @@ def _new_disabled_tool_config(user_id: str, name: str, enabled: bool) -> ToolCon
 class ToolConfigStore:
     """Database-backed tool configuration using ToolConfig ORM model.
 
-    Dual-API store (issue #1157). Each public method has an ``*_async``
-    peer with identical semantics; the two share query construction via
-    the ``_tool_config_load_select`` / ``_tool_config_delete_for_user`` /
-    ``_tool_config_disabled_names_select`` /
-    ``_tool_config_by_name_select`` /
-    ``_tool_config_disabled_sub_tools_select`` builders above. Follows
-    the IdempotencyStore pilot pattern from PR #1199.
+    Async-only API (issue #1160). The dual sync+async surface from
+    issue #1157 has been collapsed: only the async implementation
+    remains. ``*_async`` aliases stay as thin wrappers in case any
+    out-of-tree caller still depends on the suffix; the OSS callers
+    have all been migrated to the bare names.
     """
 
     def __init__(self, user_id: str) -> None:
@@ -963,15 +894,6 @@ class ToolConfigStore:
 
     async def load(self) -> list[ToolConfigEntry]:
         """Query all ToolConfig rows for this user, return as DTOs."""
-        db = SessionLocal()
-        try:
-            rows = db.execute(_tool_config_load_select(self.user_id)).scalars().all()
-            return [_tool_config_to_dto(tc) for tc in rows]
-        finally:
-            db.close()
-
-    async def load_async(self) -> list[ToolConfigEntry]:
-        """Async peer of ``load``."""
         db = AsyncSessionLocal()
         try:
             result = await db.execute(_tool_config_load_select(self.user_id))
@@ -980,20 +902,12 @@ class ToolConfigStore:
         finally:
             await db.close()
 
+    async def load_async(self) -> list[ToolConfigEntry]:
+        """Deprecated alias of :meth:`load`."""
+        return await self.load()
+
     async def save(self, entries: list[ToolConfigEntry]) -> list[ToolConfigEntry]:
         """Replace all ToolConfig rows for this user with new entries."""
-        with db_session() as db:
-            # Delete existing rows for this user
-            db.execute(_tool_config_delete_for_user(self.user_id))
-
-            # Insert new rows
-            for entry in entries:
-                db.add(_build_tool_config(self.user_id, entry))
-            db.commit()
-            return entries
-
-    async def save_async(self, entries: list[ToolConfigEntry]) -> list[ToolConfigEntry]:
-        """Async peer of ``save``."""
         async with db_session_async() as db:
             await db.execute(_tool_config_delete_for_user(self.user_id))
 
@@ -1002,23 +916,22 @@ class ToolConfigStore:
             await db.commit()
             return entries
 
+    async def save_async(self, entries: list[ToolConfigEntry]) -> list[ToolConfigEntry]:
+        """Deprecated alias of :meth:`save`."""
+        return await self.save(entries)
+
     async def get_disabled_tool_names(self) -> set[str]:
         """Return the set of tool group names that are disabled."""
-        db = SessionLocal()
-        try:
-            rows = db.execute(_tool_config_disabled_names_select(self.user_id)).all()
-            return {row[0] for row in rows}
-        finally:
-            db.close()
-
-    async def get_disabled_tool_names_async(self) -> set[str]:
-        """Async peer of ``get_disabled_tool_names``."""
         db = AsyncSessionLocal()
         try:
             result = await db.execute(_tool_config_disabled_names_select(self.user_id))
             return {row[0] for row in result.all()}
         finally:
             await db.close()
+
+    async def get_disabled_tool_names_async(self) -> set[str]:
+        """Deprecated alias of :meth:`get_disabled_tool_names`."""
+        return await self.get_disabled_tool_names()
 
     async def set_enabled(self, name: str, enabled: bool) -> None:
         """Set a single tool group's enabled state.
@@ -1027,18 +940,6 @@ class ToolConfigStore:
         Only stores the name and enabled flag; the router fills in display
         metadata from the registry when building the full tool list.
         """
-        with db_session() as db:
-            existing = db.execute(
-                _tool_config_by_name_select(self.user_id, name)
-            ).scalar_one_or_none()
-            if existing:
-                existing.enabled = enabled
-            else:
-                db.add(_new_disabled_tool_config(self.user_id, name, enabled))
-            db.commit()
-
-    async def set_enabled_async(self, name: str, enabled: bool) -> None:
-        """Async peer of ``set_enabled``."""
         async with db_session_async() as db:
             existing = (
                 await db.execute(_tool_config_by_name_select(self.user_id, name))
@@ -1049,20 +950,12 @@ class ToolConfigStore:
                 db.add(_new_disabled_tool_config(self.user_id, name, enabled))
             await db.commit()
 
+    async def set_enabled_async(self, name: str, enabled: bool) -> None:
+        """Deprecated alias of :meth:`set_enabled`."""
+        await self.set_enabled(name, enabled)
+
     async def get_disabled_sub_tool_names(self) -> set[str]:
         """Return the union of all disabled sub-tool names across all groups."""
-        db = SessionLocal()
-        try:
-            rows = db.execute(_tool_config_disabled_sub_tools_select(self.user_id)).all()
-            result: set[str] = set()
-            for (raw,) in rows:
-                result.update(_parse_disabled_sub_tools(raw))
-            return result
-        finally:
-            db.close()
-
-    async def get_disabled_sub_tool_names_async(self) -> set[str]:
-        """Async peer of ``get_disabled_sub_tool_names``."""
         db = AsyncSessionLocal()
         try:
             db_result = await db.execute(_tool_config_disabled_sub_tools_select(self.user_id))
@@ -1072,6 +965,10 @@ class ToolConfigStore:
             return result
         finally:
             await db.close()
+
+    async def get_disabled_sub_tool_names_async(self) -> set[str]:
+        """Deprecated alias of :meth:`get_disabled_sub_tool_names`."""
+        return await self.get_disabled_sub_tool_names()
 
 
 # ---------------------------------------------------------------------------
