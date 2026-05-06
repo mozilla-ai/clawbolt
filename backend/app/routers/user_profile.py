@@ -6,10 +6,10 @@ from typing import cast
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy import func as sa_func
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.auth.dependencies import get_current_user
-from backend.app.channel_state import realign_preferred_channel
+from backend.app.channel_state import realign_preferred_channel_async
 from backend.app.channels import is_bluebubbles_configured, reset_channel_clients
 from backend.app.config import (
     resolve_imessage_backend,
@@ -20,9 +20,9 @@ from backend.app.config_store import (
     get_settings_store,
     strip_unchanged_secrets,
 )
-from backend.app.database import get_db
+from backend.app.database import get_async_db
 from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
-from backend.app.query_helpers import get_or_404
+from backend.app.query_helpers import get_or_404_async
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
@@ -87,7 +87,7 @@ async def get_profile(
 async def update_profile(
     body: UserProfileUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> UserProfileResponse:
     """Partial update of the current user's profile."""
     updates = body.model_dump(exclude_unset=True)
@@ -95,12 +95,12 @@ async def update_profile(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     # Re-query user in the current session to avoid detached instance issues
-    user = get_or_404(db, User, detail="User not found", id=current_user.id)
+    user = await get_or_404_async(db, User, detail="User not found", id=current_user.id)
 
     for key, value in updates.items():
         setattr(user, key, value)
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
     return _profile_response(user)
 
 
@@ -146,7 +146,7 @@ async def get_data_sharing_consent(
 async def update_data_sharing_consent(
     body: DataSharingConsentRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> DataSharingConsentResponse:
     """Toggle the current user's data sharing consent.
 
@@ -156,11 +156,11 @@ async def update_data_sharing_consent(
     which is the cheaper guarantee to keep correct: a one-shot accidental
     double-PUT can't drift the timestamp.
     """
-    user = get_or_404(db, User, detail="User not found", id=current_user.id)
+    user = await get_or_404_async(db, User, detail="User not found", id=current_user.id)
     user.data_sharing_consent = body.consent
     user.data_sharing_consent_at = _data_sharing_consent_now()
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
     return DataSharingConsentResponse(
         data_sharing_consent=user.data_sharing_consent,
         data_sharing_consent_at=(
@@ -236,14 +236,16 @@ async def update_channel_config(
 @router.get("/user/channels/routes", response_model=ChannelRouteListResponse)
 async def get_channel_routes(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> ChannelRouteListResponse:
     """Return the current user's channel routes with enabled status."""
     routes = (
-        db.execute(
-            select(ChannelRoute)
-            .where(ChannelRoute.user_id == current_user.id)
-            .order_by(ChannelRoute.created_at)
+        (
+            await db.execute(
+                select(ChannelRoute)
+                .where(ChannelRoute.user_id == current_user.id)
+                .order_by(ChannelRoute.created_at)
+            )
         )
         .scalars()
         .all()
@@ -267,7 +269,7 @@ async def update_channel_route(
     channel: str,
     body: ChannelRouteUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> ChannelRouteResponse:
     """Toggle enabled status for a channel route.
 
@@ -292,11 +294,11 @@ async def update_channel_route(
         raise HTTPException(status_code=404, detail=f"Unknown channel: {channel}") from exc
 
     # Re-query user in the current session to avoid detached instance issues
-    user = get_or_404(db, User, detail="User not found", id=current_user.id)
+    user = await get_or_404_async(db, User, detail="User not found", id=current_user.id)
 
     if body.enabled:
         # Single-channel enforcement: disable all other non-webchat routes
-        db.execute(
+        await db.execute(
             update(ChannelRoute)
             .where(
                 ChannelRoute.user_id == user.id,
@@ -306,8 +308,8 @@ async def update_channel_route(
             .values(enabled=False)
         )
 
-    route = db.execute(
-        select(ChannelRoute).filter_by(user_id=user.id, channel=channel)
+    route = (
+        await db.execute(select(ChannelRoute).filter_by(user_id=user.id, channel=channel))
     ).scalar_one_or_none()
     if route is None and user.channel_identifier:
         route = ChannelRoute(
@@ -323,11 +325,11 @@ async def update_channel_route(
     if body.enabled:
         user.preferred_channel = channel
     else:
-        realign_preferred_channel(db, user)
+        await realign_preferred_channel_async(db, user)
 
-    db.commit()
+    await db.commit()
     if route is not None:
-        db.refresh(route)
+        await db.refresh(route)
         return ChannelRouteResponse(
             channel=route.channel,
             channel_identifier=route.channel_identifier,
@@ -521,22 +523,23 @@ async def list_provider_models(
 async def get_heartbeat_logs(
     limit: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> HeartbeatLogListResponse:
     """List heartbeat logs for the current user, most recent first."""
     total: int = (
-        db.execute(
+        await db.scalar(
             select(sa_func.count(HeartbeatLog.id)).where(HeartbeatLog.user_id == current_user.id)
-        ).scalar()
-        or 0
-    )
+        )
+    ) or 0
 
     logs = (
-        db.execute(
-            select(HeartbeatLog)
-            .where(HeartbeatLog.user_id == current_user.id)
-            .order_by(HeartbeatLog.created_at.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(HeartbeatLog)
+                .where(HeartbeatLog.user_id == current_user.id)
+                .order_by(HeartbeatLog.created_at.desc())
+                .limit(limit)
+            )
         )
         .scalars()
         .all()
@@ -563,18 +566,18 @@ async def get_heartbeat_logs(
 @router.delete("/user/heartbeat-logs", response_model=DeleteHeartbeatLogsResponse)
 async def delete_heartbeat_logs(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> DeleteHeartbeatLogsResponse:
     """Delete all heartbeat logs for the current user."""
     deleted: int = cast(
         "CursorResult[object]",
-        db.execute(
+        await db.execute(
             delete(HeartbeatLog)
             .where(HeartbeatLog.user_id == current_user.id)
             .execution_options(synchronize_session="fetch")
         ),
     ).rowcount
-    db.commit()
+    await db.commit()
     return DeleteHeartbeatLogsResponse(status="deleted", deleted=deleted)
 
 
@@ -587,27 +590,31 @@ async def delete_heartbeat_logs(
 async def get_llm_usage(
     days: int = Query(30, ge=1, le=365),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> LLMUsageSummary:
     """Aggregate LLM usage for the current user over the last N days."""
     since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
 
-    rows = db.execute(
-        select(
-            LLMUsageLog.purpose,
-            sa_func.count(LLMUsageLog.id).label("call_count"),
-            sa_func.coalesce(sa_func.sum(LLMUsageLog.input_tokens), 0).label("total_input_tokens"),
-            sa_func.coalesce(sa_func.sum(LLMUsageLog.output_tokens), 0).label(
-                "total_output_tokens"
-            ),
-            sa_func.coalesce(sa_func.sum(LLMUsageLog.total_tokens), 0).label("total_tokens"),
-            sa_func.coalesce(sa_func.sum(LLMUsageLog.cost), 0).label("total_cost"),
+    rows = (
+        await db.execute(
+            select(
+                LLMUsageLog.purpose,
+                sa_func.count(LLMUsageLog.id).label("call_count"),
+                sa_func.coalesce(sa_func.sum(LLMUsageLog.input_tokens), 0).label(
+                    "total_input_tokens"
+                ),
+                sa_func.coalesce(sa_func.sum(LLMUsageLog.output_tokens), 0).label(
+                    "total_output_tokens"
+                ),
+                sa_func.coalesce(sa_func.sum(LLMUsageLog.total_tokens), 0).label("total_tokens"),
+                sa_func.coalesce(sa_func.sum(LLMUsageLog.cost), 0).label("total_cost"),
+            )
+            .where(
+                LLMUsageLog.user_id == current_user.id,
+                LLMUsageLog.created_at >= since,
+            )
+            .group_by(LLMUsageLog.purpose)
         )
-        .where(
-            LLMUsageLog.user_id == current_user.id,
-            LLMUsageLog.created_at >= since,
-        )
-        .group_by(LLMUsageLog.purpose)
     ).all()
 
     by_purpose = [
