@@ -16,7 +16,6 @@ dependencies = [
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
     "sqlalchemy>=2.0",
-    "psycopg[binary]>=3.1",
     "asyncpg>=0.29",
     "alembic>=1.13",
     "cryptography>=42.0",
@@ -27,6 +26,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Alembic migrations run with a sync engine (online + offline). asyncpg is
+# the runtime DB driver; psycopg lives here so installs that don't run
+# migrations don't pull it in. CI / deploy install with this extra so
+# `alembic upgrade head` has a sync driver available.
+alembic = [
+    "psycopg[binary]>=3.1",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -35,6 +41,7 @@ dev = [
     "pre-commit>=3.0",
     "ty>=0.0.1a0",
     "testcontainers[postgres]>=4.0",
+    "psycopg[binary]>=3.1",
 ]
 
 [build-system]
@@ -60,8 +67,8 @@ markers = [
     "integration: integration tests that call a real LLM API (requires ANTHROPIC_API_KEY)",
 ]
 addopts = "-m 'not e2e and not integration'"
-# Surface SQLAlchemy 2.0 legacy/deprecation warnings as a worklist for the
-# async DB migration (issue #1139). Non-blocking: warnings are visible in CI
+# Surface SQLAlchemy 2.0 legacy/deprecation warnings so any future legacy
+# usage shows up as a CI signal. Non-blocking: warnings are visible in CI
 # logs but do not fail the build. Pair with SQLALCHEMY_WARN_20=1 in CI env.
 filterwarnings = [
     "default::sqlalchemy.exc.SADeprecationWarning",

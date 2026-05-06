@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from any_llm.types.messages import MessageResponse, MessageUsage
+from sqlalchemy import select
 
 import backend.app.database as _db_module
 from backend.app.agent.core import ClawboltAgent
@@ -29,12 +30,17 @@ def _make_response_with_usage(
     return resp
 
 
-def _read_usage_entries(user_id: str) -> list[dict[str, object]]:
+async def _read_usage_entries(user_id: str) -> list[dict[str, object]]:
     """Read all LLM usage entries for a user from the database."""
-    db = _db_module.SessionLocal()
-    try:
+    async with _db_module.db_session_async() as db:
         logs = (
-            db.query(LLMUsageLog).filter_by(user_id=user_id).order_by(LLMUsageLog.created_at).all()
+            (
+                await db.execute(
+                    select(LLMUsageLog).filter_by(user_id=user_id).order_by(LLMUsageLog.created_at)
+                )
+            )
+            .scalars()
+            .all()
         )
         return [
             {
@@ -49,8 +55,6 @@ def _read_usage_entries(user_id: str) -> list[dict[str, object]]:
             }
             for log in logs
         ]
-    finally:
-        db.close()
 
 
 @pytest.mark.asyncio()
@@ -60,7 +64,7 @@ async def test_log_llm_usage_saves(test_user: User) -> None:
 
     await log_llm_usage(test_user.id, "test-model", response, "agent_main")
 
-    entries = _read_usage_entries(test_user.id)
+    entries = await _read_usage_entries(test_user.id)
     assert len(entries) == 1
     assert entries[0]["user_id"] == test_user.id
     assert entries[0]["model"] == "test-model"
@@ -77,7 +81,7 @@ async def test_log_llm_usage_zero_tokens(test_user: User) -> None:
 
     await log_llm_usage(test_user.id, "test-model", response, "heartbeat")
 
-    entries = _read_usage_entries(test_user.id)
+    entries = await _read_usage_entries(test_user.id)
     assert len(entries) == 1
     assert entries[0]["prompt_tokens"] == 0
     assert entries[0]["completion_tokens"] == 0
@@ -91,7 +95,7 @@ async def test_log_llm_usage_computes_total(test_user: User) -> None:
 
     await log_llm_usage(test_user.id, "test-model", response, "agent_main")
 
-    entries = _read_usage_entries(test_user.id)
+    entries = await _read_usage_entries(test_user.id)
     assert len(entries) == 1
     assert entries[0]["total_tokens"] == 150
 
@@ -107,7 +111,7 @@ async def test_log_llm_usage_multiple_entries(test_user: User) -> None:
         )
         await log_llm_usage(test_user.id, "test-model", response, f"purpose_{i}")
 
-    entries = _read_usage_entries(test_user.id)
+    entries = await _read_usage_entries(test_user.id)
     assert len(entries) == 3
     assert entries[0]["purpose"] == "purpose_0"
     assert entries[1]["purpose"] == "purpose_1"
@@ -121,7 +125,7 @@ async def test_log_llm_usage_different_models(test_user: User) -> None:
         response = _make_response_with_usage()
         await log_llm_usage(test_user.id, model_name, response, "agent_main")
 
-    entries = _read_usage_entries(test_user.id)
+    entries = await _read_usage_entries(test_user.id)
     models = {r["model"] for r in entries}
     assert models == {"model-a", "model-b", "model-c"}
 
@@ -144,7 +148,7 @@ async def test_agent_process_message_logs_usage(
     agent = ClawboltAgent(user=test_user)
     await agent.process_message("What is my schedule today?")
 
-    entries = _read_usage_entries(test_user.id)
+    entries = await _read_usage_entries(test_user.id)
     assert len(entries) == 1
     assert entries[0]["purpose"] == "agent_main"
     assert entries[0]["total_tokens"] == 420
@@ -164,7 +168,7 @@ async def test_log_llm_usage_cache_tokens_stored(test_user: User) -> None:
 
     await log_llm_usage(test_user.id, "test-model", response, "agent_main")
 
-    entries = _read_usage_entries(test_user.id)
+    entries = await _read_usage_entries(test_user.id)
     assert len(entries) == 1
     assert entries[0]["cache_creation_input_tokens"] == 200
     assert entries[0]["cache_read_input_tokens"] == 300
@@ -177,7 +181,7 @@ async def test_log_llm_usage_cache_tokens_null_when_absent(test_user: User) -> N
 
     await log_llm_usage(test_user.id, "test-model", response, "agent_main")
 
-    entries = _read_usage_entries(test_user.id)
+    entries = await _read_usage_entries(test_user.id)
     assert len(entries) == 1
     assert entries[0]["cache_creation_input_tokens"] is None
     assert entries[0]["cache_read_input_tokens"] is None

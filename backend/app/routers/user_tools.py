@@ -107,9 +107,7 @@ async def _build_tool_list(
     # Load permission data once to avoid repeated file reads per sub-tool.
     approval_store = get_approval_store() if user_id else None
     perm_data = (
-        await approval_store.load_user_permissions_async(user_id)
-        if approval_store and user_id
-        else None
+        await approval_store.load_user_permissions(user_id) if approval_store and user_id else None
     )
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
@@ -155,7 +153,7 @@ async def _build_tool_list(
     return entries
 
 
-def _get_auth_status(user: UserData | None = None) -> dict[str, str]:
+async def _get_auth_status(user: UserData | None = None) -> dict[str, str]:
     """Check auth_check for each specialist factory.
 
     Returns a mapping of factory_name -> reason for factories that are
@@ -176,7 +174,7 @@ def _get_auth_status(user: UserData | None = None) -> dict[str, str]:
         factory = default_registry._factories.get(name)
         if factory and factory.auth_check:
             try:
-                reason = factory.auth_check(ctx)
+                reason = await factory.auth_check(ctx)
             except AttributeError:
                 reason = None
             if reason:
@@ -223,7 +221,7 @@ async def get_tool_config(
     disabled_names = {e.name for e in saved if not e.enabled}
     disabled_sub_map = {e.name: e.disabled_sub_tools for e in saved if e.disabled_sub_tools}
     entries = await _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
-    auth_issues = _get_auth_status(current_user)
+    auth_issues = await _get_auth_status(current_user)
     return ToolConfigResponse(tools=[_entry_to_response(e, auth_issues) for e in entries])
 
 
@@ -280,5 +278,5 @@ async def update_tool_config(
     entries = await _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
     await store.save(entries)
 
-    auth_issues = _get_auth_status(current_user)
+    auth_issues = await _get_auth_status(current_user)
     return ToolConfigResponse(tools=[_entry_to_response(e, auth_issues) for e in entries])

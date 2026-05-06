@@ -10,6 +10,7 @@ from backend.app.agent.onboarding import is_onboarding_needed
 from backend.app.auth.dependencies import LOCAL_USER_ID, get_current_user
 from backend.app.auth.scoping import get_scoped_user
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.models import User
 
 
@@ -90,20 +91,17 @@ def test_auth_config_returns_none_mode(client: TestClient) -> None:
 @pytest.mark.asyncio()
 async def test_scoping_returns_404_for_wrong_user() -> None:
     """Scoping should return 404 when user doesn't belong to requester."""
-    db = _db_module.SessionLocal()
-    try:
+    async with db_session_async() as db:
         user1 = User(user_id="user-1")
         db.add(user1)
-        db.commit()
-        db.refresh(user1)
+        await db.commit()
+        await db.refresh(user1)
         db.expunge(user1)
         user2 = User(user_id="user-2")
         db.add(user2)
-        db.commit()
-        db.refresh(user2)
+        await db.commit()
+        await db.refresh(user2)
         db.expunge(user2)
-    finally:
-        db.close()
 
     # User 1 should not be able to access user 2
     async with _db_module.AsyncSessionLocal() as db:
@@ -115,15 +113,12 @@ async def test_scoping_returns_404_for_wrong_user() -> None:
 @pytest.mark.asyncio()
 async def test_scoping_returns_user_for_correct_user() -> None:
     """Scoping should return user when user_id matches."""
-    db = _db_module.SessionLocal()
-    try:
+    async with db_session_async() as db:
         user = User(user_id="user-1")
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
 
     async with _db_module.AsyncSessionLocal() as db:
         result = await get_scoped_user(user, user.id, db)

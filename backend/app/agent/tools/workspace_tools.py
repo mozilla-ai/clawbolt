@@ -265,7 +265,7 @@ async def _permissions_write(user_id: str, content: str) -> None:
     """
     import json as _json
 
-    from backend.app.agent.approval import _lock_user_permissions_async
+    from backend.app.agent.approval import _lock_user_permissions
     from backend.app.models import UserPermissionSet
 
     try:
@@ -276,7 +276,7 @@ async def _permissions_write(user_id: str, content: str) -> None:
         payload = _json.dumps(parsed, indent=2, default=str)
 
     async with db_session_async() as db:
-        await _lock_user_permissions_async(db, user_id)
+        await _lock_user_permissions(db, user_id)
         row = (
             await db.execute(select(UserPermissionSet).filter_by(user_id=user_id))
         ).scalar_one_or_none()
@@ -298,11 +298,11 @@ async def _permissions_edit(user_id: str, old_text: str, new_text: str) -> tuple
     """
     import json as _json
 
-    from backend.app.agent.approval import _lock_user_permissions_async
+    from backend.app.agent.approval import _lock_user_permissions
     from backend.app.models import UserPermissionSet
 
     async with db_session_async() as db:
-        await _lock_user_permissions_async(db, user_id)
+        await _lock_user_permissions(db, user_id)
         row = (
             await db.execute(select(UserPermissionSet).filter_by(user_id=user_id))
         ).scalar_one_or_none()

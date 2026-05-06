@@ -18,7 +18,7 @@ async def get_permissions(
 ) -> PermissionsResponse:
     """Return the current PERMISSIONS.json content."""
     store = get_approval_store()
-    data = await store.ensure_complete_async(current_user.id)
+    data = await store.ensure_complete(current_user.id)
     return PermissionsResponse(content=json.dumps(data, indent=2))
 
 
@@ -39,7 +39,7 @@ async def update_permissions(
     _validate_permissions_shape(data)
 
     store = get_approval_store()
-    await store._save_async(current_user.id, data)
+    await store._save(current_user.id, data)
     return PermissionsResponse(content=json.dumps(data, indent=2))
 
 

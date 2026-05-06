@@ -213,7 +213,7 @@ class TestBatchApproval:
         async def _approve_soon() -> None:
             while not gate.has_pending(test_user.id):
                 await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+            await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -262,7 +262,7 @@ class TestBatchApproval:
         async def _deny_soon() -> None:
             while not gate.has_pending(test_user.id):
                 await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.DENIED)
+            await gate.resolve(test_user.id, ApprovalDecision.DENIED)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -302,7 +302,7 @@ class TestBatchApproval:
             for _ in range(2):
                 while not gate.has_pending(test_user.id):
                     await asyncio.sleep(0.005)
-                gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
+                await gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
                 # Let the main loop process the resolution and move to
                 # the next entry before we check for it.
                 await asyncio.sleep(0.02)
@@ -326,8 +326,8 @@ class TestBatchApproval:
 
         # Both should now be ALWAYS in the store
         store = get_approval_store()
-        assert store.check_permission(test_user.id, "writer") == PermissionLevel.ALWAYS
-        assert store.check_permission(test_user.id, "sender") == PermissionLevel.ALWAYS
+        assert await store.check_permission(test_user.id, "writer") == PermissionLevel.ALWAYS
+        assert await store.check_permission(test_user.id, "sender") == PermissionLevel.ALWAYS
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -353,7 +353,7 @@ class TestBatchApproval:
             for _ in range(2):
                 while not gate.has_pending(test_user.id):
                     await asyncio.sleep(0.005)
-                gate.resolve(test_user.id, ApprovalDecision.ALWAYS_DENY)
+                await gate.resolve(test_user.id, ApprovalDecision.ALWAYS_DENY)
                 await asyncio.sleep(0.02)
 
         agent = ClawboltAgent(
@@ -374,8 +374,8 @@ class TestBatchApproval:
         await task
 
         store = get_approval_store()
-        assert store.check_permission(test_user.id, "writer") == PermissionLevel.DENY
-        assert store.check_permission(test_user.id, "sender") == PermissionLevel.DENY
+        assert await store.check_permission(test_user.id, "writer") == PermissionLevel.DENY
+        assert await store.check_permission(test_user.id, "sender") == PermissionLevel.DENY
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -405,7 +405,7 @@ class TestBatchApproval:
             for decision in decisions:
                 while not gate.has_pending(test_user.id):
                     await asyncio.sleep(0.005)
-                gate.resolve(test_user.id, decision)
+                await gate.resolve(test_user.id, decision)
                 await asyncio.sleep(0.02)
 
         agent = ClawboltAgent(
@@ -455,7 +455,7 @@ class TestBatchApproval:
         async def _interrupt_soon() -> None:
             while not gate.has_pending(test_user.id):
                 await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.INTERRUPTED)
+            await gate.resolve(test_user.id, ApprovalDecision.INTERRUPTED)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -490,8 +490,8 @@ class TestBatchApproval:
 
         # No permissions should have been persisted
         store = get_approval_store()
-        assert store.check_permission(test_user.id, "writer") == PermissionLevel.ASK
-        assert store.check_permission(test_user.id, "sender") == PermissionLevel.ASK
+        assert await store.check_permission(test_user.id, "writer") == PermissionLevel.ASK
+        assert await store.check_permission(test_user.id, "sender") == PermissionLevel.ASK
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -552,7 +552,7 @@ class TestBatchApproval:
         mock_publish = AsyncMock()
 
         store = get_approval_store()
-        store.set_permission(test_user.id, "writer", PermissionLevel.ALWAYS)
+        await store.set_permission(test_user.id, "writer", PermissionLevel.ALWAYS)
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response(
@@ -598,7 +598,7 @@ class TestBatchApproval:
         async def _approve_soon() -> None:
             while not gate.has_pending(test_user.id):
                 await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+            await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -658,7 +658,7 @@ class TestBatchApproval:
         async def _always_soon() -> None:
             while not gate.has_pending(test_user.id):
                 await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
+            await gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -675,12 +675,12 @@ class TestBatchApproval:
         # "invoices" resource should be ALWAYS
         store = get_approval_store()
         assert (
-            store.check_permission(test_user.id, "fetcher", resource="invoices")
+            await store.check_permission(test_user.id, "fetcher", resource="invoices")
             == PermissionLevel.ALWAYS
         )
         # Different resource should still be ASK (the default)
         assert (
-            store.check_permission(test_user.id, "fetcher", resource="customers")
+            await store.check_permission(test_user.id, "fetcher", resource="customers")
             == PermissionLevel.ASK
         )
 
@@ -699,7 +699,7 @@ class TestBatchApproval:
         """
         mock_publish = AsyncMock()
         session_id = "test-approval-persist"
-        create_test_session(test_user.id, session_id=session_id, channel="linq")
+        await create_test_session(test_user.id, session_id=session_id, channel="linq")
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response(
@@ -716,7 +716,7 @@ class TestBatchApproval:
         async def _approve_soon() -> None:
             while not gate.has_pending(test_user.id):
                 await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+            await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
 
         agent = ClawboltAgent(
             user=test_user,

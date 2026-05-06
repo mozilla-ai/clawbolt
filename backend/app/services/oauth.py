@@ -15,7 +15,7 @@ import logging
 import random
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,7 +25,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.config import settings
-from backend.app.database import db_session, get_async_engine, get_engine
+from backend.app.database import db_session_async, get_async_engine
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ _LOCK_MAX_WAIT_S = 5.0
 
 
 async def _try_acquire_advisory_lock_async(conn: Any, lock_key: str) -> bool:
-    """Async-safe bounded acquire of a session-scoped advisory lock.
+    """Bounded acquire of a session-scoped advisory lock.
 
     Returns True on acquire, False if the wait expires. Uses
     ``await asyncio.sleep`` between polls so the event loop stays
@@ -86,27 +86,6 @@ async def _try_acquire_advisory_lock_async(conn: Any, lock_key: str) -> bool:
         if time.monotonic() >= deadline:
             return False
         await asyncio.sleep(_LOCK_RETRY_INTERVAL_S)
-
-
-def _try_acquire_advisory_lock_sync(conn: Any, lock_key: str) -> bool:
-    """Sync variant for use from sync callbacks (e.g. on_refresh).
-
-    Same connection-pinning requirement as the async helper: ``conn``
-    must be a ``Connection``, not a ``Session``. See the async docstring
-    for the rationale.
-    """
-    deadline = time.monotonic() + _LOCK_MAX_WAIT_S
-    while True:
-        acquired = conn.execute(
-            text("SELECT pg_try_advisory_lock(hashtext(:k))"),
-            {"k": lock_key},
-        ).scalar()
-        conn.commit()
-        if acquired:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(_LOCK_RETRY_INTERVAL_S)
 
 
 # Per-process TTL on cached tokens. A single agent turn loads OAuth
@@ -401,7 +380,7 @@ class OAuthService:
         if realm_id:
             token_data.realm_id = realm_id
 
-        self.save_token(pending.user_id, pending.integration, token_data)
+        await self.save_token(pending.user_id, pending.integration, token_data)
         return token_data
 
     async def _exchange_code(
@@ -445,7 +424,7 @@ class OAuthService:
 
     # -- Token persistence (database-backed) ------------------------------------
 
-    def save_token(
+    async def save_token(
         self,
         user_id: str,
         integration: str,
@@ -477,14 +456,14 @@ class OAuthService:
             )
         )
 
-        with db_session() as db:
-            db.execute(stmt)
-            db.commit()
+        async with db_session_async() as db:
+            await db.execute(stmt)
+            await db.commit()
         # Drop any cached entry so the next load_token re-reads the
         # freshly persisted row (e.g. after a refresh writes new tokens).
         self._token_cache.pop((user_id, integration), None)
 
-    def load_token(
+    async def load_token(
         self,
         user_id: str,
         integration: str,
@@ -514,11 +493,13 @@ class OAuthService:
             user_id,
             integration,
         )
-        with db_session() as db:
-            row = db.execute(
-                select(OAuthToken).where(
-                    OAuthToken.user_id == user_id,
-                    OAuthToken.integration == integration,
+        async with db_session_async() as db:
+            row = (
+                await db.execute(
+                    select(OAuthToken).where(
+                        OAuthToken.user_id == user_id,
+                        OAuthToken.integration == integration,
+                    )
                 )
             ).scalar_one_or_none()
 
@@ -551,7 +532,7 @@ class OAuthService:
             self._token_cache[cache_key] = (token, now + _TOKEN_CACHE_TTL_SECONDS)
             return token
 
-    def _load_token_uncached(
+    async def _load_token_uncached(
         self,
         user_id: str,
         integration: str,
@@ -566,9 +547,9 @@ class OAuthService:
         should use ``load_token``.
         """
         self._token_cache.pop((user_id, integration), None)
-        return self.load_token(user_id, integration)
+        return await self.load_token(user_id, integration)
 
-    def delete_token(
+    async def delete_token(
         self,
         user_id: str,
         integration: str,
@@ -581,11 +562,13 @@ class OAuthService:
             user_id,
             integration,
         )
-        with db_session() as db:
-            row = db.execute(
-                select(OAuthToken).where(
-                    OAuthToken.user_id == user_id,
-                    OAuthToken.integration == integration,
+        async with db_session_async() as db:
+            row = (
+                await db.execute(
+                    select(OAuthToken).where(
+                        OAuthToken.user_id == user_id,
+                        OAuthToken.integration == integration,
+                    )
                 )
             ).scalar_one_or_none()
 
@@ -593,19 +576,19 @@ class OAuthService:
                 self._token_cache.pop((user_id, integration), None)
                 return False
 
-            db.delete(row)
-            db.commit()
+            await db.delete(row)
+            await db.commit()
             self._token_cache.pop((user_id, integration), None)
             return True
 
-    def is_connected(self, user_id: str, integration: str) -> bool:
+    async def is_connected(self, user_id: str, integration: str) -> bool:
         """Check if a valid (non-expired) token exists for this user/integration.
 
         Returns True when a token row exists and is either not expired or
         has a refresh token that could renew it. Returns False when no
         token exists or the token is expired without a refresh token.
         """
-        token = self.load_token(user_id, integration)
+        token = await self.load_token(user_id, integration)
         if token is None:
             return False
         if not token.is_expired():
@@ -618,8 +601,8 @@ class OAuthService:
         self,
         user_id: str,
         integration: str,
-    ) -> Callable[[str, str, float], None]:
-        """Return a callback that persists tokens refreshed mid-call by a service.
+    ) -> Callable[[str, str, float], Awaitable[None]]:
+        """Return an async callback that persists tokens refreshed mid-call by a service.
 
         Provider services (QuickBooks, Google Calendar) refresh on 401 and
         rotate ``refresh_token`` for some providers. Without persisting, the
@@ -635,15 +618,15 @@ class OAuthService:
         refresh_token from whichever callback runs second).
         """
 
-        def _persist(access_token: str, refresh_token: str, expires_at: float) -> None:
+        async def _persist(access_token: str, refresh_token: str, expires_at: float) -> None:
             # See ``refresh_token`` for why the lock must live on a
             # ``Connection``, not a ``Session``: ``Session.commit()``
             # returns the underlying connection to the pool and lets a
             # peer enter the critical section.
-            lock_conn = get_engine().connect()
+            lock_conn = await get_async_engine().connect()
             lock_key = _refresh_lock_key(user_id, integration)
             try:
-                if not _try_acquire_advisory_lock_sync(lock_conn, lock_key):
+                if not await _try_acquire_advisory_lock_async(lock_conn, lock_key):
                     logger.warning(
                         "on_refresh callback could not acquire OAuth lock within %.1fs, "
                         "skipping persist: user=%s integration=%s",
@@ -656,7 +639,7 @@ class OAuthService:
                     # Bypass the cache: this load is the peer-write detection
                     # point for the on_refresh callback path. Same race as
                     # in refresh_token's post-lock reload.
-                    current = self._load_token_uncached(user_id, integration)
+                    current = await self._load_token_uncached(user_id, integration)
                     if current is None:
                         logger.warning(
                             "on_refresh callback fired for missing token: user=%s integration=%s",
@@ -668,7 +651,7 @@ class OAuthService:
                     if refresh_token:
                         current.refresh_token = refresh_token
                     current.expires_at = expires_at
-                    self.save_token(user_id, integration, current)
+                    await self.save_token(user_id, integration, current)
                     logger.info(
                         "Persisted mid-call token refresh: user=%s integration=%s",
                         user_id,
@@ -676,11 +659,11 @@ class OAuthService:
                     )
                 finally:
                     try:
-                        lock_conn.execute(
+                        await lock_conn.execute(
                             text("SELECT pg_advisory_unlock(hashtext(:k))"),
                             {"k": lock_key},
                         )
-                        lock_conn.commit()
+                        await lock_conn.commit()
                     except Exception:
                         logger.exception(
                             "Failed to release OAuth refresh lock in callback: "
@@ -689,7 +672,7 @@ class OAuthService:
                             integration,
                         )
             finally:
-                lock_conn.close()
+                await lock_conn.close()
 
         return _persist
 
@@ -757,10 +740,9 @@ class OAuthService:
         # connection to the pool, where a peer coroutine can check it
         # out and call ``pg_try_advisory_lock`` on it (locks are
         # reentrant per PG session), letting both callers enter the
-        # critical section. The token read / write business logic still
-        # uses its own sync ``Session`` via ``_load_token_uncached``
-        # and ``save_token``; only the lock primitive runs on the async
-        # engine so the polling waits do not block the event loop.
+        # critical section. The advisory lock must stay pinned to the
+        # same physical connection from acquire through unlock; only
+        # ``AsyncConnection`` provides that pinning.
         lock_conn = await get_async_engine().connect()
         lock_key = _refresh_lock_key(user_id, integration)
         try:
@@ -777,7 +759,7 @@ class OAuthService:
                 # Bypass the cache: the post-lock reload exists to detect
                 # a peer worker's just-persisted refresh, which an in-memory
                 # cache from before the lock would mask.
-                token = self._load_token_uncached(user_id, integration)
+                token = await self._load_token_uncached(user_id, integration)
                 if not token or not token.refresh_token:
                     logger.debug(
                         "Cannot refresh token (missing): user=%s integration=%s "
@@ -846,7 +828,7 @@ class OAuthService:
                 else:
                     token.expires_at = 0.0
 
-                self.save_token(user_id, integration, token)
+                await self.save_token(user_id, integration, token)
                 logger.info(
                     "Refreshed OAuth token: user=%s integration=%s",
                     user_id,
@@ -881,7 +863,7 @@ class OAuthService:
         On transient failure (e.g. network error), keeps the token for
         a later retry and returns None.
         """
-        token = self.load_token(user_id, integration)
+        token = await self.load_token(user_id, integration)
         if not token:
             logger.debug("No token found: user=%s integration=%s", user_id, integration)
             return None
@@ -925,7 +907,7 @@ class OAuthService:
                     user_id,
                     integration,
                 )
-                self.delete_token(user_id, integration)
+                await self.delete_token(user_id, integration)
                 await self._notify_reauth_needed(user_id, integration)
             else:
                 logger.info(
@@ -950,12 +932,14 @@ class OAuthService:
             from backend.app.bus import OutboundMessage, message_bus
             from backend.app.models import ChannelRoute
 
-            with db_session() as db:
+            async with db_session_async() as db:
                 route = (
-                    db.execute(
-                        select(ChannelRoute).where(
-                            ChannelRoute.user_id == user_id,
-                            ChannelRoute.enabled.is_(True),
+                    (
+                        await db.execute(
+                            select(ChannelRoute).where(
+                                ChannelRoute.user_id == user_id,
+                                ChannelRoute.enabled.is_(True),
+                            )
                         )
                     )
                     .scalars()
@@ -1126,13 +1110,15 @@ class OAuthRefreshScheduler:
             .where(ChannelRoute.last_inbound_at.is_not(None))
             .where(ChannelRoute.last_inbound_at > activity_cutoff)
         )
-        with db_session() as db:
-            rows = db.execute(
-                select(OAuthToken.user_id, OAuthToken.integration)
-                .where(OAuthToken.expires_at > 0)
-                .where(OAuthToken.expires_at < cutoff)
-                .where(OAuthToken.refresh_token != "")
-                .where(OAuthToken.user_id.in_(active_user_ids))
+        async with db_session_async() as db:
+            rows = (
+                await db.execute(
+                    select(OAuthToken.user_id, OAuthToken.integration)
+                    .where(OAuthToken.expires_at > 0)
+                    .where(OAuthToken.expires_at < cutoff)
+                    .where(OAuthToken.refresh_token != "")
+                    .where(OAuthToken.user_id.in_(active_user_ids))
+                )
             ).all()
         if not rows:
             return 0

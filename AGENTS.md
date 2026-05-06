@@ -64,83 +64,65 @@ Key store modules:
 - `backend/app/agent/stores.py` -- `MediaStore`, `HeartbeatStore`, `IdempotencyStore`, `LLMUsageStore`, `ToolConfigStore`
 - `backend/app/agent/dto.py` -- Pydantic DTOs: `UserData`, `StoredMessage`, `SessionState`, etc.
 - `backend/app/agent/file_store.py` -- Compatibility shim (re-exports from above modules)
-- `backend/app/database.py` -- `Base`, `SessionLocal`, `get_db()`, `get_engine()`
+- `backend/app/database.py` -- `Base`, `AsyncSessionLocal`, `db_session_async()`, `get_async_db()`, `get_async_engine()`
 - `backend/app/models.py` -- All SQLAlchemy ORM model classes
 
 File storage for uploads uses the local filesystem under `data/` (configurable via `DATA_DIR`).
 
-## Database access (sync + async dual-API)
+## Database access (async-only)
 
-OSS is mid-migration from sync DB sessions to async (epic #1139). Every store currently exposes both a sync and an async surface so internal callers can convert one site at a time and external consumers (premium, CLI, Alembic) keep working unchanged. The pattern below is the contract that landed in PRs #1189, #1198, #1199, #1200, #1201, #1202, #1203, #1204, #1205, #1206. New stores and new methods MUST follow it; the sync surface will be removed in #1160 only after premium migration completes.
-
-### Dual-API contract
-
-- Sync methods keep their plain names (`load`, `get_by_id`, `create`, ...).
-- Async peers add an `_async` suffix (`load_async`, `get_by_id_async`, ...).
-- Sync method bodies must not change observable behavior when an async peer is added. Refactor only as far as extracting shared pure builders. Do not change return types, exception classes, query shapes, ordering, or locking.
-- Do not preemptively delete sync APIs. Removal lands in #1160 once premium converts.
-- Do not accept an externally-managed session as a parameter on the `_async` methods. Mismatch with the sync API contract; not how callers use the methods.
-
-### Shared logic via pure builders
-
-Sync and async methods share query construction through module-level builders that return concretely-typed SQLAlchemy core constructs. No `Any`, no session dependency. Canonical pilot: `_seen_select`, `_count_select`, `_prune_delete` in `backend/app/agent/stores.py:578-600` (IdempotencyStore). Same shape across `HeartbeatStore`, `MediaStore`, `LLMUsageStore`, `ToolConfigStore`, `MemoryStore`, `UserStore`, `SessionStore`, `DbSettingsStore`.
-
-Non-SQL helpers that both paths need (allowlist setters like `_apply_media_updates`, time-window helpers like `_today_window_utc`) follow the same rule: pure, module-level, no session.
-
-```python
-def _seen_select(external_id: str) -> Select[tuple[IdempotencyKey]]:
-    return select(IdempotencyKey).filter_by(external_id=external_id)
-```
+OSS uses asyncpg for every database call. The sync engine, sync session factory, and sync `db_session()` / `get_db` helpers were removed once the migration epic (#1139) completed. New code MUST use the async API; do not reintroduce a sync DB path.
 
 ### Async session lifecycle
 
-Both factories live in `backend/app/database.py`. Async pool tuning matches the sync pool (`pool_recycle`, `pool_pre_ping`, statement timeout), and the async session factory ships with `expire_on_commit=False` so attribute access after commit does not trigger `MissingGreenlet`.
+Both the singleton engine and session factory live in `backend/app/database.py`. The async session factory ships with `expire_on_commit=False` so attribute access after commit does not trigger `MissingGreenlet`. Pool tuning (`pool_recycle`, `pool_pre_ping`, statement timeout) is on the engine.
 
-- READ-only async methods: `db = AsyncSessionLocal()` + `try / finally await db.close()`. Lighter weight, no rollback wrapper. Reference `IdempotencyStore.has_seen_async` in `backend/app/agent/stores.py:628-635`.
-- WRITE async methods: `async with db_session_async() as db: ...`. Auto-rollback on exception, auto-close. Reference `IdempotencyStore.try_mark_seen_async` in `backend/app/agent/stores.py:661-683`.
+- READ-only methods: `db = AsyncSessionLocal()` + `try / finally await db.close()`. Lighter weight, no rollback wrapper. Reference `IdempotencyStore.has_seen` in `backend/app/agent/stores.py`.
+- WRITE methods: `async with db_session_async() as db: ...`. Auto-rollback on exception, auto-close. Reference `IdempotencyStore.try_mark_seen` in `backend/app/agent/stores.py`.
+- FastAPI dependency: `db: AsyncSession = Depends(get_async_db)`.
 
-Pool sizing is currently SQLAlchemy default (`pool_size=5`, `max_overflow=10`) on both engines. To re-evaluate, run `scripts/benchmark_pool.py` against a prod-like Postgres; it sweeps `pool_size`/`max_overflow` across realistic concurrency and emits a markdown report with p50/p95/p99 connection-acquisition latency. Methodology and the most recent run are in `scripts/benchmark_pool_report.md` (issue #1179).
+Pool sizing is currently SQLAlchemy default (`pool_size=5`, `max_overflow=10`). To re-evaluate, run `scripts/benchmark_pool.py` against a prod-like Postgres; it sweeps `pool_size`/`max_overflow` across realistic concurrency and emits a markdown report with p50/p95/p99 connection-acquisition latency. Methodology and the most recent run are in `scripts/benchmark_pool_report.md` (issue #1179).
 
 ### Common SQLAlchemy 2.0 patterns
 
-These are the patterns that survive the sync-to-async port. PR #1190 already converted all `db.query()` call sites; do not reintroduce the 1.x Query API in new code.
+PR #1190 converted all `db.query()` call sites; do not reintroduce the 1.x Query API in new code.
 
-- Read: `db.execute(select(X).where(...)).scalar_one_or_none()` works on both `Session` and `AsyncSession` (with `await` on the async side). For a scalar count use `db.scalar(select(func.count(...)))`.
-- DML rowcount: at runtime `db.execute(update/delete).rowcount` returns `int`, but the stubs say `Result`. Cast to access cleanly: `cast("CursorResult[object]", db.execute(...)).rowcount`. Reference `SessionStore.delete_message` in `backend/app/agent/session_db.py:794-823`.
-- Bulk DML `synchronize_session`: the kwarg moved off `update()`/`delete()` constructors. Use `.execution_options(synchronize_session="fetch")` on the executable, and preserve the original value when migrating call sites. Reference `_append_history_update` in `backend/app/agent/memory_db.py:66-79`.
-- Row-level lock: `db.execute(select(M).filter_by(id=x).with_for_update()).scalar_one_or_none()`.
+- Read: `(await db.execute(select(X).where(...))).scalar_one_or_none()`. For a scalar count use `await db.scalar(select(func.count(...)))`.
+- DML rowcount: at runtime `(await db.execute(update/delete)).rowcount` returns `int`, but the stubs say `Result`. Cast to access cleanly: `cast("CursorResult[object]", await db.execute(...)).rowcount`. Reference `SessionStore.delete_message` in `backend/app/agent/session_db.py`.
+- Bulk DML `synchronize_session`: the kwarg moved off `update()`/`delete()` constructors. Use `.execution_options(synchronize_session="fetch")` on the executable. Reference `_append_history_update` in `backend/app/agent/memory_db.py`.
+- Row-level lock: `(await db.execute(select(M).filter_by(id=x).with_for_update())).scalar_one_or_none()`.
 - `.scalars().all()` returns `Sequence[T]`, not `list[T]`. Wrap with `list(...)` only when the consumer is typed for `list`.
 
 ### Encrypted columns: do not concat on the SQL side
 
 `EncryptedString` columns (e.g. `MemoryDocument.history_text`, `OAuthToken.access_token`) handle envelope encryption automatically on bind/unbind. SQL-side string concat (`Model.col || new_text`) operates on ciphertext and silently corrupts the row. Bug fixed in #1200.
 
-Correct pattern: SELECT FOR UPDATE the row, decrypt-in-Python via attribute access, append in Python, UPDATE with the full new plaintext. Reference `_doc_select_for_update` and `_append_history_update` plus their callers in `backend/app/agent/memory_db.py:52-237`. The row-level lock serializes concurrent appenders so neither side loses its update.
+Correct pattern: SELECT FOR UPDATE the row, decrypt-in-Python via attribute access, append in Python, UPDATE with the full new plaintext. Reference `_doc_select_for_update` and `_append_history_update` plus their callers in `backend/app/agent/memory_db.py`. The row-level lock serializes concurrent appenders so neither side loses its update.
 
 ### Advisory locks
 
-Use `pg_advisory_xact_lock` whenever possible: the lock is bound to the surrounding transaction and released automatically on COMMIT or ROLLBACK. Both sync and async paths simply execute the lock SQL inside their session and let the existing commit drop it. Reference `_advisory_lock_sql` in `backend/app/agent/session_db.py:100-111` (SessionStore) and `_lock_user_permissions` in `backend/app/agent/approval.py`.
+Use `pg_advisory_xact_lock` whenever possible: the lock is bound to the surrounding transaction and released automatically on COMMIT or ROLLBACK. Just execute the lock SQL inside the session and let the existing commit drop it. Reference `_advisory_lock_sql` in `backend/app/agent/session_db.py` (SessionStore) and `_lock_user_permissions` in `backend/app/agent/approval.py`.
 
-Session-scoped advisory locks (`pg_advisory_lock` / `pg_try_advisory_lock`) are different: the unlock MUST run on the **same** connection that took the lock. SQLAlchemy `Session.commit()` returns the underlying DBAPI connection to the pool, so a follow-up `pg_advisory_unlock` call on a fresh `SessionLocal()` runs on a different connection and is a silent no-op (Postgres returns `False`, the helper logs nothing). Recovery code in `backend/app/agent/inbound_recovery.py` and OAuth refresh in `backend/app/services/oauth.py` rely on the same-connection coupling. The regression test in `tests/test_inbound_recovery.py:715` (`test_unlock_on_different_connection_is_a_no_op`) pins this invariant for the future async port.
+Session-scoped advisory locks (`pg_advisory_lock` / `pg_try_advisory_lock`) are different: the unlock MUST run on the **same** connection that took the lock. `AsyncSession.commit()` returns the underlying connection to the pool, so a follow-up `pg_advisory_unlock` call on a fresh `AsyncSessionLocal()` runs on a different connection and is a silent no-op (Postgres returns `False`, the helper logs nothing). Recovery code in `backend/app/agent/inbound_recovery.py` and OAuth refresh in `backend/app/services/oauth.py` rely on the same-connection coupling: they hold the lock on a dedicated `AsyncConnection` (not a session) for the duration of the critical section.
 
-Concurrency tests for advisory locks: spin per-thread `engine.connect()` (sync) or per-task `AsyncSession(engine, ...)` connections so the lock primitive is actually exercised, not the connection serialization. Coordinate via `threading.Event` (sync) or `asyncio.Event` (async). Do not assert on `time.monotonic()` deltas across threads or tasks; sub-millisecond races make the comparisons flake (lesson from #1202). Reference `tests/test_approval.py:216-385` (`TestApprovalLockSerialization`) and `tests/test_inbound_recovery.py:457-790` (`TestInboundRecoveryLockSerialization`).
+Concurrency tests for advisory locks: spin per-task `AsyncConnection` handles so the lock primitive is actually exercised, not the connection serialization. Coordinate via `asyncio.Event`. Do not assert on `time.monotonic()` deltas across tasks; sub-millisecond races make the comparisons flake. Reference `TestInboundRecoveryLockSerialization` in `tests/test_inbound_recovery.py`.
 
 ### Test fixture: async DB isolation
 
-The `async_db` fixture in `tests/conftest.py:171-211` runs each async test inside a per-test `AsyncConnection` with a wrapping transaction; it rebinds `backend.app.database._async_session_factory` so store calls to `AsyncSessionLocal()` and `db_session_async()` pick up the test connection. Two non-obvious choices documented in the design comment block above the fixture (lines 119-168):
+The `async_db` fixture in `tests/conftest.py` runs each opt-in async test inside a per-test `AsyncConnection` with a wrapping transaction; it rebinds `backend.app.database._async_session_factory` so store calls to `AsyncSessionLocal()` and `db_session_async()` pick up the test connection. Two non-obvious choices documented in the design comment block above the fixture:
 
-- **Function-scoped engine.** asyncpg connections bind to the event loop they were created on; pytest-asyncio rotates loops between tests by default. A session-scoped async engine surfaces as `RuntimeError: Future attached to a different loop` on the second test. We pay one engine setup per async test in exchange for not having to widen the loop scope across the whole suite.
-- **`join_transaction_mode="create_savepoint"`, not `conditional_savepoint`.** The sync analog uses `conditional_savepoint` because psycopg2 keeps the outer transaction alive when only the savepoint aborts on `IntegrityError`. Under asyncpg the outer transaction silently detaches in the same scenario, which surfaces as "the row I just committed disappeared after a duplicate-insert error in a later session". `create_savepoint` forces every session into its own SAVEPOINT and keeps the contract consistent across drivers.
+- **Function-scoped engine.** asyncpg connections bind to the event loop they were created on; pytest-asyncio rotates loops between tests by default. A session-scoped async engine surfaces as `RuntimeError: Future attached to a different loop` on the second test. We pay one engine setup per opt-in test in exchange for not having to widen the loop scope across the whole suite.
+- **`join_transaction_mode="create_savepoint"`.** Forces every session into its own SAVEPOINT under the outer transaction so an `IntegrityError` rolls back to the savepoint without detaching the outer transaction.
 
-The shared `async_test_user` fixture (`tests/conftest.py:248-280`) inserts a test user through the async connection, expunges it, and yields. Use it from any async store test; do not redefine.
+The session-scoped autouse `_isolate_async_engine` fixture rebinds the OSS engine to a `NullPool` async engine pointed at the test database, so non-opt-in tests still execute against the test DB. The default `_isolate_stores` autouse fixture TRUNCATEs every table in `Base.metadata.sorted_tables` after each test (RESTART IDENTITY + CASCADE) to give the next test a clean slate.
 
-End every async test file with an iso-canary pair to prove rollback isolation. The `_part_a` test writes a fixed-id row; the `_part_b` test asserts the row is gone. Reference `test_async_isolation_rolls_back_between_tests_part_a` and `_part_b` in `tests/test_idempotency_pruning_async.py`.
+The shared `async_test_user` fixture inserts a test user through the per-test connection (only useful with `async_db`); the standard `test_user` fixture writes through `db_session_async()` against the session-scoped engine.
 
-Cross-API caveat: the sync per-test transaction (`_isolate_stores`) and the async per-test transaction (`async_db`) live on independent connections. Under READ COMMITTED, a sync write committed from one is not visible to an async read in the same test. Pure-async store tests are fine; mixed-API tests must drive their setup through the matching API.
+End every async-isolation test file with an iso-canary pair to prove rollback isolation. The `_part_a` test writes a fixed-id row; the `_part_b` test asserts the row is gone. Reference `test_async_isolation_rolls_back_between_tests_part_a` and `_part_b` in `tests/test_idempotency_pruning_async.py`.
 
 ### Premium
 
-Premium imports OSS via the editable `../clawbolt` path. The dual-API surface lets premium migrate call sites incrementally without lockstep merges. Premium ships its own `async_db` fixture that mirrors the OSS one but rebinds the OSS module attributes (`_oss_db_module._async_engine`, `_async_session_factory`); see premium #390 when it lands. The sync removal in #1160 is gated on premium completing its store conversions.
+Premium imports OSS via the editable `../clawbolt` path. Premium fixtures rebind the OSS async engine module attributes for per-test isolation; see premium `tests/conftest.py` for the analog of `async_db`.
 
 ## Backwards Compatibility
 

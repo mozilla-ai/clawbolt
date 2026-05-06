@@ -33,7 +33,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.bus import OutboundMessage
 from backend.app.config import settings
-from backend.app.database import SessionLocal, db_session, db_session_async
+from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import ApprovalEvent, PendingApprovalRow, UserPermissionSet
 
 logger = logging.getLogger(__name__)
@@ -45,37 +45,20 @@ logger = logging.getLogger(__name__)
 
 
 def _user_permissions_lock_key(user_id: str) -> str:
-    """Stable string key for the per-user permissions advisory lock.
-
-    Shared between sync and async callers so the two paths contend on
-    the same key.
-    """
+    """Stable string key for the per-user permissions advisory lock."""
     return f"user_permissions:{user_id}"
 
 
-def _lock_user_permissions(db: Any, user_id: str) -> None:
+async def _lock_user_permissions(db: Any, user_id: str) -> None:
     """Acquire a transaction-scoped Postgres advisory lock for this user's
     permissions row.
 
     Serializes concurrent read-modify-write sequences across workers and
-    requests. Released automatically at COMMIT / ROLLBACK. Postgres-only;
-    the project's test + production databases are both Postgres.
-    """
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
-        {"k": _user_permissions_lock_key(user_id)},
-    )
-
-
-async def _lock_user_permissions_async(db: Any, user_id: str) -> None:
-    """Async peer of ``_lock_user_permissions``.
-
-    Same ``pg_advisory_xact_lock`` semantics: the lock is bound to the
-    surrounding transaction and released only on COMMIT / ROLLBACK of
-    that transaction. ``db`` is an ``AsyncSession`` (or any handle that
-    awaits ``execute(...)``); the caller must hold the lock and the
-    matching read+write inside a single ``async with db.begin()`` /
-    ``async with db_session_async()`` block so the autobegun
+    requests. The lock is bound to the surrounding transaction and
+    released only on COMMIT / ROLLBACK of that transaction. ``db`` is
+    an ``AsyncSession`` (or any handle that awaits ``execute(...)``);
+    the caller must hold the lock and the matching read+write inside a
+    single ``async with db_session_async()`` block so the autobegun
     transaction owns the lock.
     """
     await db.execute(
@@ -100,11 +83,6 @@ def _parse_row_data(row: UserPermissionSet | None) -> dict[str, Any]:
 
 
 def _select_user_permissions(user_id: str) -> Any:
-    """Select the ``UserPermissionSet`` row for one user.
-
-    Shared between sync and async paths so the query shape stays in
-    lockstep across the dual-API surface.
-    """
     return select(UserPermissionSet).filter_by(user_id=user_id)
 
 
@@ -245,34 +223,15 @@ class ApprovalStore:
     Resolution order: resource match (exact then glob) > tool match > policy default.
     """
 
-    def _load(self, user_id: str) -> dict[str, Any]:
-        with db_session() as db:
-            row = db.execute(_select_user_permissions(user_id)).scalar_one_or_none()
-            return _parse_row_data(row)
-
-    async def _load_async(self, user_id: str) -> dict[str, Any]:
-        """Async peer of ``_load``."""
+    async def _load(self, user_id: str) -> dict[str, Any]:
         async with db_session_async() as db:
             row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             return _parse_row_data(row)
 
-    def _save(self, user_id: str, data: dict[str, Any]) -> None:
+    async def _save(self, user_id: str, data: dict[str, Any]) -> None:
         """Wholesale replace. Serialized against concurrent writers via an
         advisory lock keyed on the user so the dashboard PUT can't race
         with set_permission or a workspace_tools write on the same row.
-        """
-        payload = json.dumps(data, indent=2, default=str)
-        with db_session() as db:
-            _lock_user_permissions(db, user_id)
-            row = db.execute(_select_user_permissions(user_id)).scalar_one_or_none()
-            if row is None:
-                db.add(UserPermissionSet(user_id=user_id, data=payload))
-            else:
-                row.data = payload
-            db.commit()
-
-    async def _save_async(self, user_id: str, data: dict[str, Any]) -> None:
-        """Async peer of ``_save``.
 
         Acquires the per-user ``pg_advisory_xact_lock`` on the same
         AsyncSession that performs the read+write. The lock and the
@@ -282,7 +241,7 @@ class ApprovalStore:
         """
         payload = json.dumps(data, indent=2, default=str)
         async with db_session_async() as db:
-            await _lock_user_permissions_async(db, user_id)
+            await _lock_user_permissions(db, user_id)
             row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             if row is None:
                 db.add(UserPermissionSet(user_id=user_id, data=payload))
@@ -290,17 +249,13 @@ class ApprovalStore:
                 row.data = payload
             await db.commit()
 
-    def load_user_permissions(self, user_id: str) -> dict[str, Any]:
+    async def load_user_permissions(self, user_id: str) -> dict[str, Any]:
         """Load the raw permission data for a user.
 
         Use with :meth:`resolve_permission` for bulk lookups to avoid
-        repeated file reads.
+        repeated DB reads.
         """
-        return self._load(user_id)
-
-    async def load_user_permissions_async(self, user_id: str) -> dict[str, Any]:
-        """Async peer of ``load_user_permissions``."""
-        return await self._load_async(user_id)
+        return await self._load(user_id)
 
     @staticmethod
     def resolve_permission(
@@ -329,7 +284,7 @@ class ApprovalStore:
 
         return default
 
-    def check_permission(
+    async def check_permission(
         self,
         user_id: str,
         tool_name: str,
@@ -340,18 +295,7 @@ class ApprovalStore:
 
         Resolution order: resource match (exact then glob) > tool match > default.
         """
-        data = self._load(user_id)
-        return self.resolve_permission(data, tool_name, resource, default)
-
-    async def check_permission_async(
-        self,
-        user_id: str,
-        tool_name: str,
-        resource: str | None = None,
-        default: PermissionLevel = PermissionLevel.ASK,
-    ) -> PermissionLevel:
-        """Async peer of ``check_permission``."""
-        data = await self._load_async(user_id)
+        data = await self._load(user_id)
         return self.resolve_permission(data, tool_name, resource, default)
 
     def generate_defaults(self, user_id: str) -> dict[str, Any]:
@@ -368,9 +312,9 @@ class ApprovalStore:
                 tools[st.name] = st.default_permission
         return {"version": _PERMISSIONS_VERSION, "tools": tools, "resources": {}}
 
-    def ensure_complete(self, user_id: str) -> dict[str, Any]:
+    async def ensure_complete(self, user_id: str) -> dict[str, Any]:
         """Load permissions, backfilling any missing tools with defaults."""
-        data = self._load(user_id)
+        data = await self._load(user_id)
         defaults = self.generate_defaults(user_id)
         changed = False
         for tool_name, default_level in defaults["tools"].items():
@@ -378,31 +322,14 @@ class ApprovalStore:
                 data.setdefault("tools", {})[tool_name] = default_level
                 changed = True
         if changed:
-            self._save(user_id, data)
+            await self._save(user_id, data)
         return data
 
-    async def ensure_complete_async(self, user_id: str) -> dict[str, Any]:
-        """Async peer of ``ensure_complete``."""
-        data = await self._load_async(user_id)
-        defaults = self.generate_defaults(user_id)
-        changed = False
-        for tool_name, default_level in defaults["tools"].items():
-            if tool_name not in data.get("tools", {}):
-                data.setdefault("tools", {})[tool_name] = default_level
-                changed = True
-        if changed:
-            await self._save_async(user_id, data)
-        return data
-
-    def reset_permissions(self, user_id: str) -> None:
+    async def reset_permissions(self, user_id: str) -> None:
         """Reset all permissions to defaults."""
-        self._save(user_id, self.generate_defaults(user_id))
+        await self._save(user_id, self.generate_defaults(user_id))
 
-    async def reset_permissions_async(self, user_id: str) -> None:
-        """Async peer of ``reset_permissions``."""
-        await self._save_async(user_id, self.generate_defaults(user_id))
-
-    def set_permission(
+    async def set_permission(
         self,
         user_id: str,
         tool_name: str,
@@ -420,48 +347,14 @@ class ApprovalStore:
 
         Backfills the complete tool list before writing so setting one
         permission doesn't drop other entries.
-        """
-        with db_session() as db:
-            _lock_user_permissions(db, user_id)
-            row = db.execute(_select_user_permissions(user_id)).scalar_one_or_none()
-            data = _parse_row_data(row)
 
-            # ensure_complete-style backfill: fill missing tool defaults.
-            defaults = self.generate_defaults(user_id)
-            for tname, default_level in defaults["tools"].items():
-                data.setdefault("tools", {}).setdefault(tname, default_level)
-
-            if resource is not None:
-                data.setdefault("resources", {}).setdefault(tool_name, {})[resource] = str(level)
-            else:
-                data.setdefault("tools", {})[tool_name] = str(level)
-
-            payload = json.dumps(data, indent=2, default=str)
-            if row is None:
-                db.add(UserPermissionSet(user_id=user_id, data=payload))
-            else:
-                row.data = payload
-            db.commit()
-
-    async def set_permission_async(
-        self,
-        user_id: str,
-        tool_name: str,
-        level: PermissionLevel,
-        resource: str | None = None,
-    ) -> None:
-        """Async peer of ``set_permission``.
-
-        Same lost-update guard as the sync path: lock + read +
-        backfill-merge + write all happen inside one autobegun async
-        transaction so the lock is released only after the write
-        commits. ``db_session_async`` calls ``await db.commit()``
-        implicitly via its context manager exit only on success;
-        rollback on exception drops the lock too. Either way the
-        transaction-scoped lock cannot leak past this method.
+        ``db_session_async`` calls ``await db.commit()`` implicitly via
+        its context manager exit only on success; rollback on exception
+        drops the lock too. Either way the transaction-scoped lock
+        cannot leak past this method.
         """
         async with db_session_async() as db:
-            await _lock_user_permissions_async(db, user_id)
+            await _lock_user_permissions(db, user_id)
             row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             data = _parse_row_data(row)
 
@@ -544,8 +437,8 @@ class ApprovalGate:
 
         pending = PendingApproval(tool_name=tool_name, description=description)
         self._pending[user_id] = pending
-        _persist_pending_row(user_id, tool_name, description, channel, chat_id)
-        _log_approval_event(user_id, "requested", tool_name, description, channel, chat_id)
+        await _persist_pending_row(user_id, tool_name, description, channel, chat_id)
+        await _log_approval_event(user_id, "requested", tool_name, description, channel, chat_id)
 
         if prompt is None:
             prompt = format_approval_message(tool_name, description)
@@ -556,7 +449,7 @@ class ApprovalGate:
         except Exception:
             logger.exception("Failed to send approval prompt to user %s", user_id)
             self._pending.pop(user_id, None)
-            _delete_pending_row(user_id)
+            await _delete_pending_row(user_id)
             return ApprovalDecision.DENIED
 
         try:
@@ -571,8 +464,10 @@ class ApprovalGate:
                 tool_name,
             )
             self._pending.pop(user_id, None)
-            _delete_pending_row(user_id)
-            _log_approval_event(user_id, "timed_out", tool_name, description, channel, chat_id)
+            await _delete_pending_row(user_id)
+            await _log_approval_event(
+                user_id, "timed_out", tool_name, description, channel, chat_id
+            )
             return ApprovalDecision.DENIED
 
         if pending.decision is None:
@@ -587,10 +482,10 @@ class ApprovalGate:
         else:
             decision = pending.decision
         self._pending.pop(user_id, None)
-        _delete_pending_row(user_id)
+        await _delete_pending_row(user_id)
         return decision
 
-    def resolve(self, user_id: str, decision: ApprovalDecision) -> bool:
+    async def resolve(self, user_id: str, decision: ApprovalDecision) -> bool:
         """Resolve a pending approval with the user's decision.
 
         Returns True if there was a pending approval to resolve.
@@ -604,13 +499,13 @@ class ApprovalGate:
         if pending is None:
             return False
         pending.decision = decision
-        _delete_pending_row(user_id)
+        await _delete_pending_row(user_id)
         # The audit log mirrors what was sent to the user: tool_name and
         # description come from the in-memory PendingApproval. channel /
         # chat_id are not threaded through resolve() (callers don't know
         # them); they're already on the matching ``requested`` row, so
         # admins can join by user_id + ordering.
-        _log_approval_event(
+        await _log_approval_event(
             user_id,
             "decided",
             pending.tool_name,
@@ -628,7 +523,7 @@ class ApprovalGate:
 # ---------------------------------------------------------------------------
 
 
-def _persist_pending_row(
+async def _persist_pending_row(
     user_id: str,
     tool_name: str,
     description: str,
@@ -668,9 +563,9 @@ def _persist_pending_row(
                 },
             )
         )
-        with db_session() as db:
-            db.execute(stmt)
-            db.commit()
+        async with db_session_async() as db:
+            await db.execute(stmt)
+            await db.commit()
     except Exception:
         logger.exception(
             "Failed to persist pending approval row for user %s tool %s",
@@ -679,14 +574,14 @@ def _persist_pending_row(
         )
 
 
-def _delete_pending_row(user_id: str) -> None:
+async def _delete_pending_row(user_id: str) -> None:
     """Delete a pending_approvals row. Logs and swallows errors."""
     try:
-        with db_session() as db:
-            row = db.get(PendingApprovalRow, user_id)
+        async with db_session_async() as db:
+            row = await db.get(PendingApprovalRow, user_id)
             if row is not None:
-                db.delete(row)
-                db.commit()
+                await db.delete(row)
+                await db.commit()
     except Exception:
         logger.exception("Failed to delete pending approval row for user %s", user_id)
 
@@ -696,7 +591,7 @@ def _delete_pending_row(user_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _log_approval_event(
+async def _log_approval_event(
     user_id: str,
     event_type: str,
     tool_name: str,
@@ -712,7 +607,7 @@ def _log_approval_event(
     live wake-up flow.
     """
     try:
-        with db_session() as db:
+        async with db_session_async() as db:
             db.add(
                 ApprovalEvent(
                     user_id=user_id,
@@ -724,7 +619,7 @@ def _log_approval_event(
                     decision=str(decision) if decision is not None else None,
                 )
             )
-            db.commit()
+            await db.commit()
     except Exception:
         logger.exception(
             "Failed to record approval_event(%s) for user %s tool %s",
@@ -766,18 +661,20 @@ async def cleanup_orphaned_approvals(
       * Fresh rows whose publish fails stay in the table for a later
         restart to retry. The age gate caps how long that can loop.
     """
-    db = SessionLocal()
+    db = AsyncSessionLocal()
     lock_acquired = False
     try:
         try:
-            got_lock = db.execute(
-                text("SELECT pg_try_advisory_lock(hashtext(:k))"),
-                {"k": _CLEANUP_LOCK_KEY},
+            got_lock = (
+                await db.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                    {"k": _CLEANUP_LOCK_KEY},
+                )
             ).scalar()
             # Close the implicit read transaction so we aren't idle-in-
             # transaction through publish_outbound below. The advisory
             # lock is session-scoped and survives the commit.
-            db.commit()
+            await db.commit()
         except Exception:
             logger.exception("Failed to acquire orphan-cleanup advisory lock")
             return 0
@@ -787,9 +684,9 @@ async def cleanup_orphaned_approvals(
         lock_acquired = True
 
         try:
-            rows = db.execute(select(PendingApprovalRow)).scalars().all()
+            rows = (await db.execute(select(PendingApprovalRow))).scalars().all()
             snapshot = [(r.user_id, r.tool_name, r.channel, r.chat_id, r.created_at) for r in rows]
-            db.commit()
+            await db.commit()
         except Exception:
             logger.exception("Failed to load orphaned approvals on startup")
             return 0
@@ -806,7 +703,7 @@ async def cleanup_orphaned_approvals(
                     channel,
                     chat_id,
                 )
-                _delete_pending_row(user_id)
+                await _delete_pending_row(user_id)
                 continue
 
             expired = created_at is not None and (now - created_at) > _ORPHAN_MAX_AGE
@@ -823,8 +720,8 @@ async def cleanup_orphaned_approvals(
                         ),
                     )
                 )
-                _delete_pending_row(user_id)
-                _log_approval_event(user_id, "recovered", tool_name, "", channel, chat_id)
+                await _delete_pending_row(user_id)
+                await _log_approval_event(user_id, "recovered", tool_name, "", channel, chat_id)
                 recovered += 1
                 logger.info(
                     "Recovered orphaned approval for user %s (tool=%s)",
@@ -845,19 +742,19 @@ async def cleanup_orphaned_approvals(
                         tool_name,
                         _ORPHAN_MAX_AGE,
                     )
-                    _delete_pending_row(user_id)
+                    await _delete_pending_row(user_id)
         return recovered
     finally:
         if lock_acquired:
             try:
-                db.execute(
+                await db.execute(
                     text("SELECT pg_advisory_unlock(hashtext(:k))"),
                     {"k": _CLEANUP_LOCK_KEY},
                 )
-                db.commit()
+                await db.commit()
             except Exception:
                 logger.exception("Failed to release orphan-cleanup advisory lock")
-        db.close()
+        await db.close()
 
 
 # ---------------------------------------------------------------------------

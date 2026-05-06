@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
@@ -22,6 +21,7 @@ from backend.app.agent.onboarding import (
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.models import User
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
@@ -40,19 +40,16 @@ async def test_onboarding_extracts_profile_from_intro() -> None:
     """Agent should write user info to USER.md via write_file during onboarding."""
 
     # Create a blank user (no profile info)
-    db = _db_module.SessionLocal()
-    try:
+    async with db_session_async() as db:
         user = User(
             user_id="onboarding-test-user",
             channel_identifier="onboard_test_1",
             preferred_channel="telegram",
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
 
     _create_bootstrap(user)
     assert is_onboarding_needed(user)

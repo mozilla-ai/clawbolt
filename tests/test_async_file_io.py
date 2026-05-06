@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-import backend.app.database as _db_module
 from backend.app.agent.dto import UserData
 from backend.app.agent.session_db import SessionStore
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
+from backend.app.database import db_session_async
 from backend.app.models import User
 
 # ---------------------------------------------------------------------------
@@ -90,14 +90,11 @@ async def test_workspace_read_file_db_backed(
 ) -> None:
     """Workspace read_file should read USER.md from the DB."""
     # Write user_text directly to the DB
-    db = _db_module.SessionLocal()
-    try:
-        user = db.query(User).filter_by(id=str(test_user.id)).first()
+    async with db_session_async() as db:
+        user = await db.get(User, str(test_user.id))
         assert user is not None
         user.user_text = "# User\n\n- Name: Jake\n"
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     tools = create_workspace_tools(str(test_user.id))
     read_fn = next(t.function for t in tools if t.name == "read_file")
@@ -116,13 +113,10 @@ async def test_workspace_write_file_db_backed(
     result = await write_fn(path="USER.md", content="# User\n\n- Name: Sarah\n")
     assert result.is_error is False
 
-    db = _db_module.SessionLocal()
-    try:
-        user = db.query(User).filter_by(id=str(test_user.id)).first()
+    async with db_session_async() as db:
+        user = await db.get(User, str(test_user.id))
         assert user is not None
         assert "Sarah" in user.user_text
-    finally:
-        db.close()
 
 
 @pytest.mark.asyncio()
@@ -131,24 +125,18 @@ async def test_workspace_edit_file_db_backed(
 ) -> None:
     """Workspace edit_file should edit USER.md in the DB."""
     # Seed initial content
-    db = _db_module.SessionLocal()
-    try:
-        user = db.query(User).filter_by(id=str(test_user.id)).first()
+    async with db_session_async() as db:
+        user = await db.get(User, str(test_user.id))
         assert user is not None
         user.user_text = "- Rate: $85/hr\n"
-        db.commit()
-    finally:
-        db.close()
+        await db.commit()
 
     tools = create_workspace_tools(str(test_user.id))
     edit_fn = next(t.function for t in tools if t.name == "edit_file")
     result = await edit_fn(path="USER.md", old_text="$85/hr", new_text="$100/hr")
     assert result.is_error is False
 
-    db = _db_module.SessionLocal()
-    try:
-        user = db.query(User).filter_by(id=str(test_user.id)).first()
+    async with db_session_async() as db:
+        user = await db.get(User, str(test_user.id))
         assert user is not None
         assert "$100/hr" in user.user_text
-    finally:
-        db.close()
