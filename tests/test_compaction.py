@@ -226,7 +226,7 @@ async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
 
     # Verify MEMORY.md was written
     store = get_memory_store(test_user.id)
-    content = store.read_memory()
+    content = await store.read_memory_async()
     assert "Deck: $45/sqft" in content
 
     # Verify LLM was called with the system prompt
@@ -243,8 +243,8 @@ async def test_compact_session_includes_current_memory_and_user(
 ) -> None:
     """compact_session should pass current MEMORY.md and USER.md to the LLM."""
     store = get_memory_store(test_user.id)
-    store.write_memory("## Existing\n- Old fact: still relevant")
-    store.write_user("- Name: Nathan\n- Trade: General contractor")
+    await store.write_memory_async("## Existing\n- Old fact: still relevant")
+    await store.write_user_async("- Name: Nathan\n- Trade: General contractor")
 
     mock_response = make_text_response(
         json.dumps({"memory_update": "## Existing\n- Old fact: still relevant", "summary": ""})
@@ -278,8 +278,10 @@ async def test_compact_session_user_profile_in_separate_xml_section(
     """Regression test for #823: user profile must be in a distinct <user_profile>
     section so the LLM does not merge it into memory_update."""
     store = get_memory_store(test_user.id)
-    store.write_memory("## Clients\n- Bob: 555-0100")
-    store.write_user("- Name: Nathan\n- Trade: General contractor\n- Location: Portland")
+    await store.write_memory_async("## Clients\n- Bob: 555-0100")
+    await store.write_user_async(
+        "- Name: Nathan\n- Trade: General contractor\n- Location: Portland"
+    )
 
     mock_response = make_text_response(
         json.dumps({"memory_update": "## Clients\n- Bob: 555-0100", "summary": ""})
@@ -325,8 +327,8 @@ async def test_compact_session_includes_soul_and_heartbeat(
 ) -> None:
     """compact_session should pass soul and heartbeat text to the LLM in XML tags."""
     store = get_memory_store(test_user.id)
-    store.write_memory("## Clients\n- Alice: 555-0100")
-    store.write_soul("You are a friendly assistant for trades professionals.")
+    await store.write_memory_async("## Clients\n- Alice: 555-0100")
+    await store.write_soul_async("You are a friendly assistant for trades professionals.")
 
     heartbeat_store = HeartbeatStore(test_user.id)
     await heartbeat_store.write_heartbeat_md("- Follow up with Bob about the deck estimate")
@@ -359,8 +361,8 @@ async def test_compact_session_soul_in_separate_xml_section(
 ) -> None:
     """Regression: soul content must be in <soul>, not in <current_memory>."""
     store = get_memory_store(test_user.id)
-    store.write_memory("## Clients\n- Bob: 555-0100")
-    store.write_soul("You are a helpful construction assistant.")
+    await store.write_memory_async("## Clients\n- Bob: 555-0100")
+    await store.write_soul_async("You are a helpful construction assistant.")
 
     mock_response = make_text_response(
         json.dumps({"memory_update": "## Clients\n- Bob: 555-0100", "summary": ""})
@@ -394,7 +396,7 @@ async def test_compact_session_heartbeat_in_separate_xml_section(
 ) -> None:
     """Regression: heartbeat content must be in <heartbeat>, not in <current_memory>."""
     store = get_memory_store(test_user.id)
-    store.write_memory("## Facts\n- Rate: $50/hr")
+    await store.write_memory_async("## Facts\n- Rate: $50/hr")
 
     heartbeat_store = HeartbeatStore(test_user.id)
     await heartbeat_store.write_heartbeat_md("- Call supplier about lumber delivery")
@@ -474,7 +476,7 @@ async def test_compact_session_returns_max_message_seq(test_user: UserData) -> N
 async def test_compact_session_writes_user_profile(test_user: UserData) -> None:
     """compact_session should write USER.md when LLM returns user_profile_update."""
     store = get_memory_store(test_user.id)
-    store.write_user("- Name: Nathan\n- Trade: General contractor")
+    await store.write_user_async("- Name: Nathan\n- Trade: General contractor")
 
     llm_response_content = json.dumps(
         {
@@ -494,7 +496,7 @@ async def test_compact_session_writes_user_profile(test_user: UserData) -> None:
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await compact_session(test_user.id, messages)
 
-    updated_profile = store.read_user()
+    updated_profile = await store.read_user_async()
     assert "Day rate: $500" in updated_profile
     assert "Nathan" in updated_profile
     assert "General contractor" in updated_profile
@@ -504,7 +506,7 @@ async def test_compact_session_writes_user_profile(test_user: UserData) -> None:
 async def test_compact_session_writes_soul(test_user: UserData) -> None:
     """compact_session should write SOUL.md when LLM returns soul_update."""
     store = get_memory_store(test_user.id)
-    store.write_soul("You are a friendly assistant.")
+    await store.write_soul_async("You are a friendly assistant.")
 
     llm_response_content = json.dumps(
         {
@@ -524,7 +526,7 @@ async def test_compact_session_writes_soul(test_user: UserData) -> None:
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await compact_session(test_user.id, messages)
 
-    updated_soul = store.read_soul()
+    updated_soul = await store.read_soul_async()
     assert "direct, no-nonsense" in updated_soul
     assert "Skip the pleasantries" in updated_soul
 
@@ -533,8 +535,8 @@ async def test_compact_session_writes_soul(test_user: UserData) -> None:
 async def test_compact_session_skips_empty_profile_and_soul(test_user: UserData) -> None:
     """compact_session should not write USER.md or SOUL.md when updates are empty."""
     store = get_memory_store(test_user.id)
-    store.write_user("- Name: Nathan")
-    store.write_soul("You are helpful.")
+    await store.write_user_async("- Name: Nathan")
+    await store.write_soul_async("You are helpful.")
 
     llm_response_content = json.dumps(
         {
@@ -555,10 +557,10 @@ async def test_compact_session_skips_empty_profile_and_soul(test_user: UserData)
         await compact_session(test_user.id, messages)
 
     # Profile and soul should be unchanged
-    assert store.read_user() == "- Name: Nathan"
-    assert store.read_soul() == "You are helpful."
+    assert await store.read_user_async() == "- Name: Nathan"
+    assert await store.read_soul_async() == "You are helpful."
     # Memory should be updated
-    assert "Bob: 555-0100" in store.read_memory()
+    assert "Bob: 555-0100" in await store.read_memory_async()
 
 
 @pytest.mark.asyncio()
@@ -943,7 +945,7 @@ async def test_trigger_compaction_for_dropped_fires_background_task(
         await asyncio.sleep(0.2)
 
     store = get_memory_store(test_user.id)
-    content = store.read_memory()
+    content = await store.read_memory_async()
     assert "fact: from_trim" in content
 
 
@@ -1006,7 +1008,7 @@ async def test_compact_session_appends_history(test_user: UserData) -> None:
     assert "Rate: $100/hr" in memory_update
 
     memory_store = get_memory_store(test_user.id)
-    history_content = memory_store.read_history()
+    history_content = await memory_store.read_history_async()
     assert history_content  # non-empty
     assert "User set hourly rate to $100" in history_content
     assert "[TIMESTAMP]" not in history_content
@@ -1028,7 +1030,7 @@ async def test_compact_session_no_summary_skips_history(test_user: UserData) -> 
         await compact_session(test_user.id, messages, max_message_seq=2)
 
     memory_store = get_memory_store(test_user.id)
-    assert memory_store.read_history() == ""
+    assert await memory_store.read_history_async() == ""
 
 
 @pytest.mark.asyncio()
@@ -1285,7 +1287,7 @@ async def test_load_conversation_history_respects_last_trim_seq(test_user: User)
     finally:
         db.close()
 
-    session = get_session_store(test_user.id).load_session(cs.session_id)
+    session = await get_session_store(test_user.id).load_session_async(cs.session_id)
     assert session is not None
     history = await load_conversation_history(session)
 
@@ -1302,7 +1304,7 @@ async def test_load_conversation_history_respects_last_trim_seq(test_user: User)
 async def test_load_conversation_history_null_watermark_no_filter(test_user: User) -> None:
     """NULL watermark (default) is the back-compat behavior: no filtering."""
     cs = _seed_session_with_messages(test_user, message_count=10)
-    session = get_session_store(test_user.id).load_session(cs.session_id)
+    session = await get_session_store(test_user.id).load_session_async(cs.session_id)
     assert session is not None
     assert session.last_trim_seq is None
 
@@ -1435,7 +1437,7 @@ async def test_compact_session_with_event_id_updates_existing_row(
 
     # Seed memory before so the LLM-driven write produces a diff.
     memory_store = get_memory_store(test_user.id)
-    memory_store.write_memory("# Old MEMORY\n- nothing here yet")
+    await memory_store.write_memory_async("# Old MEMORY\n- nothing here yet")
 
     llm_response = json.dumps(
         {"memory_update": "# New MEMORY\n- learned something", "summary": "[TIMESTAMP] s"}

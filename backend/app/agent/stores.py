@@ -158,32 +158,17 @@ def _today_window_utc() -> tuple[datetime.datetime, datetime.datetime]:
 class HeartbeatStore:
     """Database-backed heartbeat storage using User.heartbeat_text and HeartbeatLog ORM models.
 
-    Async-only API for the methods originally introduced by issue #1154
-    (collapsed in #1160). ``read_heartbeat_md`` retains its sync ``def``
-    signature: premium callers (data export, audit) invoke it from sync
-    code paths and converting them requires premium-side changes.
+    Async-only API after the issue #1160 final pass. The sync
+    ``read_heartbeat_md`` method introduced as a transition shim in
+    issue #1154 has been removed; all OSS and premium callers use
+    :meth:`read_heartbeat_md_async`.
     """
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
 
-    def read_heartbeat_md(self) -> str:
-        """Read freeform heartbeat markdown from User.heartbeat_text.
-
-        Sync-only; premium calls this from sync export/audit paths.
-        Async callers should use :meth:`read_heartbeat_md_async`.
-        """
-        db = SessionLocal()
-        try:
-            user = db.execute(_heartbeat_user_select(self.user_id)).scalar_one_or_none()
-            if user is not None and user.heartbeat_text:
-                return user.heartbeat_text
-            return ""
-        finally:
-            db.close()
-
     async def read_heartbeat_md_async(self) -> str:
-        """Async peer of :meth:`read_heartbeat_md`."""
+        """Read freeform heartbeat markdown from User.heartbeat_text."""
         db = AsyncSessionLocal()
         try:
             user = (await db.execute(_heartbeat_user_select(self.user_id))).scalar_one_or_none()
@@ -541,12 +526,15 @@ class IdempotencyStore:
     Uses the IdempotencyKey ORM model. No user_id scoping -- external_id
     is globally unique.
 
-    Pilot for the dual-API rollout (issue #1150). The sync surface is
-    retained because the webhook entry path runs from a sync TestClient
-    worker thread that cannot share an asyncpg connection with the
-    fixture loop; converting it requires test-infra changes outside the
-    scope of #1160. The ``_async`` peers are the canonical surface for
-    new code.
+    The last sync hold-out after the issue #1160 final pass. Every
+    other store's sync surface has been removed, but the webhook entry
+    path runs from a sync ``TestClient`` worker thread that cannot
+    share an asyncpg connection with the fixture's async loop, so
+    ``has_seen``, ``try_mark_seen``, and ``_prune`` keep their sync
+    bodies until the test infrastructure can drive that path through
+    an async client. The ``_async`` peers are the canonical surface
+    for new code; the sync methods stay only for that one TestClient
+    seam.
     """
 
     def has_seen(self, external_id: str) -> bool:
@@ -734,19 +722,16 @@ def _build_llm_usage_log(
 class LLMUsageStore:
     """Database-backed LLM usage logging using LLMUsageLog ORM model.
 
-    Dual-API store (issue #1156). The async peer matters for the
-    request hot path: premium reads from this table for quota
-    enforcement, and the sync write was a known event-loop blocking
-    risk. Sync and async paths share the ``_build_llm_usage_log``
-    helper so cost computation and the unpriced-model warning behave
-    identically. Follows the IdempotencyStore pilot pattern from
-    PR #1199.
+    Async-only API after the issue #1160 final pass. The sync ``log``
+    method has been removed; ``services.llm_usage.log_llm_usage`` is
+    the canonical async entry point and threads cost computation
+    plus the unpriced-model warning through ``_build_llm_usage_log``.
     """
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
 
-    def log(
+    async def log_async(
         self,
         model: str,
         prompt_tokens: int,
@@ -768,31 +753,6 @@ class LLMUsageStore:
         ``cost=0.000000`` and a once-per-process warning so we notice when
         our pricing data is stale.
         """
-        entry = _build_llm_usage_log(
-            user_id=self.user_id,
-            model=model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            purpose=purpose,
-            provider=provider,
-            cache_creation_input_tokens=cache_creation_input_tokens,
-            cache_read_input_tokens=cache_read_input_tokens,
-        )
-        with db_session() as db:
-            db.add(entry)
-            db.commit()
-
-    async def log_async(
-        self,
-        model: str,
-        prompt_tokens: int,
-        completion_tokens: int,
-        purpose: str,
-        provider: str = "",
-        cache_creation_input_tokens: int | None = None,
-        cache_read_input_tokens: int | None = None,
-    ) -> None:
-        """Async peer of ``log``."""
         entry = _build_llm_usage_log(
             user_id=self.user_id,
             model=model,

@@ -65,7 +65,7 @@ async def test_system_prompt_stored_on_first_message(test_user: User) -> None:
 
     # Verify it was persisted
     store = get_session_store(test_user.id)
-    loaded = store.load_session("prompt-sess-1")
+    loaded = await store.load_session_async("prompt-sess-1")
     assert loaded is not None
     assert loaded.initial_system_prompt == "You are a helpful assistant."
 
@@ -79,7 +79,7 @@ async def test_system_prompt_not_overwritten(test_user: User) -> None:
     )
 
     store = get_session_store(test_user.id)
-    session = store.load_session("prompt-sess-2")
+    session = await store.load_session_async("prompt-sess-2")
     assert session is not None
 
     ctx = PipelineContext(
@@ -91,7 +91,7 @@ async def test_system_prompt_not_overwritten(test_user: User) -> None:
     )
     await persist_system_prompt_step(ctx)
 
-    loaded = store.load_session("prompt-sess-2")
+    loaded = await store.load_session_async("prompt-sess-2")
     assert loaded is not None
     assert loaded.initial_system_prompt == "Original prompt"
 

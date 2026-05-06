@@ -44,7 +44,7 @@ async def test_update_heartbeat_writes_text(test_user: User) -> None:
 
     # Verify via store
     store = HeartbeatStore(test_user.id)
-    text = store.read_heartbeat_md()
+    text = await store.read_heartbeat_md_async()
     assert "Daily site check" in text
     assert "Review inbox" in text
 
@@ -60,7 +60,7 @@ async def test_update_heartbeat_clears_with_empty_text(test_user: User) -> None:
     result = await update_hb(text="")
     assert "updated" in result.content.lower()
 
-    text = store.read_heartbeat_md()
+    text = await store.read_heartbeat_md_async()
     assert text == ""
 
 

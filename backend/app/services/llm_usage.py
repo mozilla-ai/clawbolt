@@ -16,7 +16,7 @@ from backend.app.agent.stores import LLMUsageStore
 logger = logging.getLogger(__name__)
 
 
-def log_llm_usage(
+async def log_llm_usage(
     user_id: str,
     model: str,
     response: MessageResponse,
@@ -41,7 +41,7 @@ def log_llm_usage(
 
     try:
         store = LLMUsageStore(user_id)
-        store.log(
+        await store.log_async(
             model,
             prompt_tokens,
             completion_tokens,

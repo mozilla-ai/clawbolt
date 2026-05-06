@@ -1540,7 +1540,7 @@ class TestIngestionIntercept:
         from unittest.mock import MagicMock
 
         mock_store = MagicMock()
-        mock_store.load_session.return_value = fresh_session
+        mock_store.load_session_async = AsyncMock(return_value=fresh_session)
 
         mock_handle = AsyncMock()
 
@@ -1563,7 +1563,7 @@ class TestIngestionIntercept:
             )
 
         # Session store should have been called to reload
-        mock_store.load_session.assert_called_once_with("test-sess")
+        mock_store.load_session_async.assert_called_once_with("test-sess")
 
         # handle_inbound_message should have received the fresh session
         mock_handle.assert_called_once()

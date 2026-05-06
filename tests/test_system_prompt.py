@@ -463,12 +463,15 @@ class TestBuildTimeUserContext:
 
 
 class TestCrossSessionContext:
-    def test_returns_empty_when_no_other_sessions(
+    @pytest.mark.asyncio()
+    async def test_returns_empty_when_no_other_sessions(
         self,
         test_user: "User",
     ) -> None:
         """Should return empty string when no other sessions exist."""
-        result = build_cross_session_context(test_user.id, current_session_id="nonexistent_999")
+        result = await build_cross_session_context(
+            test_user.id, current_session_id="nonexistent_999"
+        )
         assert result == ""
 
     @pytest.mark.asyncio()
@@ -486,7 +489,7 @@ class TestCrossSessionContext:
         await store.add_message(session_a, "inbound", "Hello from Telegram")
         await store.add_message(session_a, "outbound", "Hi! How can I help?")
 
-        result = build_cross_session_context(
+        result = await build_cross_session_context(
             test_user.id, current_session_id="different_session_999"
         )
         assert "Hello from Telegram" in result
@@ -508,7 +511,9 @@ class TestCrossSessionContext:
         await store.add_message(session_a, "inbound", "Message in session A")
 
         # When querying with session A's own ID, nothing should appear
-        result = build_cross_session_context(test_user.id, current_session_id=session_a.session_id)
+        result = await build_cross_session_context(
+            test_user.id, current_session_id=session_a.session_id
+        )
         assert result == ""
 
     @pytest.mark.asyncio()
@@ -524,7 +529,7 @@ class TestCrossSessionContext:
         long_body = "x" * 300
         await store.add_message(session_a, "inbound", long_body)
 
-        result = build_cross_session_context(test_user.id, current_session_id="other_999")
+        result = await build_cross_session_context(test_user.id, current_session_id="other_999")
         assert "..." in result
         # Should be truncated to ~200 chars + "..."
         assert "x" * 201 not in result
