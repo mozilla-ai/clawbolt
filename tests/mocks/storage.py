@@ -35,3 +35,9 @@ class MockStorageBackend(StorageBackend):
                 name = file_path.split("/")[-1]
                 result.append({"name": name, "path": file_path})
         return result
+
+    async def download_file(self, path: str) -> bytes:
+        if path not in self.files:
+            msg = f"File not found: {path}"
+            raise FileNotFoundError(msg)
+        return self.files[path]

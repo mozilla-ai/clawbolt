@@ -11,10 +11,14 @@ import asyncio
 import calendar
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+from backend.app.agent.saved_media import (
+    find_saved_media_record,
+    latest_saved_media_record,
+    read_saved_media_bytes,
+)
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.companycam.params import (
@@ -57,7 +61,6 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         tags: list[str] | None = None,
     ) -> ToolResult:
         """Upload a photo from the current conversation to a CompanyCam project."""
-        from backend.app.agent.stores import MediaStore
         from backend.app.config import settings
         from backend.app.routers.media_temp import create_temp_media_url
 
@@ -111,16 +114,12 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
 
         # 3. Fall back to MediaFile records (already saved to storage)
         if not file_bytes:
-            media_store = MediaStore(ctx.user.id)
-            media_file = None
             if original_url:
-                media_file = await media_store.get_by_url(original_url)
-            if media_file is None and not original_url:
+                media_file = await find_saved_media_record(ctx.user.id, original_url)
+            else:
                 # Same guard as step 2: only grab the most recent media
                 # when the LLM did not specify a particular URL.
-                all_media = await media_store.list_all()
-                if all_media:
-                    media_file = all_media[-1]
+                media_file = await latest_saved_media_record(ctx.user.id)
 
             if media_file:
                 mime_type = media_file.mime_type or "image/jpeg"
@@ -128,11 +127,11 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 # Cloud storage: use the shareable URL directly
                 if storage_url and not storage_url.startswith("file://"):
                     photo_uri = storage_url
-                # Local storage: read bytes from disk
-                elif storage_url and storage_url.startswith("file://"):
-                    local_path = Path(storage_url.removeprefix("file://"))
-                    if local_path.is_file():
-                        file_bytes = await asyncio.to_thread(local_path.read_bytes)
+                elif ctx.storage is not None:
+                    try:
+                        file_bytes = await read_saved_media_bytes(ctx.storage, media_file)
+                    except FileNotFoundError:
+                        logger.warning("Saved media missing from storage: %s", media_file.id)
 
         if not file_bytes and not photo_uri:
             return ToolResult(

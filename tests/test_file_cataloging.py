@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from backend.app.agent.file_store import MediaStore
@@ -8,6 +10,7 @@ from backend.app.agent.tools.file_tools import (
     build_folder_path,
     create_file_tools,
 )
+from backend.app.agent.tools.names import ToolName
 from backend.app.models import User
 from tests.mocks.storage import MockStorageBackend
 
@@ -437,3 +440,99 @@ async def test_organize_file_resolves_by_storage_path(
 
     assert result.is_error is False
     assert "Moved" in result.content
+
+
+# ---------------------------------------------------------------------------
+# durable retrieval tool tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_find_saved_files_matches_query_tokens(
+    test_user: User,
+) -> None:
+    """find_saved_files should match across client path and saved description tokens."""
+    storage = MockStorageBackend()
+    media_store = MediaStore(test_user.id)
+    await media_store.create(
+        original_url="bb_receipt",
+        mime_type="image/jpeg",
+        processed_text="receipt for fasteners",
+        storage_url="https://mock-storage.example.com/Loeffler/documents/receipt_001.jpg",
+        storage_path="/Loeffler/documents/receipt_001.jpg",
+    )
+    await media_store.create(
+        original_url="bb_photo",
+        mime_type="image/jpeg",
+        processed_text="front porch progress photo",
+        storage_url="https://mock-storage.example.com/Acme/photos/photo_001.jpg",
+        storage_path="/Acme/photos/photo_001.jpg",
+    )
+
+    tools = create_file_tools(test_user, storage)
+    find_saved = next(t for t in tools if t.name == ToolName.FIND_SAVED_FILES).function
+
+    result = await find_saved(query="Loeffler receipt")
+
+    assert result.is_error is False
+    assert "media-001" in result.content
+    assert "/Loeffler/documents/receipt_001.jpg" in result.content
+    assert "media-002" not in result.content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.tools.file_tools.run_vision_on_media", new_callable=AsyncMock)
+async def test_analyze_saved_file_reads_from_durable_storage(
+    mock_vision: AsyncMock,
+    test_user: User,
+) -> None:
+    """analyze_saved_file should download bytes from storage and run vision."""
+    mock_vision.return_value = "Receipt total: $29.91."
+
+    storage = MockStorageBackend()
+    await storage.upload_file(b"saved-image-bytes", "/Loeffler/documents", "receipt_001.jpg")
+    media_store = MediaStore(test_user.id)
+    created = await media_store.create(
+        original_url="bb_receipt",
+        mime_type="image/jpeg",
+        processed_text="receipt for fasteners",
+        storage_url="https://mock-storage.example.com/Loeffler/documents/receipt_001.jpg",
+        storage_path="/Loeffler/documents/receipt_001.jpg",
+    )
+
+    tools = create_file_tools(test_user, storage)
+    analyze_saved = next(t for t in tools if t.name == ToolName.ANALYZE_SAVED_FILE).function
+
+    result = await analyze_saved(file_ref=created.id, context="Pull the total")
+
+    assert result.is_error is False
+    assert result.content == "Receipt total: $29.91."
+    mock_vision.assert_awaited_once_with(
+        b"saved-image-bytes",
+        "image/jpeg",
+        "Pull the total",
+    )
+
+
+@pytest.mark.asyncio()
+async def test_analyze_saved_file_rejects_non_image(
+    test_user: User,
+) -> None:
+    """analyze_saved_file should reject saved non-image documents."""
+    storage = MockStorageBackend()
+    media_store = MediaStore(test_user.id)
+    created = await media_store.create(
+        original_url="bb_doc",
+        mime_type="application/pdf",
+        processed_text="supplier invoice",
+        storage_url="https://mock-storage.example.com/Loeffler/documents/invoice_001.pdf",
+        storage_path="/Loeffler/documents/invoice_001.pdf",
+    )
+
+    tools = create_file_tools(test_user, storage)
+    analyze_saved = next(t for t in tools if t.name == ToolName.ANALYZE_SAVED_FILE).function
+
+    result = await analyze_saved(file_ref=created.id)
+
+    assert result.is_error is True
+    assert "not an image" in result.content

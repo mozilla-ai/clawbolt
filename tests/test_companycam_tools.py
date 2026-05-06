@@ -13,6 +13,7 @@ from backend.app.integrations.companycam.params import (
     CompanyCamUploadPhotoParams,
 )
 from backend.app.integrations.companycam.service import CompanyCamService, get_photo_url
+from backend.app.models import User
 
 # ---------------------------------------------------------------------------
 # CompanyCamService tests
@@ -1290,6 +1291,65 @@ async def test_upload_photo_strips_dict_description() -> None:
     # The description sent to CompanyCam must be empty, not the dict repr
     call_kwargs = service.upload_photo.call_args
     assert call_kwargs.kwargs.get("description", "") == ""
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_can_reuse_saved_file_from_storage(test_user: User) -> None:
+    """Saved photos should be reusable through the durable storage path."""
+    from backend.app.agent.file_store import MediaStore
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+    from tests.mocks.storage import MockStorageBackend
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="39951388",
+        description="Saved progress photo",
+        processing_status="processed",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/saved.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    storage = MockStorageBackend()
+    await storage.upload_file(b"saved-jpg", "/Client/photos", "photo_001.jpg")
+    media_store = MediaStore(test_user.id)
+    await media_store.create(
+        original_url="bb_saved_photo",
+        mime_type="image/jpeg",
+        processed_text="progress photo",
+        storage_url="",
+        storage_path="/Client/photos/photo_001.jpg",
+    )
+
+    ctx = MagicMock()
+    ctx.user.id = test_user.id
+    ctx.downloaded_media = []
+    ctx.storage = storage
+
+    with (
+        patch(
+            "backend.app.services.webhook.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.routers.media_temp.create_temp_media_url",
+            return_value="https://tunnel.example.com/media/tmp/saved",
+        ) as mock_temp_url,
+    ):
+        tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+        result = await tool.function(project_id="94772883", original_url="bb_saved_photo")
+
+    assert result.is_error is False
+    mock_temp_url.assert_called_once_with(
+        b"saved-jpg",
+        "image/jpeg",
+        "https://tunnel.example.com",
+    )
+    assert (
+        service.upload_photo.call_args.kwargs["photo_uri"]
+        == "https://tunnel.example.com/media/tmp/saved"
+    )
 
 
 @pytest.mark.asyncio()
