@@ -19,17 +19,18 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Select, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.dto import UserData
 from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
-from backend.app.database import AsyncSessionLocal, SessionLocal, db_session_async
+from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 
 
-def provision_user(user: User, db: object | None = None) -> None:
+async def provision_user(user: User, db: AsyncSession | None = None) -> None:
     """Provision a new user: seed DB defaults and create the data directory.
 
     Seeds soul_text and user_text DB columns with default templates if
@@ -42,33 +43,13 @@ def provision_user(user: User, db: object | None = None) -> None:
     are currently empty and only writes BOOTSTRAP.md if missing and the
     user is not already onboarded.
     """
-    from sqlalchemy.orm import Session as SASession
-
     # Seed DB text columns with default templates
     seeded: list[str] = []
-    own_session = db is None
-    if own_session:
-        db = SessionLocal()
-    assert isinstance(db, SASession)
-    try:
-        # Re-query within this session to ensure we can write
-        db_user = db.execute(select(User).filter_by(id=user.id)).scalar_one_or_none()
-        if db_user is not None:
-            if not db_user.soul_text:
-                db_user.soul_text = f"# Soul\n\n{load_prompt('default_soul')}\n"
-                seeded.append("soul_text")
-            if not db_user.user_text:
-                db_user.user_text = f"# User\n\n{load_prompt('default_user')}\n"
-                seeded.append("user_text")
-            if seeded:
-                db.commit()
-                db.refresh(db_user)
-                # Update the in-memory user object so callers see the seeded values
-                user.soul_text = db_user.soul_text
-                user.user_text = db_user.user_text
-    finally:
-        if own_session:
-            db.close()
+    if db is None:
+        async with db_session_async() as own_db:
+            await _seed_user_text(own_db, user, seeded)
+    else:
+        await _seed_user_text(db, user, seeded)
 
     # On-disk: BOOTSTRAP.md + data directory structure
     user_dir = Path(settings.data_dir) / str(user.id)
@@ -89,6 +70,29 @@ def provision_user(user: User, db: object | None = None) -> None:
         user.onboarding_complete,
         user_dir,
     )
+
+
+async def _seed_user_text(db: AsyncSession, user: User, seeded: list[str]) -> None:
+    """Re-query the User row in *db* and seed empty text columns with defaults.
+
+    Mutates *seeded* in place so the caller can include the field list in
+    its log line. Updates *user* (the in-memory object) to reflect the
+    seeded values for callers that hold on to it.
+    """
+    db_user = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
+    if db_user is None:
+        return
+    if not db_user.soul_text:
+        db_user.soul_text = f"# Soul\n\n{load_prompt('default_soul')}\n"
+        seeded.append("soul_text")
+    if not db_user.user_text:
+        db_user.user_text = f"# User\n\n{load_prompt('default_user')}\n"
+        seeded.append("user_text")
+    if seeded:
+        await db.commit()
+        await db.refresh(db_user)
+        user.soul_text = db_user.soul_text
+        user.user_text = db_user.user_text
 
 
 def _user_to_dto(user: User) -> UserData:

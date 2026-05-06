@@ -12,12 +12,11 @@ admin-UI-saves-survive-restart contract.
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.app.config import settings
 from backend.app.config_store import (
@@ -139,14 +138,14 @@ def test_apply_to_settings_empty_env_var_does_not_block_store_value() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_json_file_store_loads_existing_file(tmp_path: Path) -> None:
+async def test_json_file_store_loads_existing_file(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(json.dumps({"llm_provider": "anthropic", "llm_model": "sonnet"}))
     store = JsonFileSettingsStore(path)
-    assert store.load() == {"llm_provider": "anthropic", "llm_model": "sonnet"}
+    assert await store.load() == {"llm_provider": "anthropic", "llm_model": "sonnet"}
 
 
-def test_json_file_store_missing_file_is_loud_by_default(tmp_path: Path) -> None:
+async def test_json_file_store_missing_file_is_loud_by_default(tmp_path: Path) -> None:
     """Missing file raises ``ConfigStoreError`` instead of returning {}.
 
     This is the regression guard for the production bug that motivated
@@ -156,32 +155,32 @@ def test_json_file_store_missing_file_is_loud_by_default(tmp_path: Path) -> None
     """
     store = JsonFileSettingsStore(tmp_path / "missing.json")
     with pytest.raises(ConfigStoreError, match="does not exist"):
-        store.load()
+        await store.load()
 
 
-def test_json_file_store_allow_missing_returns_empty(tmp_path: Path) -> None:
+async def test_json_file_store_allow_missing_returns_empty(tmp_path: Path) -> None:
     """First-boot opt-in: ``allow_missing=True`` returns {}."""
     store = JsonFileSettingsStore(tmp_path / "missing.json", allow_missing=True)
-    assert store.load() == {}
+    assert await store.load() == {}
 
 
-def test_json_file_store_save_creates_and_merges(tmp_path: Path) -> None:
+async def test_json_file_store_save_creates_and_merges(tmp_path: Path) -> None:
     path = tmp_path / "data" / "config.json"
     store = JsonFileSettingsStore(path)
-    store.save({"llm_provider": "anthropic"})
+    await store.save({"llm_provider": "anthropic"})
     assert json.loads(path.read_text()) == {"llm_provider": "anthropic"}
-    store.save({"llm_model": "sonnet"})
+    await store.save({"llm_model": "sonnet"})
     assert json.loads(path.read_text()) == {
         "llm_provider": "anthropic",
         "llm_model": "sonnet",
     }
 
 
-def test_json_file_store_delete_removes_keys(tmp_path: Path) -> None:
+async def test_json_file_store_delete_removes_keys(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     store = JsonFileSettingsStore(path)
-    store.save({"llm_provider": "x", "llm_model": "y"})
-    store.delete(["llm_model"])
+    await store.save({"llm_provider": "x", "llm_model": "y"})
+    await store.delete(["llm_model"])
     assert json.loads(path.read_text()) == {"llm_provider": "x"}
 
 
@@ -197,39 +196,32 @@ def _kek_provider() -> LocalKEKProvider:
 
 
 @pytest.fixture()
-def _db_store(_kek_provider: LocalKEKProvider) -> Generator[DbSettingsStore]:
-    """Construct a store bound to the active ``SessionLocal``.
-
-    The autouse ``_isolate_stores`` fixture rebinds ``SessionLocal`` to
-    a per-test connection in a rolled-back transaction; using it here
-    means our writes auto-clean between tests.
-    """
-    import backend.app.database as _db_module
-
-    yield DbSettingsStore(_db_module.SessionLocal, _kek_provider)
+def _db_store(_kek_provider: LocalKEKProvider) -> DbSettingsStore:
+    """Construct a store that resolves the test-scoped async session factory."""
+    return DbSettingsStore(_kek_provider)
 
 
-def test_db_store_save_and_load_round_trips(_db_store: DbSettingsStore) -> None:
+async def test_db_store_save_and_load_round_trips(_db_store: DbSettingsStore) -> None:
     """Save then load returns the exact value for both secret and non-secret keys.
 
     This is the integration guard the previous DB-backed attempt was
     missing: it proves the read and write halves agree end-to-end.
     """
-    _db_store.save(
+    await _db_store.save(
         {
             "llm_provider": "anthropic",
             "llm_model": "claude-sonnet-4-6",
             "telegram_bot_token": "real-secret-token",
         }
     )
-    loaded = _db_store.load()
+    loaded = await _db_store.load()
     assert loaded["llm_provider"] == "anthropic"
     assert loaded["llm_model"] == "claude-sonnet-4-6"
     # Decryption happened transparently.
     assert loaded["telegram_bot_token"] == "real-secret-token"
 
 
-def test_db_store_int_setting_round_trips_through_text_column(
+async def test_db_store_int_setting_round_trips_through_text_column(
     _db_store: DbSettingsStore,
 ) -> None:
     """Integer persistable settings round-trip cleanly through the TEXT
@@ -252,9 +244,9 @@ def test_db_store_int_setting_round_trips_through_text_column(
     """
     original = settings.llm_max_tokens_agent
     try:
-        _db_store.save({"llm_max_tokens_agent": "4096"})
+        await _db_store.save({"llm_max_tokens_agent": "4096"})
         # Stored verbatim as TEXT, not transparently re-typed by the store.
-        assert _db_store.load()["llm_max_tokens_agent"] == "4096"
+        assert (await _db_store.load())["llm_max_tokens_agent"] == "4096"
 
         # Boot path: load from store, apply to settings. ``apply_to_settings``
         # skips keys that have a non-empty matching env var, so clear the
@@ -263,7 +255,7 @@ def test_db_store_int_setting_round_trips_through_text_column(
             import os
 
             os.environ.pop("LLM_MAX_TOKENS_AGENT", None)
-            applied = apply_to_settings(_db_store.load())
+            applied = apply_to_settings(await _db_store.load())
         assert applied["llm_max_tokens_agent"] == "4096"
         # The live singleton holds the typed int, not the raw string.
         assert settings.llm_max_tokens_agent == 4096
@@ -272,7 +264,7 @@ def test_db_store_int_setting_round_trips_through_text_column(
         settings.llm_max_tokens_agent = original
 
 
-def test_db_store_secrets_are_envelope_encrypted_at_rest(
+async def test_db_store_secrets_are_envelope_encrypted_at_rest(
     _db_store: DbSettingsStore,
 ) -> None:
     """Verify the on-disk bytes are an envelope, not plaintext.
@@ -282,13 +274,15 @@ def test_db_store_secrets_are_envelope_encrypted_at_rest(
     """
     from sqlalchemy import text
 
-    import backend.app.database as _db_module
+    from backend.app.database import db_session_async
 
-    _db_store.save({"telegram_bot_token": "real-secret-token"})
+    await _db_store.save({"telegram_bot_token": "real-secret-token"})
 
-    with _db_module.SessionLocal() as db:
-        row = db.execute(
-            text("SELECT value, is_secret FROM app_settings WHERE key='telegram_bot_token'")
+    async with db_session_async() as db:
+        row = (
+            await db.execute(
+                text("SELECT value, is_secret FROM app_settings WHERE key='telegram_bot_token'")
+            )
         ).one()
     raw_value, is_secret_flag = row
     assert is_secret_flag is True
@@ -296,83 +290,95 @@ def test_db_store_secrets_are_envelope_encrypted_at_rest(
     assert is_envelope(raw_value)
 
 
-def test_db_store_non_secret_stored_verbatim(
+async def test_db_store_non_secret_stored_verbatim(
     _db_store: DbSettingsStore,
 ) -> None:
     from sqlalchemy import text
 
-    import backend.app.database as _db_module
+    from backend.app.database import db_session_async
 
-    _db_store.save({"llm_provider": "anthropic"})
-    with _db_module.SessionLocal() as db:
-        row = db.execute(
-            text("SELECT value, is_secret FROM app_settings WHERE key='llm_provider'")
+    await _db_store.save({"llm_provider": "anthropic"})
+    async with db_session_async() as db:
+        row = (
+            await db.execute(
+                text("SELECT value, is_secret FROM app_settings WHERE key='llm_provider'")
+            )
         ).one()
     assert row[0] == "anthropic"
     assert row[1] is False
 
 
-def test_db_store_save_rejects_non_persistable_keys(_db_store: DbSettingsStore) -> None:
+async def test_db_store_save_rejects_non_persistable_keys(_db_store: DbSettingsStore) -> None:
     with pytest.raises(ValueError, match="not a persistable setting"):
-        _db_store.save({"definitely_not_a_setting": "x"})
+        await _db_store.save({"definitely_not_a_setting": "x"})
 
 
-def test_db_store_save_upserts(_db_store: DbSettingsStore) -> None:
+async def test_db_store_save_upserts(_db_store: DbSettingsStore) -> None:
     """Saving the same key twice updates the value, doesn't error on dup PK."""
-    _db_store.save({"llm_provider": "anthropic"})
-    _db_store.save({"llm_provider": "openai"})
-    assert _db_store.load()["llm_provider"] == "openai"
+    await _db_store.save({"llm_provider": "anthropic"})
+    await _db_store.save({"llm_provider": "openai"})
+    assert (await _db_store.load())["llm_provider"] == "openai"
 
 
-def test_db_store_delete_removes_rows(_db_store: DbSettingsStore) -> None:
-    _db_store.save({"llm_provider": "anthropic", "llm_model": "sonnet"})
-    _db_store.delete(["llm_model"])
-    loaded = _db_store.load()
+async def test_db_store_delete_removes_rows(_db_store: DbSettingsStore) -> None:
+    await _db_store.save({"llm_provider": "anthropic", "llm_model": "sonnet"})
+    await _db_store.delete(["llm_model"])
+    loaded = await _db_store.load()
     assert "llm_provider" in loaded
     assert "llm_model" not in loaded
 
 
-def test_db_store_load_raises_on_missing_table(
-    _kek_provider: LocalKEKProvider, _pg_engine: Engine
+async def test_db_store_load_raises_on_missing_table(
+    _kek_provider: LocalKEKProvider, _pg_async_engine_session: AsyncEngine
 ) -> None:
     """Backend-failure path raises ``ConfigStoreError``, not silently returns {}."""
     from sqlalchemy import text
-    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from backend.app.database import Base
 
-    # Drop the table outside the autouse rollback so the store sees the
+    # Drop the table outside the autouse TRUNCATE so the store sees the
     # absence; recreate at the end so other tests aren't poisoned.
-    with _pg_engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS app_settings CASCADE"))
+    async with _pg_async_engine_session.begin() as conn:
+        await conn.execute(text("DROP TABLE IF EXISTS app_settings CASCADE"))
     try:
         store = DbSettingsStore(
-            sessionmaker(bind=_pg_engine, autocommit=False, autoflush=False),
             _kek_provider,
+            async_session_factory=async_sessionmaker(
+                bind=_pg_async_engine_session, autoflush=False, expire_on_commit=False
+            ),
         )
         with pytest.raises(ConfigStoreError):
-            store.load()
+            await store.load()
     finally:
-        Base.metadata.tables["app_settings"].create(_pg_engine, checkfirst=True)
+        async with _pg_async_engine_session.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: Base.metadata.tables["app_settings"].create(
+                    sync_conn, checkfirst=True
+                )
+            )
 
 
-def test_db_store_save_records_actor(_db_store: DbSettingsStore) -> None:
+async def test_db_store_save_records_actor(_db_store: DbSettingsStore) -> None:
     """``actor_user_id`` is recorded against the row for audit clarity."""
     from sqlalchemy import text
 
-    import backend.app.database as _db_module
+    from backend.app.database import db_session_async
     from backend.app.models import User
 
-    with _db_module.SessionLocal() as db:
+    async with db_session_async() as db:
         user = User(user_id="actor-user-store", channel_identifier="actor-tel")
         db.add(user)
-        db.commit()
+        await db.commit()
+        await db.refresh(user)
         actor_id = user.id
 
-    _db_store.save({"llm_provider": "anthropic"}, actor_user_id=actor_id)
+    await _db_store.save({"llm_provider": "anthropic"}, actor_user_id=actor_id)
 
-    with _db_module.SessionLocal() as db:
-        row = db.execute(
-            text("SELECT updated_by_user_id FROM app_settings WHERE key='llm_provider'")
+    async with db_session_async() as db:
+        row = (
+            await db.execute(
+                text("SELECT updated_by_user_id FROM app_settings WHERE key='llm_provider'")
+            )
         ).one()
     assert row[0] == actor_id

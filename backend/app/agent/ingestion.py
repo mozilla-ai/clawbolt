@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from sqlalchemy import CursorResult, delete, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.approval import (
     ApprovalDecision,
@@ -34,7 +34,7 @@ from backend.app.agent.router import handle_inbound_message
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.user_db import provision_user
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import db_session_async
 from backend.app.enums import MessageDirection
 from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia
@@ -61,23 +61,20 @@ class InboundMessage:
     request_id: str = ""
 
 
-def _check_channel_route_enabled(user_id: str, channel: str) -> bool | None:
+async def _check_channel_route_enabled(user_id: str, channel: str) -> bool | None:
     """Check whether a channel route is enabled for a user.
 
     Returns True if the route exists and is enabled, False if it exists
     and is disabled, or None if no route exists (backward compat: treat
     as enabled).
     """
-    db = SessionLocal()
-    try:
-        route = db.execute(
-            select(ChannelRoute).filter_by(user_id=user_id, channel=channel)
+    async with db_session_async() as db:
+        route = (
+            await db.execute(select(ChannelRoute).filter_by(user_id=user_id, channel=channel))
         ).scalar_one_or_none()
         if route is None:
             return None
         return route.enabled
-    finally:
-        db.close()
 
 
 async def _send_early_typing_indicator(channel: str, chat_id: str) -> None:
@@ -137,7 +134,9 @@ async def _send_error_fallback(
         logger.exception("Failed to send error fallback to user %s", user_id)
 
 
-def _stamp_route_last_inbound(db: Session, user_id: str, channel: str, sender_id: str) -> None:
+async def _stamp_route_last_inbound(
+    db: AsyncSession, user_id: str, channel: str, sender_id: str
+) -> None:
     """Mark the resolved ChannelRoute as having received an inbound.
 
     The channel picker UI flips to "Verified" when this field is non-null,
@@ -145,7 +144,7 @@ def _stamp_route_last_inbound(db: Session, user_id: str, channel: str, sender_id
     delivers messages. Called on every inbound resolution so the stamp
     always reflects the most recent successful delivery.
     """
-    db.execute(
+    await db.execute(
         update(ChannelRoute)
         .where(
             ChannelRoute.user_id == user_id,
@@ -183,14 +182,15 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
     from sqlalchemy.exc import IntegrityError
 
     logger.debug("_get_or_create_user: channel=%s sender_id=%s", channel, mask_pii(sender_id))
-    db = SessionLocal()
-    try:
+    async with db_session_async() as db:
         # Look up by channel route
-        route = db.execute(
-            select(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id)
+        route = (
+            await db.execute(
+                select(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id)
+            )
         ).scalar_one_or_none()
         if route:
-            user = db.execute(select(User).filter_by(id=route.user_id)).scalar_one_or_none()
+            user = (await db.execute(select(User).filter_by(id=route.user_id))).scalar_one_or_none()
             if user is not None:
                 # Track the most recently used channel so heartbeat and other
                 # proactive messages are delivered to the right place.
@@ -204,7 +204,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 # dispatcher always picks up the current address.
                 deleted = cast(
                     "CursorResult[object]",
-                    db.execute(
+                    await db.execute(
                         delete(ChannelRoute).where(
                             ChannelRoute.user_id == user.id,
                             ChannelRoute.channel == channel,
@@ -220,9 +220,9 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                         channel,
                         user.id,
                     )
-                _stamp_route_last_inbound(db, user.id, channel, sender_id)
-                db.commit()
-                db.refresh(user)
+                await _stamp_route_last_inbound(db, user.id, channel, sender_id)
+                await db.commit()
+                await db.refresh(user)
                 logger.debug("_get_or_create_user: found via channel route -> user %s", user.id)
                 db.expunge(user)
                 return user
@@ -231,14 +231,14 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         # every channel are visible in the dashboard.  Skip this in
         # multi-tenant (premium) mode to avoid linking a new sender's
         # messages to an existing user's account.
-        all_users = db.execute(select(User)).scalars().all()
+        all_users = (await db.execute(select(User))).scalars().all()
         if len(all_users) == 1 and not settings.premium_plugin:
             user = all_users[0]
             logger.debug("_get_or_create_user: single-tenant reuse -> user %s", user.id)
             # Remove stale routes for this user+channel before adding the new one.
             # This prevents the outbound dispatcher from picking up an old
             # identifier (e.g. a UUID handle instead of a real phone number).
-            db.execute(
+            await db.execute(
                 delete(ChannelRoute).where(
                     ChannelRoute.user_id == user.id,
                     ChannelRoute.channel == channel,
@@ -248,28 +248,28 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
             user.channel_identifier = sender_id
             user.preferred_channel = channel
-            db.flush()
-            _stamp_route_last_inbound(db, user.id, channel, sender_id)
-            db.commit()
-            db.refresh(user)
+            await db.flush()
+            await _stamp_route_last_inbound(db, user.id, channel, sender_id)
+            await db.commit()
+            await db.refresh(user)
             db.expunge(user)
             return user
 
         # In premium mode the webchat sends sender_id = user.id (the PK).
         # Link the existing user to this channel instead of creating a
         # duplicate account.
-        existing = db.execute(select(User).filter_by(id=sender_id)).scalar_one_or_none()
+        existing = (await db.execute(select(User).filter_by(id=sender_id))).scalar_one_or_none()
         if existing is not None:
             logger.debug(
                 "_get_or_create_user: sender_id matches existing PK -> user %s",
                 existing.id,
             )
             db.add(ChannelRoute(user_id=existing.id, channel=channel, channel_identifier=sender_id))
-            provision_user(existing, db)
-            db.flush()
-            _stamp_route_last_inbound(db, existing.id, channel, sender_id)
-            db.commit()
-            db.refresh(existing)
+            await provision_user(existing, db)
+            await db.flush()
+            await _stamp_route_last_inbound(db, existing.id, channel, sender_id)
+            await db.commit()
+            await db.refresh(existing)
             db.expunge(existing)
             return existing
 
@@ -281,13 +281,13 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 preferred_channel=channel,
             )
             db.add(user)
-            db.flush()
+            await db.flush()
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
-            db.flush()
-            provision_user(user, db)
-            _stamp_route_last_inbound(db, user.id, channel, sender_id)
-            db.commit()
-            db.refresh(user)
+            await db.flush()
+            await provision_user(user, db)
+            await _stamp_route_last_inbound(db, user.id, channel, sender_id)
+            await db.commit()
+            await db.refresh(user)
             logger.debug(
                 "_get_or_create_user: created new user %s (user_id=%s)",
                 user.id,
@@ -296,31 +296,33 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             db.expunge(user)
             return user
         except IntegrityError:
-            db.rollback()
+            await db.rollback()
             logger.debug(
                 "_get_or_create_user: IntegrityError race, re-querying for %s/%s",
                 channel,
                 sender_id,
             )
             # Concurrent insert won the race; re-query
-            route = db.execute(
-                select(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id)
+            route = (
+                await db.execute(
+                    select(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id)
+                )
             ).scalar_one_or_none()
             if route:
-                user = db.execute(select(User).filter_by(id=route.user_id)).scalar_one_or_none()
+                user = (
+                    await db.execute(select(User).filter_by(id=route.user_id))
+                ).scalar_one_or_none()
                 if user is not None:
                     db.expunge(user)
                     return user
             # Fallback: look up by user_id
-            user = db.execute(
-                select(User).filter_by(user_id=f"{channel}_{sender_id}")
+            user = (
+                await db.execute(select(User).filter_by(user_id=f"{channel}_{sender_id}"))
             ).scalar_one_or_none()
             if user is not None:
                 db.expunge(user)
                 return user
             raise
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +380,12 @@ async def _dispatch_to_pipeline(
                 async with user_locks.acquire(user_id):
                     interrupt_task.cancel()
                     try:
+                        # Defensive User reload: use the sync session here
+                        # so the in-loop hot path stays mockable and fast.
+                        # The block runs once per pipeline invocation and
+                        # only writes to the in-memory ``user`` variable.
+                        from backend.app.database import SessionLocal
+
                         db = SessionLocal()
                         try:
                             fresh = db.execute(
@@ -661,48 +669,49 @@ async def _handle_report_command(
         # ``session.session_id`` (the UUID string); we resolve to the
         # integer ``ChatSession.id`` here for the FK on
         # ``reported_conversations``.
-        db = SessionLocal()
         try:
-            cs_row = db.execute(
-                select(ChatSession).where(ChatSession.session_id == session.session_id)
-            ).scalar_one_or_none()
-            if cs_row is None:
-                logger.error(
-                    "/report: session %s not in DB; skipping persistence",
-                    session.session_id,
-                )
-            else:
-                latest_seq = db.execute(
-                    select(Message.seq)
-                    .where(Message.session_id == cs_row.id)
-                    .order_by(Message.seq.desc())
-                    .limit(1)
-                ).scalar()
-                anchor_seq = int(latest_seq) if latest_seq is not None else None
-                row = ReportedConversation(
-                    user_id=user.id,
-                    session_id=cs_row.id,
-                    anchor_seq=anchor_seq,
-                    reason=reason,
-                )
-                db.add(row)
-                db.commit()
-                logger.info(
-                    "/report filed by user %s for session %s (anchor_seq=%s, reason_len=%d)",
-                    user.id,
-                    session.session_id,
-                    anchor_seq,
-                    len(reason),
-                )
+            async with db_session_async() as db:
+                cs_row = (
+                    await db.execute(
+                        select(ChatSession).where(ChatSession.session_id == session.session_id)
+                    )
+                ).scalar_one_or_none()
+                if cs_row is None:
+                    logger.error(
+                        "/report: session %s not in DB; skipping persistence",
+                        session.session_id,
+                    )
+                else:
+                    latest_seq = (
+                        await db.execute(
+                            select(Message.seq)
+                            .where(Message.session_id == cs_row.id)
+                            .order_by(Message.seq.desc())
+                            .limit(1)
+                        )
+                    ).scalar()
+                    anchor_seq = int(latest_seq) if latest_seq is not None else None
+                    row = ReportedConversation(
+                        user_id=user.id,
+                        session_id=cs_row.id,
+                        anchor_seq=anchor_seq,
+                        reason=reason,
+                    )
+                    db.add(row)
+                    await db.commit()
+                    logger.info(
+                        "/report filed by user %s for session %s (anchor_seq=%s, reason_len=%d)",
+                        user.id,
+                        session.session_id,
+                        anchor_seq,
+                        len(reason),
+                    )
         except Exception:
             logger.exception(
                 "/report: failed to persist row for user %s session %s",
                 user.id,
                 session.session_id,
             )
-            db.rollback()
-        finally:
-            db.close()
     finally:
         await message_bus.publish_outbound(
             OutboundMessage(
@@ -738,7 +747,7 @@ async def process_inbound_from_bus(
     )
 
     # -- Check if channel is disabled for this user --
-    route_enabled = _check_channel_route_enabled(user.id, inbound.channel)
+    route_enabled = await _check_channel_route_enabled(user.id, inbound.channel)
     if route_enabled is False:
         from backend.app.bus import OutboundMessage, message_bus
 

@@ -21,7 +21,7 @@ from backend.app.agent.messages import (
 )
 from backend.app.agent.session_db import get_session_store
 from backend.app.config import settings
-from backend.app.database import db_session
+from backend.app.database import db_session_async
 from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, CompactionEvent
 
@@ -108,7 +108,7 @@ def _seqs_from_dropped(dropped: list[AgentMessage]) -> list[int]:
     return seqs
 
 
-def trigger_compaction_for_dropped(
+async def trigger_compaction_for_dropped(
     user_id: str,
     dropped_messages: list[AgentMessage],
 ) -> None:
@@ -148,10 +148,10 @@ def trigger_compaction_for_dropped(
     max_seq = max(dropped_seqs)
     triggered_at = datetime.datetime.now(datetime.UTC)
 
-    # Phase 1: synchronous insert + watermark advance, in one transaction.
+    # Phase 1: insert + watermark advance, in one transaction.
     event_id: int
     try:
-        with db_session() as db:
+        async with db_session_async() as db:
             event = CompactionEvent(
                 user_id=user_id,
                 triggered_at=triggered_at,
@@ -161,16 +161,18 @@ def trigger_compaction_for_dropped(
                 trimmed_count=len(dropped_messages),
             )
             db.add(event)
-            db.flush()
+            await db.flush()
             assert event.id is not None, "flush() must populate the autoincrement id"
             event_id = event.id
 
-            cs = db.execute(select(ChatSession).filter_by(user_id=user_id)).scalar_one_or_none()
+            cs = (
+                await db.execute(select(ChatSession).filter_by(user_id=user_id))
+            ).scalar_one_or_none()
             if cs is not None:
                 current = cs.last_trim_seq or 0
                 if max_seq > current:
                     cs.last_trim_seq = max_seq
-            db.commit()
+            await db.commit()
     except Exception:
         logger.exception(
             "Failed to record pending compaction event for user %s; "

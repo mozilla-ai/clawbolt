@@ -19,14 +19,13 @@ from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
-    from sqlalchemy.orm import Session
 
 from backend.app.agent.dto import (
     HeartbeatLogEntry,
     MediaData,
     ToolConfigEntry,
 )
-from backend.app.database import AsyncSessionLocal, SessionLocal, db_session, db_session_async
+from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import (
     HeartbeatLog,
     IdempotencyKey,
@@ -526,27 +525,14 @@ class IdempotencyStore:
     Uses the IdempotencyKey ORM model. No user_id scoping -- external_id
     is globally unique.
 
-    The last sync hold-out after the issue #1160 final pass. Every
-    other store's sync surface has been removed, but the webhook entry
-    path runs from a sync ``TestClient`` worker thread that cannot
-    share an asyncpg connection with the fixture's async loop, so
-    ``has_seen``, ``try_mark_seen``, and ``_prune`` keep their sync
-    bodies until the test infrastructure can drive that path through
-    an async client. The ``_async`` peers are the canonical surface
-    for new code; the sync methods stay only for that one TestClient
-    seam.
+    Async-only as of issue #1160. The webhook entry path is async, the
+    test fixtures drive it through ``httpx.AsyncClient`` so the route
+    runs on the same event loop as the test's async DB connection.
+    ``*_async`` aliases are kept as thin wrappers for any out-of-tree
+    caller still on the suffix.
     """
 
-    def has_seen(self, external_id: str) -> bool:
-        """Check if an external message ID has been seen."""
-        db = SessionLocal()
-        try:
-            row = db.execute(_seen_select(external_id)).scalar_one_or_none()
-            return row is not None
-        finally:
-            db.close()
-
-    async def has_seen_async(self, external_id: str) -> bool:
+    async def has_seen(self, external_id: str) -> bool:
         """Check if an external message ID has been seen."""
         db = AsyncSessionLocal()
         try:
@@ -555,37 +541,18 @@ class IdempotencyStore:
         finally:
             await db.close()
 
-    def try_mark_seen(self, external_id: str) -> bool:
+    async def has_seen_async(self, external_id: str) -> bool:
+        """Deprecated alias of :meth:`has_seen`."""
+        return await self.has_seen(external_id)
+
+    async def try_mark_seen(self, external_id: str) -> bool:
         """Atomically insert an IdempotencyKey row and return whether it was new.
 
         Returns ``True`` if the row was newly inserted (first time seen),
-        ``False`` if it already existed (duplicate). This replaces the
-        separate has_seen + mark_seen pattern to eliminate the TOCTOU race.
-        """
-        with db_session() as db:
-            key = IdempotencyKey(external_id=external_id)
-            db.add(key)
-            try:
-                db.commit()
-            except IntegrityError:
-                db.rollback()
-                return False
-
-            # Prune in the same session; insert is already committed
-            try:
-                self._prune(db)
-            except Exception:
-                db.rollback()
-                logger.warning("IdempotencyStore prune failed", exc_info=True)
-        return True
-
-    async def try_mark_seen_async(self, external_id: str) -> bool:
-        """Async peer of :meth:`try_mark_seen`.
-
-        Same TOCTOU-free contract: the unique-constraint violation on
-        ``external_id`` is the source of truth for "already seen". A
-        prune failure is logged and swallowed so a transient prune
-        error never makes a duplicate webhook re-fire.
+        ``False`` if it already existed (duplicate). The unique-constraint
+        violation on ``external_id`` is the source of truth for "already
+        seen". A prune failure is logged and swallowed so a transient
+        prune error never makes a duplicate webhook re-fire.
         """
         async with db_session_async() as db:
             key = IdempotencyKey(external_id=external_id)
@@ -597,18 +564,22 @@ class IdempotencyStore:
                 return False
 
             try:
-                await self._prune_async(db)
+                await self._prune(db)
             except Exception:
                 await db.rollback()
                 logger.warning("IdempotencyStore prune failed", exc_info=True)
         return True
 
-    def _prune(self, db: Session | None = None) -> None:
+    async def try_mark_seen_async(self, external_id: str) -> bool:
+        """Deprecated alias of :meth:`try_mark_seen`."""
+        return await self.try_mark_seen(external_id)
+
+    async def _prune(self, db: AsyncSession | None = None) -> None:
         """Remove the oldest rows when the table exceeds ``_SEEN_MAX``.
 
         When *db* is provided the caller's session is reused, avoiding
-        an extra connection checkout.  When called without a session
-        (e.g. from tests) a fresh session is created automatically.
+        an extra connection checkout.  When called without a session a
+        fresh session is created automatically.
 
         Keeps the newest rows by ``id`` (autoincrement, so allocation
         order is monotonic even if commit order isn't -- fine for dedup).
@@ -616,20 +587,8 @@ class IdempotencyStore:
         app-generated timestamps can drift across workers.
         """
         if db is None:
-            with db_session() as db:
-                self._prune(db)
-            return
-        count = db.scalar(_count_select()) or 0
-        if count <= _SEEN_MAX:
-            return
-        db.execute(_prune_delete())
-        db.commit()
-
-    async def _prune_async(self, db: AsyncSession | None = None) -> None:
-        """Async peer of :meth:`_prune`. Same semantics, awaitable."""
-        if db is None:
             async with db_session_async() as fresh:
-                await self._prune_async(fresh)
+                await self._prune(fresh)
             return
         count = (await db.scalar(_count_select())) or 0
         if count <= _SEEN_MAX:
@@ -642,14 +601,11 @@ class IdempotencyStore:
 
         Prefer :meth:`try_mark_seen` for atomic check-and-insert.
         """
-        self.try_mark_seen(external_id)
+        await self.try_mark_seen(external_id)
 
     async def mark_seen_async(self, external_id: str) -> None:
-        """Async peer of :meth:`mark_seen`.
-
-        Prefer :meth:`try_mark_seen_async` for atomic check-and-insert.
-        """
-        await self.try_mark_seen_async(external_id)
+        """Deprecated alias of :meth:`mark_seen`."""
+        await self.try_mark_seen(external_id)
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,6 @@ import time
 from unittest.mock import AsyncMock, patch
 
 import httpx
-from fastapi.testclient import TestClient
 
 from backend.app.channels.linq import LinqChannel
 from tests.mocks.linq import (
@@ -27,8 +26,8 @@ _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
 # ---------------------------------------------------------------------------
 
 
-def _post_webhook(
-    client: TestClient,
+async def _post_webhook(
+    client: httpx.AsyncClient,
     payload: dict,
     signing_secret: str = "",
     timestamp: int | None = None,
@@ -39,7 +38,7 @@ def _post_webhook(
         headers = make_linq_webhook_headers(body, signing_secret, timestamp)
     else:
         headers = {"Content-Type": "application/json"}
-    return client.post("/api/webhooks/linq", content=body, headers=headers)
+    return await client.post("/api/webhooks/linq", content=body, headers=headers)
 
 
 # ---------------------------------------------------------------------------
@@ -47,20 +46,20 @@ def _post_webhook(
 # ---------------------------------------------------------------------------
 
 
-def test_inbound_webhook_returns_200(linq_client: TestClient) -> None:
+async def test_inbound_webhook_returns_200(linq_client: httpx.AsyncClient) -> None:
     """Valid webhook payload should return 200 with ok:true."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
         payload = make_linq_webhook_payload(text="Hello")
-        resp = _post_webhook(linq_client, payload)
+        resp = await _post_webhook(linq_client, payload)
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
 
 
-def test_inbound_webhook_publishes_text(linq_client: TestClient) -> None:
+async def test_inbound_webhook_publishes_text(linq_client: httpx.AsyncClient) -> None:
     """Inbound text message should be published to the bus."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_linq_webhook_payload(sender="+15559876543", text="Need a quote")
-        _post_webhook(linq_client, payload)
+        await _post_webhook(linq_client, payload)
 
     mock_pub.assert_called_once()
     inbound = mock_pub.call_args[0][0]
@@ -69,14 +68,14 @@ def test_inbound_webhook_publishes_text(linq_client: TestClient) -> None:
     assert inbound.text == "Need a quote"
 
 
-def test_inbound_webhook_publishes_media(linq_client: TestClient) -> None:
+async def test_inbound_webhook_publishes_media(linq_client: httpx.AsyncClient) -> None:
     """Media messages should include media_refs in the published InboundMessage."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_linq_webhook_payload(
             text="Check this out",
             media_url="https://cdn.linqapp.com/media/photo.jpg",
         )
-        _post_webhook(linq_client, payload)
+        await _post_webhook(linq_client, payload)
 
     mock_pub.assert_called_once()
     inbound = mock_pub.call_args[0][0]
@@ -86,7 +85,7 @@ def test_inbound_webhook_publishes_media(linq_client: TestClient) -> None:
     assert inbound.media_refs[0][1] == "image/jpeg"
 
 
-def test_non_utf8_body_does_not_crash(linq_client: TestClient) -> None:
+async def test_non_utf8_body_does_not_crash(linq_client: httpx.AsyncClient) -> None:
     """Non-UTF-8 webhook body should return 200 without crashing (not raise UnicodeDecodeError)."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
@@ -101,14 +100,14 @@ def test_non_utf8_body_does_not_crash(linq_client: TestClient) -> None:
             "X-Webhook-Timestamp": str(int(time.time())),
             "Content-Type": "application/json",
         }
-        resp = linq_client.post("/api/webhooks/linq", content=raw_body, headers=headers)
+        resp = await linq_client.post("/api/webhooks/linq", content=raw_body, headers=headers)
 
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
     mock_pub.assert_not_called()
 
 
-def test_invalid_hmac_does_not_publish(linq_client: TestClient) -> None:
+async def test_invalid_hmac_does_not_publish(linq_client: httpx.AsyncClient) -> None:
     """Invalid HMAC signature should return 200 but not publish to bus."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
@@ -124,13 +123,13 @@ def test_invalid_hmac_does_not_publish(linq_client: TestClient) -> None:
             "X-Webhook-Timestamp": str(int(time.time())),
             "Content-Type": "application/json",
         }
-        resp = linq_client.post("/api/webhooks/linq", content=body, headers=headers)
+        resp = await linq_client.post("/api/webhooks/linq", content=body, headers=headers)
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
 
 
-def test_stale_timestamp_does_not_publish(linq_client: TestClient) -> None:
+async def test_stale_timestamp_does_not_publish(linq_client: httpx.AsyncClient) -> None:
     """Stale timestamp (replay attack) should return 200 but not publish."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
@@ -141,7 +140,7 @@ def test_stale_timestamp_does_not_publish(linq_client: TestClient) -> None:
     ):
         payload = make_linq_webhook_payload(text="Hi")
         stale_ts = int(time.time()) - 600  # 10 minutes ago
-        resp = _post_webhook(
+        resp = await _post_webhook(
             linq_client, payload, signing_secret=LINQ_TEST_SIGNING_SECRET, timestamp=stale_ts
         )
 
@@ -149,7 +148,7 @@ def test_stale_timestamp_does_not_publish(linq_client: TestClient) -> None:
     mock_pub.assert_not_called()
 
 
-def test_valid_hmac_publishes(linq_client: TestClient) -> None:
+async def test_valid_hmac_publishes(linq_client: httpx.AsyncClient) -> None:
     """Valid HMAC signature should publish to bus."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
@@ -159,36 +158,36 @@ def test_valid_hmac_publishes(linq_client: TestClient) -> None:
         ),
     ):
         payload = make_linq_webhook_payload(text="Hi")
-        resp = _post_webhook(linq_client, payload, signing_secret=LINQ_TEST_SIGNING_SECRET)
+        resp = await _post_webhook(linq_client, payload, signing_secret=LINQ_TEST_SIGNING_SECRET)
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
 
 
-def test_duplicate_message_skipped(linq_client: TestClient) -> None:
+async def test_duplicate_message_skipped(linq_client: httpx.AsyncClient) -> None:
     """Duplicate webhook calls should not publish to bus twice."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_linq_webhook_payload(text="First", message_id="dup-msg-001")
-        _post_webhook(linq_client, payload)
-        _post_webhook(linq_client, payload)
+        await _post_webhook(linq_client, payload)
+        await _post_webhook(linq_client, payload)
 
     mock_pub.assert_called_once()
 
 
-def test_non_message_received_event_ignored(linq_client: TestClient) -> None:
+async def test_non_message_received_event_ignored(linq_client: httpx.AsyncClient) -> None:
     """Non-message.received events should return 200 without publishing."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         for event in ("message.delivered", "message.read", "message.failed"):
             payload = make_linq_webhook_payload(text="Hi", event=event)
-            resp = _post_webhook(linq_client, payload)
+            resp = await _post_webhook(linq_client, payload)
             assert resp.status_code == 200
 
     mock_pub.assert_not_called()
 
 
-def test_invalid_json_returns_200(linq_client: TestClient) -> None:
+async def test_invalid_json_returns_200(linq_client: httpx.AsyncClient) -> None:
     """Invalid JSON body should return 200 without crashing."""
-    resp = linq_client.post(
+    resp = await linq_client.post(
         "/api/webhooks/linq",
         content=b"not valid json",
         headers={"Content-Type": "application/json"},
@@ -197,11 +196,11 @@ def test_invalid_json_returns_200(linq_client: TestClient) -> None:
     assert resp.json() == {"ok": True}
 
 
-def test_outbound_direction_ignored(linq_client: TestClient) -> None:
+async def test_outbound_direction_ignored(linq_client: httpx.AsyncClient) -> None:
     """Outbound messages should be ignored."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_linq_webhook_payload(text="Echo", direction="outbound")
-        resp = _post_webhook(linq_client, payload)
+        resp = await _post_webhook(linq_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
@@ -212,53 +211,53 @@ def test_outbound_direction_ignored(linq_client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_allowlist_empty_denies_all(linq_client: TestClient) -> None:
+async def test_allowlist_empty_denies_all(linq_client: httpx.AsyncClient) -> None:
     """Empty allowlist should deny all phone numbers."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch("backend.app.channels.linq.settings.linq_allowed_numbers", ""),
     ):
         payload = make_linq_webhook_payload(sender="+15551234567", text="Hi")
-        resp = _post_webhook(linq_client, payload)
+        resp = await _post_webhook(linq_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
 
 
-def test_allowlist_wildcard_allows_all(linq_client: TestClient) -> None:
+async def test_allowlist_wildcard_allows_all(linq_client: httpx.AsyncClient) -> None:
     """Setting allowed_numbers to '*' should allow all phone numbers."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch("backend.app.channels.linq.settings.linq_allowed_numbers", "*"),
     ):
         payload = make_linq_webhook_payload(sender="+15559999999", text="Hi")
-        resp = _post_webhook(linq_client, payload)
+        resp = await _post_webhook(linq_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
 
 
-def test_allowlist_matching_number_allows(linq_client: TestClient) -> None:
+async def test_allowlist_matching_number_allows(linq_client: httpx.AsyncClient) -> None:
     """Matching E.164 number should be allowed."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch("backend.app.channels.linq.settings.linq_allowed_numbers", "+15551234567"),
     ):
         payload = make_linq_webhook_payload(sender="+15551234567", text="Hi")
-        resp = _post_webhook(linq_client, payload)
+        resp = await _post_webhook(linq_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
 
 
-def test_allowlist_non_matching_number_denies(linq_client: TestClient) -> None:
+async def test_allowlist_non_matching_number_denies(linq_client: httpx.AsyncClient) -> None:
     """Non-matching phone number should be denied."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch("backend.app.channels.linq.settings.linq_allowed_numbers", "+15551234567"),
     ):
         payload = make_linq_webhook_payload(sender="+15559999999", text="Hi")
-        resp = _post_webhook(linq_client, payload)
+        resp = await _post_webhook(linq_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
@@ -288,23 +287,23 @@ def test_verify_signature_rejects_non_utf8_body() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_is_allowed_empty_denies() -> None:
+async def test_is_allowed_empty_denies() -> None:
     channel = LinqChannel()
     with patch("backend.app.channels.linq.settings.linq_allowed_numbers", ""):
-        assert channel.is_allowed("+15551234567", "") is False
+        assert await channel.is_allowed("+15551234567", "") is False
 
 
-def test_is_allowed_wildcard_allows() -> None:
+async def test_is_allowed_wildcard_allows() -> None:
     channel = LinqChannel()
     with patch("backend.app.channels.linq.settings.linq_allowed_numbers", "*"):
-        assert channel.is_allowed("+15551234567", "") is True
+        assert await channel.is_allowed("+15551234567", "") is True
 
 
-def test_is_allowed_matching_number() -> None:
+async def test_is_allowed_matching_number() -> None:
     channel = LinqChannel()
     with patch("backend.app.channels.linq.settings.linq_allowed_numbers", "+15551234567"):
-        assert channel.is_allowed("+15551234567", "") is True
-        assert channel.is_allowed("+15559999999", "") is False
+        assert await channel.is_allowed("+15551234567", "") is True
+        assert await channel.is_allowed("+15559999999", "") is False
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +405,7 @@ async def test_download_media_from_cdn() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_webhook_populates_chat_cache(linq_client: TestClient) -> None:
+async def test_webhook_populates_chat_cache(linq_client: httpx.AsyncClient) -> None:
     """Inbound webhook should populate the chat cache for outbound use."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
         payload = make_linq_webhook_payload(
@@ -414,7 +413,7 @@ def test_webhook_populates_chat_cache(linq_client: TestClient) -> None:
             text="Hello",
             chat_id="webhook-chat-uuid",
         )
-        _post_webhook(linq_client, payload)
+        await _post_webhook(linq_client, payload)
 
     # Get the LinqChannel instance from the app
     from backend.app.channels import get_channel

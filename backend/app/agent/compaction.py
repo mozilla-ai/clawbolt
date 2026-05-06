@@ -378,7 +378,7 @@ async def compact_session(
     # or INSERT a fresh completed row (legacy/test paths). A DB hiccup
     # here must not lose the compacted memory we just wrote upstream.
     try:
-        _persist_compaction_event(
+        await _persist_compaction_event(
             event_id=event_id,
             user_id=user_id,
             trimmed_count=_trimmed_count,
@@ -442,7 +442,7 @@ def _build_snapshot_pairs(
     return pairs
 
 
-def _persist_compaction_event(
+async def _persist_compaction_event(
     *,
     event_id: int | None,
     user_id: str,
@@ -472,12 +472,14 @@ def _persist_compaction_event(
     """
     from sqlalchemy import select
 
-    from backend.app.database import SessionLocal
+    from backend.app.database import db_session_async
     from backend.app.models import CompactionEvent
 
-    with SessionLocal() as db:
+    async with db_session_async() as db:
         if event_id is not None:
-            event = db.execute(select(CompactionEvent).filter_by(id=event_id)).scalar_one_or_none()
+            event = (
+                await db.execute(select(CompactionEvent).filter_by(id=event_id))
+            ).scalar_one_or_none()
             if event is None:
                 logger.warning(
                     "Compaction event id=%d not found for user %s; "
@@ -522,4 +524,4 @@ def _persist_compaction_event(
                     **llm_call,
                 )
             )
-        db.commit()
+        await db.commit()

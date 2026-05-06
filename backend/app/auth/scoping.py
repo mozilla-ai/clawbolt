@@ -1,18 +1,18 @@
 from fastapi import Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.database import get_db
+from backend.app.database import get_async_db
 from backend.app.models import User
 
 
 async def get_scoped_user(
     current_user: User,
     target_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> User:
     """Get a user by ID, scoped to the current user. Returns 404 on mismatch."""
-    target = db.execute(select(User).where(User.id == str(target_id))).scalar_one_or_none()
+    target = (await db.execute(select(User).where(User.id == str(target_id)))).scalar_one_or_none()
     if not target or target.user_id != current_user.user_id:
         raise HTTPException(status_code=404, detail="User not found")
     return target

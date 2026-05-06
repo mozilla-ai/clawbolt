@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from backend.app.channels.bluebubbles import BlueBubblesChannel, _derive_webhook_token
 from tests.mocks.bluebubbles import make_bluebubbles_webhook_payload
@@ -22,8 +21,8 @@ _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
 # ---------------------------------------------------------------------------
 
 
-def _post_webhook(
-    client: TestClient,
+async def _post_webhook(
+    client: httpx.AsyncClient,
     payload: dict,
     token: str = "",
     password: str = "",
@@ -34,7 +33,7 @@ def _post_webhook(
         url = f"{url}?token={token}"
     elif password:
         url = f"{url}?password={password}"
-    return client.post(url, json=payload)
+    return await client.post(url, json=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -42,20 +41,20 @@ def _post_webhook(
 # ---------------------------------------------------------------------------
 
 
-def test_inbound_webhook_returns_200(bluebubbles_client: TestClient) -> None:
+async def test_inbound_webhook_returns_200(bluebubbles_client: httpx.AsyncClient) -> None:
     """Valid webhook payload should return 200 with ok:true."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
         payload = make_bluebubbles_webhook_payload(text="Hello")
-        resp = _post_webhook(bluebubbles_client, payload)
+        resp = await _post_webhook(bluebubbles_client, payload)
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
 
 
-def test_inbound_webhook_publishes_text(bluebubbles_client: TestClient) -> None:
+async def test_inbound_webhook_publishes_text(bluebubbles_client: httpx.AsyncClient) -> None:
     """Inbound text message should be published to the bus."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_bluebubbles_webhook_payload(sender="+15559876543", text="Need a quote")
-        _post_webhook(bluebubbles_client, payload)
+        await _post_webhook(bluebubbles_client, payload)
 
     mock_pub.assert_called_once()
     inbound = mock_pub.call_args[0][0]
@@ -64,7 +63,7 @@ def test_inbound_webhook_publishes_text(bluebubbles_client: TestClient) -> None:
     assert inbound.text == "Need a quote"
 
 
-def test_inbound_webhook_publishes_media(bluebubbles_client: TestClient) -> None:
+async def test_inbound_webhook_publishes_media(bluebubbles_client: httpx.AsyncClient) -> None:
     """Media messages should include media_refs in the published InboundMessage."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_bluebubbles_webhook_payload(
@@ -78,7 +77,7 @@ def test_inbound_webhook_publishes_media(bluebubbles_client: TestClient) -> None
                 }
             ],
         )
-        _post_webhook(bluebubbles_client, payload)
+        await _post_webhook(bluebubbles_client, payload)
 
     mock_pub.assert_called_once()
     inbound = mock_pub.call_args[0][0]
@@ -88,30 +87,30 @@ def test_inbound_webhook_publishes_media(bluebubbles_client: TestClient) -> None
     assert inbound.media_refs[0][1] == "image/jpeg"
 
 
-def test_is_from_me_ignored(bluebubbles_client: TestClient) -> None:
+async def test_is_from_me_ignored(bluebubbles_client: httpx.AsyncClient) -> None:
     """Messages sent by the Mac (isFromMe=True) should be ignored."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_bluebubbles_webhook_payload(text="Echo", is_from_me=True)
-        resp = _post_webhook(bluebubbles_client, payload)
+        resp = await _post_webhook(bluebubbles_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
 
 
-def test_non_new_message_event_ignored(bluebubbles_client: TestClient) -> None:
+async def test_non_new_message_event_ignored(bluebubbles_client: httpx.AsyncClient) -> None:
     """Non-new-message events should return 200 without publishing."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         for event in ("typing-indicator", "chat-read-status-changed", "updated-message"):
             payload = make_bluebubbles_webhook_payload(text="Hi", event_type=event)
-            resp = _post_webhook(bluebubbles_client, payload)
+            resp = await _post_webhook(bluebubbles_client, payload)
             assert resp.status_code == 200
 
     mock_pub.assert_not_called()
 
 
-def test_invalid_json_returns_200(bluebubbles_client: TestClient) -> None:
+async def test_invalid_json_returns_200(bluebubbles_client: httpx.AsyncClient) -> None:
     """Invalid JSON body should return 200 without crashing."""
-    resp = bluebubbles_client.post(
+    resp = await bluebubbles_client.post(
         "/api/webhooks/bluebubbles",
         content=b"not valid json",
         headers={"Content-Type": "application/json"},
@@ -120,17 +119,17 @@ def test_invalid_json_returns_200(bluebubbles_client: TestClient) -> None:
     assert resp.json() == {"ok": True}
 
 
-def test_duplicate_message_skipped(bluebubbles_client: TestClient) -> None:
+async def test_duplicate_message_skipped(bluebubbles_client: httpx.AsyncClient) -> None:
     """Duplicate webhook calls should not publish to bus twice."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_bluebubbles_webhook_payload(text="First", message_guid="dup-msg-001")
-        _post_webhook(bluebubbles_client, payload)
-        _post_webhook(bluebubbles_client, payload)
+        await _post_webhook(bluebubbles_client, payload)
+        await _post_webhook(bluebubbles_client, payload)
 
     mock_pub.assert_called_once()
 
 
-def test_invalid_token_does_not_publish(bluebubbles_client: TestClient) -> None:
+async def test_invalid_token_does_not_publish(bluebubbles_client: httpx.AsyncClient) -> None:
     """Invalid webhook token should return 200 but not publish to bus."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
@@ -140,13 +139,13 @@ def test_invalid_token_does_not_publish(bluebubbles_client: TestClient) -> None:
         ),
     ):
         payload = make_bluebubbles_webhook_payload(text="Hi")
-        resp = _post_webhook(bluebubbles_client, payload, token="wrong-token")
+        resp = await _post_webhook(bluebubbles_client, payload, token="wrong-token")
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
 
 
-def test_correct_token_publishes(bluebubbles_client: TestClient) -> None:
+async def test_correct_token_publishes(bluebubbles_client: httpx.AsyncClient) -> None:
     """Correct derived webhook token should publish to bus."""
     password = "correct-password"
     with (
@@ -158,13 +157,13 @@ def test_correct_token_publishes(bluebubbles_client: TestClient) -> None:
     ):
         payload = make_bluebubbles_webhook_payload(text="Hi")
         token = _derive_webhook_token(password)
-        resp = _post_webhook(bluebubbles_client, payload, token=token)
+        resp = await _post_webhook(bluebubbles_client, payload, token=token)
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
 
 
-def test_correct_password_param_publishes(bluebubbles_client: TestClient) -> None:
+async def test_correct_password_param_publishes(bluebubbles_client: httpx.AsyncClient) -> None:
     """Webhook with correct raw ?password= should also pass auth and publish."""
     password = "correct-password"
     with (
@@ -175,13 +174,13 @@ def test_correct_password_param_publishes(bluebubbles_client: TestClient) -> Non
         ),
     ):
         payload = make_bluebubbles_webhook_payload(text="Hi via password")
-        resp = _post_webhook(bluebubbles_client, payload, password=password)
+        resp = await _post_webhook(bluebubbles_client, payload, password=password)
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
 
 
-def test_wrong_password_param_does_not_publish(bluebubbles_client: TestClient) -> None:
+async def test_wrong_password_param_does_not_publish(bluebubbles_client: httpx.AsyncClient) -> None:
     """Webhook with incorrect raw ?password= should not publish."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
@@ -191,7 +190,7 @@ def test_wrong_password_param_does_not_publish(bluebubbles_client: TestClient) -
         ),
     ):
         payload = make_bluebubbles_webhook_payload(text="Hi")
-        resp = _post_webhook(bluebubbles_client, payload, password="wrong-password")
+        resp = await _post_webhook(bluebubbles_client, payload, password="wrong-password")
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
@@ -210,33 +209,33 @@ def test_raw_password_never_in_webhook_url() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_allowlist_empty_denies_all(bluebubbles_client: TestClient) -> None:
+async def test_allowlist_empty_denies_all(bluebubbles_client: httpx.AsyncClient) -> None:
     """Empty allowlist should deny all senders."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_allowed_numbers", ""),
     ):
         payload = make_bluebubbles_webhook_payload(sender="+15551234567", text="Hi")
-        resp = _post_webhook(bluebubbles_client, payload)
+        resp = await _post_webhook(bluebubbles_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
 
 
-def test_allowlist_wildcard_allows_all(bluebubbles_client: TestClient) -> None:
+async def test_allowlist_wildcard_allows_all(bluebubbles_client: httpx.AsyncClient) -> None:
     """Setting allowed_numbers to '*' should allow all senders."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_allowed_numbers", "*"),
     ):
         payload = make_bluebubbles_webhook_payload(sender="+15559999999", text="Hi")
-        resp = _post_webhook(bluebubbles_client, payload)
+        resp = await _post_webhook(bluebubbles_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
 
 
-def test_allowlist_matching_number_allows(bluebubbles_client: TestClient) -> None:
+async def test_allowlist_matching_number_allows(bluebubbles_client: httpx.AsyncClient) -> None:
     """Matching E.164 number should be allowed."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
@@ -246,13 +245,13 @@ def test_allowlist_matching_number_allows(bluebubbles_client: TestClient) -> Non
         ),
     ):
         payload = make_bluebubbles_webhook_payload(sender="+15551234567", text="Hi")
-        resp = _post_webhook(bluebubbles_client, payload)
+        resp = await _post_webhook(bluebubbles_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
 
 
-def test_allowlist_non_matching_number_denies(bluebubbles_client: TestClient) -> None:
+async def test_allowlist_non_matching_number_denies(bluebubbles_client: httpx.AsyncClient) -> None:
     """Non-matching phone number should be denied."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
@@ -262,7 +261,7 @@ def test_allowlist_non_matching_number_denies(bluebubbles_client: TestClient) ->
         ),
     ):
         payload = make_bluebubbles_webhook_payload(sender="+15559999999", text="Hi")
-        resp = _post_webhook(bluebubbles_client, payload)
+        resp = await _post_webhook(bluebubbles_client, payload)
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
@@ -273,34 +272,34 @@ def test_allowlist_non_matching_number_denies(bluebubbles_client: TestClient) ->
 # ---------------------------------------------------------------------------
 
 
-def test_is_allowed_empty_denies() -> None:
+async def test_is_allowed_empty_denies() -> None:
     channel = BlueBubblesChannel()
     with patch("backend.app.channels.bluebubbles.settings.bluebubbles_allowed_numbers", ""):
-        assert channel.is_allowed("+15551234567", "") is False
+        assert await channel.is_allowed("+15551234567", "") is False
 
 
-def test_is_allowed_wildcard_allows() -> None:
+async def test_is_allowed_wildcard_allows() -> None:
     channel = BlueBubblesChannel()
     with patch("backend.app.channels.bluebubbles.settings.bluebubbles_allowed_numbers", "*"):
-        assert channel.is_allowed("+15551234567", "") is True
+        assert await channel.is_allowed("+15551234567", "") is True
 
 
-def test_is_allowed_matching_number() -> None:
+async def test_is_allowed_matching_number() -> None:
     channel = BlueBubblesChannel()
     with patch(
         "backend.app.channels.bluebubbles.settings.bluebubbles_allowed_numbers", "+15551234567"
     ):
-        assert channel.is_allowed("+15551234567", "") is True
-        assert channel.is_allowed("+15559999999", "") is False
+        assert await channel.is_allowed("+15551234567", "") is True
+        assert await channel.is_allowed("+15559999999", "") is False
 
 
-def test_is_allowed_premium_override() -> None:
+async def test_is_allowed_premium_override() -> None:
     """When premium override is set, it should take precedence."""
     channel = BlueBubblesChannel()
-    with patch.object(channel, "_check_premium_route", return_value=True):
-        assert channel.is_allowed("+15551234567", "") is True
-    with patch.object(channel, "_check_premium_route", return_value=False):
-        assert channel.is_allowed("+15551234567", "") is False
+    with patch.object(channel, "_check_premium_route", AsyncMock(return_value=True)):
+        assert await channel.is_allowed("+15551234567", "") is True
+    with patch.object(channel, "_check_premium_route", AsyncMock(return_value=False)):
+        assert await channel.is_allowed("+15551234567", "") is False
 
 
 # ---------------------------------------------------------------------------
@@ -741,7 +740,7 @@ async def test_download_media() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_webhook_populates_chat_cache(bluebubbles_client: TestClient) -> None:
+async def test_webhook_populates_chat_cache(bluebubbles_client: httpx.AsyncClient) -> None:
     """Inbound webhook should populate the chat cache for outbound use."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
         payload = make_bluebubbles_webhook_payload(
@@ -749,7 +748,7 @@ def test_webhook_populates_chat_cache(bluebubbles_client: TestClient) -> None:
             text="Hello",
             chat_guid="iMessage;-;+15551234567",
         )
-        _post_webhook(bluebubbles_client, payload)
+        await _post_webhook(bluebubbles_client, payload)
 
     from backend.app.channels import get_channel
 

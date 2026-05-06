@@ -941,7 +941,7 @@ async def test_trigger_compaction_for_dropped_fires_background_task(
     )
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        trigger_compaction_for_dropped(test_user.id, dropped)
+        await trigger_compaction_for_dropped(test_user.id, dropped)
         await asyncio.sleep(0.2)
 
     store = get_memory_store(test_user.id)
@@ -957,7 +957,7 @@ async def test_trigger_compaction_for_dropped_skips_empty(
     from backend.app.agent.context import trigger_compaction_for_dropped
 
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
-        trigger_compaction_for_dropped(test_user.id, [])
+        await trigger_compaction_for_dropped(test_user.id, [])
         await asyncio.sleep(0.1)
 
     mock_llm.assert_not_called()
@@ -977,7 +977,7 @@ async def test_trigger_compaction_for_dropped_skips_when_disabled(
         patch("backend.app.agent.compaction.amessages") as mock_llm,
     ):
         mock_settings.compaction_enabled = False
-        trigger_compaction_for_dropped(test_user.id, dropped)
+        await trigger_compaction_for_dropped(test_user.id, dropped)
         await asyncio.sleep(0.1)
 
     mock_llm.assert_not_called()
@@ -1328,7 +1328,7 @@ async def test_trigger_compaction_for_dropped_no_seqs_skips(test_user: User) -> 
     in_memory_only: list[AgentMessage] = [
         UserMessage(content="placeholder"),  # seq=None
     ]
-    trigger_compaction_for_dropped(test_user.id, in_memory_only)
+    await trigger_compaction_for_dropped(test_user.id, in_memory_only)
     db = _db_module.SessionLocal()
     try:
         rows = db.query(CompactionEvent).filter_by(user_id=test_user.id).count()
@@ -1356,7 +1356,7 @@ async def test_trigger_compaction_for_dropped_inserts_pending_and_advances_water
         "backend.app.agent.context.compact_session",
         new=AsyncMock(return_value=("", 5)),
     ):
-        trigger_compaction_for_dropped(test_user.id, dropped)
+        await trigger_compaction_for_dropped(test_user.id, dropped)
         # Yield to let the (mocked) background task run.
         await asyncio.sleep(0)
 
@@ -1393,7 +1393,7 @@ async def test_watermark_event_seq_invariant_after_compaction(test_user: User) -
         "backend.app.agent.context.compact_session",
         new=AsyncMock(return_value=("", 8)),
     ):
-        trigger_compaction_for_dropped(test_user.id, dropped)
+        await trigger_compaction_for_dropped(test_user.id, dropped)
         await asyncio.sleep(0)
 
     db = _db_module.SessionLocal()
