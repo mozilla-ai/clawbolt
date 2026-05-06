@@ -204,12 +204,12 @@ async def compact_session(
     _input_chars = sum(len(m.content or "") for m in trimmed_messages if hasattr(m, "content"))
 
     memory_store = get_memory_store(user_id)
-    current_memory = memory_store.read_memory()
-    current_user_profile = memory_store.read_user()
-    current_soul = memory_store.read_soul()
-    current_history = memory_store.read_history()
+    current_memory = await memory_store.read_memory_async()
+    current_user_profile = await memory_store.read_user_async()
+    current_soul = await memory_store.read_soul_async()
+    current_history = await memory_store.read_history_async()
     heartbeat_store = HeartbeatStore(user_id)
-    current_heartbeat = heartbeat_store.read_heartbeat_md()
+    current_heartbeat = await heartbeat_store.read_heartbeat_md_async()
 
     user_prompt_parts = [
         "<current_memory>",
@@ -257,7 +257,7 @@ async def compact_session(
         logger.exception("Compaction LLM call failed for user %s", user_id)
         return "", None
 
-    log_llm_usage(user_id, model, response, purpose="compaction", provider=provider)
+    await log_llm_usage(user_id, model, response, purpose="compaction", provider=provider)
 
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)
@@ -269,7 +269,7 @@ async def compact_session(
 
     # Write updated MEMORY.md if the LLM produced content
     if result.memory_update:
-        memory_store.write_memory(result.memory_update)
+        await memory_store.write_memory_async(result.memory_update)
         logger.info("Compaction rewrote MEMORY.md for user %s", user_id)
 
     # Append summary to HISTORY.md if the LLM produced one
@@ -287,12 +287,12 @@ async def compact_session(
 
     # Write updated USER.md if the LLM detected new profile info
     if result.user_profile_update:
-        memory_store.write_user(result.user_profile_update)
+        await memory_store.write_user_async(result.user_profile_update)
         logger.info("Compaction updated USER.md for user %s", user_id)
 
     # Write updated SOUL.md if the LLM detected personality changes
     if result.soul_update:
-        memory_store.write_soul(result.soul_update)
+        await memory_store.write_soul_async(result.soul_update)
         logger.info("Compaction updated SOUL.md for user %s", user_id)
 
     # Single structured summary line. Fields are space-separated key=value

@@ -392,7 +392,9 @@ async def _dispatch_to_pipeline(
                         # messages persisted by a previous pipeline that
                         # was holding the lock (e.g. tool interactions
                         # from an interrupted approval).
-                        fresh_session = get_session_store(user_id).load_session(session.session_id)
+                        fresh_session = await get_session_store(user_id).load_session_async(
+                            session.session_id
+                        )
                         if fresh_session is not None:
                             session = fresh_session
                         await handle_inbound_message(

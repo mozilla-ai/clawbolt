@@ -2,14 +2,29 @@
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.memory_db import get_memory_store
-from backend.app.models import User
+from backend.app.database import SessionLocal
+from backend.app.models import MemoryDocument, User
 
 
 def _seed_memory(user: User) -> None:
-    """Create memory with test data."""
-    store = get_memory_store(user.id)
-    store.write_memory("## Pricing\n- Deck: $45/sqft\n- Fence: $20/ft")
+    """Create memory with test data via direct ORM write.
+
+    The MemoryStore API is async-only now (issue #1160 follow-up); sync
+    test helpers seed the row directly so they can run from inside a
+    sync ``TestClient`` test without spinning up an event loop.
+    """
+    db = SessionLocal()
+    try:
+        doc = db.query(MemoryDocument).filter_by(user_id=user.id).one_or_none()
+        text = "## Pricing\n- Deck: $45/sqft\n- Fence: $20/ft\n"
+        if doc is None:
+            doc = MemoryDocument(user_id=user.id, memory_text=text, history_text="")
+            db.add(doc)
+        else:
+            doc.memory_text = text
+        db.commit()
+    finally:
+        db.close()
 
 
 def test_get_memory_empty(client: TestClient) -> None:

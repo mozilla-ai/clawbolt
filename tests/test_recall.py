@@ -12,7 +12,7 @@ async def test_build_memory_context_includes_memory_content(
 ) -> None:
     """build_memory_context should include MEMORY.md content."""
     store = get_memory_store(test_user.id)
-    store.write_memory("## Pricing\n- Hourly rate: $75/hour for general work")
+    await store.write_memory_async("## Pricing\n- Hourly rate: $75/hour for general work")
 
     context = await build_memory_context(test_user.id)
     assert "$75/hour" in context

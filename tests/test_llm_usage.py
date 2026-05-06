@@ -53,11 +53,12 @@ def _read_usage_entries(user_id: str) -> list[dict[str, object]]:
         db.close()
 
 
-def test_log_llm_usage_saves(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_log_llm_usage_saves(test_user: User) -> None:
     """log_llm_usage should persist token counts to the usage log."""
     response = _make_response_with_usage(prompt_tokens=200, completion_tokens=80, total_tokens=280)
 
-    log_llm_usage(test_user.id, "test-model", response, "agent_main")
+    await log_llm_usage(test_user.id, "test-model", response, "agent_main")
 
     entries = _read_usage_entries(test_user.id)
     assert len(entries) == 1
@@ -69,11 +70,12 @@ def test_log_llm_usage_saves(test_user: User) -> None:
     assert entries[0]["purpose"] == "agent_main"
 
 
-def test_log_llm_usage_zero_tokens(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_log_llm_usage_zero_tokens(test_user: User) -> None:
     """log_llm_usage should handle zero token counts gracefully."""
     response = _make_response_with_usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
 
-    log_llm_usage(test_user.id, "test-model", response, "heartbeat")
+    await log_llm_usage(test_user.id, "test-model", response, "heartbeat")
 
     entries = _read_usage_entries(test_user.id)
     assert len(entries) == 1
@@ -82,18 +84,20 @@ def test_log_llm_usage_zero_tokens(test_user: User) -> None:
     assert entries[0]["total_tokens"] == 0
 
 
-def test_log_llm_usage_computes_total(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_log_llm_usage_computes_total(test_user: User) -> None:
     """log_llm_usage should compute total_tokens as prompt + completion."""
     response = _make_response_with_usage(prompt_tokens=100, completion_tokens=50, total_tokens=0)
 
-    log_llm_usage(test_user.id, "test-model", response, "agent_main")
+    await log_llm_usage(test_user.id, "test-model", response, "agent_main")
 
     entries = _read_usage_entries(test_user.id)
     assert len(entries) == 1
     assert entries[0]["total_tokens"] == 150
 
 
-def test_log_llm_usage_multiple_entries(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_log_llm_usage_multiple_entries(test_user: User) -> None:
     """Multiple log_llm_usage calls should create separate entries."""
     for i in range(3):
         response = _make_response_with_usage(
@@ -101,7 +105,7 @@ def test_log_llm_usage_multiple_entries(test_user: User) -> None:
             completion_tokens=50 * (i + 1),
             total_tokens=150 * (i + 1),
         )
-        log_llm_usage(test_user.id, "test-model", response, f"purpose_{i}")
+        await log_llm_usage(test_user.id, "test-model", response, f"purpose_{i}")
 
     entries = _read_usage_entries(test_user.id)
     assert len(entries) == 3
@@ -110,11 +114,12 @@ def test_log_llm_usage_multiple_entries(test_user: User) -> None:
     assert entries[2]["purpose"] == "purpose_2"
 
 
-def test_log_llm_usage_different_models(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_log_llm_usage_different_models(test_user: User) -> None:
     """log_llm_usage should correctly record different model names."""
     for model_name in ["model-a", "model-b", "model-c"]:
         response = _make_response_with_usage()
-        log_llm_usage(test_user.id, model_name, response, "agent_main")
+        await log_llm_usage(test_user.id, model_name, response, "agent_main")
 
     entries = _read_usage_entries(test_user.id)
     models = {r["model"] for r in entries}
@@ -150,13 +155,14 @@ async def test_agent_process_message_logs_usage(
 # ---------------------------------------------------------------------------
 
 
-def test_log_llm_usage_cache_tokens_stored(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_log_llm_usage_cache_tokens_stored(test_user: User) -> None:
     """log_llm_usage should persist cache token fields when present."""
     response = _make_response_with_usage(prompt_tokens=500, completion_tokens=100)
     response.usage.cache_creation_input_tokens = 200
     response.usage.cache_read_input_tokens = 300
 
-    log_llm_usage(test_user.id, "test-model", response, "agent_main")
+    await log_llm_usage(test_user.id, "test-model", response, "agent_main")
 
     entries = _read_usage_entries(test_user.id)
     assert len(entries) == 1
@@ -164,11 +170,12 @@ def test_log_llm_usage_cache_tokens_stored(test_user: User) -> None:
     assert entries[0]["cache_read_input_tokens"] == 300
 
 
-def test_log_llm_usage_cache_tokens_null_when_absent(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_log_llm_usage_cache_tokens_null_when_absent(test_user: User) -> None:
     """Cache token fields should be NULL when not set on the response."""
     response = _make_response_with_usage(prompt_tokens=100, completion_tokens=50)
 
-    log_llm_usage(test_user.id, "test-model", response, "agent_main")
+    await log_llm_usage(test_user.id, "test-model", response, "agent_main")
 
     entries = _read_usage_entries(test_user.id)
     assert len(entries) == 1

@@ -15,27 +15,24 @@ from sqlalchemy import Select, Update, select, update
 from backend.app.agent.store_cache import StoreCache
 from backend.app.database import (
     AsyncSessionLocal,
-    SessionLocal,
-    db_session,
     db_session_async,
 )
 from backend.app.models import MemoryDocument, User
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
-    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Pure typed builders shared by sync and async paths.
+# Pure typed builders shared by every async store method.
 #
-# Mirrors the IdempotencyStore pilot (issue #1150 / PR #1199): each
-# public sync method has an ``*_async`` peer; both forward through the
-# same ``select(...) / update(...)`` builders so the two paths cannot
-# drift. Builders return concretely-typed SQLAlchemy core constructs;
-# no ``Any`` so ``ty`` can verify call sites end-to-end.
+# Originally introduced as the dual sync/async pilot from issue #1150 /
+# PR #1199; the sync surface has since been removed (issue #1160 final
+# pass). Builders stay because they keep query construction in one place
+# and return concretely-typed SQLAlchemy core constructs that ``ty`` can
+# verify end-to-end without ``Any``.
 # ---------------------------------------------------------------------------
 
 
@@ -50,21 +47,21 @@ def _user_select(user_id: str) -> Select[tuple[User]]:
 
 
 def _doc_select_for_update(user_id: str) -> Select[tuple[MemoryDocument]]:
-    """Builder for the locked read used by ``append_history*``.
+    """Builder for the locked read used by ``append_history``.
 
     ``MemoryDocument.history_text`` is an ``EncryptedString`` column,
     so we cannot append ciphertext on the SQL side: each row carries
     its own DEK and the envelope format is not concat-friendly.
-    Instead, both sync and async append paths SELECT the row under
-    ``FOR UPDATE``, decrypt automatically on read, concatenate in
-    Python, and write the full new plaintext back. The row-level lock
-    serializes concurrent appenders so neither side loses its update.
+    Instead, the append path SELECTs the row under ``FOR UPDATE``,
+    decrypts automatically on read, concatenates in Python, and writes
+    the full new plaintext back. The row-level lock serializes
+    concurrent appenders so neither side loses its update.
     """
     return select(MemoryDocument).filter_by(user_id=user_id).with_for_update()
 
 
 def _append_history_update(doc_id: int, full_new_text: str) -> Update:
-    """Build the UPDATE used by both sync and async ``append_history`` paths.
+    """Build the UPDATE used by the ``append_history`` path.
 
     The caller has already read the current ``history_text`` under a
     row-level lock, decrypted it, appended the new entry in Python, and
@@ -82,8 +79,8 @@ def _append_history_update(doc_id: int, full_new_text: str) -> Update:
 def _strip_section_prefix(raw: str, prefix: str) -> str:
     """Strip an optional leading ``# Soul`` / ``# User`` header.
 
-    Pulled out of the read methods so sync and async produce the same
-    string for the same DB content.
+    Pulled out of the read methods so the public API and any tests
+    that read the column directly produce the same string.
     """
     raw = raw.strip()
     if raw.startswith(prefix):
@@ -94,13 +91,10 @@ def _strip_section_prefix(raw: str, prefix: str) -> str:
 class MemoryStore:
     """Database-backed memory storage using MemoryDocument ORM model.
 
-    Dual-API store (issue #1153, part of #1139). Each public sync
-    method has an ``*_async`` peer with identical semantics. The two
-    paths share query construction via the module-level builders
-    above; only the session acquisition and ``await`` placement
-    differ. Sync callers (CLI, premium, legacy paths) keep working
-    unchanged while OSS-internal callers migrate to the async API one
-    site at a time. Follows the IdempotencyStore pilot from PR #1199.
+    Async-only API after the issue #1160 final pass. The dual sync/async
+    surface from issue #1153 (PR #1199 pilot) has been collapsed: only the
+    ``*_async`` peers remain. Premium and OSS callers all reach for the
+    async API directly.
     """
 
     def __init__(self, user_id: str) -> None:
@@ -108,17 +102,8 @@ class MemoryStore:
 
     # -- internal helpers --------------------------------------------------
 
-    def _get_or_create_doc(self, db: Session) -> MemoryDocument:
-        """Get or create the MemoryDocument row for this user."""
-        doc = db.execute(_doc_select(self.user_id)).scalar_one_or_none()
-        if doc is None:
-            doc = MemoryDocument(user_id=self.user_id, memory_text="", history_text="")
-            db.add(doc)
-            db.flush()
-        return doc
-
     async def _get_or_create_doc_async(self, db: AsyncSession) -> MemoryDocument:
-        """Async peer of ``_get_or_create_doc``."""
+        """Get or create the MemoryDocument row for this user."""
         doc = (await db.execute(_doc_select(self.user_id))).scalar_one_or_none()
         if doc is None:
             doc = MemoryDocument(user_id=self.user_id, memory_text="", history_text="")
@@ -128,19 +113,8 @@ class MemoryStore:
 
     # -- memory text -------------------------------------------------------
 
-    def read_memory(self) -> str:
-        """Read memory text (equivalent of MEMORY.md)."""
-        db = SessionLocal()
-        try:
-            doc = db.execute(_doc_select(self.user_id)).scalar_one_or_none()
-            if doc is None:
-                return ""
-            return (doc.memory_text or "").strip()
-        finally:
-            db.close()
-
     async def read_memory_async(self) -> str:
-        """Async peer of ``read_memory``."""
+        """Read memory text (equivalent of MEMORY.md)."""
         db = AsyncSessionLocal()
         try:
             doc = (await db.execute(_doc_select(self.user_id))).scalar_one_or_none()
@@ -150,15 +124,8 @@ class MemoryStore:
         finally:
             await db.close()
 
-    def write_memory(self, content: str) -> None:
-        """Write memory text (full rewrite, equivalent of MEMORY.md)."""
-        with db_session() as db:
-            doc = self._get_or_create_doc(db)
-            doc.memory_text = content.rstrip() + "\n"
-            db.commit()
-
     async def write_memory_async(self, content: str) -> None:
-        """Async peer of ``write_memory``."""
+        """Write memory text (full rewrite, equivalent of MEMORY.md)."""
         async with db_session_async() as db:
             doc = await self._get_or_create_doc_async(db)
             doc.memory_text = content.rstrip() + "\n"
@@ -166,19 +133,8 @@ class MemoryStore:
 
     # -- history text ------------------------------------------------------
 
-    def read_history(self) -> str:
-        """Read history text (equivalent of HISTORY.md)."""
-        db = SessionLocal()
-        try:
-            doc = db.execute(_doc_select(self.user_id)).scalar_one_or_none()
-            if doc is None:
-                return ""
-            return (doc.history_text or "").strip()
-        finally:
-            db.close()
-
     async def read_history_async(self) -> str:
-        """Async peer of ``read_history``."""
+        """Read history text (equivalent of HISTORY.md)."""
         db = AsyncSessionLocal()
         try:
             doc = (await db.execute(_doc_select(self.user_id))).scalar_one_or_none()
@@ -194,31 +150,9 @@ class MemoryStore:
         Reads the current row under ``SELECT ... FOR UPDATE`` to
         serialize concurrent appenders, decrypts and concatenates in
         Python, then rewrites the column with the full plaintext.
-        SQL-side concatenation is not viable because
-        ``history_text`` is an ``EncryptedString`` column whose
-        envelope format is not concat-safe.
-        """
-        suffix = entry + "\n"
-        with db_session() as db:
-            doc = db.execute(_doc_select_for_update(self.user_id)).scalar_one_or_none()
-            if doc is None:
-                db.add(
-                    MemoryDocument(
-                        user_id=self.user_id,
-                        memory_text="",
-                        history_text=suffix,
-                    )
-                )
-            else:
-                full_new_text = (doc.history_text or "") + suffix
-                db.execute(_append_history_update(doc.id, full_new_text))
-            db.commit()
-
-    async def append_history_async(self, entry: str) -> None:
-        """Async peer of ``append_history``.
-
-        Same lock-and-rewrite contract as the sync path; only the
-        session acquisition and ``await`` placement differ.
+        SQL-side concatenation is not viable because ``history_text``
+        is an ``EncryptedString`` column whose envelope format is not
+        concat-safe.
         """
         suffix = entry + "\n"
         async with db_session_async() as db:
@@ -236,21 +170,14 @@ class MemoryStore:
                 await db.execute(_append_history_update(doc.id, full_new_text))
             await db.commit()
 
+    async def append_history_async(self, entry: str) -> None:
+        """Deprecated alias of :meth:`append_history`."""
+        await self.append_history(entry)
+
     # -- soul text ---------------------------------------------------------
 
-    def read_soul(self) -> str:
-        """Read soul text from User model."""
-        db = SessionLocal()
-        try:
-            user = db.execute(_user_select(self.user_id)).scalar_one_or_none()
-            if user is None:
-                return ""
-            return _strip_section_prefix(user.soul_text or "", "# Soul")
-        finally:
-            db.close()
-
     async def read_soul_async(self) -> str:
-        """Async peer of ``read_soul``."""
+        """Read soul text from User model."""
         db = AsyncSessionLocal()
         try:
             user = (await db.execute(_user_select(self.user_id))).scalar_one_or_none()
@@ -260,16 +187,8 @@ class MemoryStore:
         finally:
             await db.close()
 
-    def write_soul(self, content: str) -> None:
-        """Write soul text to User model."""
-        with db_session() as db:
-            user = db.execute(_user_select(self.user_id)).scalar_one_or_none()
-            if user is not None:
-                user.soul_text = f"# Soul\n\n{content}\n"
-                db.commit()
-
     async def write_soul_async(self, content: str) -> None:
-        """Async peer of ``write_soul``."""
+        """Write soul text to User model."""
         async with db_session_async() as db:
             user = (await db.execute(_user_select(self.user_id))).scalar_one_or_none()
             if user is not None:
@@ -278,19 +197,8 @@ class MemoryStore:
 
     # -- user text ---------------------------------------------------------
 
-    def read_user(self) -> str:
-        """Read user text from User model."""
-        db = SessionLocal()
-        try:
-            user = db.execute(_user_select(self.user_id)).scalar_one_or_none()
-            if user is None:
-                return ""
-            return _strip_section_prefix(user.user_text or "", "# User")
-        finally:
-            db.close()
-
     async def read_user_async(self) -> str:
-        """Async peer of ``read_user``."""
+        """Read user text from User model."""
         db = AsyncSessionLocal()
         try:
             user = (await db.execute(_user_select(self.user_id))).scalar_one_or_none()
@@ -300,16 +208,8 @@ class MemoryStore:
         finally:
             await db.close()
 
-    def write_user(self, content: str) -> None:
-        """Write user text to User model."""
-        with db_session() as db:
-            user = db.execute(_user_select(self.user_id)).scalar_one_or_none()
-            if user is not None:
-                user.user_text = f"# User\n\n{content}\n"
-                db.commit()
-
     async def write_user_async(self, content: str) -> None:
-        """Async peer of ``write_user``."""
+        """Write user text to User model."""
         async with db_session_async() as db:
             user = (await db.execute(_user_select(self.user_id))).scalar_one_or_none()
             if user is not None:
@@ -318,12 +218,8 @@ class MemoryStore:
 
     # -- composite helpers -------------------------------------------------
 
-    async def build_memory_context(self) -> str:
-        """Build memory context for injection into the agent prompt."""
-        return self.read_memory()
-
     async def build_memory_context_async(self) -> str:
-        """Async peer of ``build_memory_context``."""
+        """Build memory context for injection into the agent prompt."""
         return await self.read_memory_async()
 
 
@@ -356,16 +252,16 @@ def reset_memory_stores() -> None:
 async def build_memory_context(user_id: str) -> str:
     """Build memory context text for injection into the agent prompt."""
     store = get_memory_store(user_id)
-    return await store.build_memory_context()
+    return await store.build_memory_context_async()
 
 
-def read_memory(user_id: str) -> str:
+async def read_memory(user_id: str) -> str:
     """Read raw MEMORY.md content for a user."""
     store = get_memory_store(user_id)
-    return store.read_memory()
+    return await store.read_memory_async()
 
 
-def write_memory(user_id: str, content: str) -> None:
+async def write_memory(user_id: str, content: str) -> None:
     """Write raw MEMORY.md content for a user."""
     store = get_memory_store(user_id)
-    store.write_memory(content)
+    await store.write_memory_async(content)

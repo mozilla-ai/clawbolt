@@ -39,8 +39,6 @@ from backend.app.agent.store_cache import StoreCache
 from backend.app.config import settings
 from backend.app.database import (
     AsyncSessionLocal,
-    SessionLocal,
-    db_session,
     db_session_async,
 )
 from backend.app.models import ChatSession, Message
@@ -216,11 +214,11 @@ _MESSAGE_UPDATABLE_FIELDS: frozenset[str] = frozenset(
 class SessionStore:
     """Database-backed session storage using ChatSession and Message ORM models.
 
-    Dual-API store (issue #1152). Each public sync method has an
-    ``*_async`` peer with identical semantics; query construction is
-    factored into the module-level builder helpers above so the two
-    paths stay in lockstep. Sync callers keep working unchanged while
-    OSS-internal callers migrate to the async API one site at a time.
+    Async-only API after the issue #1160 final pass. The dual-API surface
+    from issue #1152 has been collapsed: only the async implementations
+    remain. The bare-name methods now delegate to their ``*_async`` peers
+    to keep the public surface stable for any out-of-tree caller; OSS and
+    premium have all migrated to the suffixed names.
     """
 
     def __init__(self, user_id: str) -> None:
@@ -230,22 +228,8 @@ class SessionStore:
     # load_session
     # ------------------------------------------------------------------
 
-    def load_session(self, session_id: str) -> SessionState | None:
-        """Load a session by its string session_id."""
-        db = SessionLocal()
-        try:
-            cs = db.execute(
-                _select_session_by_session_id(session_id, self.user_id)
-            ).scalar_one_or_none()
-            if cs is None:
-                return None
-            messages = list(db.execute(_select_messages_for_session(cs.id)).scalars().all())
-            return _session_to_state(cs, messages)
-        finally:
-            db.close()
-
     async def load_session_async(self, session_id: str) -> SessionState | None:
-        """Async peer of ``load_session``."""
+        """Load a session by its string session_id."""
         db = AsyncSessionLocal()
         try:
             cs = (
@@ -262,21 +246,8 @@ class SessionStore:
     # list_sessions
     # ------------------------------------------------------------------
 
-    async def list_sessions(self) -> list[SessionState]:
-        """Return all sessions with their messages for this user."""
-        db = SessionLocal()
-        try:
-            sessions = db.execute(_select_all_sessions_for_user(self.user_id)).scalars().all()
-            result = []
-            for cs in sessions:
-                messages = list(db.execute(_select_messages_for_session(cs.id)).scalars().all())
-                result.append(_session_to_state(cs, messages))
-            return result
-        finally:
-            db.close()
-
     async def list_sessions_async(self) -> list[SessionState]:
-        """Async peer of ``list_sessions``."""
+        """Return all sessions with their messages for this user."""
         db = AsyncSessionLocal()
         try:
             sessions = (
@@ -292,11 +263,19 @@ class SessionStore:
         finally:
             await db.close()
 
+    async def list_sessions(self) -> list[SessionState]:
+        """Deprecated alias of :meth:`list_sessions_async`."""
+        return await self.list_sessions_async()
+
     # ------------------------------------------------------------------
     # get_or_create_session  (advisory-lock site)
     # ------------------------------------------------------------------
 
     async def get_or_create_session(self) -> tuple[SessionState, bool]:
+        """Deprecated alias of :meth:`get_or_create_session_async`."""
+        return await self.get_or_create_session_async()
+
+    async def get_or_create_session_async(self) -> tuple[SessionState, bool]:
         """Get the user's session, creating it on first call.
 
         Each user has a single persistent session, enforced by the
@@ -308,66 +287,6 @@ class SessionStore:
         otherwise race the INSERT and one would lose to the unique
         constraint. We serialize with a transaction-scoped advisory lock
         keyed on user_id so the runner-up sees the winner's row instead.
-        """
-        db = SessionLocal()
-        try:
-            db.execute(
-                _advisory_lock_sql(),
-                {"k": _advisory_lock_key(self.user_id)},
-            )
-            cs = db.execute(_select_session_by_user(self.user_id)).scalar_one_or_none()
-            if cs is not None:
-                now = datetime.datetime.now(datetime.UTC)
-                cs.last_message_at = now
-                db.commit()
-                messages = list(db.execute(_select_messages_for_session(cs.id)).scalars().all())
-                return _session_to_state(cs, messages), False
-
-            # Create new session with unique ID. Use timestamp + short UUID suffix
-            # to keep IDs readable while avoiding races.
-            now = datetime.datetime.now(datetime.UTC)
-            ts = int(now.timestamp())
-            short_uid = uuid.uuid4().hex[:8]
-            session_id = f"{self.user_id}_{ts}_{short_uid}"
-
-            cs = ChatSession(
-                session_id=session_id,
-                user_id=self.user_id,
-                channel="",
-                created_at=now,
-                last_message_at=now,
-            )
-            db.add(cs)
-            try:
-                db.commit()
-            except IntegrityError:
-                db.rollback()
-                # Either a session_id collision (extremely unlikely) or
-                # the user_id UNIQUE lost a race despite the advisory
-                # lock. Reload and return the winner's row.
-                cs = db.execute(_select_session_by_user(self.user_id)).scalar_one_or_none()
-                if cs is not None:
-                    messages = list(db.execute(_select_messages_for_session(cs.id)).scalars().all())
-                    return _session_to_state(cs, messages), False
-                # No conflicting row found; retry with a fresh session_id.
-                short_uid = uuid.uuid4().hex[:8]
-                session_id = f"{self.user_id}_{ts}_{short_uid}"
-                cs = ChatSession(
-                    session_id=session_id,
-                    user_id=self.user_id,
-                    channel="",
-                    created_at=now,
-                    last_message_at=now,
-                )
-                db.add(cs)
-                db.commit()
-            db.refresh(cs)
-            return _session_to_state(cs, []), True
-        finally:
-            db.close()
-
-    async def get_or_create_session_async(self) -> tuple[SessionState, bool]:
-        """Async peer of ``get_or_create_session``.
 
         Preserves the ``pg_advisory_xact_lock`` semantics: the lock is
         acquired inside an autobegun transaction and released only on
@@ -444,70 +363,17 @@ class SessionStore:
         tool_interactions_json: str = "",
         channel: str = "",
     ) -> StoredMessage:
-        """Insert a message into the database and update the in-memory session."""
-        with db_session() as db:
-            cs = db.execute(
-                _select_session_by_session_id(session.session_id, self.user_id)
-            ).scalar_one_or_none()
-            if cs is None:
-                # Auto-create the session row (supports in-memory-only SessionState
-                # objects created outside of get_or_create_session).
-                now = datetime.datetime.now(datetime.UTC)
-                cs = ChatSession(
-                    session_id=session.session_id,
-                    user_id=session.user_id,
-                    channel=channel or session.channel,
-                    created_at=now,
-                    last_message_at=now,
-                )
-                db.add(cs)
-                db.flush()
-
-            # Lock the session row to serialize concurrent message inserts,
-            # then calculate next seq. FOR UPDATE cannot be used with aggregates
-            # in PostgreSQL, so we lock the parent row instead.
-            db.execute(_select_session_for_update(cs.id)).scalar_one_or_none()
-            max_seq: int = db.execute(_select_max_seq(cs.id)).scalar() or 0
-            seq = max_seq + 1
-            now = datetime.datetime.now(datetime.UTC)
-
-            msg = Message(
-                session_id=cs.id,
-                seq=seq,
-                direction=direction,
-                body=body,
-                processed_context=processed_context,
-                tool_interactions_json=tool_interactions_json,
-                external_message_id=external_message_id,
-                media_urls_json=media_urls_json,
-                timestamp=now,
-            )
-            db.add(msg)
-
-            # Update session metadata
-            cs.last_message_at = now
-            if channel:
-                cs.channel = channel
-
-            db.commit()
-
-            # Update in-memory state
-            stored = StoredMessage(
-                direction=direction,
-                body=body,
-                processed_context=processed_context,
-                tool_interactions_json=tool_interactions_json,
-                external_message_id=external_message_id,
-                media_urls_json=media_urls_json,
-                timestamp=now.isoformat(),
-                seq=seq,
-            )
-            session.messages.append(stored)
-            session.last_message_at = now.isoformat()
-            if channel:
-                session.channel = channel
-
-            return stored
+        """Deprecated alias of :meth:`add_message_async`."""
+        return await self.add_message_async(
+            session,
+            direction,
+            body,
+            external_message_id=external_message_id,
+            media_urls_json=media_urls_json,
+            processed_context=processed_context,
+            tool_interactions_json=tool_interactions_json,
+            channel=channel,
+        )
 
     async def add_message_async(
         self,
@@ -520,7 +386,7 @@ class SessionStore:
         tool_interactions_json: str = "",
         channel: str = "",
     ) -> StoredMessage:
-        """Async peer of ``add_message``."""
+        """Insert a message into the database and update the in-memory session."""
         async with db_session_async() as db:
             cs = (
                 await db.execute(_select_session_by_session_id(session.session_id, self.user_id))
@@ -593,50 +459,17 @@ class SessionStore:
         tool_interactions_json: str = "",
         channel: str = "",
     ) -> StoredMessage:
-        """Insert a message using only the session_id (no SessionState needed).
-
-        Useful when the caller does not have a live ``SessionState`` object,
-        e.g. persisting an approval prompt from the agent loop.
-        """
-        with db_session() as db:
-            cs = db.execute(
-                _select_session_by_session_id(session_id, self.user_id)
-            ).scalar_one_or_none()
-            if cs is None:
-                raise ValueError(f"Session {session_id!r} not found for user {self.user_id!r}")
-
-            db.execute(_select_session_for_update(cs.id)).scalar_one_or_none()
-            max_seq: int = db.execute(_select_max_seq(cs.id)).scalar() or 0
-            seq = max_seq + 1
-            now = datetime.datetime.now(datetime.UTC)
-
-            msg = Message(
-                session_id=cs.id,
-                seq=seq,
-                direction=direction,
-                body=body,
-                processed_context=processed_context,
-                tool_interactions_json=tool_interactions_json,
-                external_message_id=external_message_id,
-                media_urls_json=media_urls_json,
-                timestamp=now,
-            )
-            db.add(msg)
-            cs.last_message_at = now
-            if channel:
-                cs.channel = channel
-            db.commit()
-
-            return StoredMessage(
-                direction=direction,
-                body=body,
-                processed_context=processed_context,
-                tool_interactions_json=tool_interactions_json,
-                external_message_id=external_message_id,
-                media_urls_json=media_urls_json,
-                timestamp=now.isoformat(),
-                seq=seq,
-            )
+        """Deprecated alias of :meth:`add_message_by_session_id_async`."""
+        return await self.add_message_by_session_id_async(
+            session_id,
+            direction,
+            body,
+            external_message_id=external_message_id,
+            media_urls_json=media_urls_json,
+            processed_context=processed_context,
+            tool_interactions_json=tool_interactions_json,
+            channel=channel,
+        )
 
     async def add_message_by_session_id_async(
         self,
@@ -649,7 +482,11 @@ class SessionStore:
         tool_interactions_json: str = "",
         channel: str = "",
     ) -> StoredMessage:
-        """Async peer of ``add_message_by_session_id``."""
+        """Insert a message using only the session_id (no SessionState needed).
+
+        Useful when the caller does not have a live ``SessionState`` object,
+        e.g. persisting an approval prompt from the agent loop.
+        """
         async with db_session_async() as db:
             cs = (
                 await db.execute(_select_session_by_session_id(session_id, self.user_id))
@@ -700,30 +537,8 @@ class SessionStore:
         seq: int,
         **updates: Any,
     ) -> None:
-        """Update a message by seq number."""
-        with db_session() as db:
-            cs = db.execute(
-                _select_session_by_session_id(session.session_id, self.user_id)
-            ).scalar_one_or_none()
-            if cs is None:
-                return
-
-            msg = db.execute(_select_message_by_seq(cs.id, seq)).scalar_one_or_none()
-            if msg is None:
-                return
-
-            for key, value in updates.items():
-                if key in _MESSAGE_UPDATABLE_FIELDS:
-                    setattr(msg, key, value)
-            db.commit()
-
-            # Update in-memory
-            for m in session.messages:
-                if m.seq == seq:
-                    for k, v in updates.items():
-                        if k in _MESSAGE_UPDATABLE_FIELDS and hasattr(m, k):
-                            setattr(m, k, v)
-                    break
+        """Deprecated alias of :meth:`update_message_async`."""
+        await self.update_message_async(session, seq, **updates)
 
     async def update_message_async(
         self,
@@ -731,7 +546,7 @@ class SessionStore:
         seq: int,
         **updates: Any,
     ) -> None:
-        """Async peer of ``update_message``."""
+        """Update a message by seq number."""
         async with db_session_async() as db:
             cs = (
                 await db.execute(_select_session_by_session_id(session.session_id, self.user_id))
@@ -760,22 +575,13 @@ class SessionStore:
     # ------------------------------------------------------------------
 
     async def update_initial_system_prompt(self, session: SessionState, system_prompt: str) -> None:
-        """Store the system prompt on the session if not already set."""
-        if session.initial_system_prompt:
-            return
-        with db_session() as db:
-            cs = db.execute(
-                _select_session_by_session_id(session.session_id, self.user_id)
-            ).scalar_one_or_none()
-            if cs is not None and not cs.initial_system_prompt:
-                cs.initial_system_prompt = system_prompt
-                db.commit()
-            session.initial_system_prompt = system_prompt
+        """Deprecated alias of :meth:`update_initial_system_prompt_async`."""
+        await self.update_initial_system_prompt_async(session, system_prompt)
 
     async def update_initial_system_prompt_async(
         self, session: SessionState, system_prompt: str
     ) -> None:
-        """Async peer of ``update_initial_system_prompt``."""
+        """Store the system prompt on the session if not already set."""
         if session.initial_system_prompt:
             return
         async with db_session_async() as db:
@@ -791,26 +597,11 @@ class SessionStore:
     # delete_message
     # ------------------------------------------------------------------
 
-    def delete_message(self, session_id: str, seq: int) -> bool:
+    async def delete_message_async(self, session_id: str, seq: int) -> bool:
         """Delete a single message by seq number from a session.
 
         Returns True if a message was deleted, False if not found.
         """
-        with db_session() as db:
-            cs = db.execute(
-                _select_session_by_session_id(session_id, self.user_id)
-            ).scalar_one_or_none()
-            if cs is None:
-                return False
-            count: int = cast(
-                "CursorResult[object]",
-                db.execute(_delete_message_by_seq(cs.id, seq)),
-            ).rowcount
-            db.commit()
-            return count > 0
-
-    async def delete_message_async(self, session_id: str, seq: int) -> bool:
-        """Async peer of ``delete_message``."""
         async with db_session_async() as db:
             cs = (
                 await db.execute(_select_session_by_session_id(session_id, self.user_id))
@@ -826,26 +617,11 @@ class SessionStore:
     # delete_messages_by_seqs
     # ------------------------------------------------------------------
 
-    def delete_messages_by_seqs(self, session_id: str, seqs: list[int]) -> int:
+    async def delete_messages_by_seqs_async(self, session_id: str, seqs: list[int]) -> int:
         """Delete specific messages by seq numbers from a session.
 
         Returns the number of messages actually deleted.
         """
-        with db_session() as db:
-            cs = db.execute(
-                _select_session_by_session_id(session_id, self.user_id)
-            ).scalar_one_or_none()
-            if cs is None:
-                return 0
-            count: int = cast(
-                "CursorResult[object]",
-                db.execute(_delete_messages_by_seqs(cs.id, seqs)),
-            ).rowcount
-            db.commit()
-            return count
-
-    async def delete_messages_by_seqs_async(self, session_id: str, seqs: list[int]) -> int:
-        """Async peer of ``delete_messages_by_seqs``."""
         async with db_session_async() as db:
             cs = (
                 await db.execute(_select_session_by_session_id(session_id, self.user_id))
@@ -861,28 +637,12 @@ class SessionStore:
     # delete_messages
     # ------------------------------------------------------------------
 
-    def delete_messages(self, session_id: str) -> int:
+    async def delete_messages_async(self, session_id: str) -> int:
         """Delete all messages from a session and clear its initial system prompt.
 
         Returns the number of messages deleted. The session row itself is
         preserved so the conversation can continue with an empty history.
         """
-        with db_session() as db:
-            cs = db.execute(
-                _select_session_by_session_id(session_id, self.user_id)
-            ).scalar_one_or_none()
-            if cs is None:
-                return 0
-            count: int = cast(
-                "CursorResult[object]",
-                db.execute(_delete_all_messages_for_session(cs.id)),
-            ).rowcount
-            cs.initial_system_prompt = ""
-            db.commit()
-            return count
-
-    async def delete_messages_async(self, session_id: str) -> int:
-        """Async peer of ``delete_messages``."""
         async with db_session_async() as db:
             cs = (
                 await db.execute(_select_session_by_session_id(session_id, self.user_id))
@@ -899,67 +659,32 @@ class SessionStore:
     # last-timestamp helpers
     # ------------------------------------------------------------------
 
-    def _get_last_timestamp(self, direction: str) -> datetime.datetime | None:
-        """Get the most recent message timestamp in the given direction."""
-        db = SessionLocal()
-        try:
-            return db.execute(_select_last_timestamp(self.user_id, direction)).scalar()
-        finally:
-            db.close()
-
     async def _get_last_timestamp_async(self, direction: str) -> datetime.datetime | None:
-        """Async peer of ``_get_last_timestamp``."""
+        """Get the most recent message timestamp in the given direction."""
         db = AsyncSessionLocal()
         try:
             return (await db.execute(_select_last_timestamp(self.user_id, direction))).scalar()
         finally:
             await db.close()
 
-    def get_last_inbound_timestamp(self) -> datetime.datetime | None:
-        """Get the most recent inbound message timestamp."""
-        return self._get_last_timestamp("inbound")
-
     async def get_last_inbound_timestamp_async(self) -> datetime.datetime | None:
-        """Async peer of ``get_last_inbound_timestamp``."""
+        """Get the most recent inbound message timestamp."""
         return await self._get_last_timestamp_async("inbound")
 
-    def get_last_outbound_timestamp(self) -> datetime.datetime | None:
-        """Get the most recent outbound message timestamp."""
-        return self._get_last_timestamp("outbound")
-
     async def get_last_outbound_timestamp_async(self) -> datetime.datetime | None:
-        """Async peer of ``get_last_outbound_timestamp``."""
+        """Get the most recent outbound message timestamp."""
         return await self._get_last_timestamp_async("outbound")
 
     # ------------------------------------------------------------------
     # recent-message collectors
     # ------------------------------------------------------------------
 
-    def _collect_messages(
-        self,
-        count: int | None = None,
-        exclude_session_id: str | None = None,
-    ) -> list[StoredMessage]:
-        """Collect the most recent messages, optionally excluding a session."""
-        resolved = count if count is not None else settings.heartbeat_recent_messages_count
-        db = SessionLocal()
-        try:
-            messages = list(
-                db.execute(_select_recent_messages(self.user_id, resolved, exclude_session_id))
-                .scalars()
-                .all()
-            )
-            # Return in chronological order
-            return [_msg_to_stored(m) for m in reversed(messages)]
-        finally:
-            db.close()
-
     async def _collect_messages_async(
         self,
         count: int | None = None,
         exclude_session_id: str | None = None,
     ) -> list[StoredMessage]:
-        """Async peer of ``_collect_messages``."""
+        """Collect the most recent messages, optionally excluding a session."""
         resolved = count if count is not None else settings.heartbeat_recent_messages_count
         db = AsyncSessionLocal()
         try:
@@ -972,32 +697,21 @@ class SessionStore:
                 .scalars()
                 .all()
             )
+            # Return in chronological order
             return [_msg_to_stored(m) for m in reversed(messages)]
         finally:
             await db.close()
 
-    def get_recent_messages(self, count: int | None = None) -> list[StoredMessage]:
-        """Get the most recent messages across all sessions."""
-        return self._collect_messages(count)
-
     async def get_recent_messages_async(self, count: int | None = None) -> list[StoredMessage]:
-        """Async peer of ``get_recent_messages``."""
+        """Get the most recent messages across all sessions."""
         return await self._collect_messages_async(count)
-
-    def get_other_session_messages(
-        self,
-        exclude_session_id: str,
-        count: int | None = None,
-    ) -> list[StoredMessage]:
-        """Get recent messages from sessions other than *exclude_session_id*."""
-        return self._collect_messages(count, exclude_session_id)
 
     async def get_other_session_messages_async(
         self,
         exclude_session_id: str,
         count: int | None = None,
     ) -> list[StoredMessage]:
-        """Async peer of ``get_other_session_messages``."""
+        """Get recent messages from sessions other than *exclude_session_id*."""
         return await self._collect_messages_async(count, exclude_session_id)
 
 

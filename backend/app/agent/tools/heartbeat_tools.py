@@ -32,7 +32,7 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
     async def get_heartbeat() -> ToolResult:
         """Read the user's heartbeat notes."""
         store = HeartbeatStore(user_id)
-        text = store.read_heartbeat_md()
+        text = await store.read_heartbeat_md_async()
         if not text:
             return ToolResult(content="No heartbeat notes set.")
         return ToolResult(content=text)
@@ -43,7 +43,7 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
         Reads the current content first so the result shows what changed.
         """
         store = HeartbeatStore(user_id)
-        previous = store.read_heartbeat_md()
+        previous = await store.read_heartbeat_md_async()
         await store.write_heartbeat_md(text)
         if previous:
             return ToolResult(content=f"Heartbeat notes updated.\n\nPrevious content:\n{previous}")

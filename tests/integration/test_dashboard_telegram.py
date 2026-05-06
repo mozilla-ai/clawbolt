@@ -120,16 +120,31 @@ def _create_session(
 
 
 def _seed_memory(user: User) -> None:
-    """Write memory text for the given user."""
-    from backend.app.agent.memory_db import get_memory_store
+    """Write memory text for the given user via direct ORM write.
 
-    store = get_memory_store(user.id)
-    store.write_memory(
+    The MemoryStore API is async-only now; sync helpers seed the
+    row directly to avoid spinning up an event loop here.
+    """
+    from backend.app.database import SessionLocal
+    from backend.app.models import MemoryDocument
+
+    text = (
         "# Long-term Memory\n\n"
         "## Business\n"
         "- hourly_rate: 95 (confidence: 1.0)\n"
-        "- specialty: panel upgrades (confidence: 0.9)"
+        "- specialty: panel upgrades (confidence: 0.9)\n"
     )
+    db = SessionLocal()
+    try:
+        doc = db.query(MemoryDocument).filter_by(user_id=user.id).one_or_none()
+        if doc is None:
+            doc = MemoryDocument(user_id=user.id, memory_text=text, history_text="")
+            db.add(doc)
+        else:
+            doc.memory_text = text
+        db.commit()
+    finally:
+        db.close()
 
 
 class TestDashboardSeesTelegramData:
