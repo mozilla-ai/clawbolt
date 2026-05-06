@@ -341,6 +341,14 @@ async def load_conversation_history(
         # Prefer processed context (includes media descriptions) over raw body
         content = msg.processed_context if msg.processed_context else msg.body
         if msg.direction == MessageDirection.INBOUND:
+            # Rapid-fire attachment-only messages can be batched so the
+            # placeholder row is persisted with no body and no processed
+            # context. Keeping that blank row in history teaches the LLM
+            # that the previous user turn was "silent", which can produce
+            # stray clarification text on the next real message.
+            if not (content or "").strip():
+                last_was_approval_prompt = False
+                continue
             # Drop the user's approval reply ("Yes", "Always", ...) when it
             # immediately follows a (now-filtered) approval prompt. Without
             # this, the orphan reply floats in history with no antecedent

@@ -105,6 +105,53 @@ async def test_load_history_prefers_processed_context(
 
 
 @pytest.mark.asyncio()
+async def test_load_history_skips_blank_inbound_placeholder_rows(
+    conversation: SessionState,
+) -> None:
+    """Blank inbounds from batched attachment-only turns should not reach the LLM."""
+    conversation.messages.append(StoredMessage(direction="inbound", body="", seq=1))
+    conversation.messages.append(
+        StoredMessage(
+            direction="inbound",
+            body="Save this receipt for later",
+            processed_context=(
+                "[Text message]: 'Save this receipt for later'\n\n"
+                "[Photo 1, handle=media_test123]: "
+                "(staged, call analyze_photo(handle='media_test123') if you need a description)"
+            ),
+            seq=2,
+        )
+    )
+
+    history = await load_conversation_history(conversation)
+    assert history == []
+
+
+@pytest.mark.asyncio()
+async def test_load_history_keeps_processed_attachment_only_turns(
+    conversation: SessionState,
+) -> None:
+    """A processed photo-only turn still carries useful context and must survive."""
+    conversation.messages.append(
+        StoredMessage(
+            direction="inbound",
+            body="",
+            processed_context=(
+                "[Photo 1, handle=media_test123]: "
+                "(staged, call analyze_photo(handle='media_test123') if you need a description)"
+            ),
+            seq=1,
+        )
+    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=2))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 1
+    assert isinstance(history[0], UserMessage)
+    assert "Photo 1" in (history[0].content or "")
+
+
+@pytest.mark.asyncio()
 async def test_load_history_empty_conversation(
     conversation: SessionState,
 ) -> None:
