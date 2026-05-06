@@ -949,9 +949,7 @@ async def test_trigger_compaction_for_dropped_fires_background_task(
         # and a 200ms sleep flakes; gather() resolves as soon as the
         # compaction task completes.
         if _context_module._background_tasks:
-            await asyncio.gather(
-                *list(_context_module._background_tasks), return_exceptions=True
-            )
+            await asyncio.gather(*list(_context_module._background_tasks), return_exceptions=True)
 
     store = get_memory_store(test_user.id)
     content = await store.read_memory_async()
