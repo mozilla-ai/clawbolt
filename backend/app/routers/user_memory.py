@@ -16,7 +16,7 @@ async def get_memory(
 ) -> MemoryResponse:
     """Return the raw MEMORY.md content."""
     store = get_memory_store(current_user.id)
-    return MemoryResponse(content=store.read_memory())
+    return MemoryResponse(content=await store.read_memory_async())
 
 
 @router.put("/user/memory", response_model=MemoryResponse)
@@ -26,5 +26,5 @@ async def update_memory(
 ) -> MemoryResponse:
     """Overwrite MEMORY.md with new content."""
     store = get_memory_store(current_user.id)
-    store.write_memory(body.content)
-    return MemoryResponse(content=store.read_memory())
+    await store.write_memory_async(body.content)
+    return MemoryResponse(content=await store.read_memory_async())

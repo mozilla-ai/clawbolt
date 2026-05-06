@@ -382,11 +382,11 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_settings.heartbeat_recent_messages_count = 5
 
     mock_session_store = MagicMock()
-    mock_session_store.get_recent_messages.return_value = []
+    mock_session_store.get_recent_messages_async = AsyncMock(return_value=[])
     mock_get_session_store.return_value = mock_session_store
 
     mock_hb_store = MagicMock()
-    mock_hb_store.read_heartbeat_md.return_value = ""
+    mock_hb_store.read_heartbeat_md_async = AsyncMock(return_value="")
     mock_hb_store.get_recent_logs = AsyncMock(return_value=[])
     mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -453,11 +453,11 @@ async def test_heartbeat_works_without_channel(
     mock_settings.heartbeat_recent_messages_count = 5
 
     mock_session_store = MagicMock()
-    mock_session_store.get_recent_messages.return_value = []
+    mock_session_store.get_recent_messages_async = AsyncMock(return_value=[])
     mock_get_session_store.return_value = mock_session_store
 
     mock_hb_store = MagicMock()
-    mock_hb_store.read_heartbeat_md.return_value = ""
+    mock_hb_store.read_heartbeat_md_async = AsyncMock(return_value="")
     mock_hb_store.get_recent_logs = AsyncMock(return_value=[])
     mock_heartbeat_store_cls.return_value = mock_hb_store
 

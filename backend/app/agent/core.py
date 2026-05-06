@@ -1037,7 +1037,7 @@ class ClawboltAgent:
                 messages, tool_schemas, max_tokens=max_tokens
             )
             purpose = "agent_main" if _round == 0 else "agent_followup"
-            log_llm_usage(
+            await log_llm_usage(
                 self.user.id,
                 self._llm_model_override or settings.llm_model,
                 response,

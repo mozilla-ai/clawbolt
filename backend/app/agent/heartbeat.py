@@ -404,7 +404,9 @@ async def evaluate_heartbeat_need(
     agent.
     """
     session_store = get_session_store(user.id)
-    recent = session_store.get_recent_messages(count=settings.heartbeat_recent_messages_count)
+    recent = await session_store.get_recent_messages_async(
+        count=settings.heartbeat_recent_messages_count
+    )
     recent_lines: list[str] = []
     for m in recent:
         label = "User" if m.direction == MessageDirection.INBOUND else "Assistant"
@@ -425,7 +427,7 @@ async def evaluate_heartbeat_need(
     recent_text = "\n".join(recent_lines) or "(no recent messages)"
 
     heartbeat_store = HeartbeatStore(user.id)
-    heartbeat_md = heartbeat_store.read_heartbeat_md()
+    heartbeat_md = await heartbeat_store.read_heartbeat_md_async()
 
     # Fetch recent heartbeat send history so the LLM knows when it last
     # messaged this user and can avoid duplicates or missed sends.
@@ -485,7 +487,7 @@ async def evaluate_heartbeat_need(
     if response is None:
         raise RuntimeError("Heartbeat LLM retry loop exited without response")
 
-    log_llm_usage(user.id, model, response, "heartbeat_decision", provider=provider)
+    await log_llm_usage(user.id, model, response, "heartbeat_decision", provider=provider)
     decision = _parse_decision_response(response)
     if response.usage:
         decision.input_tokens = response.usage.input_tokens or 0
@@ -874,7 +876,7 @@ async def run_heartbeat_for_user(
     # ``read_heartbeat_md``, which is also called by compaction and the
     # heartbeat tools where the raw text is the right return.
     heartbeat_store = HeartbeatStore(user.id)
-    heartbeat_text = heartbeat_store.read_heartbeat_md()
+    heartbeat_text = await heartbeat_store.read_heartbeat_md_async()
     if not _has_actionable_heartbeat_content(heartbeat_text):
         logger.debug("Heartbeat skip user %s: no heartbeat items configured", user.id)
         return None

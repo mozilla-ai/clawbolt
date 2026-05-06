@@ -198,7 +198,7 @@ def build_time_user_context(user: User) -> str:
     )
 
 
-def build_cross_session_context(
+async def build_cross_session_context(
     user_id: str,
     current_session_id: str,
     count: int | None = None,
@@ -210,7 +210,7 @@ def build_cross_session_context(
     continuity when the user switches channels.
     """
     store = get_session_store(user_id)
-    messages = store.get_other_session_messages(current_session_id, count=count)
+    messages = await store.get_other_session_messages_async(current_session_id, count=count)
     if not messages:
         return ""
     lines: list[str] = []
@@ -266,7 +266,7 @@ async def build_agent_system_prompt(
     builder.add_section("Your Memory", memory, dynamic=True)
 
     if current_session_id:
-        cross = build_cross_session_context(user.id, current_session_id)
+        cross = await build_cross_session_context(user.id, current_session_id)
         if cross:
             builder.add_section("Recent Activity (other channel)", cross, dynamic=True)
 

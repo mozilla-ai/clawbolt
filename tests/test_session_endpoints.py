@@ -524,20 +524,37 @@ def test_delete_conversation_history(client: TestClient, test_user: User) -> Non
 
 def test_delete_conversation_history_preserves_memory(client: TestClient, test_user: User) -> None:
     """Memory documents are not affected by conversation history deletion."""
-    from backend.app.agent.memory_db import get_memory_store
+    from backend.app.database import SessionLocal
+    from backend.app.models import MemoryDocument
 
     _create_session(
         test_user,
         [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
     )
-    mem_store = get_memory_store(test_user.id)
-    mem_store.write_memory("# Test Memory\nImportant fact.")
+    # Seed memory directly via ORM. ``MemoryStore`` is async-only after
+    # the #1160 follow-up; sync ``TestClient`` tests bypass the store
+    # rather than spin up an event loop just to seed a row.
+    db = SessionLocal()
+    try:
+        doc = MemoryDocument(
+            user_id=test_user.id,
+            memory_text="# Test Memory\nImportant fact.\n",
+            history_text="",
+        )
+        db.add(doc)
+        db.commit()
+    finally:
+        db.close()
 
     resp = client.delete("/api/user/conversation/messages")
     assert resp.status_code == 200
 
-    content = mem_store.read_memory()
-    assert "Important fact." in content
+    db = SessionLocal()
+    try:
+        doc = db.query(MemoryDocument).filter_by(user_id=test_user.id).one()
+        assert "Important fact." in (doc.memory_text or "")
+    finally:
+        db.close()
 
 
 def test_delete_conversation_history_no_conversation(client: TestClient, test_user: User) -> None:

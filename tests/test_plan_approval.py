@@ -733,7 +733,7 @@ class TestBatchApproval:
 
         # The approval prompt must NOT appear in session history.
         store = get_session_store(test_user.id)
-        session = store.load_session(session_id)
+        session = await store.load_session_async(session_id)
         assert session is not None
         outbound_msgs = [m for m in session.messages if m.direction == "outbound"]
         assert not any("reply with one of" in m.body.lower() for m in outbound_msgs), (
