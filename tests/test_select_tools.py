@@ -245,7 +245,6 @@ class TestDefaultRegistryCoreSpecialistSplit:
         assert "messaging" in core
         assert "workspace" in core
         assert "heartbeat" in core
-        assert "file" in core
 
     def test_specialist_factories(self) -> None:
         from backend.app.agent.tools.registry import default_registry
@@ -253,8 +252,8 @@ class TestDefaultRegistryCoreSpecialistSplit:
         specialist = default_registry.specialist_factory_names
         assert "quickbooks" in specialist
         assert "calendar" in specialist
+        assert "file" in specialist
         assert "heartbeat" not in specialist
-        assert "file" not in specialist
 
     def test_no_overlap(self) -> None:
         from backend.app.agent.tools.registry import default_registry

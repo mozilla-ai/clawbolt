@@ -51,7 +51,12 @@ from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
 from backend.app.models import ChannelRoute, User
 from backend.app.services.llm_service import resolve_user_llm_override
-from backend.app.services.storage_service import StorageBackend, get_storage_service
+from backend.app.services.oauth import oauth_service
+from backend.app.services.storage_service import (
+    DriveOAuthCredentials,
+    GoogleDriveStorage,
+    StorageBackend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,27 +124,39 @@ PipelineStep = Callable[[PipelineContext], Awaitable[PipelineContext]]
 # ---------------------------------------------------------------------------
 
 
-def init_storage(user: User) -> StorageBackend | None:
-    """Initialize storage backend for a user.
+async def init_storage(user: User) -> StorageBackend | None:
+    """Build a storage backend for *user* if Google Drive is connected.
 
-    Returns the storage backend if configured, or ``None`` otherwise.
+    File storage is per-user: each user grants ``drive.file`` scope through
+    ``manage_integration(action='connect', target='google_drive')``. Until
+    they do, this returns ``None`` and the file tools auto-disable.
+
+    Failures in token loading (network blip, OAuth provider 5xx) log and
+    return ``None`` so the rest of the agent turn still serves the user
+    instead of crashing the pipeline.
     """
-    has_storage = (
-        settings.storage_provider == "local"
-        or (settings.storage_provider == "dropbox" and settings.dropbox_access_token)
-        or (settings.storage_provider == "google_drive" and settings.google_drive_credentials_json)
-    )
-    if not has_storage:
-        logger.debug(
-            "Storage not configured (provider=%r), skipping file features",
-            settings.storage_provider,
-        )
+    if not (settings.google_drive_client_id and settings.google_drive_client_secret):
+        logger.debug("Drive OAuth client not configured; skipping file features")
         return None
+
     try:
-        return get_storage_service(user=user)
-    except (ValueError, OSError, RuntimeError):
-        logger.exception("Storage backend %r failed to initialize", settings.storage_provider)
+        token = await oauth_service.get_valid_token(user.id, "google_drive")
+    except Exception:
+        logger.exception("Failed to load Drive token for user %s", user.id)
         return None
+
+    if token is None or not token.access_token:
+        logger.debug("Drive not connected for user %s; skipping file features", user.id)
+        return None
+
+    return GoogleDriveStorage(
+        DriveOAuthCredentials(
+            access_token=token.access_token,
+            refresh_token=token.refresh_token,
+            client_id=settings.google_drive_client_id,
+            client_secret=settings.google_drive_client_secret,
+        )
+    )
 
 
 async def prepare_media(
@@ -172,7 +189,7 @@ async def prepare_media(
             except Exception:
                 logger.exception("Failed to download media: %s", file_id)
 
-    storage = init_storage(user)
+    storage = await init_storage(user)
     return downloaded_media, storage
 
 

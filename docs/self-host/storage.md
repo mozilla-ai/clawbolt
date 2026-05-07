@@ -1,51 +1,28 @@
 # Storage Providers
 
-Clawbolt can catalog job photos and documents to a storage backend. Three providers are supported.
+Clawbolt catalogs job photos and documents to **each user's own Google Drive** via OAuth. There is no deployment-level storage; users opt in by connecting Drive through the agent (`manage_integration(action='connect', target='google_drive')`) or the integrations panel.
 
-## Local (default)
+When a user connects Drive, files land in their own account under a top-level `Clawbolt` folder. The integration uses the narrow `drive.file` scope, which means the app only sees files it created itself — not the user's existing Drive contents.
 
-Works out of the box with no configuration. Files are saved to `data/storage/` on disk.
+Without a Drive connection, the file tools (`upload_to_storage`, `organize_file`, `find_saved_files`, `analyze_saved_file`) stay disabled for that user. Other integrations like CompanyCam still work without Drive.
 
-```
-data/storage/
-└── Job Photos/
-    └── 2026-02-28/
-        ├── site-front.jpg
-        └── site-back.jpg
-```
+## Operator setup
 
-This is ideal for development and demos. Set `STORAGE_PROVIDER=local` or leave it unset (it's the default).
-
-When running with Docker Compose, the `data/` directory is bind-mounted to the host (default: `./data` in the project root) so files persist across container rebuilds. Set `CLAWBOLT_DATA_DIR` to change the host path:
-
-```bash
-CLAWBOLT_DATA_DIR=/mnt/storage/clawbolt
-```
-
-## Dropbox
-
-1. Go to the [Dropbox App Console](https://www.dropbox.com/developers/apps) and create a new app
-2. Choose **Scoped access** and **Full Dropbox** (or **App folder** for sandboxed access)
-3. Under **Permissions**, enable: `files.content.write`, `files.content.read`, `sharing.write`, `sharing.read`
-4. Generate an **access token** on the app's settings page
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a project (or reuse the one you set up for Google Calendar).
+2. Enable the **Google Drive API**.
+3. Create **OAuth 2.0 credentials** (Web application type).
+4. Add an authorized redirect URI matching your deployment: `https://your-host/api/oauth/callback`.
 5. Set environment variables:
 
 ```bash
-STORAGE_PROVIDER=dropbox
-DROPBOX_ACCESS_TOKEN=sl.xxxxx...
+GOOGLE_DRIVE_CLIENT_ID=...apps.googleusercontent.com
+GOOGLE_DRIVE_CLIENT_SECRET=...
 ```
 
-## Google Drive
+Once these are set, every user can connect their own Drive.
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a project
-2. Enable the **Google Drive API**
-3. Create **OAuth 2.0 credentials** (Desktop app type)
-4. Complete the OAuth flow to get a credentials JSON
-5. Set environment variables:
+## Per-user connection flow
 
-```bash
-STORAGE_PROVIDER=google_drive
-GOOGLE_DRIVE_CREDENTIALS_JSON='{"token": "...", "refresh_token": "...", ...}'
-```
+In chat, the agent generates an OAuth link via `manage_integration(action='connect', target='google_drive')`. The user taps it, grants `drive.file` scope to your app, and the OAuth callback returns them to Clawbolt with file storage now enabled for their account.
 
-> **Note:** Storage is currently global: one storage account per deployment. Future versions will support per-user storage credentials so each user's files go to their own cloud account.
+Disconnect anytime with `manage_integration(action='disconnect', target='google_drive')`.

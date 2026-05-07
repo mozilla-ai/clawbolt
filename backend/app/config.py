@@ -64,11 +64,12 @@ class Settings(BaseSettings):
     llm_max_tokens_heartbeat: int = Field(default=12000, ge=1)
     llm_max_tokens_vision: int = Field(default=1000, ge=1)
 
-    # Storage
-    storage_provider: str = "local"  # "local", "dropbox", or "google_drive"
-    dropbox_access_token: str = ""
-    google_drive_credentials_json: str = ""
-    file_storage_base_dir: str = "data/storage"
+    # Storage: per-user Google Drive via OAuth. The deployment supplies the
+    # OAuth client credentials; each user grants ``drive.file`` scope through
+    # ``manage_integration(action='connect', target='google_drive')``. Files
+    # land in the user's own Drive, not a shared admin Drive.
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
 
     # Agent loop
     approval_timeout_seconds: int = Field(default=120, ge=1)
@@ -272,10 +273,6 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "compaction_provider",
         "compaction_max_tokens",
         "reasoning_effort",
-        "storage_provider",
-        "dropbox_access_token",
-        "google_drive_credentials_json",
-        "file_storage_base_dir",
     }
 )
 
@@ -342,25 +339,6 @@ def validate_imessage_backend(s: "Settings | None" = None) -> None:
             "Two iMessage backends are configured at once. "
             "Set only LINQ_API_TOKEN or only BLUEBUBBLES_SERVER_URL + "
             "BLUEBUBBLES_PASSWORD, not both."
-        )
-
-
-def validate_personal_storage_backend(s: "Settings | None" = None) -> None:
-    """Reject startup if two personal-storage backends are configured simultaneously.
-
-    The product supports a single personal storage destination per deployment
-    (local, Dropbox, or Google Drive). Allowing credentials for two at once
-    makes ``storage_provider`` ambiguous to operators. Mirrors the iMessage
-    mutual-exclusion pattern from :func:`validate_imessage_backend`.
-    """
-    s = s or settings
-    dropbox_set = bool(s.dropbox_access_token)
-    gdrive_set = bool(s.google_drive_credentials_json)
-    if dropbox_set and gdrive_set:
-        raise RuntimeError(
-            "Two personal-storage backends are configured at once. "
-            "Set only DROPBOX_ACCESS_TOKEN or only GOOGLE_DRIVE_CREDENTIALS_JSON, "
-            "not both. Choose one via STORAGE_PROVIDER."
         )
 
 
