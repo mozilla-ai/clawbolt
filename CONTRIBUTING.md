@@ -116,8 +116,7 @@ uv run pytest -v
 |------|------------------|
 | Telegram | Telegram Bot API calls |
 | LLM | any-llm `acompletion` calls |
-| Dropbox/Drive | Cloud storage operations |
-| Storage | `MockStorageBackend` for file operations |
+| Storage | `MockStorageBackend` for Google Drive operations |
 
 **Auth override:** The `get_current_user` dependency is overridden in tests to return a fixed test user, bypassing authentication.
 
