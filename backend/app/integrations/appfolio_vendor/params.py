@@ -176,3 +176,102 @@ class AppFolioMessageTenantParams(BaseModel):
     message: str = Field(
         description="SMS body to send to the tenant via AppFolio's proxy.",
     )
+
+
+class AppFolioInvoiceLineItem(BaseModel):
+    description: str = Field(description="Line-item description (e.g. 'Labor: 4hr').")
+    quantity: float = Field(default=1.0, description="Quantity (decimal supported).")
+    rate: float = Field(description="Per-unit rate in dollars.")
+
+
+class AppFolioCreateInvoiceParams(BaseModel):
+    customer_id: str = Field(
+        description="AppFolio customer (property manager) ID for this invoice.",
+    )
+    work_order_id: str = Field(description="Work order ID this invoice bills against.")
+    line_items: list[AppFolioInvoiceLineItem] = Field(
+        description=(
+            "List of line items for the invoice. Each entry has description, quantity, and rate."
+        ),
+    )
+    invoice_number: str = Field(
+        default="",
+        description="Optional vendor-side invoice number to print on the document.",
+    )
+    due_date: str = Field(
+        default="",
+        description="Optional due date in ISO YYYY-MM-DD format.",
+    )
+    media_refs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional photo or document references from the conversation"
+            " to attach as supporting evidence (same shape as appfolio_add_note)."
+        ),
+    )
+
+
+class AppFolioUploadInvoicePdfParams(BaseModel):
+    customer_id: str = Field(
+        description="AppFolio customer (property manager) ID for this invoice.",
+    )
+    work_order_id: str = Field(description="Work order ID this invoice bills against.")
+    media_refs: list[str] = Field(
+        description=(
+            "Photo or PDF references from the conversation. Each entry is"
+            " an original_url or a media handle. AppFolio uploads them as"
+            " a single invoice document."
+        ),
+    )
+
+
+class AppFolioUploadComplianceDocParams(BaseModel):
+    customer_id: str = Field(
+        description="AppFolio customer (property manager) ID requesting the doc.",
+    )
+    compliance_type: str = Field(
+        description=(
+            "AppFolio compliance category. Common values: 'w9',"
+            " 'general_liability', 'workers_compensation', 'license'."
+            " Confirm with the user when uncertain."
+        ),
+    )
+    media_ref: str = Field(
+        description=(
+            "Single document reference from the conversation: an original_url"
+            " or a media handle. AppFolio expects exactly one file per upload."
+        ),
+    )
+
+
+class AppFolioGetEstimateParams(BaseModel):
+    estimate_id: str = Field(description="AppFolio estimate ID.")
+
+
+class AppFolioUpdateEstimateParams(BaseModel):
+    estimate_id: str = Field(description="AppFolio estimate ID to update.")
+    amount: float | None = Field(
+        default=None,
+        description="Updated total amount in dollars. Omit to leave unchanged.",
+    )
+    description: str = Field(
+        default="",
+        description="Updated estimate description. Empty leaves it unchanged.",
+    )
+    notes: str = Field(
+        default="",
+        description="Optional vendor notes for the property manager.",
+    )
+
+
+class AppFolioUpdateProfileParams(BaseModel):
+    first_name: str = Field(default="", description="New first name (empty to leave unchanged).")
+    last_name: str = Field(default="", description="New last name (empty to leave unchanged).")
+    phone_number: str = Field(
+        default="",
+        description="New phone number, E.164 preferred (empty to leave unchanged).",
+    )
+    company_name: str = Field(
+        default="",
+        description="New company name (empty to leave unchanged).",
+    )
