@@ -397,3 +397,124 @@ async def test_set_enabled_updates_existing_row(test_user: User) -> None:
     await store.set_enabled("calendar", enabled=True)
     disabled = await store.get_disabled_tool_names()
     assert "calendar" not in disabled
+
+
+# ---------------------------------------------------------------------------
+# Magic-link integrations (AppFolio Vendor Portal)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_status_lists_appfolio_with_connection_state(test_user: User) -> None:
+    """Status should surface AppFolio's magic-link connection state.
+
+    Regression for the dev.clawbolt.ai bug where the agent told the user
+    "AppFolio is listed as an integration but it's not set up yet on the
+    backend" because manage_integration only knew about OAuth.
+    """
+    with patch(
+        "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+        new=AsyncMock(return_value=False),
+    ):
+        result = await _call(test_user, "status")
+    assert not result.is_error
+    assert "appfolio_vendor" in result.content
+    assert "AppFolio Vendor Portal" in result.content
+    assert "not connected" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_status_marks_appfolio_connected(test_user: User) -> None:
+    """When AppFolio has a credential, status should say 'connected'."""
+    with patch(
+        "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+        new=AsyncMock(return_value=True),
+    ):
+        result = await _call(test_user, "status")
+    assert not result.is_error
+    # The line for appfolio_vendor must include 'connected' (and not the
+    # negated form).
+    appfolio_line = next(line for line in result.content.splitlines() if "appfolio_vendor" in line)
+    assert "connected" in appfolio_line
+    assert "not connected" not in appfolio_line
+
+
+@pytest.mark.asyncio()
+async def test_connect_appfolio_returns_magic_link_instructions(test_user: User) -> None:
+    """Connect with target='appfolio_vendor' should return paste-token instructions.
+
+    The agent-facing message must mention vendor.appfolio.com (so the
+    agent can guide the user to the right site) and appfolio_connect (so
+    the agent knows which tool finishes the flow).
+    """
+    with patch(
+        "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+        new=AsyncMock(return_value=False),
+    ):
+        result = await _call(test_user, "connect", "appfolio_vendor")
+    assert not result.is_error
+    assert "vendor.appfolio.com" in result.content
+    assert "appfolio_connect" in result.content
+    # Should NOT claim AppFolio "does not use OAuth" or look like a rejection.
+    assert "does not use OAuth" not in result.content
+
+
+@pytest.mark.asyncio()
+async def test_connect_appfolio_when_already_connected(test_user: User) -> None:
+    """Connecting an already-connected AppFolio should report it, not re-prompt."""
+    with patch(
+        "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+        new=AsyncMock(return_value=True),
+    ):
+        result = await _call(test_user, "connect", "appfolio_vendor")
+    assert not result.is_error
+    assert "already connected" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_disconnect_appfolio_clears_credential(test_user: User) -> None:
+    """Disconnecting AppFolio should call clear_credential."""
+    is_connected_mock = AsyncMock(return_value=True)
+    clear_mock = AsyncMock()
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+            new=is_connected_mock,
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.appfolio_auth.clear_credential",
+            new=clear_mock,
+        ),
+    ):
+        result = await _call(test_user, "disconnect", "appfolio_vendor")
+    assert not result.is_error
+    assert "Disconnected" in result.content
+    clear_mock.assert_awaited_once_with(test_user.id)
+
+
+@pytest.mark.asyncio()
+async def test_disconnect_appfolio_when_not_connected(test_user: User) -> None:
+    """Disconnecting AppFolio with no credential should return a NOT_FOUND error."""
+    with patch(
+        "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+        new=AsyncMock(return_value=False),
+    ):
+        result = await _call(test_user, "disconnect", "appfolio_vendor")
+    assert result.is_error
+    assert "not currently connected" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_appfolio_usage_hint_mentions_magic_link(test_user: User) -> None:
+    """The usage_hint should tell the agent that AppFolio uses magic-link auth.
+
+    Without this guidance the agent would assume a connect URL is coming
+    back and either stall or pass the instructions through verbatim.
+    """
+    ctx = ToolContext(user=test_user)
+    tools = create_integration_tools(ctx)
+    tool = next(t for t in tools if t.name == ToolName.MANAGE_INTEGRATION)
+    assert tool.usage_hint is not None
+    hint = tool.usage_hint.lower()
+    assert "appfolio" in hint
+    assert "magic-link" in hint or "magic link" in hint
