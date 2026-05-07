@@ -1,20 +1,23 @@
-"""AppFolio Vendor Portal tool registration and factory.
+"""AppFolio Vendor Portal tool registration and factories.
 
 Picked up by the registry's ``ensure_tool_modules_imported`` scan; the
-``_register()`` call at the bottom installs the integration into the
-default tool registry at module-import time.
+``_register()`` call at the bottom installs two factories at module-import
+time:
 
-Two registration concerns:
+* ``appfolio_auth`` (core, always on the schema): the magic-link connect
+  tools (``appfolio_connect``, ``appfolio_complete_2fa``). These must
+  stay reachable even when the user has no credential, since pasting
+  the token *is* the connect path.
+* ``appfolio_vendor`` (specialist, gated on connection state): the data
+  tools (work orders, notes, invoices, payments, etc.). When the user
+  is not yet connected, ``_appfolio_vendor_auth_check`` returns a reason
+  string so the registry surfaces it under "Not connected" rather than
+  letting the LLM believe AppFolio is ready to use.
 
-1. The auth tools (``appfolio_connect``, ``appfolio_complete_2fa``) must
-   stay on the LLM schema even when the user has no credential, so the
-   factory always returns them and ``auth_check`` returns ``None``
-   unconditionally. The registry's ``auth_check`` contract is binary:
-   any non-None return value strips the entire factory's tools from
-   the schema, which would also hide the connect tool, leaving the
-   user with no in-product way to authenticate.
-2. The data tools (work orders, payments, profile) require a loaded
-   credential and so live in the factory body, hidden until connected.
+This split closes a prod bug where the agent confidently told users
+"AppFolio is connected" before they had connected, because a single
+combined factory had to keep ``auth_check`` returning ``None``
+unconditionally to keep the connect tool on the schema.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
@@ -46,22 +50,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_INTEGRATION = "appfolio_vendor"
+_AUTH_FACTORY = "appfolio_auth"
+_DATA_FACTORY = "appfolio_vendor"
 
 
-async def _appfolio_factory(ctx: ToolContext) -> list[Tool]:
-    """Assemble AppFolio tools for the given user.
+async def _appfolio_auth_factory(ctx: ToolContext) -> list[Tool]:
+    """Assemble just the magic-link auth tools for AppFolio.
 
-    Always returns the two auth tools so the user can connect from a
-    fresh state. Data tools are appended only when a usable credential
-    is on file.
+    Returns the connect + 2FA tools so the user can authenticate from a
+    fresh state. Registered as a core factory so the schema contract is
+    independent of credential state. Mirrors the user-facing ``appfolio_vendor``
+    factory's enabled state: if the user has disabled AppFolio, the auth
+    tools disappear too.
     """
-    user_id = ctx.user.id
-    tools: list[Tool] = list(build_auth_tools(user_id))
-    cred = await load_credential(user_id)
+    disabled = await ToolConfigStore(ctx.user.id).get_disabled_tool_names()
+    if _DATA_FACTORY in disabled:
+        return []
+    return list(build_auth_tools(ctx.user.id))
+
+
+async def _appfolio_vendor_factory(ctx: ToolContext) -> list[Tool]:
+    """Assemble the AppFolio data tools for an authenticated user.
+
+    Callers should not invoke this when the user has no credential; the
+    registry guards via ``_appfolio_vendor_auth_check`` and skips factory
+    creation in that case. The defensive ``return []`` covers the rare
+    race where the credential disappears between auth check and create.
+    """
+    cred = await load_credential(ctx.user.id)
     if cred is None or not cred.jwt:
-        return tools
+        return []
     service = build_service(cred, api_base=settings.appfolio_vendor_api_base)
+    tools: list[Tool] = []
     tools.extend(build_work_order_tools(service))
     tools.extend(build_work_order_write_tools(service))
     tools.extend(build_note_tools(service, ctx))
@@ -74,34 +94,36 @@ async def _appfolio_factory(ctx: ToolContext) -> list[Tool]:
     return tools
 
 
-async def _appfolio_auth_check(ctx: ToolContext) -> str | None:
-    """Always return ``None`` so the auth tools stay on the schema.
+async def _appfolio_vendor_auth_check(ctx: ToolContext) -> str | None:
+    """Return ``None`` when the user has a usable AppFolio credential.
 
-    The registry's ``auth_check`` contract is binary: a non-None return
-    pulls *every* tool the factory builds out of the LLM schema. For
-    OAuth integrations that is fine because the registry surfaces a
-    connect URL through ``manage_integration``. AppFolio uses magic-link
-    auth, so the only way to connect is for the agent to call
-    ``appfolio_connect`` with a user-pasted token. If that tool is not
-    in the schema, no connect path exists. We always return ``None``
-    and let the factory body decide which tools to expose based on
-    credential state.
+    When no credential is on file, returns a reason string so the
+    registry surfaces ``appfolio_vendor`` under "Not connected" in the
+    LLM's capability list. The LLM then knows it must guide the user
+    through the magic-link flow before claiming AppFolio access.
+
+    The connect tool itself lives in the separate ``appfolio_auth``
+    factory (core, always available), so this auth_check returning a
+    reason does not strip the connect path from the schema.
     """
-    _ = ctx
-    return None
+    cred = await load_credential(ctx.user.id)
+    if cred is not None and cred.jwt:
+        return None
+    return (
+        "AppFolio Vendor Portal is not connected. Use "
+        "manage_integration(action='connect', target='appfolio_vendor') "
+        "for the magic-link recipe, then call appfolio_connect with the "
+        "URL the user pastes."
+    )
 
 
 def _register() -> None:
     from backend.app.agent.tools.registry import SubToolInfo, default_registry
 
     default_registry.register(
-        _INTEGRATION,
-        _appfolio_factory,
-        core=False,
-        summary=(
-            "Manage AppFolio Vendor Portal: view work orders, search,"
-            " check payments, and read your vendor profile"
-        ),
+        _AUTH_FACTORY,
+        _appfolio_auth_factory,
+        core=True,
         sub_tools=[
             SubToolInfo(
                 ToolName.APPFOLIO_CONNECT,
@@ -113,6 +135,21 @@ def _register() -> None:
                 "Submit AppFolio 2FA code",
                 default_permission="always",
             ),
+        ],
+    )
+
+    default_registry.register(
+        _DATA_FACTORY,
+        _appfolio_vendor_factory,
+        core=False,
+        summary=(
+            "AppFolio Vendor Portal: view, search, and act on work orders "
+            "(accept, schedule, update status, add notes with photos), "
+            "message tenants, create or upload invoices, upload compliance "
+            "documents (W-9, COI, license), update estimates and profile, "
+            "and check payments"
+        ),
+        sub_tools=[
             SubToolInfo(
                 ToolName.APPFOLIO_LIST_WORK_ORDERS,
                 "List AppFolio work orders by status",
@@ -209,7 +246,7 @@ def _register() -> None:
                 default_permission="ask",
             ),
         ],
-        auth_check=_appfolio_auth_check,
+        auth_check=_appfolio_vendor_auth_check,
     )
 
 

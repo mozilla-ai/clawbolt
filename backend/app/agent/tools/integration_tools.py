@@ -52,6 +52,17 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
 # discovery surface for "connect <integration>".
 _MAGIC_LINK_INTEGRATIONS: set[str] = {"appfolio_vendor"}
 
+# Core factories that back a user-facing integration but should not surface
+# in ``manage_integration`` listings or be enable/disable-able on their own.
+# These are visibility-paired with another factory: when the user-facing
+# integration is disabled, the backing factory follows. ``appfolio_auth``
+# holds the magic-link connect tools that must stay on the schema even when
+# ``appfolio_vendor`` reports "not connected"; from the user's perspective
+# both are one integration.
+_HIDDEN_CORE_FACTORIES: dict[str, str] = {
+    "appfolio_auth": "appfolio_vendor",
+}
+
 
 _warned_missing_display_names: set[str] = set()
 
@@ -246,6 +257,8 @@ async def _handle_status(
     integration_lines: list[str] = []
 
     for name in sorted(registry.factory_names):
+        if name in _HIDDEN_CORE_FACTORIES:
+            continue
         factory = registry._factories.get(name)
         if factory is None:
             continue
