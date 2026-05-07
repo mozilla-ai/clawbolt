@@ -104,6 +104,32 @@ async def test_usage_hint_instructs_status_check_first(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_usage_hint_lists_current_oauth_integrations(test_user: User) -> None:
+    """The manage_integration usage_hint must enumerate every OAuth integration
+    registered on the current deployment.
+
+    Regression for #INTEGRATION_FRESHNESS: when a new integration shipped
+    (e.g. google_drive in #1251), users with prior 'manage_integration'
+    results in their conversation history saw the agent claim the new
+    integration was unavailable, because the agent trusted the stale tool
+    result. The fix lives in the system prompt (via this usage_hint), which
+    is rebuilt every turn from the live registry, so the hint always
+    overrides stale tool history.
+    """
+    from backend.app.services.oauth import list_oauth_integrations
+
+    ctx = ToolContext(user=test_user)
+    tools = create_integration_tools(ctx)
+    tool = next(t for t in tools if t.name == ToolName.MANAGE_INTEGRATION)
+    assert tool.usage_hint is not None
+    for oauth_name in list_oauth_integrations():
+        assert oauth_name in tool.usage_hint, (
+            f"usage_hint should reference every registered OAuth integration; "
+            f"missing '{oauth_name}'"
+        )
+
+
+@pytest.mark.asyncio()
 async def test_status_shows_oauth_connection_state(test_user: User) -> None:
     """Status should show connected/not connected for OAuth integrations."""
     mock_config = OAuthConfig(

@@ -45,6 +45,30 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
 }
 
 
+def _build_available_integrations_hint() -> str:
+    """Return a sentence enumerating the OAuth integrations registered on this deployment.
+
+    Built from ``list_oauth_integrations()`` so new integrations surface in
+    the system prompt automatically once their factory is wired up. This is
+    the LLM's only authoritative signal that an integration exists: prior
+    ``manage_integration`` results sitting in conversation history may
+    reflect an older deployment.
+    """
+    oauth_to_tool = {oauth: tool for tool, oauth in _TOOL_OAUTH_MAP.items()}
+    display_names = [
+        _DISPLAY_NAMES.get(oauth_to_tool.get(name, name), name)
+        for name in sorted(list_oauth_integrations())
+    ]
+    target_tokens = ", ".join(f"'{name}'" for name in sorted(list_oauth_integrations()))
+    return (
+        f"Available integrations on this deployment: {', '.join(display_names)}. "
+        f"This list reflects the current code. If a previous manage_integration "
+        f"result earlier in this conversation listed fewer integrations, trust "
+        f"this line, not the stale result. Capabilities can change between "
+        f"deployments. Valid connect targets: {target_tokens}."
+    )
+
+
 class ManageIntegrationParams(BaseModel):
     """Parameters for the manage_integration tool."""
 
@@ -73,6 +97,7 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
     ensure_tool_modules_imported()
 
     user_id = ctx.user.id
+    available_integrations_hint = _build_available_integrations_hint()
 
     async def manage_integration(
         action: str,
@@ -116,14 +141,14 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
             function=manage_integration,
             params_model=ManageIntegrationParams,
             usage_hint=(
-                "Use manage_integration to help users control their integrations. "
-                "Before offering ANY connect link, call action='status' first and "
-                "skip integrations already showing as connected (do not re-prompt "
-                "for something they already set up). "
-                "Call with action='connect' and target='google_calendar', "
-                "'google_drive', or 'quickbooks' to generate an OAuth link "
-                "the user can tap to connect. "
-                "Call with action='enable'/'disable' and target=group_name to toggle tools."
+                f"Use manage_integration to help users control their integrations. "
+                f"{available_integrations_hint} "
+                f"Before offering ANY connect link, call action='status' first and "
+                f"skip integrations already showing as connected (do not re-prompt "
+                f"for something they already set up). "
+                f"Call with action='connect' and a target from the list above to "
+                f"generate an OAuth link the user can tap to connect. "
+                f"Call with action='enable'/'disable' and target=group_name to toggle tools."
             ),
             # Enable/disable and connect/disconnect mutate the per-user
             # ``tool_configs`` row and the OAuth token store. Two of these
