@@ -38,7 +38,7 @@ When you send media, the agent uses these tools:
 3. `find_saved_files` searches your saved files by client, filename, or saved description.
 4. `analyze_saved_file` runs vision analysis on a previously saved image without asking you to resend it.
 
-Each upload is recorded in Clawbolt's media manifest with a stable id (`media-NNN`) so the agent can reference it across turns.
+The agent references saved files by their storage path (e.g. `/John Smith - 116 Virginia Ave/photos/kitchen-before_001.jpg`). Drive is the source of truth: filenames, locations, and descriptions are stored on the file in your Drive, not in a separate Clawbolt database.
 
 ## Operator setup (self-hosted only)
 

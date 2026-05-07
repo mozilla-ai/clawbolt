@@ -4,7 +4,7 @@ import asyncio
 import io
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,25 @@ logger = logging.getLogger(__name__)
 ROOT_FOLDER_NAME = "Clawbolt"
 
 
+@dataclass
+class SavedFile:
+    """Metadata for a file persisted to per-user storage.
+
+    Fields are derived from the backend's native metadata, not from a
+    Clawbolt-side shadow table. ``path`` is the human-readable storage
+    path the agent quotes across turns and tools (e.g.
+    ``/Astro Home Management - 123 Penn Ave/photos/foo.jpg``).
+    """
+
+    path: str
+    name: str
+    mime_type: str = ""
+    description: str = ""
+    web_view_link: str = ""
+    modified_at: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class StorageBackend(ABC):
     """Abstract base for per-user file storage backends.
 
@@ -27,8 +46,16 @@ class StorageBackend(ABC):
     """
 
     @abstractmethod
-    async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
-        """Upload a file. Returns the public/shared URL."""
+    async def upload_file(
+        self,
+        file_bytes: bytes,
+        path: str,
+        filename: str,
+        *,
+        mime_type: str = "application/octet-stream",
+        description: str = "",
+    ) -> SavedFile:
+        """Upload a file. Returns metadata for the uploaded file."""
 
     @abstractmethod
     async def create_folder(self, path: str) -> str:
@@ -37,16 +64,29 @@ class StorageBackend(ABC):
     @abstractmethod
     async def move_file(
         self, from_path: str, from_filename: str, to_path: str, to_filename: str
-    ) -> str:
-        """Move/rename a file. Returns the new URL/path."""
+    ) -> SavedFile:
+        """Move/rename a file. Returns metadata for the moved file."""
 
     @abstractmethod
-    async def list_folder(self, path: str) -> list[dict[str, str]]:
-        """List files in a folder. Returns list of file metadata."""
+    async def list_folder(self, path: str) -> list[SavedFile]:
+        """List files in a folder."""
 
     @abstractmethod
     async def download_file(self, path: str) -> bytes:
         """Download a previously stored file by its logical storage path."""
+
+    @abstractmethod
+    async def get_file(self, path: str) -> SavedFile | None:
+        """Fetch metadata for a single file by storage path. Returns None if missing."""
+
+    @abstractmethod
+    async def search_files(self, query: str = "", limit: int = 10) -> list[SavedFile]:
+        """Return up to *limit* files matching *query*.
+
+        With an empty query, returns the most recently modified files
+        the backend knows about. Matching covers filename and the
+        backend's stored description field.
+        """
 
 
 @dataclass
@@ -62,6 +102,14 @@ class DriveOAuthCredentials:
     refresh_token: str
     client_id: str
     client_secret: str
+
+
+# appProperties key holding the human-readable storage path. drive.file
+# scope means the app only sees files it uploaded, so no namespacing
+# beyond the key itself is needed.
+_DRIVE_PATH_PROPERTY = "clawbolt_path"
+
+_DRIVE_FILE_FIELDS = "id,name,mimeType,description,webViewLink,modifiedTime,parents,appProperties"
 
 
 class GoogleDriveStorage(StorageBackend):
@@ -186,35 +234,72 @@ class GoogleDriveStorage(StorageBackend):
 
         return current_id
 
-    async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
+    @staticmethod
+    def _normalized_path(folder_path: str, filename: str) -> str:
+        return "/" + "/".join(p for p in (folder_path.strip("/"), filename.strip("/")) if p)
+
+    @classmethod
+    def _from_drive_file(cls, payload: dict[str, Any], fallback_path: str = "") -> SavedFile:
+        app_props = payload.get("appProperties") or {}
+        path = app_props.get(_DRIVE_PATH_PROPERTY) or fallback_path
+        return SavedFile(
+            path=path,
+            name=payload.get("name", ""),
+            mime_type=payload.get("mimeType", ""),
+            description=payload.get("description", "") or "",
+            web_view_link=payload.get("webViewLink", "") or "",
+            modified_at=payload.get("modifiedTime", "") or "",
+            metadata={"id": payload.get("id", "")},
+        )
+
+    async def upload_file(
+        self,
+        file_bytes: bytes,
+        path: str,
+        filename: str,
+        *,
+        mime_type: str = "application/octet-stream",
+        description: str = "",
+    ) -> SavedFile:
         from googleapiclient.errors import HttpError
         from googleapiclient.http import MediaIoBaseUpload
 
         logger.info("Uploading to Google Drive: %s/%s (%d bytes)", path, filename, len(file_bytes))
         folder_id = await self._resolve_path(path)
         service = self._get_service()
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/octet-stream")
-        file_metadata: dict[str, Any] = {"name": filename, "parents": [folder_id]}
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
+        storage_path = self._normalized_path(path, filename)
+        file_metadata: dict[str, Any] = {
+            "name": filename,
+            "parents": [folder_id],
+            "appProperties": {_DRIVE_PATH_PROPERTY: storage_path},
+        }
+        if description:
+            file_metadata["description"] = description
         try:
             result = await asyncio.to_thread(
                 service.files()
-                .create(body=file_metadata, media_body=media, fields="id,webViewLink")
+                .create(body=file_metadata, media_body=media, fields=_DRIVE_FILE_FIELDS)
                 .execute
             )
         except HttpError as exc:
             logger.exception("Google Drive upload failed: %s/%s", path, filename)
             msg = f"Google Drive upload failed for {path}/{filename}: {exc}"
             raise RuntimeError(msg) from exc
-        url = result.get("webViewLink", result.get("id", ""))
-        logger.info("Google Drive upload complete: %s/%s -> %s", path, filename, url)
-        return url
+        saved = self._from_drive_file(result, fallback_path=storage_path)
+        logger.info(
+            "Google Drive upload complete: %s -> %s",
+            saved.path,
+            saved.web_view_link or saved.metadata.get("id", ""),
+        )
+        return saved
 
     async def create_folder(self, path: str) -> str:
         return await self._resolve_path(path)
 
     async def move_file(
         self, from_path: str, from_filename: str, to_path: str, to_filename: str
-    ) -> str:
+    ) -> SavedFile:
         from_folder_id = await self._resolve_path(from_path)
         to_folder_id = await self._resolve_path(to_path)
         service = self._get_service()
@@ -228,32 +313,80 @@ class GoogleDriveStorage(StorageBackend):
             msg = f"File not found: {from_filename} in {from_path}"
             raise FileNotFoundError(msg)
         file_id = files[0]["id"]
+        new_path = self._normalized_path(to_path, to_filename)
         update_result = await asyncio.to_thread(
             service.files()
             .update(
                 fileId=file_id,
-                body={"name": to_filename},
+                body={
+                    "name": to_filename,
+                    "appProperties": {_DRIVE_PATH_PROPERTY: new_path},
+                },
                 addParents=to_folder_id,
                 removeParents=from_folder_id,
-                fields="id,webViewLink",
+                fields=_DRIVE_FILE_FIELDS,
             )
             .execute
         )
-        return update_result.get("webViewLink", update_result.get("id", ""))
+        return self._from_drive_file(update_result, fallback_path=new_path)
 
-    async def list_folder(self, path: str) -> list[dict[str, str]]:
+    async def list_folder(self, path: str) -> list[SavedFile]:
         folder_id = await self._resolve_existing_path(path)
         if folder_id is None:
             return []
         service = self._get_service()
         query = f"'{folder_id}' in parents and trashed=false"
         result = await asyncio.to_thread(
-            service.files().list(q=query, fields="files(id,name,webViewLink)").execute
+            service.files()
+            .list(q=query, fields=f"files({_DRIVE_FILE_FIELDS})", pageSize=200)
+            .execute
         )
-        return [
-            {"name": f["name"], "path": f.get("webViewLink", f["id"])}
-            for f in result.get("files", [])
-        ]
+        normalized_path = path.strip("/")
+        files: list[SavedFile] = []
+        for payload in result.get("files", []):
+            fallback = "/" + "/".join(p for p in (normalized_path, payload.get("name", "")) if p)
+            files.append(self._from_drive_file(payload, fallback_path=fallback))
+        return files
+
+    async def get_file(self, path: str) -> SavedFile | None:
+        normalized = path.strip("/")
+        if not normalized or "/" not in normalized:
+            folder_path, filename = "", normalized
+        else:
+            folder_path, filename = normalized.rsplit("/", 1)
+        folder_id = await self._resolve_existing_path(folder_path)
+        if folder_id is None:
+            return None
+        service = self._get_service()
+        safe_name = filename.replace("\\", "\\\\").replace("'", "\\'")
+        query = f"name='{safe_name}' and '{folder_id}' in parents and trashed=false"
+        result = await asyncio.to_thread(
+            service.files().list(q=query, fields=f"files({_DRIVE_FILE_FIELDS})", pageSize=1).execute
+        )
+        files = result.get("files", [])
+        if not files:
+            return None
+        return self._from_drive_file(files[0], fallback_path=f"/{normalized}")
+
+    async def search_files(self, query: str = "", limit: int = 10) -> list[SavedFile]:
+        bounded = max(1, min(limit, 100))
+        service = self._get_service()
+        clauses = ["trashed=false", "mimeType!='application/vnd.google-apps.folder'"]
+        for token in _search_tokens(query):
+            safe = token.replace("\\", "\\\\").replace("'", "\\'")
+            clauses.append(f"(name contains '{safe}' or fullText contains '{safe}')")
+        q = " and ".join(clauses)
+        result = await asyncio.to_thread(
+            service.files()
+            .list(
+                q=q,
+                fields=f"files({_DRIVE_FILE_FIELDS})",
+                pageSize=bounded,
+                orderBy="modifiedTime desc",
+            )
+            .execute
+        )
+        return [self._from_drive_file(payload) for payload in result.get("files", [])]
 
     async def download_file(self, path: str) -> bytes:
         from googleapiclient.errors import HttpError
@@ -287,3 +420,10 @@ class GoogleDriveStorage(StorageBackend):
             msg = f"Google Drive download failed for {path}: {exc}"
             raise RuntimeError(msg) from exc
         return bytes(data)
+
+
+def _search_tokens(query: str) -> list[str]:
+    """Tokenize a search string for case-insensitive Drive lookup."""
+    import re
+
+    return [token for token in re.split(r"\W+", query.strip()) if token]
