@@ -83,6 +83,11 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         domain_group="Integrations",
         domain_group_order=3,
     ),
+    "appfolio_vendor": _FactoryMeta(
+        "View work orders, payments, and profile in AppFolio Vendor Portal",
+        domain_group="Integrations",
+        domain_group_order=2,
+    ),
 }
 
 

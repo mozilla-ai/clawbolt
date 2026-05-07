@@ -194,6 +194,15 @@ When `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` are set, us
 
 When both are set, users can connect CompanyCam via OAuth on the Tools page or through chat. This enables tools like `companycam_search_projects`, `companycam_upload_photo`, and `companycam_create_project`.
 
+## AppFolio Vendor Portal
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APPFOLIO_VENDOR_API_BASE` | `https://vendor.appf.io` | Base URL of the AppFolio Vendor Portal API. Override only for staging or test environments. |
+| `APPFOLIO_VENDOR_WEB_BASE` | `https://vendor.appfolio.com` | Web base shown to users when prompting them to request a magic link. |
+
+The integration uses passwordless magic-link auth: users paste the URL from their AppFolio email and the agent exchanges it for a Bearer JWT. No client ID or secret to configure. Once connected, the agent gains tools like `appfolio_list_work_orders`, `appfolio_search_work_orders`, and `appfolio_list_payments`.
+
 ## Supplier pricing
 
 | Variable | Default | Description |
