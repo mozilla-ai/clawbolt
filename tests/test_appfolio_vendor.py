@@ -967,11 +967,14 @@ async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
 async def test_auth_tools_always_in_schema_when_disconnected() -> None:
     """``appfolio_connect`` must stay reachable when the user has no credential.
 
-    The registry's ``auth_check`` contract is binary: any non-None return
-    value strips the entire factory's tools from the LLM schema. Magic-link
-    integrations need the auth tool on the schema regardless of connection
-    state, since pasting the token *is* the connect path. Regression for
-    the dev.clawbolt.ai bug where the agent had no way to start the flow.
+    Magic-link integrations need the auth tool on the schema regardless
+    of connection state, since pasting the token *is* the connect path.
+    The auth tools live in a separate core factory (``appfolio_auth``) so
+    the data factory's auth_check can correctly report "not connected"
+    without stripping the connect path. Regression for the prod bug where
+    the agent confidently told users "AppFolio is connected" before they
+    had connected, and for the original dev.clawbolt.ai bug where the
+    agent had no way to start the connect flow.
     """
     from backend.app.agent.tools.names import ToolName
     from backend.app.agent.tools.registry import (
@@ -986,21 +989,117 @@ async def test_auth_tools_always_in_schema_when_disconnected() -> None:
     user = User(id="appfolio-disconnected-user", user_id="test")
     ctx = ToolContext(user=user)
 
-    # auth_check must be None-returning unconditionally.
-    factory = default_registry._factories["appfolio_vendor"]
-    assert factory.auth_check is not None
-    assert await factory.auth_check(ctx) is None
+    # The data factory's auth_check returns a reason when not connected,
+    # so the registry will surface ``appfolio_vendor`` under "Not
+    # connected" in list_capabilities and the LLM will know it must
+    # connect first before claiming AppFolio access.
+    data_factory = default_registry._factories["appfolio_vendor"]
+    assert data_factory.auth_check is not None
+    with patch(
+        "backend.app.integrations.appfolio_vendor.factory.load_credential",
+        new=AsyncMock(return_value=None),
+    ):
+        reason = await data_factory.auth_check(ctx)
+    assert reason is not None
+    assert "not connected" in reason.lower()
 
-    # And the materialized factory output must include the auth tools.
-    from backend.app.integrations.appfolio_vendor.factory import _appfolio_factory
+    # The auth factory is separate, core, and always materializes the
+    # connect tools so the LLM has a way to drive the magic-link flow.
+    from backend.app.integrations.appfolio_vendor.factory import (
+        _appfolio_auth_factory,
+        _appfolio_vendor_factory,
+    )
+
+    auth_tools = await _appfolio_auth_factory(ctx)
+    auth_names = {t.name for t in auth_tools}
+    assert ToolName.APPFOLIO_CONNECT in auth_names
+    assert ToolName.APPFOLIO_COMPLETE_2FA in auth_names
+
+    # The data factory returns nothing when the credential is missing.
+    with patch(
+        "backend.app.integrations.appfolio_vendor.factory.load_credential",
+        new=AsyncMock(return_value=None),
+    ):
+        data_tools = await _appfolio_vendor_factory(ctx)
+    data_names = {t.name for t in data_tools}
+    assert ToolName.APPFOLIO_LIST_WORK_ORDERS not in data_names
+    assert ToolName.APPFOLIO_CONNECT not in data_names
+
+
+@pytest.mark.asyncio()
+async def test_unconnected_user_sees_appfolio_in_unauthenticated_list() -> None:
+    """When the user has no AppFolio credential, ``list_capabilities`` must
+    show ``appfolio_vendor`` under "Not connected", not in the available
+    specialists list. Regression for the prod bug where the agent told a
+    first-time user "Yeah, AppFolio is connected" before the user had
+    pasted any magic link, because the registry treated AppFolio as a
+    ready specialist regardless of credential state.
+    """
+    from backend.app.agent.tools.registry import (
+        ToolContext,
+        default_registry,
+        ensure_tool_modules_imported,
+    )
+    from backend.app.models import User
+
+    ensure_tool_modules_imported()
+
+    user = User(id="appfolio-unconnected", user_id="test")
+    ctx = ToolContext(user=user)
 
     with patch(
         "backend.app.integrations.appfolio_vendor.factory.load_credential",
         new=AsyncMock(return_value=None),
     ):
-        tools = await _appfolio_factory(ctx)
-    names = {t.name for t in tools}
-    assert ToolName.APPFOLIO_CONNECT in names
-    assert ToolName.APPFOLIO_COMPLETE_2FA in names
-    # Data tools should still be hidden until a credential is on file.
-    assert ToolName.APPFOLIO_LIST_WORK_ORDERS not in names
+        ready = await default_registry.get_available_specialist_summaries(ctx)
+        unauth = await default_registry.get_unauthenticated_specialists(ctx)
+
+    assert "appfolio_vendor" not in ready, (
+        "appfolio_vendor must NOT appear as a ready specialist for an "
+        "unconnected user; it should be in the unauthenticated list so "
+        "the LLM knows to guide the user through connecting first."
+    )
+    assert "appfolio_vendor" in unauth
+    assert "not connected" in unauth["appfolio_vendor"].lower()
+
+
+@pytest.mark.asyncio()
+async def test_connected_user_sees_appfolio_in_specialist_summaries() -> None:
+    """The complementary case: when the user has a usable credential,
+    ``appfolio_vendor`` must show up as a ready specialist. The summary
+    should mention write capabilities (notes, photos, invoices) so the
+    LLM knows it can act on work orders, not just read them.
+    """
+    from backend.app.agent.tools.registry import (
+        ToolContext,
+        default_registry,
+        ensure_tool_modules_imported,
+    )
+    from backend.app.models import User
+
+    ensure_tool_modules_imported()
+
+    user = User(id="appfolio-connected", user_id="test")
+    ctx = ToolContext(user=user)
+
+    cred = AppFolioCredential(
+        user_id=user.id,
+        jwt="eyJ.fake.jwt",
+        fingerprint="abc123",
+        customer_ids=["cust-1"],
+        extra={},
+    )
+    with patch(
+        "backend.app.integrations.appfolio_vendor.factory.load_credential",
+        new=AsyncMock(return_value=cred),
+    ):
+        ready = await default_registry.get_available_specialist_summaries(ctx)
+        unauth = await default_registry.get_unauthenticated_specialists(ctx)
+
+    assert "appfolio_vendor" in ready
+    assert "appfolio_vendor" not in unauth
+    summary = ready["appfolio_vendor"].lower()
+    # Read-only language alone caused the agent to refuse writes in prod
+    # ("AppFolio is read-only on my end..."). The summary must surface
+    # write capabilities so the LLM knows the full surface area.
+    assert "note" in summary or "invoice" in summary or "schedule" in summary

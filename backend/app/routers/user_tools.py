@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.app.agent.approval import ApprovalStore, PermissionLevel, get_approval_store
 from backend.app.agent.dto import SubToolEntry, ToolConfigEntry, UserData
 from backend.app.agent.stores import ToolConfigStore
+from backend.app.agent.tools.integration_tools import _HIDDEN_CORE_FACTORIES
 from backend.app.agent.tools.registry import (
     default_registry,
     ensure_tool_modules_imported,
@@ -116,6 +117,10 @@ async def _build_tool_list(
     )
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
+        # Hidden backing factories (e.g. ``appfolio_auth``) are part of a
+        # user-facing integration's plumbing, not a separate dashboard row.
+        if name in _HIDDEN_CORE_FACTORIES:
+            continue
         is_core = name in _CORE_FACTORIES
         meta = _FACTORY_META.get(name)
 
