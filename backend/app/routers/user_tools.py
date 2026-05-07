@@ -74,6 +74,11 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         domain_group="Integrations",
         domain_group_order=2,
     ),
+    "gmail": _FactoryMeta(
+        "Search, read, and send Gmail messages on the user's behalf",
+        domain_group="Integrations",
+        domain_group_order=2,
+    ),
     "companycam": _FactoryMeta(
         "Upload photos, search projects, and manage job documentation with CompanyCam",
         domain_group="Integrations",
