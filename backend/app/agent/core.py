@@ -46,6 +46,8 @@ from backend.app.agent.messages import (
     messages_to_messages_api,
 )
 from backend.app.agent.observer import (
+    PURPOSE_AGENT_FOLLOWUP,
+    PURPOSE_AGENT_MAIN,
     LLMRequestPayload,
     compute_min_message_seq,
     emit_llm_request,
@@ -477,6 +479,7 @@ class ClawboltAgent:
         await emit_llm_request(
             LLMRequestPayload(
                 schema_version=1,
+                purpose=PURPOSE_AGENT_MAIN,
                 user_id=self.user.id,
                 session_id=self._session_id or None,
                 request_id=self._request_id or None,
@@ -537,6 +540,7 @@ class ClawboltAgent:
                 await emit_llm_request(
                     LLMRequestPayload(
                         schema_version=1,
+                        purpose=PURPOSE_AGENT_FOLLOWUP,
                         user_id=self.user.id,
                         session_id=self._session_id or None,
                         request_id=self._request_id or None,
