@@ -52,6 +52,17 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
 # discovery surface for "connect <integration>".
 _MAGIC_LINK_INTEGRATIONS: set[str] = {"appfolio_vendor"}
 
+# Core factories that back a user-facing integration but should not surface
+# in ``manage_integration`` listings or be enable/disable-able on their own.
+# These are visibility-paired with another factory: when the user-facing
+# integration is disabled, the backing factory follows. ``appfolio_auth``
+# holds the magic-link connect tools that must stay on the schema even when
+# ``appfolio_vendor`` reports "not connected"; from the user's perspective
+# both are one integration.
+_HIDDEN_CORE_FACTORIES: dict[str, str] = {
+    "appfolio_auth": "appfolio_vendor",
+}
+
 
 _warned_missing_display_names: set[str] = set()
 
@@ -246,6 +257,8 @@ async def _handle_status(
     integration_lines: list[str] = []
 
     for name in sorted(registry.factory_names):
+        if name in _HIDDEN_CORE_FACTORIES:
+            continue
         factory = registry._factories.get(name)
         if factory is None:
             continue
@@ -289,15 +302,26 @@ async def _handle_status(
     return ToolResult(content="\n".join(lines))
 
 
+def _hidden_factories_paired_with(target: str) -> list[str]:
+    """Return any backing factory names that should follow ``target``'s
+    enable/disable state. Hidden factories never appear directly in user-
+    facing listings, so toggling them only happens via cascade from the
+    user-facing factory they back.
+    """
+    return [hidden for hidden, paired in _HIDDEN_CORE_FACTORIES.items() if paired == target]
+
+
 async def _handle_enable(
     user_id: str,
     target: str,
     registry: ToolRegistry,
 ) -> ToolResult:
     """Enable a tool group."""
-    if target not in registry.factory_names:
+    if target not in registry.factory_names or target in _HIDDEN_CORE_FACTORIES:
         available = [
-            n for n in sorted(registry.factory_names) if n not in registry.core_factory_names
+            n
+            for n in sorted(registry.factory_names)
+            if n not in registry.core_factory_names and n not in _HIDDEN_CORE_FACTORIES
         ]
         return ToolResult(
             content=(
@@ -316,6 +340,8 @@ async def _handle_enable(
 
     store = ToolConfigStore(user_id)
     await store.set_enabled(target, enabled=True)
+    for hidden in _hidden_factories_paired_with(target):
+        await store.set_enabled(hidden, enabled=True)
 
     display = _DISPLAY_NAMES.get(target, target)
     logger.info("User %s enabled tool group '%s' via chat", user_id, target)
@@ -330,9 +356,11 @@ async def _handle_disable(
     registry: ToolRegistry,
 ) -> ToolResult:
     """Disable a tool group."""
-    if target not in registry.factory_names:
+    if target not in registry.factory_names or target in _HIDDEN_CORE_FACTORIES:
         available = [
-            n for n in sorted(registry.factory_names) if n not in registry.core_factory_names
+            n
+            for n in sorted(registry.factory_names)
+            if n not in registry.core_factory_names and n not in _HIDDEN_CORE_FACTORIES
         ]
         return ToolResult(
             content=(
@@ -353,6 +381,8 @@ async def _handle_disable(
 
     store = ToolConfigStore(user_id)
     await store.set_enabled(target, enabled=False)
+    for hidden in _hidden_factories_paired_with(target):
+        await store.set_enabled(hidden, enabled=False)
 
     display = _DISPLAY_NAMES.get(target, target)
     logger.info("User %s disabled tool group '%s' via chat", user_id, target)
@@ -363,6 +393,15 @@ async def _handle_disable(
 
 async def _handle_connect(user_id: str, target: str) -> ToolResult:
     """Generate an OAuth authorization URL for an integration."""
+    # Hidden backing factories are never directly addressable by users; the
+    # connect flow goes through the user-facing factory they back.
+    if target in _HIDDEN_CORE_FACTORIES:
+        return ToolResult(
+            content=f"Unknown tool group '{target}'.",
+            is_error=True,
+            error_kind=ToolErrorKind.NOT_FOUND,
+        )
+
     # Magic-link integrations have their own connect flow (paste-a-token)
     # and don't fit the OAuth URL model.
     if target in _MAGIC_LINK_INTEGRATIONS:
@@ -413,6 +452,13 @@ async def _handle_connect(user_id: str, target: str) -> ToolResult:
 
 async def _handle_disconnect(user_id: str, target: str) -> ToolResult:
     """Remove OAuth tokens for an integration."""
+    if target in _HIDDEN_CORE_FACTORIES:
+        return ToolResult(
+            content=f"Unknown tool group '{target}'.",
+            is_error=True,
+            error_kind=ToolErrorKind.NOT_FOUND,
+        )
+
     if target in _MAGIC_LINK_INTEGRATIONS:
         return await _handle_magic_link_disconnect(user_id, target)
 

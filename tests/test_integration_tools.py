@@ -575,3 +575,74 @@ async def test_appfolio_usage_hint_mentions_magic_link(test_user: User) -> None:
     hint = tool.usage_hint.lower()
     assert "appfolio" in hint
     assert "magic-link" in hint or "magic link" in hint
+
+
+# ---------------------------------------------------------------------------
+# Hidden backing factories (``appfolio_auth``)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_status_omits_hidden_appfolio_auth_factory(test_user: User) -> None:
+    """``manage_integration(status)`` must not surface the backing
+    ``appfolio_auth`` factory; users see only ``appfolio_vendor`` as the
+    AppFolio integration.
+    """
+    with patch(
+        "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+        new=AsyncMock(return_value=False),
+    ):
+        result = await _call(test_user, "status")
+    assert "appfolio_auth" not in result.content
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize("action", ["enable", "disable", "connect", "disconnect"])
+async def test_hidden_factory_rejected_from_all_actions(test_user: User, action: str) -> None:
+    """All ``manage_integration`` actions must reject the backing
+    ``appfolio_auth`` factory as ``Unknown tool group``. The LLM never has
+    a reason to address it directly; this is defense in depth in case it
+    tries.
+    """
+    result = await _call(test_user, action, "appfolio_auth")
+    assert result.is_error
+    assert "Unknown tool group" in result.content
+    assert "appfolio_auth" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_disable_appfolio_vendor_cascades_to_appfolio_auth(
+    test_user: User,
+) -> None:
+    """Disabling ``appfolio_vendor`` must also flip ``appfolio_auth`` so
+    the registry's ``excluded_factories`` mechanism removes both
+    factories together. Without the cascade, the auth tools would stay
+    on the LLM's schema even though the user disabled the integration.
+    """
+    store = ToolConfigStore(test_user.id)
+
+    result = await _call(test_user, "disable", "appfolio_vendor")
+    assert not result.is_error
+
+    disabled = await store.get_disabled_tool_names()
+    assert "appfolio_vendor" in disabled
+    assert "appfolio_auth" in disabled
+
+
+@pytest.mark.asyncio()
+async def test_enable_appfolio_vendor_cascades_to_appfolio_auth(
+    test_user: User,
+) -> None:
+    """The complementary cascade: re-enabling ``appfolio_vendor`` must
+    also re-enable ``appfolio_auth`` so the connect flow works again.
+    """
+    store = ToolConfigStore(test_user.id)
+    await store.set_enabled("appfolio_vendor", enabled=False)
+    await store.set_enabled("appfolio_auth", enabled=False)
+
+    result = await _call(test_user, "enable", "appfolio_vendor")
+    assert not result.is_error
+
+    disabled = await store.get_disabled_tool_names()
+    assert "appfolio_vendor" not in disabled
+    assert "appfolio_auth" not in disabled
