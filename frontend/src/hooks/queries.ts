@@ -6,7 +6,6 @@ import type {
   MemoryUpdate,
   PermissionsUpdate,
   ModelConfigUpdate,
-  StorageConfigUpdate,
   ToolConfigUpdateEntry,
   ChannelConfigUpdate,
   DataSharingConsentRequest,
@@ -196,25 +195,6 @@ export function useUpdateCalendarConfig() {
       api.updateCalendarConfig(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.calendarConfig });
-    },
-  });
-}
-
-// --- Storage config ---
-
-export function useStorageConfig() {
-  return useQuery({
-    queryKey: queryKeys.storageConfig,
-    queryFn: () => api.getStorageConfig(),
-  });
-}
-
-export function useUpdateStorageConfig() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: StorageConfigUpdate) => api.updateStorageConfig(body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.storageConfig });
     },
   });
 }

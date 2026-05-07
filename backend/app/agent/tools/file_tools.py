@@ -550,6 +550,28 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
     return create_file_tools(ctx.user, ctx.storage, pending_media, ctx.turn_text)
 
 
+async def _file_auth_check(ctx: ToolContext) -> str | None:
+    """Return a "connect Drive" hint when the user hasn't authorized Drive.
+
+    Returns ``None`` when the integration is not configured at the
+    deployment level (no client id/secret), so it stays hidden rather than
+    nagging users on a deployment that can't offer Drive at all.
+    """
+    from backend.app.config import settings
+    from backend.app.services.oauth import oauth_service
+
+    if not settings.google_drive_client_id or not settings.google_drive_client_secret:
+        return None
+    token = await oauth_service.load_token(ctx.user.id, "google_drive")
+    if token is not None and token.access_token:
+        return None
+    return (
+        "Google Drive is not connected. "
+        "Use manage_integration(action='connect', target='google_drive') "
+        "to generate a connection link for the user."
+    )
+
+
 def _register() -> None:
     from backend.app.agent.tools.registry import SubToolInfo, default_registry
 
@@ -557,12 +579,12 @@ def _register() -> None:
         "file",
         _file_factory,
         requires_storage=True,
-        core=True,
-        summary="Upload, retrieve, and organize files in cloud storage (Dropbox/Google Drive)",
+        core=False,
+        summary="Upload, retrieve, and organize files in the user's Google Drive",
         sub_tools=[
             SubToolInfo(
                 ToolName.UPLOAD_TO_STORAGE,
-                "Upload files to cloud storage",
+                "Upload files to Google Drive",
                 default_permission="ask",
             ),
             SubToolInfo(
@@ -570,7 +592,7 @@ def _register() -> None:
             ),
             SubToolInfo(
                 ToolName.FIND_SAVED_FILES,
-                "Find previously saved files in storage",
+                "Find previously saved files in Drive",
                 default_permission="always",
             ),
             SubToolInfo(
@@ -579,6 +601,7 @@ def _register() -> None:
                 default_permission="always",
             ),
         ],
+        auth_check=_file_auth_check,
     )
 
 

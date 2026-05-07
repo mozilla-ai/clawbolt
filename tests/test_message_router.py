@@ -1,5 +1,5 @@
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -297,23 +297,16 @@ async def test_processed_context_saved_to_message(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-@patch("backend.app.agent.router.get_storage_service")
-@patch("backend.app.agent.router.settings")
+@patch("backend.app.agent.router.init_storage", new_callable=AsyncMock)
 async def test_file_tools_wired_when_storage_configured(
-    mock_settings: MagicMock,
-    mock_get_storage: MagicMock,
+    mock_init_storage: AsyncMock,
     mock_amessages: object,
     test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
-    """File tools should be registered when storage credentials are set."""
-    mock_settings.storage_provider = "dropbox"
-    mock_settings.dropbox_access_token = "test-token"
-    mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "test-model"
-    mock_settings.llm_provider = "test-provider"
-    mock_get_storage.return_value = MockStorageBackend()
+    """File tools should be registered when the user's Drive is connected."""
+    mock_init_storage.return_value = MockStorageBackend()
     mock_amessages.return_value = make_text_response("File saved!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -325,25 +318,21 @@ async def test_file_tools_wired_when_storage_configured(
     )
 
     assert response.reply_text == "File saved!"
-    mock_get_storage.assert_called_once()
+    mock_init_storage.assert_awaited()
 
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-@patch("backend.app.agent.router.settings")
+@patch("backend.app.agent.router.init_storage", new_callable=AsyncMock)
 async def test_file_tools_skipped_when_no_storage(
-    mock_settings: MagicMock,
+    mock_init_storage: AsyncMock,
     mock_amessages: object,
     test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
-    """File tools should be skipped gracefully when storage not configured."""
-    mock_settings.storage_provider = "dropbox"
-    mock_settings.dropbox_access_token = ""
-    mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "test-model"
-    mock_settings.llm_provider = "test-provider"
+    """File tools should be skipped gracefully when Drive isn't connected."""
+    mock_init_storage.return_value = None
     mock_amessages.return_value = make_text_response("No file tools!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -495,23 +484,22 @@ async def test_media_pipeline_failure_retries_with_empty_media(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-@patch("backend.app.agent.router.get_storage_service")
+@patch("backend.app.agent.router.oauth_service.get_valid_token", new_callable=AsyncMock)
 @patch("backend.app.agent.router.settings")
 async def test_storage_exception_skips_file_tools(
-    mock_settings: MagicMock,
-    mock_get_storage: MagicMock,
+    mock_settings: AsyncMock,
+    mock_get_valid_token: AsyncMock,
     mock_amessages: object,
     test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
-    """When get_storage_service() raises, file tools are skipped and processing continues."""
-    mock_settings.storage_provider = "dropbox"
-    mock_settings.dropbox_access_token = "some-token"
-    mock_settings.google_drive_credentials_json = ""
+    """A failure in the OAuth token lookup must not crash the pipeline."""
+    mock_settings.google_drive_client_id = "client-id"
+    mock_settings.google_drive_client_secret = "client-secret"
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
-    mock_get_storage.side_effect = RuntimeError("Storage backend init failed")
+    mock_get_valid_token.side_effect = RuntimeError("Drive token refresh failed")
     mock_amessages.return_value = make_text_response("No file tools due to error!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -524,7 +512,7 @@ async def test_storage_exception_skips_file_tools(
 
     # Processing should succeed even though storage raised
     assert response.reply_text == "No file tools due to error!"
-    mock_get_storage.assert_called_once()
+    mock_get_valid_token.assert_awaited()
 
 
 @pytest.mark.asyncio()
