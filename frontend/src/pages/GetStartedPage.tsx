@@ -285,7 +285,6 @@ export default function GetStartedPage() {
                     subtitle="Send an iMessage to this address to get started."
                     qrSize={120}
                   />
-                  <PhotoAccessHint />
                 </div>
               ) : selectedChannel === 'bluebubbles' && bbConfigured && bbAddress ? (
                 <div className="mt-2 grid gap-2">
@@ -294,7 +293,6 @@ export default function GetStartedPage() {
                     subtitle="Send an iMessage to this address to get started."
                     qrSize={120}
                   />
-                  <PhotoAccessHint />
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-1">
@@ -615,7 +613,6 @@ function MobileImessageFlow({
             <p className="text-center text-sm font-mono">{imessageNumber}</p>
           </>
         )}
-        <PhotoAccessHint />
       </Card>
     );
   }
@@ -722,7 +719,6 @@ function MobileTelegramFlow({
         {telegramBotInfo?.bot_username && (
           <p className="text-center text-sm font-mono">@{telegramBotInfo.bot_username}</p>
         )}
-        <PhotoAccessHint />
       </Card>
     );
   }
@@ -767,14 +763,6 @@ function MobileTelegramFlow({
 // ---------------------------------------------------------------------------
 // Shared bits
 // ---------------------------------------------------------------------------
-
-function PhotoAccessHint() {
-  return (
-    <p className="text-xs text-muted-foreground italic">
-      Clawbolt only sees photos you send it. It can't browse your camera roll.
-    </p>
-  );
-}
 
 function ChannelRadioItem({
   value,
