@@ -5,6 +5,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from any_llm import (
@@ -43,6 +44,11 @@ from backend.app.agent.messages import (
     ToolResultMessage,
     UserMessage,
     messages_to_messages_api,
+)
+from backend.app.agent.observer import (
+    LLMRequestPayload,
+    compute_min_message_seq,
+    emit_llm_request,
 )
 from backend.app.agent.system_prompt import build_agent_system_prompt, build_time_user_context
 from backend.app.agent.tool_errors import (
@@ -468,6 +474,23 @@ class ClawboltAgent:
             tool_count,
             effective_max_tokens,
         )
+        await emit_llm_request(
+            LLMRequestPayload(
+                schema_version=1,
+                user_id=self.user.id,
+                session_id=self._session_id or None,
+                request_id=self._request_id or None,
+                model=effective_model,
+                provider=effective_provider,
+                max_tokens=effective_max_tokens,
+                thinking=thinking,
+                system=system,
+                messages=msg_dicts,
+                tools=tool_schemas,
+                min_message_seq_in_prompt=compute_min_message_seq(messages),
+                started_at=datetime.now(UTC),
+            )
+        )
         for attempt in range(LLM_MAX_RETRIES):
             try:
                 return cast(
@@ -510,6 +533,23 @@ class ClawboltAgent:
                     prepare_system_with_caching(retry_system_str)
                     if retry_system_str is not None
                     else None
+                )
+                await emit_llm_request(
+                    LLMRequestPayload(
+                        schema_version=1,
+                        user_id=self.user.id,
+                        session_id=self._session_id or None,
+                        request_id=self._request_id or None,
+                        model=effective_model,
+                        provider=effective_provider,
+                        max_tokens=effective_max_tokens,
+                        thinking=thinking,
+                        system=system,
+                        messages=trimmed_dicts,
+                        tools=tool_schemas,
+                        min_message_seq_in_prompt=compute_min_message_seq(trim_result.messages),
+                        started_at=datetime.now(UTC),
+                    )
                 )
                 return cast(
                     MessageResponse,
