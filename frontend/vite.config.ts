@@ -23,8 +23,8 @@ export default defineConfig({
         name: 'Clawbolt',
         short_name: 'Clawbolt',
         description: 'AI assistant for the trades',
-        theme_color: '#1a1a2e',
-        background_color: '#1a1a2e',
+        theme_color: '#B8720E',
+        background_color: '#F6F5F3',
         display: 'standalone',
         icons: [
           {

@@ -10,7 +10,7 @@
 - **Direction:** Industrial/Utilitarian with warmth
 - **Decoration level:** Expressive (gradient backgrounds, frosted glass cards, subtle grain texture for depth and sophistication. Reference: octonous.ai for the level of polish expected.)
 - **Mood:** Reliable workshop tool with polish. Confident, warm, practical, but visually sophisticated. The kind of product that feels premium but not corporate.
-- **Logo:** Existing logo (hardware bolt + lobster claw). Do NOT replace with lightning bolt or other icons. Use `/clawbolt.png` asset.
+- **Logo:** Stylized lobster claws cradling a wrench/hex motif. Rendered in the amber primary (`#B8720E`). Do NOT replace with lightning bolt or other icons. Use `/clawbolt.png` for square placements (favicon, sidebar, app shell), `assets/clawbolt_text.png` for the horizontal lockup (README, marketing). Black and white variants of the same artwork live in the `Black/` and `White/` distribution zips for use on photography or single-color contexts.
 - **Reference sites:** housecallpro.com, servicetitan.com, contractorplus.app, octonous.ai (sibling mozilla.ai project, reference for visual polish)
 
 ## Typography
