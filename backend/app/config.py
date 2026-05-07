@@ -182,6 +182,13 @@ class Settings(BaseSettings):
     # ships EU / sandbox hosts (the US prod URL is stable today).
     companycam_web_base: str = "https://app.companycam.com"
 
+    # AppFolio Vendor Portal (magic-link Bearer JWT, no client_id/secret).
+    # Override the API base only for staging or test environments; production
+    # is the host the SPA calls (window.CONFIG.vendorUrl).
+    appfolio_vendor_api_base: str = "https://vendor.appf.io"
+    # Web app base for receipt deep links and the URL users paste from.
+    appfolio_vendor_web_base: str = "https://vendor.appfolio.com"
+
     # Supplier pricing (SerpApi Home Depot engine)
     serpapi_api_key: str = ""  # https://serpapi.com — free tier: 250 searches/month
 

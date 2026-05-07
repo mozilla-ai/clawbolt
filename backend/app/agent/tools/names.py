@@ -61,6 +61,15 @@ class ToolName:
     COMPANYCAM_GET_CHECKLIST = "companycam_get_checklist"
     COMPANYCAM_CREATE_CHECKLIST = "companycam_create_checklist"
 
+    # AppFolio Vendor Portal
+    APPFOLIO_CONNECT = "appfolio_connect"
+    APPFOLIO_COMPLETE_2FA = "appfolio_complete_2fa"
+    APPFOLIO_LIST_WORK_ORDERS = "appfolio_list_work_orders"
+    APPFOLIO_SEARCH_WORK_ORDERS = "appfolio_search_work_orders"
+    APPFOLIO_GET_WORK_ORDER = "appfolio_get_work_order"
+    APPFOLIO_LIST_PAYMENTS = "appfolio_list_payments"
+    APPFOLIO_GET_PROFILE = "appfolio_get_profile"
+
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
 
