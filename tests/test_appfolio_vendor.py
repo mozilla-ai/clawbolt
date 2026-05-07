@@ -584,6 +584,7 @@ async def test_resolve_staged_files_pulls_from_downloaded_media() -> None:
     ctx = MagicMock()
     ctx.user.id = "u1"
     ctx.downloaded_media = [media]
+    ctx.storage = None  # forces the resolver to skip the saved-file fallback
 
     with (
         patch(
@@ -594,12 +595,7 @@ async def test_resolve_staged_files_pulls_from_downloaded_media() -> None:
             "backend.app.agent.media_staging.get_all_for_user",
             return_value={},
         ),
-        patch("backend.app.agent.stores.MediaStore") as ms_cls,
     ):
-        store = AsyncMock()
-        store.get_by_url = AsyncMock(return_value=None)
-        ms_cls.return_value = store
-
         result = await resolve_staged_files(ctx, ["https://example.com/photo1.jpg"])
 
     from backend.app.integrations.appfolio_vendor.service import FileUpload
@@ -621,6 +617,7 @@ async def test_resolve_staged_files_returns_error_for_missing_ref() -> None:
     ctx = MagicMock()
     ctx.user.id = "u1"
     ctx.downloaded_media = []
+    ctx.storage = None
 
     with (
         patch(
@@ -631,12 +628,7 @@ async def test_resolve_staged_files_returns_error_for_missing_ref() -> None:
             "backend.app.agent.media_staging.get_all_for_user",
             return_value={},
         ),
-        patch("backend.app.agent.stores.MediaStore") as ms_cls,
     ):
-        store = AsyncMock()
-        store.get_by_url = AsyncMock(return_value=None)
-        ms_cls.return_value = store
-
         result = await resolve_staged_files(ctx, ["https://example.com/missing.jpg"])
 
     # Returns ToolResult on error rather than raising.

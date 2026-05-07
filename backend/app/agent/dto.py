@@ -86,20 +86,6 @@ class SessionState(BaseModel):
     last_trim_seq: int | None = None
 
 
-class MediaData(BaseModel):
-    """In-memory media file DTO."""
-
-    id: str = ""
-    message_id: str | None = None
-    user_id: str = ""
-    original_url: str = ""
-    mime_type: str = ""
-    processed_text: str = ""
-    storage_url: str = ""
-    storage_path: str = ""
-    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
-
-
 class HeartbeatLogEntry(BaseModel):
     """Heartbeat log entry DTO."""
 

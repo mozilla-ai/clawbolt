@@ -10,16 +10,14 @@ from pydantic import BaseModel, Field
 
 from backend.app.agent import media_staging
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.dto import MediaData
 from backend.app.agent.dto import slugify as _store_slugify
-from backend.app.agent.saved_media import find_saved_media_record, read_saved_media_bytes
-from backend.app.agent.stores import MediaStore
+from backend.app.agent.saved_media import find_saved_file, read_saved_file_bytes
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import MIME_EXTENSIONS
 from backend.app.media.pipeline import run_vision_on_media
 from backend.app.models import User
-from backend.app.services.storage_service import StorageBackend
+from backend.app.services.storage_service import SavedFile, StorageBackend
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -71,8 +69,11 @@ class UploadToStorageParams(BaseModel):
 class OrganizeFileParams(BaseModel):
     """Parameters for the organize_file tool."""
 
-    original_url: str = Field(
-        description="Original URL/file_id of the media to move",
+    storage_path: str = Field(
+        description=(
+            "Current storage path of the file to move, as quoted by find_saved_files"
+            " (e.g. /Unsorted/2026-04-16/file_001.jpg)"
+        ),
     )
     file_category: FileCategory = Field(
         description="Category for organizing the file",
@@ -97,7 +98,7 @@ class FindSavedFilesParams(BaseModel):
     query: str = Field(
         default="",
         description=(
-            "Short text to match against client folders, filenames, or saved descriptions. "
+            "Short text to match against filenames or saved descriptions. "
             "Leave empty to list the most recent saved files."
         ),
     )
@@ -114,8 +115,8 @@ class AnalyzeSavedFileParams(BaseModel):
 
     file_ref: str = Field(
         description=(
-            "Saved file reference from find_saved_files. Accepts media id, storage path, "
-            "or storage URL."
+            "Saved file reference from find_saved_files, normally a storage path"
+            " like /Astro Home/photos/foo.jpg"
         ),
     )
     context: str = Field(
@@ -189,27 +190,17 @@ def _extension_from_mime(mime_type: str) -> str:
     return dotted.lstrip(".")
 
 
-def _saved_file_ref(media: MediaData) -> str:
-    """Return the most stable LLM-facing reference for a saved file."""
-    return media.id or media.storage_path or media.storage_url or media.original_url
-
-
-def _format_saved_file(media: MediaData) -> str:
+def _format_saved_file(saved: SavedFile) -> str:
     """Render one saved file as a compact, parseable line for the LLM."""
-    parts = [
-        f"ref={_saved_file_ref(media)}",
-        f"path={media.storage_path or '<missing>'}",
-    ]
-    if media.mime_type and media.mime_type != "image/jpeg":
-        parts.append(f"mime={media.mime_type}")
-    if media.processed_text:
-        parts.append(f"description={media.processed_text}")
-    if media.created_at:
-        parts.append(f"saved_at={media.created_at}")
-    # Skip ``file://`` URLs: those are LocalFileStorage absolute server paths
-    # that shouldn't leak into the LLM context.
-    if media.storage_url and not media.storage_url.startswith("file://"):
-        parts.append(f"url={media.storage_url}")
+    parts = [f"path={saved.path}"]
+    if saved.mime_type and saved.mime_type != "image/jpeg":
+        parts.append(f"mime={saved.mime_type}")
+    if saved.description:
+        parts.append(f"description={saved.description}")
+    if saved.modified_at:
+        parts.append(f"saved_at={saved.modified_at}")
+    if saved.web_view_link:
+        parts.append(f"url={saved.web_view_link}")
     return "- " + " | ".join(parts)
 
 
@@ -276,8 +267,8 @@ def create_file_tools(
                 content=(
                     "No file content available to upload. This tool only works with "
                     "media attached to the current message. To organize a previously "
-                    "received file, use the organize_file tool instead with the "
-                    "file's original_url."
+                    "received file, use the organize_file tool with the storage path "
+                    "from find_saved_files."
                 ),
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
@@ -290,61 +281,41 @@ def create_file_tools(
             len(file_bytes),
         )
 
-        # Build path and filename
+        # Build path and pick the next sequence number from the destination folder.
         folder_path = build_folder_path(file_category, client_name, client_address)
         extension = _extension_from_mime(mime_type)
-
-        # Count existing files to get index
-        media_store = MediaStore(user.id)
-        existing = await media_store.count_by_path_prefix(folder_path)
-
+        await storage.create_folder(folder_path)
+        existing = await storage.list_folder(folder_path)
         filename = _build_filename(
-            description, file_category, index=existing + 1, extension=extension
+            description, file_category, index=len(existing) + 1, extension=extension
         )
 
-        # Create folder and upload
-        await storage.create_folder(folder_path)
-        storage_url = await storage.upload_file(file_bytes, folder_path, filename)
-
-        # Create media file record
-        await media_store.create(
-            original_url=original_url or "",
+        saved = await storage.upload_file(
+            file_bytes,
+            folder_path,
+            filename,
             mime_type=mime_type,
-            processed_text=description,
-            storage_url=storage_url,
-            storage_path=f"{folder_path}/{filename}",
+            description=description,
         )
 
         if original_url:
             media_staging.evict(user.id, original_url)
 
-        logger.info("File cataloged: %s/%s -> %s", folder_path, filename, storage_url)
-        return ToolResult(content=f"Uploaded {filename} to {folder_path}/ ({storage_url})")
+        logger.info("File cataloged: %s", saved.path)
+        return ToolResult(content=f"Uploaded {filename} to {folder_path}/ ({saved.path})")
 
     async def organize_file(
-        original_url: str,
+        storage_path: str,
         file_category: str,
         client_name: str | None = None,
         client_address: str | None = None,
         description: str = "",
     ) -> ToolResult:
         """Move an auto-saved file from Unsorted into the correct client folder."""
-        # Resolve media handles to original URLs.
-        resolved = media_staging.resolve_media_ref(user.id, original_url)
-        if resolved is not None:
-            original_url = resolved[0]
+        current_path = storage_path.strip()
+        if not current_path.startswith("/"):
+            current_path = f"/{current_path}"
 
-        # Look up the media record
-        media_store = MediaStore(user.id)
-        media_file = await media_store.get_by_url(original_url)
-        if media_file is None:
-            return ToolResult(
-                content=f"File not found for URL: {original_url}",
-                is_error=True,
-                error_kind=ToolErrorKind.NOT_FOUND,
-            )
-
-        current_path = media_file.storage_path  # e.g. /Unsorted/2026-03-02/file_001.jpg
         new_folder = build_folder_path(file_category, client_name, client_address)
 
         # Guard: without client context the file would just move within Unsorted
@@ -362,9 +333,8 @@ def create_file_tools(
         if not current_path.startswith("/Unsorted/"):
             return ToolResult(content=f"File is already organized at {current_path}")
 
-        # Parse current path into folder and filename
         parts = current_path.rsplit("/", 1)
-        if len(parts) != 2:
+        if len(parts) != 2 or not parts[1]:
             return ToolResult(
                 content=f"Cannot parse storage path: {current_path}",
                 is_error=True,
@@ -372,40 +342,36 @@ def create_file_tools(
             )
         old_folder, old_filename = parts
 
-        # Build new filename
+        existing = await find_saved_file(storage, current_path)
+        if existing is None:
+            return ToolResult(
+                content=f"File not found at {current_path}",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+
         extension = old_filename.rsplit(".", 1)[-1] if "." in old_filename else "bin"
-        existing = await media_store.count_by_path_prefix(new_folder)
-        new_filename = _build_filename(
-            description, file_category, index=existing + 1, extension=extension
-        )
-
-        # Create destination folder and move
         await storage.create_folder(new_folder)
-        new_url = await storage.move_file(old_folder, old_filename, new_folder, new_filename)
-
-        # Update the record
-        update_fields: dict[str, str] = {
-            "storage_path": f"{new_folder}/{new_filename}",
-            "storage_url": new_url,
-        }
-        if description:
-            update_fields["processed_text"] = description
-        await media_store.update(media_file.id, **update_fields)
-
-        media_staging.evict(user.id, original_url)
-
-        logger.info(
-            "File organized: %s -> %s/%s",
-            current_path,
-            new_folder,
-            new_filename,
+        target_existing = await storage.list_folder(new_folder)
+        new_filename = _build_filename(
+            description, file_category, index=len(target_existing) + 1, extension=extension
         )
-        return ToolResult(content=f"Moved {old_filename} to {new_folder}/{new_filename}")
+
+        try:
+            moved = await storage.move_file(old_folder, old_filename, new_folder, new_filename)
+        except FileNotFoundError:
+            return ToolResult(
+                content=f"File not found at {current_path}",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+
+        logger.info("File organized: %s -> %s", current_path, moved.path)
+        return ToolResult(content=f"Moved {old_filename} to {moved.path}")
 
     async def find_saved_files(query: str = "", limit: int = 5) -> ToolResult:
         """Search previously saved files in durable storage."""
-        media_store = MediaStore(user.id)
-        matches = await media_store.search(query=query, limit=limit)
+        matches = await storage.search_files(query=query, limit=limit)
         if not matches:
             if query.strip():
                 content = f'No saved files matched "{query}".'
@@ -418,29 +384,29 @@ def create_file_tools(
             )
 
         heading = "Recent saved files:" if not query.strip() else f'Saved files matching "{query}":'
-        lines = [_format_saved_file(media) for media in matches]
+        lines = [_format_saved_file(saved) for saved in matches]
         return ToolResult(content=heading + "\n" + "\n".join(lines))
 
     async def analyze_saved_file(file_ref: str, context: str = "") -> ToolResult:
         """Run vision analysis on an image that was already saved to storage."""
-        media_file = await find_saved_media_record(user.id, file_ref)
-        if media_file is None:
+        saved = await find_saved_file(storage, file_ref)
+        if saved is None:
             return ToolResult(
                 content=f"Saved file not found for reference: {file_ref}",
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
 
-        cache_key = media_file.id or file_ref
+        cache_key = saved.path or file_ref
         cached = saved_analysis_cache.get(cache_key)
         if cached is not None:
             return ToolResult(content=cached)
 
-        mime_type = media_file.mime_type or ""
+        mime_type = saved.mime_type or ""
         if not mime_type.startswith("image/"):
             return ToolResult(
                 content=(
-                    f"Saved file {_saved_file_ref(media_file)!r} is {mime_type or 'unknown'}, "
+                    f"Saved file {saved.path!r} is {mime_type or 'unknown'}, "
                     "not an image. analyze_saved_file only works on saved photos."
                 ),
                 is_error=True,
@@ -448,19 +414,17 @@ def create_file_tools(
             )
 
         try:
-            content = await read_saved_media_bytes(storage, media_file)
+            content = await read_saved_file_bytes(storage, saved)
         except FileNotFoundError:
             return ToolResult(
-                content=(
-                    f"Saved file {_saved_file_ref(media_file)!r} could not be loaded from storage."
-                ),
+                content=f"Saved file {saved.path!r} could not be loaded from storage.",
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
         except Exception as exc:
-            logger.exception("Failed to load saved media %s", _saved_file_ref(media_file))
+            logger.exception("Failed to load saved media %s", saved.path)
             return ToolResult(
-                content=f"Couldn't load saved file {_saved_file_ref(media_file)!r}: {exc}",
+                content=f"Couldn't load saved file {saved.path!r}: {exc}",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
@@ -470,7 +434,7 @@ def create_file_tools(
         saved_analysis_cache[cache_key] = description
         logger.info(
             "analyze_saved_file ran vision for %s (chars=%d)",
-            _saved_file_ref(media_file),
+            saved.path,
             len(description),
         )
         return ToolResult(content=description)
@@ -501,9 +465,9 @@ def create_file_tools(
             description=(
                 "Move a previously received file from the Unsorted folder into the "
                 "correct client folder. Use this when you learn which client a file "
-                "belongs to, even if the file was received in an earlier message. "
-                "Requires the original_url of the file and at least a client_name "
-                "or client_address to build the destination folder."
+                "belongs to. Quote the storage_path from find_saved_files (for example "
+                "/Unsorted/2026-04-16/file_001.jpg) and pass at least client_name or "
+                "client_address."
             ),
             function=organize_file,
             params_model=OrganizeFileParams,
@@ -530,7 +494,7 @@ def create_file_tools(
             name=ToolName.ANALYZE_SAVED_FILE,
             description=(
                 "Run vision analysis on a previously saved image in durable storage. "
-                "Use the file_ref returned by find_saved_files. Only works on images."
+                "Quote the storage path returned by find_saved_files. Only works on images."
             ),
             function=analyze_saved_file,
             params_model=AnalyzeSavedFileParams,

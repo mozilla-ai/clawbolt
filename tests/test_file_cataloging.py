@@ -2,7 +2,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.app.agent.file_store import MediaStore
 from backend.app.agent.file_store import slugify as _slugify
 from backend.app.agent.tools.file_tools import (
     _build_client_folder,
@@ -106,10 +105,10 @@ def test_build_filename_without_description() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_upload_creates_media_file_record(
+async def test_upload_writes_file_to_storage(
     test_user: User,
 ) -> None:
-    """upload_to_storage should create a MediaData record."""
+    """upload_to_storage should write to the storage backend with the right path."""
     storage = MockStorageBackend()
     tools = create_file_tools(
         test_user,
@@ -126,9 +125,34 @@ async def test_upload_creates_media_file_record(
         original_url="https://example.com/media/photo.jpg",
     )
 
+    assert result.is_error is False
     assert "Uploaded" in result.content
     assert "damaged_deck_railing_001.jpg" in result.content
-    assert result.is_error is False
+    assert any("Johnson - 116 Virginia Ave/photos" in key for key in storage.files)
+
+
+@pytest.mark.asyncio()
+async def test_upload_persists_description_on_storage_metadata(
+    test_user: User,
+) -> None:
+    """upload_to_storage should write description into the backend's metadata."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(
+        test_user,
+        storage,
+        pending_media={"https://example.com/p.jpg": b"img"},
+    )
+    upload = tools[0].function
+
+    await upload(
+        file_category="job_photo",
+        description="receipt for fasteners",
+        client_name="Loeffler",
+        original_url="https://example.com/p.jpg",
+    )
+
+    saved = next(iter(storage.metadata.values()))
+    assert saved.description == "receipt for fasteners"
 
 
 @pytest.mark.asyncio()
@@ -153,7 +177,7 @@ async def test_upload_to_client_folder(
 
     assert len(storage.files) == 1
     path = next(iter(storage.files))
-    assert "/Jane Smith/documents/" in path
+    assert "Jane Smith/documents/" in path
     assert path.endswith(".pdf")
 
 
@@ -178,7 +202,7 @@ async def test_upload_without_client_goes_to_unsorted(
 
     assert len(storage.files) == 1
     path = next(iter(storage.files))
-    assert "/Unsorted/" in path
+    assert "Unsorted/" in path
     assert path.endswith(".pdf")
 
 
@@ -277,21 +301,13 @@ async def test_organize_file_moves_to_client_folder(
 ) -> None:
     """organize_file should move an auto-saved file into the client folder."""
     storage = MockStorageBackend()
-    # Simulate auto-saved file in Unsorted
     await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
-    media_store = MediaStore(test_user.id)
-    await media_store.create(
-        original_url="tg_file_id_123",
-        mime_type="image/jpeg",
-        storage_url="https://mock-storage.example.com/Unsorted/2026-03-02/file_001.jpg",
-        storage_path="/Unsorted/2026-03-02/file_001.jpg",
-    )
 
     tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(
-        original_url="tg_file_id_123",
+        storage_path="/Unsorted/2026-03-02/file_001.jpg",
         file_category="job_photo",
         client_name="John Smith",
         client_address="116 Virginia Ave",
@@ -304,7 +320,7 @@ async def test_organize_file_moves_to_client_folder(
     assert result.is_error is False
 
     # Verify storage state: old key gone, new key present
-    assert "/Unsorted/2026-03-02/file_001.jpg" not in storage.files
+    assert "Unsorted/2026-03-02/file_001.jpg" not in storage.files
     assert any("John Smith" in k for k in storage.files)
 
 
@@ -312,13 +328,13 @@ async def test_organize_file_moves_to_client_folder(
 async def test_organize_file_not_found(
     test_user: User,
 ) -> None:
-    """organize_file should return an error if the file is not in the store."""
+    """organize_file should return an error if the file is not in storage."""
     storage = MockStorageBackend()
     tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(
-        original_url="nonexistent_file_id",
+        storage_path="/Unsorted/2026-03-02/nonexistent.jpg",
         file_category="job_photo",
         client_name="Jane",
     )
@@ -332,19 +348,13 @@ async def test_organize_file_already_in_client_folder(
 ) -> None:
     """organize_file should return early if the file is already in a client folder."""
     storage = MockStorageBackend()
-    media_store = MediaStore(test_user.id)
-    await media_store.create(
-        original_url="tg_file_id_456",
-        mime_type="image/jpeg",
-        storage_url="https://mock-storage.example.com/Jane/photos/deck_001.jpg",
-        storage_path="/Jane/photos/deck_001.jpg",
-    )
+    await storage.upload_file(b"img-data", "/Jane/photos", "deck_001.jpg")
 
     tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(
-        original_url="tg_file_id_456",
+        storage_path="/Jane/photos/deck_001.jpg",
         file_category="job_photo",
         client_name="Jane",
     )
@@ -357,19 +367,13 @@ async def test_organize_file_without_client_returns_error(
 ) -> None:
     """organize_file without client_name or client_address should return an error."""
     storage = MockStorageBackend()
-    media_store = MediaStore(test_user.id)
-    await media_store.create(
-        original_url="tg_file_id_789",
-        mime_type="image/jpeg",
-        storage_url="https://mock-storage.example.com/Unsorted/2026-03-02/file_001.jpg",
-        storage_path="/Unsorted/2026-03-02/file_001.jpg",
-    )
+    await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
 
     tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(
-        original_url="tg_file_id_789",
+        storage_path="/Unsorted/2026-03-02/file_001.jpg",
         file_category="job_photo",
     )
     assert "Error" in result.content
@@ -378,66 +382,21 @@ async def test_organize_file_without_client_returns_error(
 
 
 @pytest.mark.asyncio()
-async def test_organize_file_resolves_by_storage_url(
+async def test_organize_file_normalizes_missing_leading_slash(
     test_user: User,
 ) -> None:
-    """organize_file should find the record when the agent passes storage_url
-    as original_url. This is the real-world case: upload_to_storage's tool
-    result surfaces storage_url (e.g. ``file:///...``) to the LLM, not the
-    channel attachment id (e.g. ``bb_<guid>``) that we stored on the record.
-    Later calls to organize_file pass back the storage_url because that's
-    the only URL the LLM has seen."""
-    storage = MockStorageBackend()
-    await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
-    media_store = MediaStore(test_user.id)
-    await media_store.create(
-        original_url="bb_abc-guid",  # channel attachment id, hidden from LLM
-        mime_type="image/jpeg",
-        storage_url="file:///app/data/.../Unsorted/2026-03-02/file_001.jpg",
-        storage_path="/Unsorted/2026-03-02/file_001.jpg",
-    )
-
-    tools = create_file_tools(test_user, storage)
-    organize = tools[1].function
-
-    # LLM only ever saw the storage_url in the upload result; it passes that.
-    result = await organize(
-        original_url="file:///app/data/.../Unsorted/2026-03-02/file_001.jpg",
-        file_category="job_photo",
-        client_name="Ralph Smith",
-        description="tile installation reference photo",
-    )
-
-    assert result.is_error is False
-    assert "Moved" in result.content
-    assert "Ralph Smith" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_organize_file_resolves_by_storage_path(
-    test_user: User,
-) -> None:
-    """organize_file should also find the record by storage_path, in case
-    the LLM echoes the path fragment instead of the full URL."""
+    """organize_file should accept storage_path with or without a leading slash."""
     storage = MockStorageBackend()
     await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_002.jpg")
-    media_store = MediaStore(test_user.id)
-    await media_store.create(
-        original_url="bb_xyz-guid",
-        mime_type="image/jpeg",
-        storage_url="https://mock-storage.example.com/Unsorted/2026-03-02/file_002.jpg",
-        storage_path="/Unsorted/2026-03-02/file_002.jpg",
-    )
 
     tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(
-        original_url="/Unsorted/2026-03-02/file_002.jpg",
+        storage_path="Unsorted/2026-03-02/file_002.jpg",
         file_category="job_photo",
         client_name="Ralph Smith",
     )
-
     assert result.is_error is False
     assert "Moved" in result.content
 
@@ -451,22 +410,21 @@ async def test_organize_file_resolves_by_storage_path(
 async def test_find_saved_files_matches_query_tokens(
     test_user: User,
 ) -> None:
-    """find_saved_files should match across client path and saved description tokens."""
+    """find_saved_files should match against filenames and stored descriptions."""
     storage = MockStorageBackend()
-    media_store = MediaStore(test_user.id)
-    await media_store.create(
-        original_url="bb_receipt",
+    await storage.upload_file(
+        b"img-data",
+        "/Loeffler/documents",
+        "receipt_001.jpg",
         mime_type="image/jpeg",
-        processed_text="receipt for fasteners",
-        storage_url="https://mock-storage.example.com/Loeffler/documents/receipt_001.jpg",
-        storage_path="/Loeffler/documents/receipt_001.jpg",
+        description="receipt for fasteners",
     )
-    await media_store.create(
-        original_url="bb_photo",
+    await storage.upload_file(
+        b"other",
+        "/Acme/photos",
+        "photo_001.jpg",
         mime_type="image/jpeg",
-        processed_text="front porch progress photo",
-        storage_url="https://mock-storage.example.com/Acme/photos/photo_001.jpg",
-        storage_path="/Acme/photos/photo_001.jpg",
+        description="front porch progress photo",
     )
 
     tools = create_file_tools(test_user, storage)
@@ -475,9 +433,8 @@ async def test_find_saved_files_matches_query_tokens(
     result = await find_saved(query="Loeffler receipt")
 
     assert result.is_error is False
-    assert "media-001" in result.content
     assert "/Loeffler/documents/receipt_001.jpg" in result.content
-    assert "media-002" not in result.content
+    assert "/Acme/photos/photo_001.jpg" not in result.content
 
 
 @pytest.mark.asyncio()
@@ -490,20 +447,21 @@ async def test_analyze_saved_file_reads_from_durable_storage(
     mock_vision.return_value = "Receipt total: $29.91."
 
     storage = MockStorageBackend()
-    await storage.upload_file(b"saved-image-bytes", "/Loeffler/documents", "receipt_001.jpg")
-    media_store = MediaStore(test_user.id)
-    created = await media_store.create(
-        original_url="bb_receipt",
+    await storage.upload_file(
+        b"saved-image-bytes",
+        "/Loeffler/documents",
+        "receipt_001.jpg",
         mime_type="image/jpeg",
-        processed_text="receipt for fasteners",
-        storage_url="https://mock-storage.example.com/Loeffler/documents/receipt_001.jpg",
-        storage_path="/Loeffler/documents/receipt_001.jpg",
+        description="receipt for fasteners",
     )
 
     tools = create_file_tools(test_user, storage)
     analyze_saved = next(t for t in tools if t.name == ToolName.ANALYZE_SAVED_FILE).function
 
-    result = await analyze_saved(file_ref=created.id, context="Pull the total")
+    result = await analyze_saved(
+        file_ref="/Loeffler/documents/receipt_001.jpg",
+        context="Pull the total",
+    )
 
     assert result.is_error is False
     assert result.content == "Receipt total: $29.91."
@@ -524,20 +482,18 @@ async def test_analyze_saved_file_uses_turn_text_when_context_omitted(
     mock_vision.return_value = "The receipt total is $29.91."
 
     storage = MockStorageBackend()
-    await storage.upload_file(b"saved-image-bytes", "/Loeffler/documents", "receipt_001.jpg")
-    media_store = MediaStore(test_user.id)
-    created = await media_store.create(
-        original_url="bb_receipt",
+    await storage.upload_file(
+        b"saved-image-bytes",
+        "/Loeffler/documents",
+        "receipt_001.jpg",
         mime_type="image/jpeg",
-        processed_text="receipt for fasteners",
-        storage_url="https://mock-storage.example.com/Loeffler/documents/receipt_001.jpg",
-        storage_path="/Loeffler/documents/receipt_001.jpg",
+        description="receipt for fasteners",
     )
 
     tools = create_file_tools(test_user, storage, turn_text="What was the total on this receipt?")
     analyze_saved = next(t for t in tools if t.name == ToolName.ANALYZE_SAVED_FILE).function
 
-    result = await analyze_saved(file_ref=created.id)
+    result = await analyze_saved(file_ref="/Loeffler/documents/receipt_001.jpg")
 
     assert result.is_error is False
     assert result.content == "The receipt total is $29.91."
@@ -554,19 +510,18 @@ async def test_analyze_saved_file_rejects_non_image(
 ) -> None:
     """analyze_saved_file should reject saved non-image documents."""
     storage = MockStorageBackend()
-    media_store = MediaStore(test_user.id)
-    created = await media_store.create(
-        original_url="bb_doc",
+    await storage.upload_file(
+        b"pdf-bytes",
+        "/Loeffler/documents",
+        "invoice_001.pdf",
         mime_type="application/pdf",
-        processed_text="supplier invoice",
-        storage_url="https://mock-storage.example.com/Loeffler/documents/invoice_001.pdf",
-        storage_path="/Loeffler/documents/invoice_001.pdf",
+        description="supplier invoice",
     )
 
     tools = create_file_tools(test_user, storage)
     analyze_saved = next(t for t in tools if t.name == ToolName.ANALYZE_SAVED_FILE).function
 
-    result = await analyze_saved(file_ref=created.id)
+    result = await analyze_saved(file_ref="/Loeffler/documents/invoice_001.pdf")
 
     assert result.is_error is True
     assert "not an image" in result.content

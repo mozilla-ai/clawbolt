@@ -12,7 +12,6 @@ from backend.app.models import (  # noqa: F401
     HeartbeatLog,
     IdempotencyKey,
     LLMUsageLog,
-    MediaFile,
     MemoryDocument,
     Message,
     OAuthToken,

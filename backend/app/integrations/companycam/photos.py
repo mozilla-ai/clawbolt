@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.saved_media import (
-    find_saved_media_record,
-    latest_saved_media_record,
-    read_saved_media_bytes,
+    find_saved_file,
+    latest_saved_file,
+    read_saved_file_bytes,
 )
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
@@ -112,26 +112,28 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 file_bytes = all_staged[first_url]
                 original_url = first_url
 
-        # 3. Fall back to MediaFile records (already saved to storage)
-        if not file_bytes:
+        # 3. Fall back to a saved file in Drive. The agent quotes a storage
+        #    path (e.g. /Astro Home/photos/foo.jpg) when it wants to push a
+        #    previously saved file into CompanyCam.
+        if not file_bytes and ctx.storage is not None:
             if original_url:
-                media_file = await find_saved_media_record(ctx.user.id, original_url)
+                saved = await find_saved_file(ctx.storage, original_url)
             else:
                 # Same guard as step 2: only grab the most recent media
-                # when the LLM did not specify a particular URL.
-                media_file = await latest_saved_media_record(ctx.user.id)
+                # when the LLM did not specify a particular path.
+                saved = await latest_saved_file(ctx.storage)
 
-            if media_file:
-                mime_type = media_file.mime_type or "image/jpeg"
-                storage_url = media_file.storage_url
-                # Cloud storage: use the shareable URL directly
-                if storage_url and not storage_url.startswith("file://"):
-                    photo_uri = storage_url
-                elif ctx.storage is not None:
+            if saved is not None:
+                mime_type = saved.mime_type or "image/jpeg"
+                # Cloud storage: prefer the shareable URL; CompanyCam can
+                # download Drive ``webViewLink``s without a presigned URL.
+                if saved.web_view_link:
+                    photo_uri = saved.web_view_link
+                else:
                     try:
-                        file_bytes = await read_saved_media_bytes(ctx.storage, media_file)
+                        file_bytes = await read_saved_file_bytes(ctx.storage, saved)
                     except FileNotFoundError:
-                        logger.warning("Saved media missing from storage: %s", media_file.id)
+                        logger.warning("Saved media missing from storage: %s", saved.path)
 
         if not file_bytes and not photo_uri:
             return ToolResult(

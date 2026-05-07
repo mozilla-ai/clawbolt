@@ -185,9 +185,6 @@ class User(Base):
     sessions: Mapped[list["ChatSession"]] = relationship(
         "ChatSession", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
-    media_files: Mapped[list["MediaFile"]] = relationship(
-        "MediaFile", back_populates="user", cascade="all, delete-orphan", lazy="raise"
-    )
     memory_documents: Mapped[list["MemoryDocument"]] = relationship(
         "MemoryDocument", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
@@ -328,26 +325,6 @@ class Message(Base):
     session: Mapped["ChatSession"] = relationship(
         "ChatSession", back_populates="messages", lazy="raise"
     )
-
-
-class MediaFile(Base):
-    __tablename__ = "media_files"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(
-        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    message_id: Mapped[str] = mapped_column(String, default="")
-    original_url: Mapped[str] = mapped_column(Text, default="")
-    mime_type: Mapped[str] = mapped_column(String, default="")
-    processed_text: Mapped[str] = mapped_column(Text, default="")
-    storage_url: Mapped[str] = mapped_column(Text, default="")
-    storage_path: Mapped[str] = mapped_column(String, default="")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
-
-    user: Mapped["User"] = relationship("User", back_populates="media_files", lazy="raise")
 
 
 class MemoryDocument(Base):

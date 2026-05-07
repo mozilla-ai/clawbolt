@@ -40,7 +40,7 @@ uv run ty check --python .venv backend/ tests/ alembic/
 
 ## Storage
 
-All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The database has 12 tables:
+All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The database has 11 tables:
 
 | Table | Purpose |
 |---|---|
@@ -48,7 +48,6 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `channel_routes` | Channel -> user routing (Telegram, webchat, etc.) |
 | `sessions` | Chat session metadata |
 | `messages` | Chat messages (FK to sessions) |
-| `media_files` | Media file manifest |
 | `memory_documents` | Structured memory and compaction history |
 | `heartbeat_logs` | Heartbeat send log |
 | `idempotency_keys` | Webhook deduplication |
@@ -57,11 +56,13 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `calendar_configs` | Per-user calendar integration settings |
 | `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, Google Drive, QuickBooks, etc.) |
 
+Saved files are not tracked in Postgres. The Google Drive integration is the source of truth for filenames, locations, and descriptions. The agent quotes saved files by their storage path (e.g. `/Astro Home Management - 123 Penn Ave/photos/foo.jpg`).
+
 Key store modules:
 - `backend/app/agent/user_db.py` -- `UserStore` (singleton via `get_user_store()`)
 - `backend/app/agent/session_db.py` -- `SessionStore` (per-user via `get_session_store(id)`)
 - `backend/app/agent/memory_db.py` -- `MemoryStore` (per-user via `get_memory_store(id)`)
-- `backend/app/agent/stores.py` -- `MediaStore`, `HeartbeatStore`, `IdempotencyStore`, `LLMUsageStore`, `ToolConfigStore`
+- `backend/app/agent/stores.py` -- `HeartbeatStore`, `IdempotencyStore`, `LLMUsageStore`, `ToolConfigStore`
 - `backend/app/agent/dto.py` -- Pydantic DTOs: `UserData`, `StoredMessage`, `SessionState`, etc.
 - `backend/app/agent/file_store.py` -- Compatibility shim (re-exports from above modules)
 - `backend/app/database.py` -- `Base`, `AsyncSessionLocal`, `db_session_async()`, `get_async_db()`, `get_async_engine()`
