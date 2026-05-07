@@ -12,10 +12,12 @@ Encrypted at rest under ``EncryptedString`` like ``body`` /
 quotes back user-supplied content (names, addresses, integration payloads)
 and would expose the same PII as the message body if left in plaintext.
 
-Nullable / default empty so existing rows remain readable; outbound
-messages persisted before this migration ran simply have no captured
-thinking. Inbound messages always have an empty value (the column is only
-written by the agent's outbound persistence path).
+NOT NULL with a server default of empty string so existing rows
+backfill cleanly and raw-SQL inserts in older migration tests (which
+omit the column) keep working. Outbound messages persisted before this
+migration ran simply read back as empty thinking; inbound rows always
+have an empty value because the column is only written by the agent's
+outbound persistence path.
 
 Revision ID: 033
 Revises: 032

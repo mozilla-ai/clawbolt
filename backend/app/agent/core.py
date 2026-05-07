@@ -1154,6 +1154,14 @@ class ClawboltAgent:
                     total_cache_creation_input_tokens=_total_cache_creation_tokens,
                     total_cache_read_input_tokens=_total_cache_read_tokens,
                     system_prompt=system_prompt,
+                    # Surface any reasoning that preceded the error stop so
+                    # downstream observers (and a future persistence policy
+                    # that records error fallbacks) can see what the model
+                    # was working through before it bailed. Today
+                    # ``persist_outbound`` short-circuits on
+                    # ``is_error_fallback``, so this rides along the in-memory
+                    # response only.
+                    thinking_text=get_response_thinking(response),
                 )
 
             # Parse tool calls via shared parser
