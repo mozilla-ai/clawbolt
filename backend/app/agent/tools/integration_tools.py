@@ -28,7 +28,7 @@ _DISPLAY_NAMES: dict[str, str] = {
     "profile": "Profile",
     "memory": "Memory",
     "messaging": "Messaging",
-    "file": "File management",
+    "file": "Google Drive",
     "heartbeat": "Heartbeat",
     "quickbooks": "QuickBooks Online",
     "calendar": "Google Calendar",
@@ -41,6 +41,7 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
     "calendar": "google_calendar",
     "quickbooks": "quickbooks",
     "companycam": "companycam",
+    "file": "google_drive",
 }
 
 
@@ -119,8 +120,9 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
                 "Before offering ANY connect link, call action='status' first and "
                 "skip integrations already showing as connected (do not re-prompt "
                 "for something they already set up). "
-                "Call with action='connect' and target='google_calendar' or 'quickbooks' "
-                "to generate an OAuth link the user can tap to connect. "
+                "Call with action='connect' and target='google_calendar', "
+                "'google_drive', or 'quickbooks' to generate an OAuth link "
+                "the user can tap to connect. "
                 "Call with action='enable'/'disable' and target=group_name to toggle tools."
             ),
             # Enable/disable and connect/disconnect mutate the per-user

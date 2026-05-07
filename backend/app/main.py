@@ -23,7 +23,6 @@ from backend.app.config import (
     log_config_warnings,
     settings,
     validate_imessage_backend,
-    validate_personal_storage_backend,
 )
 from backend.app.config_store import (
     apply_to_settings,
@@ -223,7 +222,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
     await _enforce_single_channel()
     validate_imessage_backend()
-    validate_personal_storage_backend()
     log_config_warnings()
 
     # Warm the Intuit discovery document cache so QuickBooks OAuth
