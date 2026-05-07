@@ -166,6 +166,7 @@ async def compact_session(
     trimmed_messages: list[AgentMessage],
     max_message_seq: int | None = None,
     event_id: int | None = None,
+    admin_note: str | None = None,
 ) -> tuple[str, int | None]:
     """Consolidate messages into an updated MEMORY.md via LLM rewrite.
 
@@ -185,6 +186,13 @@ async def compact_session(
             trim watermark. When ``None`` (e.g. test invocations or any
             future caller that has not pre-inserted), a new completed row
             is inserted.
+        admin_note: Optional steering note prepended to the conversation
+            block as ``[admin note: ...]`` so the compaction LLM can be
+            biased about how to read the conversation. Used by the admin
+            "compact now" path to flag e.g. "the agent made factual errors
+            about its own capabilities; do not preserve those as facts".
+            Has no effect on the trim-driven hot path, which leaves it
+            unset.
 
     Returns:
         A tuple of (memory_update, max_message_seq) where memory_update is the
@@ -200,6 +208,9 @@ async def compact_session(
     conversation_text = _format_messages_for_compaction(trimmed_messages)
     if not conversation_text.strip():
         return "", None
+
+    if admin_note:
+        conversation_text = f"[admin note: {admin_note}]\n\n{conversation_text}"
 
     # Telemetry: compaction is a routine operation for active users (every
     # ~27 days at 15k tokens/day, more often for power users). Capturing
