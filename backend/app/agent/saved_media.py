@@ -14,6 +14,8 @@ async def find_saved_media_record(user_id: str, file_ref: str) -> MediaData | No
         return None
 
     media_store = MediaStore(user_id)
+    # Skip the URL-shaped lookup for ids in the canonical ``media-NNN`` form
+    # to avoid an extra DB query on the common case.
     if ref.startswith("media-"):
         media = await media_store.get_by_id(ref)
         if media is not None:

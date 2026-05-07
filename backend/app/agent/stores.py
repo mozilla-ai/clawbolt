@@ -343,12 +343,15 @@ def _media_search_select(user_id: str, query: str, limit: int) -> Select[tuple[M
     tokens = _media_search_tokens(query)
     clauses: list[Any] = [MediaFile.user_id == user_id]
     for token in tokens:
-        needle = f"%{token}%"
+        # Escape LIKE metacharacters so saved filenames like ``photo_001`` are
+        # treated as literals rather than ``photo<any>001`` wildcards.
+        escaped = token.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
+        needle = f"%{escaped}%"
         clauses.append(
             or_(
-                func.lower(MediaFile.storage_path).like(needle),
-                func.lower(MediaFile.processed_text).like(needle),
-                func.lower(MediaFile.mime_type).like(needle),
+                func.lower(MediaFile.storage_path).like(needle, escape="\\"),
+                func.lower(MediaFile.processed_text).like(needle, escape="\\"),
+                func.lower(MediaFile.mime_type).like(needle, escape="\\"),
             )
         )
     return select(MediaFile).where(*clauses).order_by(MediaFile.created_at.desc()).limit(limit)

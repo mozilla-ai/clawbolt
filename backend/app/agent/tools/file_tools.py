@@ -199,13 +199,16 @@ def _format_saved_file(media: MediaData) -> str:
     parts = [
         f"ref={_saved_file_ref(media)}",
         f"path={media.storage_path or '<missing>'}",
-        f"mime={media.mime_type or 'unknown'}",
     ]
+    if media.mime_type and media.mime_type != "image/jpeg":
+        parts.append(f"mime={media.mime_type}")
     if media.processed_text:
         parts.append(f"description={media.processed_text}")
     if media.created_at:
         parts.append(f"saved_at={media.created_at}")
-    if media.storage_url:
+    # Skip ``file://`` URLs: those are LocalFileStorage absolute server paths
+    # that shouldn't leak into the LLM context.
+    if media.storage_url and not media.storage_url.startswith("file://"):
         parts.append(f"url={media.storage_url}")
     return "- " + " | ".join(parts)
 
@@ -227,6 +230,8 @@ def create_file_tools(
         turn_text: Current turn text, used as fallback analysis context.
     """
     media_map = pending_media or {}
+    # Per-turn cache: same closure lifetime as the tool list, so a saved file
+    # analyzed twice in one turn only pays the vision cost once.
     saved_analysis_cache: dict[str, str] = {}
 
     async def upload_to_storage(
