@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+import os
 from typing import Any
 
 from pydantic import Field, SecretStr, ValidationError
@@ -392,6 +393,23 @@ def log_config_warnings(s: Settings | None = None) -> list[str]:
             f"encryption_key is only {len(enc_key)} characters;"
             " use at least 32 characters of random data for production"
         )
+
+    # Storage moved to per-user Google Drive OAuth. Old deployment-level
+    # env vars are silently dropped by Pydantic ``extra='ignore'``; flag
+    # them so upgraders notice their config is dead.
+    for legacy_key in (
+        "STORAGE_PROVIDER",
+        "DROPBOX_ACCESS_TOKEN",
+        "GOOGLE_DRIVE_CREDENTIALS_JSON",
+        "FILE_STORAGE_BASE_DIR",
+    ):
+        if os.environ.get(legacy_key):
+            warnings.append(
+                f"{legacy_key} is set but no longer supported."
+                " File storage is now per-user via Google Drive OAuth; set"
+                " GOOGLE_DRIVE_CLIENT_ID + GOOGLE_DRIVE_CLIENT_SECRET and have"
+                " each user connect Drive via manage_integration."
+            )
 
     for w in warnings:
         logger.warning("Config: %s", w)

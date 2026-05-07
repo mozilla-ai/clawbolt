@@ -541,7 +541,12 @@ def create_file_tools(
 
 def _file_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for file tools, used by the registry."""
-    assert ctx.storage is not None
+    # auth_check is the user-visible gate, but defend against direct
+    # invocation paths that bypass it (e.g. ``activate_specialist`` before
+    # the user has connected Drive). Returning [] lets the activator log
+    # "no tools produced" and skip cleanly.
+    if ctx.storage is None:
+        return []
     pending_media = {m.original_url: m.content for m in ctx.downloaded_media if m.content}
     # Fall back to recent staged bytes so upload_to_storage works even when the
     # agent defers the call to a later turn with no attachments of its own.
@@ -578,7 +583,6 @@ def _register() -> None:
     default_registry.register(
         "file",
         _file_factory,
-        requires_storage=True,
         core=False,
         summary="Upload, retrieve, and organize files in the user's Google Drive",
         sub_tools=[
