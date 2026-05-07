@@ -59,7 +59,7 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
     "profile": _FactoryMeta("View and update user profile information"),
     "memory": _FactoryMeta("Save, recall, and forget long-term facts"),
     "messaging": _FactoryMeta("Send text and media replies to the user"),
-    "file": _FactoryMeta("Upload and organize files in cloud storage"),
+    "file": _FactoryMeta("Upload, retrieve, and organize files in cloud storage"),
     "media": _FactoryMeta("Describe and discard staged photos (agent-native storage)"),
     "heartbeat": _FactoryMeta("View and edit heartbeat notes"),
     "integration": _FactoryMeta("Manage integrations, enable/disable tools, connect OAuth"),

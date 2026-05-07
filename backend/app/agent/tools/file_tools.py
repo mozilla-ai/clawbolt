@@ -10,11 +10,14 @@ from pydantic import BaseModel, Field
 
 from backend.app.agent import media_staging
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+from backend.app.agent.dto import MediaData
 from backend.app.agent.dto import slugify as _store_slugify
+from backend.app.agent.saved_media import find_saved_media_record, read_saved_media_bytes
 from backend.app.agent.stores import MediaStore
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import MIME_EXTENSIONS
+from backend.app.media.pipeline import run_vision_on_media
 from backend.app.models import User
 from backend.app.services.storage_service import StorageBackend
 
@@ -88,6 +91,39 @@ class OrganizeFileParams(BaseModel):
     )
 
 
+class FindSavedFilesParams(BaseModel):
+    """Parameters for the find_saved_files tool."""
+
+    query: str = Field(
+        default="",
+        description=(
+            "Short text to match against client folders, filenames, or saved descriptions. "
+            "Leave empty to list the most recent saved files."
+        ),
+    )
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Maximum number of saved files to return.",
+    )
+
+
+class AnalyzeSavedFileParams(BaseModel):
+    """Parameters for the analyze_saved_file tool."""
+
+    file_ref: str = Field(
+        description=(
+            "Saved file reference from find_saved_files. Accepts media id, storage path, "
+            "or storage URL."
+        ),
+    )
+    context: str = Field(
+        default="",
+        description="Optional short context to guide the analysis.",
+    )
+
+
 def _build_client_folder(
     client_name: str | None = None,
     client_address: str | None = None,
@@ -153,10 +189,35 @@ def _extension_from_mime(mime_type: str) -> str:
     return dotted.lstrip(".")
 
 
+def _saved_file_ref(media: MediaData) -> str:
+    """Return the most stable LLM-facing reference for a saved file."""
+    return media.id or media.storage_path or media.storage_url or media.original_url
+
+
+def _format_saved_file(media: MediaData) -> str:
+    """Render one saved file as a compact, parseable line for the LLM."""
+    parts = [
+        f"ref={_saved_file_ref(media)}",
+        f"path={media.storage_path or '<missing>'}",
+    ]
+    if media.mime_type and media.mime_type != "image/jpeg":
+        parts.append(f"mime={media.mime_type}")
+    if media.processed_text:
+        parts.append(f"description={media.processed_text}")
+    if media.created_at:
+        parts.append(f"saved_at={media.created_at}")
+    # Skip ``file://`` URLs: those are LocalFileStorage absolute server paths
+    # that shouldn't leak into the LLM context.
+    if media.storage_url and not media.storage_url.startswith("file://"):
+        parts.append(f"url={media.storage_url}")
+    return "- " + " | ".join(parts)
+
+
 def create_file_tools(
     user: User,
     storage: StorageBackend,
     pending_media: dict[str, bytes] | None = None,
+    turn_text: str = "",
 ) -> list[Tool]:
     """Create file cataloging tools for the agent.
 
@@ -166,8 +227,12 @@ def create_file_tools(
         pending_media: Dict of original_url -> file bytes available for upload.
             Includes bytes from the current message and any recent staged
             media bytes from prior turns (populated by ``_file_factory``).
+        turn_text: Current turn text, used as fallback analysis context.
     """
     media_map = pending_media or {}
+    # Per-turn cache: same closure lifetime as the tool list, so a saved file
+    # analyzed twice in one turn only pays the vision cost once.
+    saved_analysis_cache: dict[str, str] = {}
 
     async def upload_to_storage(
         file_category: str,
@@ -337,6 +402,79 @@ def create_file_tools(
         )
         return ToolResult(content=f"Moved {old_filename} to {new_folder}/{new_filename}")
 
+    async def find_saved_files(query: str = "", limit: int = 5) -> ToolResult:
+        """Search previously saved files in durable storage."""
+        media_store = MediaStore(user.id)
+        matches = await media_store.search(query=query, limit=limit)
+        if not matches:
+            if query.strip():
+                content = f'No saved files matched "{query}".'
+            else:
+                content = "No saved files found."
+            return ToolResult(
+                content=content,
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+
+        heading = "Recent saved files:" if not query.strip() else f'Saved files matching "{query}":'
+        lines = [_format_saved_file(media) for media in matches]
+        return ToolResult(content=heading + "\n" + "\n".join(lines))
+
+    async def analyze_saved_file(file_ref: str, context: str = "") -> ToolResult:
+        """Run vision analysis on an image that was already saved to storage."""
+        media_file = await find_saved_media_record(user.id, file_ref)
+        if media_file is None:
+            return ToolResult(
+                content=f"Saved file not found for reference: {file_ref}",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+
+        cache_key = media_file.id or file_ref
+        cached = saved_analysis_cache.get(cache_key)
+        if cached is not None:
+            return ToolResult(content=cached)
+
+        mime_type = media_file.mime_type or ""
+        if not mime_type.startswith("image/"):
+            return ToolResult(
+                content=(
+                    f"Saved file {_saved_file_ref(media_file)!r} is {mime_type or 'unknown'}, "
+                    "not an image. analyze_saved_file only works on saved photos."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        try:
+            content = await read_saved_media_bytes(storage, media_file)
+        except FileNotFoundError:
+            return ToolResult(
+                content=(
+                    f"Saved file {_saved_file_ref(media_file)!r} could not be loaded from storage."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        except Exception as exc:
+            logger.exception("Failed to load saved media %s", _saved_file_ref(media_file))
+            return ToolResult(
+                content=f"Couldn't load saved file {_saved_file_ref(media_file)!r}: {exc}",
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+            )
+
+        effective_context = context or turn_text or "Describe this saved image."
+        description = await run_vision_on_media(content, mime_type, effective_context)
+        saved_analysis_cache[cache_key] = description
+        logger.info(
+            "analyze_saved_file ran vision for %s (chars=%d)",
+            _saved_file_ref(media_file),
+            len(description),
+        )
+        return ToolResult(content=description)
+
     return [
         Tool(
             name=ToolName.UPLOAD_TO_STORAGE,
@@ -377,6 +515,27 @@ def create_file_tools(
                 ),
             ),
         ),
+        Tool(
+            name=ToolName.FIND_SAVED_FILES,
+            description=(
+                "Find files that were already saved to durable storage. Use this "
+                "to pull up older receipts, photos, or documents by client name, "
+                "address, filename, or saved description."
+            ),
+            function=find_saved_files,
+            params_model=FindSavedFilesParams,
+            usage_hint="Search durable saved files before asking the user to resend one.",
+        ),
+        Tool(
+            name=ToolName.ANALYZE_SAVED_FILE,
+            description=(
+                "Run vision analysis on a previously saved image in durable storage. "
+                "Use the file_ref returned by find_saved_files. Only works on images."
+            ),
+            function=analyze_saved_file,
+            params_model=AnalyzeSavedFileParams,
+            usage_hint="Inspect a saved receipt or photo again without asking for a resend.",
+        ),
     ]
 
 
@@ -388,7 +547,7 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
     # agent defers the call to a later turn with no attachments of its own.
     for url, content in media_staging.get_all_for_user(ctx.user.id).items():
         pending_media.setdefault(url, content)
-    return create_file_tools(ctx.user, ctx.storage, pending_media)
+    return create_file_tools(ctx.user, ctx.storage, pending_media, ctx.turn_text)
 
 
 def _register() -> None:
@@ -399,7 +558,7 @@ def _register() -> None:
         _file_factory,
         requires_storage=True,
         core=True,
-        summary="Upload and organize files in cloud storage (Dropbox/Google Drive)",
+        summary="Upload, retrieve, and organize files in cloud storage (Dropbox/Google Drive)",
         sub_tools=[
             SubToolInfo(
                 ToolName.UPLOAD_TO_STORAGE,
@@ -408,6 +567,16 @@ def _register() -> None:
             ),
             SubToolInfo(
                 ToolName.ORGANIZE_FILE, "Move files into client folders", default_permission="ask"
+            ),
+            SubToolInfo(
+                ToolName.FIND_SAVED_FILES,
+                "Find previously saved files in storage",
+                default_permission="always",
+            ),
+            SubToolInfo(
+                ToolName.ANALYZE_SAVED_FILE,
+                "Analyze a previously saved image",
+                default_permission="always",
             ),
         ],
     )

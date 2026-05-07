@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Delete, Select, delete, func, or_, select
@@ -322,6 +323,40 @@ def _media_count_by_prefix_select(user_id: str, prefix: str) -> Select[tuple[int
     )
 
 
+def _media_recent_select(user_id: str, limit: int) -> Select[tuple[MediaFile]]:
+    """Builder shared by read-side recent-media lookups."""
+    return (
+        select(MediaFile)
+        .where(MediaFile.user_id == user_id)
+        .order_by(MediaFile.created_at.desc())
+        .limit(limit)
+    )
+
+
+def _media_search_tokens(query: str) -> list[str]:
+    """Tokenize a search string for case-insensitive saved-file lookup."""
+    return [token for token in re.split(r"\W+", query.lower()) if token]
+
+
+def _media_search_select(user_id: str, query: str, limit: int) -> Select[tuple[MediaFile]]:
+    """Builder shared by read-side saved-file search."""
+    tokens = _media_search_tokens(query)
+    clauses: list[Any] = [MediaFile.user_id == user_id]
+    for token in tokens:
+        # Escape LIKE metacharacters so saved filenames like ``photo_001`` are
+        # treated as literals rather than ``photo<any>001`` wildcards.
+        escaped = token.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
+        needle = f"%{escaped}%"
+        clauses.append(
+            or_(
+                func.lower(MediaFile.storage_path).like(needle, escape="\\"),
+                func.lower(MediaFile.processed_text).like(needle, escape="\\"),
+                func.lower(MediaFile.mime_type).like(needle, escape="\\"),
+            )
+        )
+    return select(MediaFile).where(*clauses).order_by(MediaFile.created_at.desc()).limit(limit)
+
+
 def _next_media_id(existing_ids: list[str]) -> str:
     """Compute the next ``media-NNN`` id from the locked existing-id set.
 
@@ -467,6 +502,21 @@ class MediaStore:
         """Deprecated alias of :meth:`get_by_url`."""
         return await self.get_by_url(original_url)
 
+    async def get_by_id(self, media_id: str) -> MediaData | None:
+        """Query a MediaFile by its durable ``media-NNN`` id."""
+        if not media_id:
+            return None
+        db = AsyncSessionLocal()
+        try:
+            m = (await db.execute(_media_by_id_select(self.user_id, media_id))).scalar_one_or_none()
+            return _media_to_dto(m) if m else None
+        finally:
+            await db.close()
+
+    async def get_by_id_async(self, media_id: str) -> MediaData | None:
+        """Deprecated alias of :meth:`get_by_id`."""
+        return await self.get_by_id(media_id)
+
     async def count_by_path_prefix(self, prefix: str) -> int:
         """Count MediaFile rows where storage_path starts with prefix."""
         db = AsyncSessionLocal()
@@ -479,6 +529,25 @@ class MediaStore:
     async def count_by_path_prefix_async(self, prefix: str) -> int:
         """Deprecated alias of :meth:`count_by_path_prefix`."""
         return await self.count_by_path_prefix(prefix)
+
+    async def search(self, query: str = "", limit: int = 5) -> list[MediaData]:
+        """Search saved files by path/description tokens, or list recent when blank."""
+        bounded_limit = max(1, min(limit, 20))
+        stmt = (
+            _media_recent_select(self.user_id, bounded_limit)
+            if not query.strip() or not _media_search_tokens(query)
+            else _media_search_select(self.user_id, query, bounded_limit)
+        )
+        db = AsyncSessionLocal()
+        try:
+            rows = (await db.execute(stmt)).scalars().all()
+            return [_media_to_dto(m) for m in rows]
+        finally:
+            await db.close()
+
+    async def search_async(self, query: str = "", limit: int = 5) -> list[MediaData]:
+        """Deprecated alias of :meth:`search`."""
+        return await self.search(query=query, limit=limit)
 
 
 # ---------------------------------------------------------------------------
