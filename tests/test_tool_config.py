@@ -93,15 +93,16 @@ async def test_create_core_tools_excludes_disabled_factories() -> None:
 
 @pytest.mark.asyncio()
 async def test_specialist_summaries_excludes_core_factories() -> None:
-    """Core factories (including file and heartbeat) should not appear in specialist summaries."""
+    """Core factories (workspace, profile, etc.) should not appear in specialist summaries."""
     user = User(id="999", user_id="test")
     ctx = ToolContext(user=user)
 
     summaries = await default_registry.get_available_specialist_summaries(ctx)
-    for core_name in ("workspace", "profile", "memory", "messaging", "file", "heartbeat"):
+    for core_name in ("workspace", "profile", "memory", "messaging", "heartbeat"):
         assert core_name not in summaries, f"{core_name} should not be a specialist"
 
-    # quickbooks and calendar are specialists (though they may be filtered by auth_check)
+    # file/quickbooks/calendar are specialists (though they may be filtered by auth_check)
+    assert "file" in default_registry.specialist_factory_names
     assert "quickbooks" in default_registry.specialist_factory_names
     assert "calendar" in default_registry.specialist_factory_names
 
