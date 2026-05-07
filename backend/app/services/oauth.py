@@ -1160,13 +1160,22 @@ GOOGLE_CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
 
+# Google Drive OAuth 2.0 endpoints. ``drive.file`` is the narrow per-app
+# scope: the integration only sees files it created itself, not the user's
+# entire Drive. Drive shares Google's OAuth endpoints with Calendar.
+GOOGLE_DRIVE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_DRIVE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_DRIVE_SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
+]
+
 # CompanyCam OAuth 2.0 endpoints
 COMPANYCAM_AUTHORIZE_URL = "https://app.companycam.com/oauth/authorize"
 COMPANYCAM_TOKEN_URL = "https://app.companycam.com/oauth/token"
 COMPANYCAM_SCOPES = ["read", "write", "destroy"]
 
 # Registry of all supported OAuth integrations.
-_OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar", "companycam")
+_OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar", "google_drive", "companycam")
 
 
 def get_quickbooks_oauth_config() -> OAuthConfig | None:
@@ -1204,6 +1213,21 @@ def get_google_calendar_oauth_config() -> OAuthConfig | None:
     return config if config.is_configured else None
 
 
+def get_google_drive_oauth_config() -> OAuthConfig | None:
+    """Build the Google Drive OAuth config from settings."""
+    config = OAuthConfig(
+        integration="google_drive",
+        client_id=settings.google_drive_client_id,
+        client_secret=settings.google_drive_client_secret,
+        authorize_url=GOOGLE_DRIVE_AUTHORIZE_URL,
+        token_url=GOOGLE_DRIVE_TOKEN_URL,
+        scopes=GOOGLE_DRIVE_SCOPES,
+        use_pkce=False,
+        extra_auth_params={"access_type": "offline", "prompt": "consent"},
+    )
+    return config if config.is_configured else None
+
+
 def get_companycam_oauth_config() -> OAuthConfig | None:
     """Build the CompanyCam OAuth config from settings."""
     config = OAuthConfig(
@@ -1224,6 +1248,8 @@ def get_oauth_config(integration: str) -> OAuthConfig | None:
         return get_quickbooks_oauth_config()
     if integration == "google_calendar":
         return get_google_calendar_oauth_config()
+    if integration == "google_drive":
+        return get_google_drive_oauth_config()
     if integration == "companycam":
         return get_companycam_oauth_config()
     return None

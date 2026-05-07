@@ -22,7 +22,6 @@ from backend.app.agent.tools.media_tools import (
 )
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext
-from backend.app.config import Settings, validate_personal_storage_backend
 from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
 from backend.app.models import User
@@ -298,31 +297,6 @@ def test_media_factory_registers_when_staged_without_current_downloads(test_user
     ctx = ToolContext(user=test_user, downloaded_media=[])
     tools = _media_factory(ctx)
     assert len(tools) == 2
-
-
-# ---------------------------------------------------------------------------
-# Startup mutual-exclusion check
-# ---------------------------------------------------------------------------
-
-
-def test_rejects_dual_personal_storage_providers() -> None:
-    s = Settings(
-        dropbox_access_token="dbx-xxx",
-        google_drive_credentials_json='{"type":"service_account"}',
-    )
-    with pytest.raises(RuntimeError, match="Two personal-storage backends"):
-        validate_personal_storage_backend(s)
-
-
-def test_allows_single_personal_storage_provider() -> None:
-    s = Settings(dropbox_access_token="dbx-xxx")
-    validate_personal_storage_backend(s)  # no raise
-
-    s2 = Settings(google_drive_credentials_json='{"type":"service_account"}')
-    validate_personal_storage_backend(s2)  # no raise
-
-    s3 = Settings()  # neither set — local fallback
-    validate_personal_storage_backend(s3)  # no raise
 
 
 # ---------------------------------------------------------------------------

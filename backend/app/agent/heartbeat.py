@@ -532,7 +532,7 @@ async def execute_heartbeat_tasks(
     try:
         from backend.app.agent.router import init_storage
 
-        storage = init_storage(user)
+        storage = await init_storage(user)
     except Exception:
         logger.debug("Heartbeat Phase 2: storage not available for user %s", user.id)
 

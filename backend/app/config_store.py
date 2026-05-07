@@ -60,8 +60,6 @@ _SECRET_SETTINGS: frozenset[str] = frozenset(
         "linq_api_token",
         "linq_webhook_signing_secret",
         "bluebubbles_password",
-        "dropbox_access_token",
-        "google_drive_credentials_json",
     }
 )
 

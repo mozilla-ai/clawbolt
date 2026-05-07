@@ -1,34 +1,29 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import io
-import json
 import logging
 from abc import ABC, abstractmethod
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
-
-import dropbox
-import dropbox.exceptions
-import dropbox.files
-
-from backend.app.config import Settings, settings
-from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 
 
+# Top-level folder created in the user's Drive to namespace app-managed
+# files. ``drive.file`` scope means the integration only sees files it
+# created, so this folder is invisible to other apps and won't clash with
+# the user's existing Drive contents.
+ROOT_FOLDER_NAME = "Clawbolt"
+
+
 class StorageBackend(ABC):
-    """Abstract base for file storage providers.
+    """Abstract base for per-user file storage backends.
 
-    Each implementation handles a single storage destination (Dropbox, Google
-    Drive, local filesystem, etc.).  The interface is intentionally minimal so
-    that adding new backends is straightforward.
-
-    Per-user isolation: when a user_id is provided, each backend
-    isolates files into a per-user subdirectory (local) or path prefix
-    (cloud).  A future Phase 2 will add shared cloud folders per user.
+    The product currently has one concrete implementation
+    (:class:`GoogleDriveStorage`); the interface stays minimal and async so
+    additional per-user OAuth backends can slot in without changes to call
+    sites.
     """
 
     @abstractmethod
@@ -54,92 +49,36 @@ class StorageBackend(ABC):
         """Download a previously stored file by its logical storage path."""
 
 
-class DropboxStorage(StorageBackend):
-    def __init__(self, access_token: str, user_id: str | None = None) -> None:
-        self.dbx = dropbox.Dropbox(access_token)
-        self._path_prefix = f"/{user_id}" if user_id is not None else ""
+@dataclass
+class DriveOAuthCredentials:
+    """Minimal token bundle the Drive client needs for auto-refresh.
 
-    def _prefixed(self, path: str) -> str:
-        """Prepend the per-user prefix to a Dropbox path."""
-        return f"{self._path_prefix}{path}" if self._path_prefix else path
+    ``client_id`` / ``client_secret`` are the deployment-level OAuth client
+    credentials; ``access_token`` / ``refresh_token`` are the per-user
+    tokens issued by Google after the user grants ``drive.file`` scope.
+    """
 
-    async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
-        full_path = f"{self._prefixed(path)}/{filename}"
-        logger.info("Uploading to Dropbox: %s (%d bytes)", full_path, len(file_bytes))
-        await asyncio.to_thread(
-            self.dbx.files_upload, file_bytes, full_path, mode=dropbox.files.WriteMode.overwrite
-        )
-        # Create a shared link
-        try:
-            shared = await asyncio.to_thread(
-                self.dbx.sharing_create_shared_link_with_settings, full_path
-            )
-            logger.info("Dropbox upload complete: %s -> %s", full_path, shared.url)
-            return shared.url
-        except dropbox.exceptions.ApiError:
-            # Link may already exist
-            links = await asyncio.to_thread(self.dbx.sharing_list_shared_links, path=full_path)
-            if links.links:
-                logger.info("Dropbox upload complete: %s -> %s", full_path, links.links[0].url)
-                return links.links[0].url
-            logger.warning("Dropbox upload: no shared link available for %s", full_path)
-            return full_path
-
-    async def create_folder(self, path: str) -> str:
-        prefixed = self._prefixed(path)
-        with contextlib.suppress(dropbox.exceptions.ApiError):
-            await asyncio.to_thread(self.dbx.files_create_folder_v2, prefixed)
-        return prefixed
-
-    async def move_file(
-        self, from_path: str, from_filename: str, to_path: str, to_filename: str
-    ) -> str:
-        src = self._prefixed(f"{from_path}/{from_filename}")
-        dest = self._prefixed(f"{to_path}/{to_filename}")
-        logger.info("Moving file in Dropbox: %s -> %s", src, dest)
-        await asyncio.to_thread(self.dbx.files_move_v2, src, dest)
-        # Create a shared link for the new location
-        try:
-            shared = await asyncio.to_thread(
-                self.dbx.sharing_create_shared_link_with_settings, dest
-            )
-            return shared.url
-        except dropbox.exceptions.ApiError:
-            links = await asyncio.to_thread(self.dbx.sharing_list_shared_links, path=dest)
-            if links.links:
-                return links.links[0].url
-            logger.warning("Dropbox move: no shared link available for %s", dest)
-            return dest
-
-    async def list_folder(self, path: str) -> list[dict[str, str]]:
-        result = await asyncio.to_thread(self.dbx.files_list_folder, self._prefixed(path))
-        files: list[dict[str, str]] = []
-        for entry in result.entries:
-            files.append({"name": entry.name, "path": entry.path_display})
-        return files
-
-    async def download_file(self, path: str) -> bytes:
-        full_path = self._prefixed(path)
-        try:
-            _metadata, response = await asyncio.to_thread(self.dbx.files_download, full_path)
-        except dropbox.exceptions.ApiError as exc:
-            msg = f"File not found in Dropbox: {full_path}"
-            raise FileNotFoundError(msg) from exc
-        return response.content
+    access_token: str
+    refresh_token: str
+    client_id: str
+    client_secret: str
 
 
 class GoogleDriveStorage(StorageBackend):
-    """Google Drive storage backend with per-user folder isolation.
+    """Google Drive storage scoped to a single user's own Drive.
 
-    All paths are human-readable strings (e.g. "/Unsorted/2026-03-02") that get
-    resolved to Google Drive folder IDs automatically.  When a *user_id* is set,
-    a per-user root folder is created in Drive and all paths are nested inside it.
+    Each user grants ``drive.file`` scope through the integration OAuth
+    flow; files land in the user's own Drive under a top-level
+    :data:`ROOT_FOLDER_NAME` folder. The ``drive.file`` scope means the
+    integration only sees files it created, so the namespace is implicit.
+
+    Folder lookups are cached in-process for the lifetime of the backend
+    instance, which is rebuilt every turn.
     """
 
-    def __init__(self, credentials_json: str, user_id: str | None = None) -> None:
-        self.credentials_json = credentials_json
+    def __init__(self, credentials: DriveOAuthCredentials) -> None:
+        self._credentials = credentials
         self._service: Any = None
-        self._user_id = user_id
         self._folder_cache: dict[str, str] = {}
 
     def _get_service(self) -> Any:
@@ -147,7 +86,13 @@ class GoogleDriveStorage(StorageBackend):
             from google.oauth2.credentials import Credentials
             from googleapiclient.discovery import build
 
-            creds = Credentials.from_authorized_user_info(json.loads(self.credentials_json))
+            creds = Credentials(
+                token=self._credentials.access_token,
+                refresh_token=self._credentials.refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=self._credentials.client_id,
+                client_secret=self._credentials.client_secret,
+            )
             self._service = build("drive", "v3", credentials=creds)
         return self._service
 
@@ -189,54 +134,47 @@ class GoogleDriveStorage(StorageBackend):
         """Translate a human-readable path to a Google Drive folder ID.
 
         Creates intermediate folders as needed.  For example,
-        ``/Unsorted/2026-03-02`` first ensures an ``Unsorted`` folder exists,
-        then ensures ``2026-03-02`` exists inside it.  When *user_id* is set the
-        entire tree is nested under a per-user root folder.
+        ``/Unsorted/2026-03-02`` ensures the app root folder, then
+        ``Unsorted``, then ``2026-03-02`` under it.
         """
         parts = [p for p in path.strip("/").split("/") if p]
-        if self._user_id:
-            root_key = self._user_id
-            if root_key not in self._folder_cache:
-                self._folder_cache[root_key] = await self._find_or_create_folder(self._user_id)
-            current_id: str | None = self._folder_cache[root_key]
-            current_path = self._user_id
-        else:
-            current_id = None
-            current_path = ""
+
+        root_key = ROOT_FOLDER_NAME
+        if root_key not in self._folder_cache:
+            self._folder_cache[root_key] = await self._find_or_create_folder(ROOT_FOLDER_NAME)
+        current_id: str = self._folder_cache[root_key]
+        current_path = ROOT_FOLDER_NAME
 
         if not parts:
-            return current_id or "root"
+            return current_id
 
         for part in parts:
-            cache_key = f"{current_path}/{part}" if current_path else part
+            cache_key = f"{current_path}/{part}"
             if cache_key not in self._folder_cache:
                 self._folder_cache[cache_key] = await self._find_or_create_folder(part, current_id)
             current_id = self._folder_cache[cache_key]
             current_path = cache_key
 
-        return current_id  # type: ignore[return-value]
+        return current_id
 
     async def _resolve_existing_path(self, path: str) -> str | None:
         """Translate a human-readable path to an existing Google Drive folder ID."""
         parts = [p for p in path.strip("/").split("/") if p]
-        if self._user_id:
-            root_key = self._user_id
-            current_id = self._folder_cache.get(root_key)
+
+        root_key = ROOT_FOLDER_NAME
+        current_id = self._folder_cache.get(root_key)
+        if current_id is None:
+            current_id = await self._find_folder(ROOT_FOLDER_NAME)
             if current_id is None:
-                current_id = await self._find_folder(self._user_id)
-                if current_id is None:
-                    return None
-                self._folder_cache[root_key] = current_id
-            current_path = self._user_id
-        else:
-            current_id = None
-            current_path = ""
+                return None
+            self._folder_cache[root_key] = current_id
+        current_path = ROOT_FOLDER_NAME
 
         if not parts:
-            return current_id or "root"
+            return current_id
 
         for part in parts:
-            cache_key = f"{current_path}/{part}" if current_path else part
+            cache_key = f"{current_path}/{part}"
             next_id = self._folder_cache.get(cache_key)
             if next_id is None:
                 next_id = await self._find_folder(part, current_id)
@@ -349,91 +287,3 @@ class GoogleDriveStorage(StorageBackend):
             msg = f"Google Drive download failed for {path}: {exc}"
             raise RuntimeError(msg) from exc
         return bytes(data)
-
-
-class LocalFileStorage(StorageBackend):
-    """Local filesystem storage for development and demos."""
-
-    def __init__(
-        self,
-        base_dir: str = settings.file_storage_base_dir,
-        user_id: str | None = None,
-    ) -> None:
-        base = Path(base_dir).resolve()
-        if user_id is not None:
-            base = base / str(user_id)
-        self.base_dir = base
-        self.base_dir.mkdir(parents=True, exist_ok=True)
-
-    def _safe_path(self, *segments: str) -> Path:
-        """Resolve path segments under base_dir, rejecting traversal attempts."""
-        result = self.base_dir
-        for seg in segments:
-            result = result / seg.lstrip("/")
-        resolved = result.resolve()
-        if not resolved.is_relative_to(self.base_dir):
-            msg = f"Path escapes storage directory: {'/'.join(segments)}"
-            raise ValueError(msg)
-        return resolved
-
-    async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
-        file_path = self._safe_path(path, filename)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info("Saving to local storage: %s (%d bytes)", file_path, len(file_bytes))
-        await asyncio.to_thread(file_path.write_bytes, file_bytes)
-        return f"file://{file_path}"
-
-    async def create_folder(self, path: str) -> str:
-        folder = self._safe_path(path)
-        folder.mkdir(parents=True, exist_ok=True)
-        return str(folder)
-
-    async def move_file(
-        self, from_path: str, from_filename: str, to_path: str, to_filename: str
-    ) -> str:
-        src = self._safe_path(from_path, from_filename)
-        dest = self._safe_path(to_path, to_filename)
-        if not src.exists():
-            msg = f"Source file not found: {from_path}/{from_filename}"
-            raise FileNotFoundError(msg)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        logger.info("Moving local file: %s -> %s", src, dest)
-        await asyncio.to_thread(src.rename, dest)
-        return f"file://{dest}"
-
-    async def list_folder(self, path: str) -> list[dict[str, str]]:
-        folder = self._safe_path(path)
-        if not folder.exists():
-            return []
-        return [{"name": f.name, "path": str(f)} for f in folder.iterdir() if f.is_file()]
-
-    async def download_file(self, path: str) -> bytes:
-        file_path = self._safe_path(path)
-        if not file_path.is_file():
-            msg = f"File not found in local storage: {path}"
-            raise FileNotFoundError(msg)
-        return await asyncio.to_thread(file_path.read_bytes)
-
-
-def get_storage_service(
-    svc_settings: Settings | None = None,
-    user: User | None = None,
-) -> StorageBackend:
-    """Factory: return the configured storage backend.
-
-    Args:
-        svc_settings: Override the global settings (useful in tests).
-        user: When provided, files are isolated into a per-user
-            subdirectory (local) or path prefix (cloud).
-    """
-    s = svc_settings or settings
-    cid = user.id if user is not None else None
-    if s.storage_provider == "local":
-        return LocalFileStorage(base_dir=s.file_storage_base_dir, user_id=cid)
-    elif s.storage_provider == "dropbox":
-        return DropboxStorage(s.dropbox_access_token, user_id=cid)
-    elif s.storage_provider == "google_drive":
-        return GoogleDriveStorage(s.google_drive_credentials_json, user_id=cid)
-    else:
-        msg = f"Unknown storage provider: {s.storage_provider}"
-        raise ValueError(msg)

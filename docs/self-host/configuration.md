@@ -81,13 +81,12 @@ When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage c
 
 ## Storage settings
 
+File storage is per-user via Google Drive OAuth. Each user grants `drive.file` scope through `manage_integration` in chat; files land in the user's own Drive under a top-level "Clawbolt" folder. Without these credentials set, file storage stays disabled and the file tools (upload, retrieve, analyze) never load for any user.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `STORAGE_PROVIDER` | `local` | Storage backend: `local`, `dropbox`, or `google_drive` |
-| `DROPBOX_ACCESS_TOKEN` | | Dropbox access token (when using Dropbox) |
-| `GOOGLE_DRIVE_CREDENTIALS_JSON` | | Google Drive OAuth credentials JSON (when using Google Drive) |
-| `CLAWBOLT_DATA_DIR` | `./data` | Host path bind-mounted to `/app/data` (Docker Compose only) |
-| `FILE_STORAGE_BASE_DIR` | `data/storage` | Base directory for local file storage |
+| `GOOGLE_DRIVE_CLIENT_ID` | | OAuth client ID from the Google Cloud console (with the Drive API enabled) |
+| `GOOGLE_DRIVE_CLIENT_SECRET` | | OAuth client secret from the Google Cloud console |
 
 See [Storage Providers](./storage.md) for setup instructions.
 

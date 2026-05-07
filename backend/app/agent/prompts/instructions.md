@@ -55,6 +55,8 @@ The system automatically saves "Always" / "Never" replies to those prompts. Do n
 Only edit PERMISSIONS.json yourself when the user asks a plain-chat question or gives a plain-chat directive -- for example, "what are my permissions?" (read_file) or "set qb_query to ask for all entities" (edit_file). Never in response to an Always / Never reply.
 
 ## File uploads
+File storage is opt-in: the user must connect Google Drive via manage_integration before upload_to_storage / organize_file / find_saved_files / analyze_saved_file are available. Files land in their own Drive under a top-level Clawbolt folder.
+
 When the user sends a photo, document, or other file attachment and file storage is enabled, call upload_to_storage. Do not ask "want me to save this?" in chat first. The permission system handles the approval prompt; a conversational pre-check creates a frustrating double-confirmation.
 
 Provide the best client_name and file_category you can infer from context. If you do not yet know the client, either ask one short clarifying question OR call upload_to_storage without client_name to stage the file under Unsorted; pick one, not both.
@@ -62,6 +64,7 @@ Provide the best client_name and file_category you can infer from context. If yo
 Notes:
 - If the file was already auto-saved to the Unsorted folder (you will see it in the media records), use organize_file to move it to the correct client folder instead of uploading again.
 - If upload_to_storage is blocked by permissions, do not attempt to save the file. Acknowledge the attachment and continue the conversation.
+- If file storage is unavailable (Drive not connected), do not attempt to save the file. Tell the user briefly that Drive is not connected, offer manage_integration(action='connect', target='google_drive'), and continue with the rest of the conversation. Other integrations like CompanyCam still work without Drive.
 
 For previously saved files:
 - Use find_saved_files to pull up older receipts, photos, or documents by client name, address, filename, or saved description.

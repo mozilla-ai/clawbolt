@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+import os
 from typing import Any
 
 from pydantic import Field, SecretStr, ValidationError
@@ -64,11 +65,12 @@ class Settings(BaseSettings):
     llm_max_tokens_heartbeat: int = Field(default=12000, ge=1)
     llm_max_tokens_vision: int = Field(default=1000, ge=1)
 
-    # Storage
-    storage_provider: str = "local"  # "local", "dropbox", or "google_drive"
-    dropbox_access_token: str = ""
-    google_drive_credentials_json: str = ""
-    file_storage_base_dir: str = "data/storage"
+    # Storage: per-user Google Drive via OAuth. The deployment supplies the
+    # OAuth client credentials; each user grants ``drive.file`` scope through
+    # ``manage_integration(action='connect', target='google_drive')``. Files
+    # land in the user's own Drive, not a shared admin Drive.
+    google_drive_client_id: str = ""
+    google_drive_client_secret: str = ""
 
     # Agent loop
     approval_timeout_seconds: int = Field(default=120, ge=1)
@@ -279,10 +281,6 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "compaction_provider",
         "compaction_max_tokens",
         "reasoning_effort",
-        "storage_provider",
-        "dropbox_access_token",
-        "google_drive_credentials_json",
-        "file_storage_base_dir",
     }
 )
 
@@ -352,25 +350,6 @@ def validate_imessage_backend(s: "Settings | None" = None) -> None:
         )
 
 
-def validate_personal_storage_backend(s: "Settings | None" = None) -> None:
-    """Reject startup if two personal-storage backends are configured simultaneously.
-
-    The product supports a single personal storage destination per deployment
-    (local, Dropbox, or Google Drive). Allowing credentials for two at once
-    makes ``storage_provider`` ambiguous to operators. Mirrors the iMessage
-    mutual-exclusion pattern from :func:`validate_imessage_backend`.
-    """
-    s = s or settings
-    dropbox_set = bool(s.dropbox_access_token)
-    gdrive_set = bool(s.google_drive_credentials_json)
-    if dropbox_set and gdrive_set:
-        raise RuntimeError(
-            "Two personal-storage backends are configured at once. "
-            "Set only DROPBOX_ACCESS_TOKEN or only GOOGLE_DRIVE_CREDENTIALS_JSON, "
-            "not both. Choose one via STORAGE_PROVIDER."
-        )
-
-
 def log_config_warnings(s: Settings | None = None) -> list[str]:
     """Log warnings for unusual but valid config values. Returns the warnings."""
     s = s or settings
@@ -421,6 +400,23 @@ def log_config_warnings(s: Settings | None = None) -> list[str]:
             f"encryption_key is only {len(enc_key)} characters;"
             " use at least 32 characters of random data for production"
         )
+
+    # Storage moved to per-user Google Drive OAuth. Old deployment-level
+    # env vars are silently dropped by Pydantic ``extra='ignore'``; flag
+    # them so upgraders notice their config is dead.
+    for legacy_key in (
+        "STORAGE_PROVIDER",
+        "DROPBOX_ACCESS_TOKEN",
+        "GOOGLE_DRIVE_CREDENTIALS_JSON",
+        "FILE_STORAGE_BASE_DIR",
+    ):
+        if os.environ.get(legacy_key):
+            warnings.append(
+                f"{legacy_key} is set but no longer supported."
+                " File storage is now per-user via Google Drive OAuth; set"
+                " GOOGLE_DRIVE_CLIENT_ID + GOOGLE_DRIVE_CLIENT_SECRET and have"
+                " each user connect Drive via manage_integration."
+            )
 
     for w in warnings:
         logger.warning("Config: %s", w)

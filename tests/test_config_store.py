@@ -39,8 +39,8 @@ from backend.app.security.encryption import LocalKEKProvider, is_envelope
 def test_is_secret_covers_known_secret_keys() -> None:
     assert is_secret("telegram_bot_token")
     assert is_secret("bluebubbles_password")
-    assert is_secret("dropbox_access_token")
-    assert is_secret("google_drive_credentials_json")
+    assert is_secret("linq_api_token")
+    assert is_secret("linq_webhook_signing_secret")
 
 
 def test_is_secret_excludes_non_secret_keys() -> None:
