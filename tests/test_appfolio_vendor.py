@@ -964,3 +964,51 @@ async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
     # Status and response body should still be in the log so we can debug.
     assert "400" in caplog.text
     assert "expired" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Factory + registry wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_auth_tools_always_in_schema_when_disconnected() -> None:
+    """``appfolio_connect`` must stay reachable when the user has no credential.
+
+    The registry's ``auth_check`` contract is binary: any non-None return
+    value strips the entire factory's tools from the LLM schema. Magic-link
+    integrations need the auth tool on the schema regardless of connection
+    state, since pasting the token *is* the connect path. Regression for
+    the dev.clawbolt.ai bug where the agent had no way to start the flow.
+    """
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.agent.tools.registry import (
+        ToolContext,
+        default_registry,
+        ensure_tool_modules_imported,
+    )
+    from backend.app.models import User
+
+    ensure_tool_modules_imported()
+
+    user = User(id="appfolio-disconnected-user", user_id="test")
+    ctx = ToolContext(user=user)
+
+    # auth_check must be None-returning unconditionally.
+    factory = default_registry._factories["appfolio_vendor"]
+    assert factory.auth_check is not None
+    assert await factory.auth_check(ctx) is None
+
+    # And the materialized factory output must include the auth tools.
+    from backend.app.integrations.appfolio_vendor.factory import _appfolio_factory
+
+    with patch(
+        "backend.app.integrations.appfolio_vendor.factory.load_credential",
+        new=AsyncMock(return_value=None),
+    ):
+        tools = await _appfolio_factory(ctx)
+    names = {t.name for t in tools}
+    assert ToolName.APPFOLIO_CONNECT in names
+    assert ToolName.APPFOLIO_COMPLETE_2FA in names
+    # Data tools should still be hidden until a credential is on file.
+    assert ToolName.APPFOLIO_LIST_WORK_ORDERS not in names

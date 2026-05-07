@@ -436,9 +436,21 @@ class ApprovalGate:
             timeout = float(settings.approval_timeout_seconds)
 
         pending = PendingApproval(tool_name=tool_name, description=description)
-        self._pending[user_id] = pending
-        await _persist_pending_row(user_id, tool_name, description, channel, chat_id)
+        # Persist the audit row + orphan-detection row BEFORE registering
+        # in ``_pending``. ``resolve()`` consults ``_pending`` and bails
+        # when the entry is absent, so a concurrent ``resolve`` (e.g. the
+        # ``_interrupt_stale_approval`` poll in ingestion that fires
+        # ``INTERRUPTED`` when a second message arrives for the same user)
+        # cannot run until both writes are committed. Without this
+        # ordering, the await on either DB call yields the event loop,
+        # the poll task fires, ``resolve`` inserts the ``decided`` row,
+        # and the still-pending ``requested`` insert lands afterward,
+        # giving an out-of-order audit log (and a possibly orphaned
+        # ``pending_approvals`` row when the DELETE in resolve sees no
+        # row under READ COMMITTED).
         await _log_approval_event(user_id, "requested", tool_name, description, channel, chat_id)
+        await _persist_pending_row(user_id, tool_name, description, channel, chat_id)
+        self._pending[user_id] = pending
 
         if prompt is None:
             prompt = format_approval_message(tool_name, description)

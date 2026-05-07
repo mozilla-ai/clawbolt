@@ -38,6 +38,23 @@ from tests.mocks.llm import make_text_response, make_tool_call_response
 # ---------------------------------------------------------------------------
 
 
+async def _await_pending(gate: ApprovalGate, user_id: str, timeout: float = 2.0) -> None:
+    """Block until ``gate.has_pending(user_id)`` is True.
+
+    ``request_approval`` performs two DB writes (audit + orphan-detection
+    row) before flipping ``has_pending`` to True, so a fixed sleep in a
+    test can race ahead of registration when those commits take longer
+    than expected. Polling on the same predicate the production poll
+    task uses (``_interrupt_stale_approval`` in ``ingestion.py``) avoids
+    that flake without weakening the assertion the test is making.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not gate.has_pending(user_id):
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"has_pending({user_id!r}) never became True within {timeout}s")
+        await asyncio.sleep(0.001)
+
+
 class _EchoParams(BaseModel):
     text: str
 
@@ -381,7 +398,7 @@ class TestApprovalGate:
         mock_publish = AsyncMock()
 
         async def _resolve_soon() -> None:
-            await asyncio.sleep(0.01)
+            await _await_pending(gate, "1")
             await gate.resolve("1", ApprovalDecision.APPROVED)
 
         task = asyncio.create_task(_resolve_soon())
@@ -725,7 +742,7 @@ class TestApprovalGate:
         mock_publish = AsyncMock()
 
         async def _check_and_resolve() -> None:
-            await asyncio.sleep(0.01)
+            await _await_pending(gate, "1")
             assert gate.has_pending("1")
             await gate.resolve("1", ApprovalDecision.DENIED)
 
@@ -1159,7 +1176,7 @@ class TestIngestionIntercept:
             )
 
         approval_task = asyncio.create_task(_start_approval())
-        await asyncio.sleep(0.01)
+        await _await_pending(gate, test_user.id)
         assert gate.has_pending(test_user.id)
 
         # Simulate inbound "yes" message
@@ -1199,7 +1216,7 @@ class TestIngestionIntercept:
             )
 
         approval_task = asyncio.create_task(_start_approval())
-        await asyncio.sleep(0.01)
+        await _await_pending(gate, test_user.id)
         assert gate.has_pending(test_user.id)
 
         inbound = InboundMessage(
@@ -1249,7 +1266,7 @@ class TestIngestionIntercept:
             )
 
         approval_task = asyncio.create_task(_start_approval())
-        await asyncio.sleep(0.01)
+        await _await_pending(gate, test_user.id)
 
         inbound = InboundMessage(
             channel="telegram",
@@ -1299,7 +1316,7 @@ class TestIngestionIntercept:
             )
 
         approval_task = asyncio.create_task(_start_approval())
-        await asyncio.sleep(0.01)
+        await _await_pending(gate, test_user.id)
         assert gate.has_pending(test_user.id)
 
         # "Yes to both" is not an exact match, but the LLM classifies it
@@ -1514,7 +1531,7 @@ class TestApprovalEvents:
         mock_publish = AsyncMock()
 
         async def _resolve_soon() -> None:
-            await asyncio.sleep(0.01)
+            await _await_pending(gate, test_user.id)
             await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
 
         task = asyncio.create_task(_resolve_soon())
@@ -1600,7 +1617,7 @@ class TestApprovalEvents:
         mock_publish = AsyncMock()
 
         async def _interrupt_soon() -> None:
-            await asyncio.sleep(0.01)
+            await _await_pending(gate, test_user.id)
             await gate.resolve(test_user.id, ApprovalDecision.INTERRUPTED)
 
         task = asyncio.create_task(_interrupt_soon())

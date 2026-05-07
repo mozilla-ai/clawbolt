@@ -6,10 +6,13 @@ default tool registry at module-import time.
 
 Two registration concerns:
 
-1. The auth tools (``appfolio_connect``, ``appfolio_complete_2fa``) need
-   to be available *before* the user has a credential, so they are
-   surfaced via ``auth_check`` returning a connect prompt rather than
-   an empty tool list.
+1. The auth tools (``appfolio_connect``, ``appfolio_complete_2fa``) must
+   stay on the LLM schema even when the user has no credential, so the
+   factory always returns them and ``auth_check`` returns ``None``
+   unconditionally. The registry's ``auth_check`` contract is binary:
+   any non-None return value strips the entire factory's tools from
+   the schema, which would also hide the connect tool, leaving the
+   user with no in-product way to authenticate.
 2. The data tools (work orders, payments, profile) require a loaded
    credential and so live in the factory body, hidden until connected.
 """
@@ -22,10 +25,7 @@ from typing import TYPE_CHECKING
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
-from backend.app.integrations.appfolio_vendor.auth import (
-    is_connected,
-    load_credential,
-)
+from backend.app.integrations.appfolio_vendor.auth import load_credential
 from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
 from backend.app.integrations.appfolio_vendor.compliance import build_compliance_tools
 from backend.app.integrations.appfolio_vendor.conversations import build_conversation_tools
@@ -75,22 +75,20 @@ async def _appfolio_factory(ctx: ToolContext) -> list[Tool]:
 
 
 async def _appfolio_auth_check(ctx: ToolContext) -> str | None:
-    """Hide AppFolio behind a connect prompt until the user is connected.
+    """Always return ``None`` so the auth tools stay on the schema.
 
-    Returns ``None`` (tools available) once a credential is on file. A
-    string return surfaces the connect instructions to the agent and
-    keeps the data tools out of the LLM schema until then.
+    The registry's ``auth_check`` contract is binary: a non-None return
+    pulls *every* tool the factory builds out of the LLM schema. For
+    OAuth integrations that is fine because the registry surfaces a
+    connect URL through ``manage_integration``. AppFolio uses magic-link
+    auth, so the only way to connect is for the agent to call
+    ``appfolio_connect`` with a user-pasted token. If that tool is not
+    in the schema, no connect path exists. We always return ``None``
+    and let the factory body decide which tools to expose based on
+    credential state.
     """
-    if await is_connected(ctx.user.id):
-        return None
-    return (
-        "AppFolio Vendor Portal is not connected. Tell the user to:"
-        " (1) open vendor.appfolio.com and request a magic link,"
-        " (2) paste the full link from the email back to you,"
-        " (3) you call appfolio_connect with that link."
-        " If AppFolio asks for a 2FA code, ask the user for it and"
-        " call appfolio_complete_2fa."
-    )
+    _ = ctx
+    return None
 
 
 def _register() -> None:
