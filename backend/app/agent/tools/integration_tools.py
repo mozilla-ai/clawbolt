@@ -53,6 +53,96 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
 _MAGIC_LINK_INTEGRATIONS: set[str] = {"appfolio_vendor"}
 
 
+_warned_missing_display_names: set[str] = set()
+
+
+def _resolve_oauth_display_name(oauth_name: str, oauth_to_tool: dict[str, str]) -> str:
+    """Look up the human-readable label for an OAuth integration.
+
+    Falls back to the raw oauth name if the tool group mapping or
+    ``_DISPLAY_NAMES`` entry is missing, and logs a one-time warning so the
+    gap surfaces in dev logs instead of in the LLM's mouth.
+    """
+    tool_group = oauth_to_tool.get(oauth_name)
+    if tool_group is None:
+        if oauth_name not in _warned_missing_display_names:
+            logger.warning(
+                "OAuth integration %r has no entry in _TOOL_OAUTH_MAP; "
+                "usage_hint will fall back to the raw name. Add it to "
+                "_TOOL_OAUTH_MAP and _DISPLAY_NAMES in integration_tools.py.",
+                oauth_name,
+            )
+            _warned_missing_display_names.add(oauth_name)
+        return oauth_name
+    display = _DISPLAY_NAMES.get(tool_group)
+    if display is None:
+        if oauth_name not in _warned_missing_display_names:
+            logger.warning(
+                "Tool group %r (for oauth %r) has no entry in _DISPLAY_NAMES; "
+                "usage_hint will fall back to the raw name.",
+                tool_group,
+                oauth_name,
+            )
+            _warned_missing_display_names.add(oauth_name)
+        return tool_group
+    return display
+
+
+def _resolve_magic_link_display_name(target: str) -> str:
+    """Look up the human-readable label for a magic-link integration.
+
+    The magic-link target name is itself the tool group key in
+    ``_DISPLAY_NAMES`` (no oauth-name redirection). Fall back to the raw
+    target with a one-time warning if the entry is missing.
+    """
+    display = _DISPLAY_NAMES.get(target)
+    if display is None:
+        if target not in _warned_missing_display_names:
+            logger.warning(
+                "Magic-link integration %r has no entry in _DISPLAY_NAMES; "
+                "usage_hint will fall back to the raw name.",
+                target,
+            )
+            _warned_missing_display_names.add(target)
+        return target
+    return display
+
+
+def _build_available_integrations_hint() -> str:
+    """Return a sentence enumerating the integrations this deployment supports.
+
+    Built from ``list_oauth_integrations()`` plus ``_MAGIC_LINK_INTEGRATIONS``
+    so new integrations surface in the system prompt automatically once
+    their factory is wired up. This is the LLM's authoritative signal that
+    an integration exists: prior ``manage_integration`` results sitting in
+    conversation history may reflect an older deployment.
+
+    Lists every integration the code knows about, not just those whose
+    admin credentials are wired up. The existing status flow surfaces the
+    "not configured by admin" case cleanly, and the hint already instructs
+    the agent to call action='status' before offering a connect link, so
+    the model never claims a connectable capability that the status check
+    would reject.
+    """
+    oauth_to_tool = {oauth: tool for tool, oauth in _TOOL_OAUTH_MAP.items()}
+    oauth_targets = sorted(list_oauth_integrations())
+    magic_link_targets = sorted(_MAGIC_LINK_INTEGRATIONS)
+
+    display_names = [_resolve_oauth_display_name(name, oauth_to_tool) for name in oauth_targets]
+    display_names.extend(_resolve_magic_link_display_name(name) for name in magic_link_targets)
+    display_names.sort()
+
+    all_targets = sorted({*oauth_targets, *magic_link_targets})
+    target_tokens = ", ".join(f"'{name}'" for name in all_targets)
+
+    return (
+        f"Integrations this deployment supports: {', '.join(display_names)}. "
+        f"Trust this list over any earlier manage_integration result in this "
+        f"conversation; capabilities can change between deployments. "
+        f"Valid connect targets: {target_tokens}."
+    )
+
+
 class ManageIntegrationParams(BaseModel):
     """Parameters for the manage_integration tool."""
 
@@ -81,6 +171,7 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
     ensure_tool_modules_imported()
 
     user_id = ctx.user.id
+    available_integrations_hint = _build_available_integrations_hint()
 
     async def manage_integration(
         action: str,
@@ -124,16 +215,16 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
             function=manage_integration,
             params_model=ManageIntegrationParams,
             usage_hint=(
-                "Use manage_integration to help users control their integrations. "
-                "Before offering ANY connect link, call action='status' first and "
-                "skip integrations already showing as connected (do not re-prompt "
-                "for something they already set up). "
-                "Call with action='connect' and target='google_calendar', "
-                "'google_drive', or 'quickbooks' to generate an OAuth link "
-                "the user can tap to connect. "
-                "For 'appfolio_vendor' you'll get magic-link instructions instead "
-                "of a URL; follow them and then call appfolio_connect directly. "
-                "Call with action='enable'/'disable' and target=group_name to toggle tools."
+                f"Use manage_integration to help users control their integrations. "
+                f"{available_integrations_hint} "
+                f"Before offering ANY connect link, call action='status' first and "
+                f"skip integrations already showing as connected (do not re-prompt "
+                f"for something they already set up). "
+                f"Call with action='connect' and a target from the list above to "
+                f"generate an OAuth link the user can tap to connect. "
+                f"For 'appfolio_vendor' you'll get magic-link instructions instead "
+                f"of a URL; follow them and then call appfolio_connect directly. "
+                f"Call with action='enable'/'disable' and target=group_name to toggle tools."
             ),
             # Enable/disable and connect/disconnect mutate the per-user
             # ``tool_configs`` row and the OAuth token store. Two of these
