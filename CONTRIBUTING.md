@@ -63,7 +63,7 @@ The server starts on `http://localhost:8000`.
 
 ### File storage in development
 
-The default storage provider is `local`, which saves files to `data/storage/` on disk. No cloud credentials needed.
+File storage is exposed through the Google Drive integration. To exercise the file tools (`upload_to_storage`, `find_saved_files`, etc.), set `GOOGLE_DRIVE_CLIENT_ID` and `GOOGLE_DRIVE_CLIENT_SECRET` in `.env`, restart the server, and ask the assistant in chat to "connect google drive" (it calls `manage_integration` and replies with an OAuth link). Without those env vars, the file tools stay hidden, which is fine for working on anything other than file flows. See [Google Drive Setup](./docs/self-host/google-drive-setup.md) for the OAuth client walkthrough.
 
 ### Set up a messaging webhook
 
