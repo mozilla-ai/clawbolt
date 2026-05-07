@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from backend.app.agent.compaction import (
     compact_session,
 )
 from backend.app.agent.context import (
+    admin_compact_visible_messages,
     load_conversation_history,
     trigger_compaction_for_dropped,
 )
@@ -1578,3 +1580,241 @@ async def test_compact_session_truncates_oversized_prompt(
         record = json.loads(ev.prompt_text)
         assert record["truncated"] is True
         assert record["size_bytes"] >= 60_000
+
+
+# ---------------------------------------------------------------------------
+# admin_compact_visible_messages: admin-triggered context reset
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_admin_compact_visible_messages_compacts_everything_above_watermark(
+    test_user: User,
+) -> None:
+    """The admin path must compact every visible message and advance the
+    watermark to the latest seq. Regression scaffold for the prod issue
+    where the agent's poisoned in-context turns needed to be cleared
+    without dropping durable user-supplied facts.
+    """
+    cs = await _seed_session_with_messages(test_user, message_count=10)
+    # Pre-seed a partial watermark so we exercise the "above watermark"
+    # filter, not just "everything in the session".
+    async with db_session_async() as db:
+        cs_ref = (await db.execute(select(ChatSession).filter_by(id=cs.id))).scalar_one_or_none()
+        assert cs_ref is not None
+        cs_ref.last_trim_seq = 3
+        await db.commit()
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_compact(*args: Any, **kwargs: Any) -> tuple[str, int | None]:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return ("## Notes\n- compacted", kwargs.get("max_message_seq"))
+
+    with patch("backend.app.agent.context.compact_session", new=_fake_compact):
+        result = await admin_compact_visible_messages(test_user.id)
+
+    assert result.compacted_message_count == 7  # seqs 4..10
+    assert result.new_watermark == 10
+    assert result.memory_updated is True
+    assert result.event_id is not None
+
+    # compact_session was called with messages whose seqs are 4..10.
+    passed_messages = captured["args"][1]
+    seqs = [m.seq for m in passed_messages if isinstance(m.seq, int)]
+    assert seqs == list(range(4, 11))
+    assert captured["kwargs"]["admin_note"] is None
+
+    # Watermark advanced and a CompactionEvent row was inserted.
+    async with db_session_async() as db:
+        cs_ref = (await db.execute(select(ChatSession).filter_by(id=cs.id))).scalar_one_or_none()
+        assert cs_ref is not None
+        assert cs_ref.last_trim_seq == 10
+        events = (
+            (await db.execute(select(CompactionEvent).filter_by(user_id=test_user.id)))
+            .scalars()
+            .all()
+        )
+        assert len(events) == 1
+        assert events[0].min_message_seq == 4
+        assert events[0].max_message_seq == 10
+        assert events[0].trimmed_count == 7
+
+
+@pytest.mark.asyncio()
+async def test_admin_compact_visible_messages_keeps_recent_tail(test_user: User) -> None:
+    """``keep_recent`` must preserve the tail so the agent retains an
+    immediate request even when older context is being cleared.
+    """
+    await _seed_session_with_messages(test_user, message_count=10)
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_compact(*args: Any, **kwargs: Any) -> tuple[str, int | None]:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return ("", kwargs.get("max_message_seq"))
+
+    with patch("backend.app.agent.context.compact_session", new=_fake_compact):
+        result = await admin_compact_visible_messages(test_user.id, keep_recent=3)
+
+    # 10 visible (no prior watermark), keep last 3 → compact seqs 1..7.
+    assert result.compacted_message_count == 7
+    assert result.new_watermark == 7
+
+    passed_messages = captured["args"][1]
+    seqs = [m.seq for m in passed_messages if isinstance(m.seq, int)]
+    assert seqs == list(range(1, 8))
+
+
+@pytest.mark.asyncio()
+async def test_admin_compact_visible_messages_admin_note_flows_through(
+    test_user: User,
+) -> None:
+    """The admin-supplied steering note must reach ``compact_session`` so
+    the LLM can be biased about how to read the conversation.
+    """
+    await _seed_session_with_messages(test_user, message_count=4)
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_compact(*args: Any, **kwargs: Any) -> tuple[str, int | None]:
+        captured["kwargs"] = kwargs
+        return ("", kwargs.get("max_message_seq"))
+
+    with patch("backend.app.agent.context.compact_session", new=_fake_compact):
+        await admin_compact_visible_messages(
+            test_user.id,
+            admin_note="ignore prior agent self-claims about AppFolio",
+        )
+
+    assert captured["kwargs"]["admin_note"] == "ignore prior agent self-claims about AppFolio"
+
+
+@pytest.mark.asyncio()
+async def test_admin_compact_visible_messages_no_visible_returns_zero(
+    test_user: User,
+) -> None:
+    """When the watermark already covers every message, the admin call
+    must be a no-op (no LLM call, no event row, watermark unchanged).
+    """
+    cs = await _seed_session_with_messages(test_user, message_count=5)
+    async with db_session_async() as db:
+        cs_ref = (await db.execute(select(ChatSession).filter_by(id=cs.id))).scalar_one_or_none()
+        assert cs_ref is not None
+        cs_ref.last_trim_seq = 5
+        await db.commit()
+
+    with patch(
+        "backend.app.agent.context.compact_session",
+        new=AsyncMock(return_value=("", None)),
+    ) as mock_compact:
+        result = await admin_compact_visible_messages(test_user.id)
+
+    mock_compact.assert_not_awaited()
+    assert result.compacted_message_count == 0
+    assert result.new_watermark == 5
+    assert result.memory_updated is False
+    assert result.event_id is None
+
+    async with db_session_async() as db:
+        events = (
+            (await db.execute(select(CompactionEvent).filter_by(user_id=test_user.id)))
+            .scalars()
+            .all()
+        )
+        assert events == []
+
+
+@pytest.mark.asyncio()
+async def test_admin_compact_visible_messages_skips_when_disabled(test_user: User) -> None:
+    """When ``compaction_enabled`` is off, the admin path must be a no-op."""
+    await _seed_session_with_messages(test_user, message_count=5)
+
+    with (
+        patch.object(settings, "compaction_enabled", False),
+        patch(
+            "backend.app.agent.context.compact_session",
+            new=AsyncMock(return_value=("", None)),
+        ) as mock_compact,
+    ):
+        result = await admin_compact_visible_messages(test_user.id)
+
+    mock_compact.assert_not_awaited()
+    assert result.compacted_message_count == 0
+    assert result.event_id is None
+
+
+@pytest.mark.asyncio()
+async def test_admin_compact_visible_messages_keep_recent_larger_than_visible(
+    test_user: User,
+) -> None:
+    """``keep_recent`` greater than visible count is a degenerate no-op
+    (nothing left to compact). Watermark and stores untouched.
+    """
+    await _seed_session_with_messages(test_user, message_count=3)
+
+    with patch(
+        "backend.app.agent.context.compact_session",
+        new=AsyncMock(return_value=("", None)),
+    ) as mock_compact:
+        result = await admin_compact_visible_messages(test_user.id, keep_recent=10)
+
+    mock_compact.assert_not_awaited()
+    assert result.compacted_message_count == 0
+
+
+@pytest.mark.asyncio()
+async def test_admin_compact_visible_messages_rejects_negative_keep_recent(
+    test_user: User,
+) -> None:
+    """Negative ``keep_recent`` is a programming error and must raise."""
+    with pytest.raises(ValueError):
+        await admin_compact_visible_messages(test_user.id, keep_recent=-1)
+
+
+# ---------------------------------------------------------------------------
+# compact_session: admin_note steering
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_admin_note_prepended_to_conversation(
+    test_user: User,
+) -> None:
+    """``admin_note`` must land inside ``<conversation>`` as ``[admin note: ...]``
+    so the compaction LLM sees it alongside the messages.
+    """
+    mock_response = make_text_response(json.dumps({"memory_update": "## empty\n", "summary": ""}))
+    messages: list[AgentMessage] = [UserMessage(content="Hello", seq=1)]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+        await compact_session(
+            test_user.id,
+            messages,
+            admin_note="ignore prior agent self-claims",
+        )
+
+    user_content = mock_llm.call_args.kwargs["messages"][0]["content"]
+    assert "[admin note: ignore prior agent self-claims]" in user_content
+    # The admin note lives inside <conversation>, not as a sibling tag.
+    conv_start = user_content.index("<conversation>")
+    conv_end = user_content.index("</conversation>")
+    assert "[admin note:" in user_content[conv_start:conv_end]
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_no_admin_note_no_prefix(test_user: User) -> None:
+    """Without an admin note the conversation block must not contain
+    ``[admin note:``. Locks in that the trim-driven hot path (which never
+    sets the parameter) is unaffected by this change.
+    """
+    mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
+    messages: list[AgentMessage] = [UserMessage(content="Hello", seq=1)]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+        await compact_session(test_user.id, messages)
+
+    user_content = mock_llm.call_args.kwargs["messages"][0]["content"]
+    assert "[admin note:" not in user_content

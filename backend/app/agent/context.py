@@ -299,6 +299,63 @@ def _expand_outbound_with_tools(
     return messages
 
 
+def _stored_messages_to_agent_messages(messages: list[Any]) -> list[AgentMessage]:
+    """Convert ``StoredMessage`` rows to typed ``AgentMessage`` objects.
+
+    Mirrors the conversion logic of ``load_conversation_history`` so any
+    caller operating on a custom slice (e.g. the admin compact-now path)
+    sees the same shape the LLM would normally receive: tool interactions
+    expanded, approval prompts and orphan approval replies dropped.
+
+    Stateful across the loop because dropping an approval prompt also
+    requires dropping the user's "yes/no" reply that immediately follows
+    it. ``last_was_approval_prompt`` carries that flag forward.
+    """
+    history: list[AgentMessage] = []
+    last_was_approval_prompt = False
+    for msg in messages:
+        # Prefer processed context (includes media descriptions) over raw body
+        content = msg.processed_context if msg.processed_context else msg.body
+        if msg.direction == MessageDirection.INBOUND:
+            # Rapid-fire attachment-only messages can be batched so the
+            # placeholder row is persisted with no body and no processed
+            # context. Keeping that blank row in history teaches the LLM
+            # that the previous user turn was "silent", which can produce
+            # stray clarification text on the next real message.
+            if not (content or "").strip():
+                last_was_approval_prompt = False
+                continue
+            # Drop the user's approval reply ("Yes", "Always", ...) when it
+            # immediately follows a (now-filtered) approval prompt. Without
+            # this, the orphan reply floats in history with no antecedent
+            # and risks confusing the LLM. We only filter the strict
+            # fast-path keyword set so a stray "Yes" in normal conversation
+            # is preserved.
+            if last_was_approval_prompt and _parse_approval_response(content) is not None:
+                last_was_approval_prompt = False
+                continue
+            last_was_approval_prompt = False
+            history.append(UserMessage(content=content, seq=msg.seq))
+        else:
+            # Check for stored tool interactions
+            tool_interactions = _parse_tool_interactions(msg.tool_interactions_json)
+            if tool_interactions:
+                history.extend(_expand_outbound_with_tools(tool_interactions, content, seq=msg.seq))
+                last_was_approval_prompt = False
+            elif _is_approval_prompt(content):
+                # Skip approval prompts (real ones persisted by older code,
+                # plus any LLM-generated fake prompts that mimic the format).
+                # Persisted prompts in past turns trained the LLM to produce
+                # them as prose instead of calling tools, creating an
+                # infinite-loop UX bug. Filtering at load time heals
+                # already-poisoned sessions without a DB migration.
+                last_was_approval_prompt = True
+            else:
+                history.append(AssistantMessage(content=content, seq=msg.seq))
+                last_was_approval_prompt = False
+    return history
+
+
 async def load_conversation_history(
     session: SessionState,
     limit: int = DEFAULT_HISTORY_LIMIT,
@@ -334,54 +391,10 @@ async def load_conversation_history(
     else:
         messages = []
 
-    history: list[AgentMessage] = []
-    tool_interaction_count = 0
-    last_was_approval_prompt = False
-    for msg in messages:
-        # Prefer processed context (includes media descriptions) over raw body
-        content = msg.processed_context if msg.processed_context else msg.body
-        if msg.direction == MessageDirection.INBOUND:
-            # Rapid-fire attachment-only messages can be batched so the
-            # placeholder row is persisted with no body and no processed
-            # context. Keeping that blank row in history teaches the LLM
-            # that the previous user turn was "silent", which can produce
-            # stray clarification text on the next real message.
-            if not (content or "").strip():
-                last_was_approval_prompt = False
-                continue
-            # Drop the user's approval reply ("Yes", "Always", ...) when it
-            # immediately follows a (now-filtered) approval prompt. Without
-            # this, the orphan reply floats in history with no antecedent
-            # and risks confusing the LLM. We only filter the strict
-            # fast-path keyword set so a stray "Yes" in normal conversation
-            # is preserved.
-            if last_was_approval_prompt and _parse_approval_response(content) is not None:
-                last_was_approval_prompt = False
-                continue
-            last_was_approval_prompt = False
-            history.append(UserMessage(content=content, seq=msg.seq))
-        else:
-            # Check for stored tool interactions
-            tool_interactions = _parse_tool_interactions(msg.tool_interactions_json)
-            if tool_interactions:
-                tool_interaction_count += len(tool_interactions)
-                history.extend(_expand_outbound_with_tools(tool_interactions, content, seq=msg.seq))
-                last_was_approval_prompt = False
-            elif _is_approval_prompt(content):
-                # Skip approval prompts (real ones persisted by older code,
-                # plus any LLM-generated fake prompts that mimic the format).
-                # Persisted prompts in past turns trained the LLM to produce
-                # them as prose instead of calling tools, creating an
-                # infinite-loop UX bug. Filtering at load time heals
-                # already-poisoned sessions without a DB migration.
-                last_was_approval_prompt = True
-            else:
-                history.append(AssistantMessage(content=content, seq=msg.seq))
-                last_was_approval_prompt = False
+    history = _stored_messages_to_agent_messages(messages)
     logger.debug(
-        "Loaded %d history messages (%d with tool interactions) for session %s",
+        "Loaded %d history messages for session %s",
         len(history),
-        tool_interaction_count,
         session.session_id,
     )
     return history
@@ -395,3 +408,155 @@ async def get_or_create_conversation(user_id: str) -> tuple[SessionState, bool]:
     where ``is_new`` is True only on the very first message for a user.
     """
     return await get_session_store(user_id).get_or_create_session()
+
+
+class AdminCompactionResult(BaseModel):
+    """Outcome of an admin-triggered context compaction."""
+
+    compacted_message_count: int
+    new_watermark: int | None
+    memory_updated: bool
+    event_id: int | None
+
+
+async def admin_compact_visible_messages(
+    user_id: str,
+    keep_recent: int = 0,
+    admin_note: str | None = None,
+) -> AdminCompactionResult:
+    """Synchronously compact every message currently visible to the agent.
+
+    Companion to :func:`trigger_compaction_for_dropped`, but driven by an
+    admin (not by the trim path) so the LLM-facing context can be reset
+    when the conversation has been poisoned, e.g. by a now-fixed bug
+    that taught the agent a wrong fact about its own capabilities.
+
+    Resolves "everything visible" the same way ``load_conversation_history``
+    does: messages with ``seq > sessions.last_trim_seq``, excluding orphan
+    approval prompts/replies, with tool interactions expanded. The last
+    *keep_recent* visible turns are preserved on the schema so the agent
+    still has immediate context if the admin wants to surgically clear
+    older noise without dropping a pending request.
+
+    Phase 1 (synchronous, one transaction) inserts a pending
+    ``CompactionEvent`` and advances ``sessions.last_trim_seq`` to the max
+    seq of the to-compact set, mirroring ``trigger_compaction_for_dropped``
+    so the next inbound's history loader already filters them.
+
+    Phase 2 (synchronous, awaited) calls :func:`compact_session` with the
+    optional admin note prepended to the conversation block. Unlike the
+    trim-driven path, we await the LLM call here so the admin endpoint
+    can return a real result and surface failures.
+    """
+    if keep_recent < 0:
+        raise ValueError("keep_recent must be non-negative")
+
+    if not settings.compaction_enabled:
+        return AdminCompactionResult(
+            compacted_message_count=0,
+            new_watermark=None,
+            memory_updated=False,
+            event_id=None,
+        )
+
+    store = get_session_store(user_id)
+    state, _ = await store.get_or_create_session()
+
+    watermark = state.last_trim_seq or 0
+    above = [m for m in state.messages if m.seq > watermark]
+    if keep_recent > 0:
+        to_compact_stored = above[:-keep_recent] if keep_recent <= len(above) else []
+    else:
+        to_compact_stored = list(above)
+
+    if not to_compact_stored:
+        return AdminCompactionResult(
+            compacted_message_count=0,
+            new_watermark=state.last_trim_seq,
+            memory_updated=False,
+            event_id=None,
+        )
+
+    agent_messages = _stored_messages_to_agent_messages(to_compact_stored)
+    if not agent_messages:
+        # All visible rows were filtered (e.g. only approval prompts).
+        # Still advance the watermark so they stop reaching the LLM, but
+        # skip the LLM call since there is nothing to extract facts from.
+        max_seq = to_compact_stored[-1].seq
+        await _advance_trim_watermark_only(user_id, max_seq)
+        return AdminCompactionResult(
+            compacted_message_count=0,
+            new_watermark=max_seq,
+            memory_updated=False,
+            event_id=None,
+        )
+
+    # Mirror ``_seqs_from_dropped``: only ``UserMessage`` /
+    # ``AssistantMessage`` carry ``seq``; tool-result and system messages
+    # do not. ``getattr`` with isinstance narrows for the type checker.
+    seqs = [getattr(m, "seq", None) for m in agent_messages]
+    seqs = [s for s in seqs if isinstance(s, int)]
+    if not seqs:
+        return AdminCompactionResult(
+            compacted_message_count=0,
+            new_watermark=state.last_trim_seq,
+            memory_updated=False,
+            event_id=None,
+        )
+    min_seq = min(seqs)
+    max_seq = max(seqs)
+    triggered_at = datetime.datetime.now(datetime.UTC)
+
+    event_id: int
+    async with db_session_async() as db:
+        event = CompactionEvent(
+            user_id=user_id,
+            triggered_at=triggered_at,
+            status="pending",
+            min_message_seq=min_seq,
+            max_message_seq=max_seq,
+            trimmed_count=len(agent_messages),
+        )
+        db.add(event)
+        await db.flush()
+        assert event.id is not None, "flush() must populate the autoincrement id"
+        event_id = event.id
+
+        cs = (await db.execute(select(ChatSession).filter_by(user_id=user_id))).scalar_one_or_none()
+        if cs is not None:
+            current = cs.last_trim_seq or 0
+            if max_seq > current:
+                cs.last_trim_seq = max_seq
+        await db.commit()
+
+    memory_update, _ = await compact_session(
+        user_id,
+        agent_messages,
+        max_message_seq=max_seq,
+        event_id=event_id,
+        admin_note=admin_note,
+    )
+
+    return AdminCompactionResult(
+        compacted_message_count=len(agent_messages),
+        new_watermark=max_seq,
+        memory_updated=bool(memory_update),
+        event_id=event_id,
+    )
+
+
+async def _advance_trim_watermark_only(user_id: str, max_seq: int) -> None:
+    """Advance ``sessions.last_trim_seq`` without inserting a compaction event.
+
+    Used when an admin compaction would drop only filtered rows (e.g.
+    nothing but approval prompts). There is nothing to extract facts
+    from, so the LLM call is skipped, but the watermark still advances
+    so the rows stop reaching the LLM.
+    """
+    async with db_session_async() as db:
+        cs = (await db.execute(select(ChatSession).filter_by(user_id=user_id))).scalar_one_or_none()
+        if cs is not None:
+            current = cs.last_trim_seq or 0
+            if max_seq > current:
+                cs.last_trim_seq = max_seq
+        await db.commit()
