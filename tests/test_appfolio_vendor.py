@@ -405,3 +405,253 @@ def test_list_work_orders_params_defaults() -> None:
     assert p.include_completed is False
     assert p.include_estimates is True
     assert p.customer_id == ""
+
+
+# ---------------------------------------------------------------------------
+# Write surface (PR2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_accept_work_order_passes_ref_param() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.accept_work_order("42", body={"notes": "got it"})
+    args, kwargs = client.request.call_args
+    assert args[0] == "POST"
+    assert "/maintenance/api/work_orders/42/accept" in args[1]
+    assert kwargs["params"] == {"ref": "vendor_portal"}
+    assert kwargs["json"] == {"notes": "got it"}
+
+
+@pytest.mark.asyncio()
+async def test_schedule_work_order_omits_unset_fields() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.schedule_work_order("42", scheduled_at="2026-05-08T14:00:00-04:00")
+    _, kwargs = client.request.call_args
+    assert kwargs["json"] == {"scheduledAt": "2026-05-08T14:00:00-04:00"}
+
+
+@pytest.mark.asyncio()
+async def test_schedule_work_order_includes_optional_fields() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.schedule_work_order(
+            "42",
+            scheduled_at="2026-05-08T14:00:00",
+            duration_minutes=90,
+            notes="bring ladder",
+        )
+    _, kwargs = client.request.call_args
+    assert kwargs["json"] == {
+        "scheduledAt": "2026-05-08T14:00:00",
+        "durationMinutes": 90,
+        "notes": "bring ladder",
+    }
+
+
+@pytest.mark.asyncio()
+async def test_update_status_uses_camelcase_envelope() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.update_work_order_status("42", status_code=8)
+    args, kwargs = client.request.call_args
+    assert args[0] == "PATCH"
+    assert kwargs["json"] == {"workOrder": {"statusCode": 8}}
+
+
+@pytest.mark.asyncio()
+async def test_add_note_inlines_base64_files() -> None:
+    from backend.app.integrations.appfolio_vendor.service import FileUpload
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={"id": "999"})
+    files = [FileUpload(name="kitchen.jpg", data=b"\x89PNGfake")]
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.add_work_order_note("42", body_text="arrived", files=files)
+    _, kwargs = client.request.call_args
+    payload = kwargs["json"]
+    assert payload["note"] == {"body": "arrived"}
+    assert len(payload["files"]) == 1
+    entry = payload["files"][0]
+    assert entry["name"] == "kitchen.jpg"
+    # base64 of b"\x89PNGfake"
+    import base64
+
+    assert entry["file_base64"] == base64.b64encode(b"\x89PNGfake").decode("ascii")
+
+
+@pytest.mark.asyncio()
+async def test_add_note_omits_files_key_when_empty() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={"id": "999"})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.add_work_order_note("42", body_text="status")
+    _, kwargs = client.request.call_args
+    assert kwargs["json"] == {"note": {"body": "status"}}
+
+
+@pytest.mark.asyncio()
+async def test_message_tenant_two_step_flow() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    proxy_resp = _mock_response(json_data={"phone_number": "+15551234567"})
+    msg_resp = _mock_response(json_data={"ok": True})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        # service.get_proxy_number then service.message_tenant
+        client.request = AsyncMock(side_effect=[proxy_resp, msg_resp])
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        proxy = await service.get_proxy_number("42")
+        await service.message_tenant(
+            work_order_id="42",
+            phone_number=proxy["phone_number"],
+            message="on my way",
+        )
+    assert client.request.call_count == 2
+    second_args, second_kwargs = client.request.call_args_list[1]
+    assert second_args[0] == "POST"
+    assert second_args[1].endswith("/tenant_vendor_conversations")
+    assert second_kwargs["json"] == {
+        "work_order_id": "42",
+        "phone_number": "+15551234567",
+        "message": "on my way",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Media resolver
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_resolve_staged_files_pulls_from_downloaded_media() -> None:
+    from backend.app.integrations.appfolio_vendor.media_resolver import (
+        resolve_staged_files,
+    )
+    from backend.app.media.download import DownloadedMedia
+
+    media = DownloadedMedia(
+        content=b"\xff\xd8fakejpg",
+        mime_type="image/jpeg",
+        original_url="https://example.com/photo1.jpg",
+        filename="photo1.jpg",
+    )
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = [media]
+
+    with (
+        patch(
+            "backend.app.agent.media_staging.resolve_media_ref",
+            return_value=None,
+        ),
+        patch(
+            "backend.app.agent.media_staging.get_all_for_user",
+            return_value={},
+        ),
+        patch("backend.app.agent.stores.MediaStore") as ms_cls,
+    ):
+        store = AsyncMock()
+        store.get_by_url = AsyncMock(return_value=None)
+        ms_cls.return_value = store
+
+        result = await resolve_staged_files(ctx, ["https://example.com/photo1.jpg"])
+
+    from backend.app.integrations.appfolio_vendor.service import FileUpload
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    first = result[0]
+    assert isinstance(first, FileUpload)
+    assert first.data == b"\xff\xd8fakejpg"
+    assert first.name.endswith(".jpg")
+
+
+@pytest.mark.asyncio()
+async def test_resolve_staged_files_returns_error_for_missing_ref() -> None:
+    from backend.app.integrations.appfolio_vendor.media_resolver import (
+        resolve_staged_files,
+    )
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    with (
+        patch(
+            "backend.app.agent.media_staging.resolve_media_ref",
+            return_value=None,
+        ),
+        patch(
+            "backend.app.agent.media_staging.get_all_for_user",
+            return_value={},
+        ),
+        patch("backend.app.agent.stores.MediaStore") as ms_cls,
+    ):
+        store = AsyncMock()
+        store.get_by_url = AsyncMock(return_value=None)
+        ms_cls.return_value = store
+
+        result = await resolve_staged_files(ctx, ["https://example.com/missing.jpg"])
+
+    # Returns ToolResult on error rather than raising.
+    from backend.app.agent.tools.base import ToolResult as _TR
+
+    assert isinstance(result, _TR)
+    assert result.is_error is True
+
+
+@pytest.mark.asyncio()
+async def test_resolve_staged_files_empty_list_returns_empty_list() -> None:
+    from backend.app.integrations.appfolio_vendor.media_resolver import (
+        resolve_staged_files,
+    )
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    result = await resolve_staged_files(ctx, [])
+    assert result == []

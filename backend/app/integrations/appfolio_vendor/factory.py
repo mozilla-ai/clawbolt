@@ -27,9 +27,14 @@ from backend.app.integrations.appfolio_vendor.auth import (
     load_credential,
 )
 from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
+from backend.app.integrations.appfolio_vendor.conversations import build_conversation_tools
+from backend.app.integrations.appfolio_vendor.notes import build_note_tools
 from backend.app.integrations.appfolio_vendor.payments import build_payment_tools
 from backend.app.integrations.appfolio_vendor.profile import build_profile_tools
 from backend.app.integrations.appfolio_vendor.service import build_service
+from backend.app.integrations.appfolio_vendor.work_order_writes import (
+    build_work_order_write_tools,
+)
 from backend.app.integrations.appfolio_vendor.work_orders import build_work_order_tools
 
 if TYPE_CHECKING:
@@ -55,6 +60,9 @@ async def _appfolio_factory(ctx: ToolContext) -> list[Tool]:
         return tools
     service = build_service(cred, api_base=settings.appfolio_vendor_api_base)
     tools.extend(build_work_order_tools(service))
+    tools.extend(build_work_order_write_tools(service))
+    tools.extend(build_note_tools(service, ctx))
+    tools.extend(build_conversation_tools(service))
     tools.extend(build_payment_tools(service))
     tools.extend(build_profile_tools(service))
     return tools
@@ -125,6 +133,46 @@ def _register() -> None:
                 ToolName.APPFOLIO_GET_PROFILE,
                 "Get the connected AppFolio profile",
                 default_permission="always",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_ACCEPT_WORK_ORDER,
+                "Accept an AppFolio work order assignment",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_SCHEDULE_WORK_ORDER,
+                "Schedule an AppFolio work order visit",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_UPDATE_WORK_ORDER_STATUS,
+                "Update the status code on an AppFolio work order",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_UNDO_WORK_ORDER_STATUS,
+                "Revert a recent AppFolio work order status change",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_LIST_NOTES,
+                "List notes on an AppFolio work order",
+                default_permission="always",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_ADD_NOTE,
+                "Add a note (with optional photos) to an AppFolio work order",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_UPDATE_NOTE,
+                "Edit an existing AppFolio work-order note",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_MESSAGE_TENANT,
+                "Send an SMS to the tenant on an AppFolio work order",
+                default_permission="ask",
             ),
         ],
         auth_check=_appfolio_auth_check,
