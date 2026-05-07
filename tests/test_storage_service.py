@@ -58,6 +58,16 @@ async def test_list_empty_folder(storage: MockStorageBackend) -> None:
     assert files == []
 
 
+@pytest.mark.asyncio()
+async def test_mock_download_file(storage: MockStorageBackend) -> None:
+    """download_file should return stored bytes by logical path."""
+    await storage.upload_file(b"photo1", "/photos", "photo1.jpg")
+
+    content = await storage.download_file("/photos/photo1.jpg")
+
+    assert content == b"photo1"
+
+
 def test_get_storage_service_invalid_provider() -> None:
     """get_storage_service should raise ValueError for unknown provider."""
     mock_settings = MagicMock()
@@ -138,6 +148,16 @@ async def test_local_list_folder_empty(local_storage: LocalFileStorage) -> None:
     assert files == []
 
 
+@pytest.mark.asyncio()
+async def test_local_download_file(local_storage: LocalFileStorage) -> None:
+    """LocalFileStorage should read a previously saved file from disk."""
+    await local_storage.upload_file(b"saved-bytes", "/docs", "a.txt")
+
+    content = await local_storage.download_file("/docs/a.txt")
+
+    assert content == b"saved-bytes"
+
+
 # ---------------------------------------------------------------------------
 # LocalFileStorage path-traversal tests
 # ---------------------------------------------------------------------------
@@ -207,6 +227,7 @@ def mock_dbx_client() -> MagicMock:
     folder_result = MagicMock()
     folder_result.entries = [entry]
     client.files_list_folder.return_value = folder_result
+    client.files_download.return_value = (MagicMock(), MagicMock(content=b"dropbox-bytes"))
     return client
 
 
@@ -316,6 +337,17 @@ async def test_dropbox_list_folder(
     assert files == [{"name": "photo.jpg", "path": "/photos/photo.jpg"}]
 
 
+@pytest.mark.asyncio()
+async def test_dropbox_download_file(
+    dropbox_storage: DropboxStorage, mock_dbx_client: MagicMock
+) -> None:
+    """download_file should fetch file content by logical storage path."""
+    content = await dropbox_storage.download_file("/photos/photo.jpg")
+
+    mock_dbx_client.files_download.assert_called_once_with("/photos/photo.jpg")
+    assert content == b"dropbox-bytes"
+
+
 # ---------------------------------------------------------------------------
 # GoogleDriveStorage tests
 # ---------------------------------------------------------------------------
@@ -335,6 +367,7 @@ def mock_drive_service() -> MagicMock:
         ]
     }
     service.files.return_value.list.return_value.execute.return_value = list_result
+    service.files.return_value.get_media.return_value.execute.return_value = b"drive-bytes"
     return service
 
 
@@ -407,6 +440,22 @@ async def test_gdrive_list_folder(
     assert files[0] == {"name": "photo.jpg", "path": "https://drive.google.com/f1"}
     assert files[1] == {"name": "doc.pdf", "path": "https://drive.google.com/f2"}
     mock_drive_service.files.return_value.list.assert_called_once()
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_download_file(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """download_file should locate a file by logical path and return its bytes."""
+    gdrive_storage._folder_cache["Client"] = "folder-id"
+    mock_drive_service.files.return_value.list.return_value.execute.return_value = {
+        "files": [{"id": "file-123"}]
+    }
+
+    content = await gdrive_storage.download_file("/Client/photo.jpg")
+
+    assert content == b"drive-bytes"
+    mock_drive_service.files.return_value.get_media.assert_called_once_with(fileId="file-123")
 
 
 # ---------------------------------------------------------------------------

@@ -49,6 +49,10 @@ class StorageBackend(ABC):
     async def list_folder(self, path: str) -> list[dict[str, str]]:
         """List files in a folder. Returns list of file metadata."""
 
+    @abstractmethod
+    async def download_file(self, path: str) -> bytes:
+        """Download a previously stored file by its logical storage path."""
+
 
 class DropboxStorage(StorageBackend):
     def __init__(self, access_token: str, user_id: str | None = None) -> None:
@@ -114,6 +118,15 @@ class DropboxStorage(StorageBackend):
             files.append({"name": entry.name, "path": entry.path_display})
         return files
 
+    async def download_file(self, path: str) -> bytes:
+        full_path = self._prefixed(path)
+        try:
+            _metadata, response = await asyncio.to_thread(self.dbx.files_download, full_path)
+        except dropbox.exceptions.ApiError as exc:
+            msg = f"File not found in Dropbox: {full_path}"
+            raise FileNotFoundError(msg) from exc
+        return response.content
+
 
 class GoogleDriveStorage(StorageBackend):
     """Google Drive storage backend with per-user folder isolation.
@@ -138,8 +151,8 @@ class GoogleDriveStorage(StorageBackend):
             self._service = build("drive", "v3", credentials=creds)
         return self._service
 
-    async def _find_or_create_folder(self, name: str, parent_id: str | None = None) -> str:
-        """Find an existing folder by *name* under *parent_id*, or create one."""
+    async def _find_folder(self, name: str, parent_id: str | None = None) -> str | None:
+        """Return the folder id for *name* under *parent_id*, if it exists."""
         service = self._get_service()
         safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
         parent_clause = f"'{parent_id}' in parents" if parent_id else "'root' in parents"
@@ -153,6 +166,14 @@ class GoogleDriveStorage(StorageBackend):
         existing = result.get("files", [])
         if existing:
             return existing[0]["id"]
+        return None
+
+    async def _find_or_create_folder(self, name: str, parent_id: str | None = None) -> str:
+        """Find an existing folder by *name* under *parent_id*, or create one."""
+        service = self._get_service()
+        existing_id = await self._find_folder(name, parent_id)
+        if existing_id is not None:
+            return existing_id
         metadata: dict[str, Any] = {
             "name": name,
             "mimeType": "application/vnd.google-apps.folder",
@@ -194,6 +215,38 @@ class GoogleDriveStorage(StorageBackend):
             current_path = cache_key
 
         return current_id  # type: ignore[return-value]
+
+    async def _resolve_existing_path(self, path: str) -> str | None:
+        """Translate a human-readable path to an existing Google Drive folder ID."""
+        parts = [p for p in path.strip("/").split("/") if p]
+        if self._user_id:
+            root_key = self._user_id
+            current_id = self._folder_cache.get(root_key)
+            if current_id is None:
+                current_id = await self._find_folder(self._user_id)
+                if current_id is None:
+                    return None
+                self._folder_cache[root_key] = current_id
+            current_path = self._user_id
+        else:
+            current_id = None
+            current_path = ""
+
+        if not parts:
+            return current_id or "root"
+
+        for part in parts:
+            cache_key = f"{current_path}/{part}" if current_path else part
+            next_id = self._folder_cache.get(cache_key)
+            if next_id is None:
+                next_id = await self._find_folder(part, current_id)
+                if next_id is None:
+                    return None
+                self._folder_cache[cache_key] = next_id
+            current_id = next_id
+            current_path = cache_key
+
+        return current_id
 
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
         from googleapiclient.errors import HttpError
@@ -251,7 +304,9 @@ class GoogleDriveStorage(StorageBackend):
         return update_result.get("webViewLink", update_result.get("id", ""))
 
     async def list_folder(self, path: str) -> list[dict[str, str]]:
-        folder_id = await self._resolve_path(path)
+        folder_id = await self._resolve_existing_path(path)
+        if folder_id is None:
+            return []
         service = self._get_service()
         query = f"'{folder_id}' in parents and trashed=false"
         result = await asyncio.to_thread(
@@ -261,6 +316,39 @@ class GoogleDriveStorage(StorageBackend):
             {"name": f["name"], "path": f.get("webViewLink", f["id"])}
             for f in result.get("files", [])
         ]
+
+    async def download_file(self, path: str) -> bytes:
+        from googleapiclient.errors import HttpError
+
+        normalized = path.strip("/")
+        if not normalized:
+            msg = "Cannot download a folder path from Google Drive."
+            raise FileNotFoundError(msg)
+
+        folder_path, filename = normalized.rsplit("/", 1) if "/" in normalized else ("", normalized)
+        folder_id = await self._resolve_existing_path(folder_path)
+        if folder_id is None:
+            msg = f"Google Drive folder not found for {path!r}"
+            raise FileNotFoundError(msg)
+
+        service = self._get_service()
+        safe_name = filename.replace("\\", "\\\\").replace("'", "\\'")
+        query = f"name='{safe_name}' and '{folder_id}' in parents and trashed=false"
+        result = await asyncio.to_thread(
+            service.files().list(q=query, fields="files(id)", pageSize=1).execute
+        )
+        files = result.get("files", [])
+        if not files:
+            msg = f"File not found in Google Drive: {path}"
+            raise FileNotFoundError(msg)
+
+        file_id = files[0]["id"]
+        try:
+            data = await asyncio.to_thread(service.files().get_media(fileId=file_id).execute)
+        except HttpError as exc:
+            msg = f"Google Drive download failed for {path}: {exc}"
+            raise RuntimeError(msg) from exc
+        return bytes(data)
 
 
 class LocalFileStorage(StorageBackend):
@@ -318,6 +406,13 @@ class LocalFileStorage(StorageBackend):
         if not folder.exists():
             return []
         return [{"name": f.name, "path": str(f)} for f in folder.iterdir() if f.is_file()]
+
+    async def download_file(self, path: str) -> bytes:
+        file_path = self._safe_path(path)
+        if not file_path.is_file():
+            msg = f"File not found in local storage: {path}"
+            raise FileNotFoundError(msg)
+        return await asyncio.to_thread(file_path.read_bytes)
 
 
 def get_storage_service(
