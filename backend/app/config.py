@@ -406,7 +406,6 @@ def log_config_warnings(s: Settings | None = None) -> list[str]:
     # them so upgraders notice their config is dead.
     for legacy_key in (
         "STORAGE_PROVIDER",
-        "DROPBOX_ACCESS_TOKEN",
         "GOOGLE_DRIVE_CREDENTIALS_JSON",
         "FILE_STORAGE_BASE_DIR",
     ):
