@@ -219,6 +219,120 @@ class AppFolioVendorService:
     async def get_profile(self) -> Any:
         return await self.get("/profiles/me", params={"viewed": "true"})
 
+    # ------------------------------------------------------------------
+    # Domain helpers (PR2: write surface)
+    # ------------------------------------------------------------------
+
+    async def accept_work_order(
+        self,
+        work_order_id: str,
+        *,
+        body: dict[str, Any] | None = None,
+    ) -> Any:
+        return await self.post(
+            f"/maintenance/api/work_orders/{work_order_id}/accept",
+            params={"ref": "vendor_portal"},
+            json_body=body,
+        )
+
+    async def schedule_work_order(
+        self,
+        work_order_id: str,
+        *,
+        scheduled_at: str,
+        duration_minutes: int | None = None,
+        notes: str = "",
+    ) -> Any:
+        """POST a schedule onto a work order.
+
+        Body shape mirrors the SPA: a flat dict whose keys are camelCase.
+        ``scheduled_at`` should be an ISO 8601 string with timezone (or
+        local with offset) so AppFolio can render it correctly back to
+        the property manager.
+        """
+        body: dict[str, Any] = {"scheduledAt": scheduled_at}
+        if duration_minutes is not None:
+            body["durationMinutes"] = duration_minutes
+        if notes:
+            body["notes"] = notes
+        return await self.post(
+            f"/maintenance/api/work_orders/{work_order_id}/schedule",
+            json_body=body,
+        )
+
+    async def update_work_order_status(self, work_order_id: str, *, status_code: int) -> Any:
+        return await self.patch(
+            f"/maintenance/api/work_orders/{work_order_id}",
+            json_body={"workOrder": {"statusCode": status_code}},
+        )
+
+    async def undo_work_order_status(
+        self, work_order_id: str, *, previous_status: int | str
+    ) -> Any:
+        return await self.patch(
+            f"/maintenance/api/work_orders/{work_order_id}/undo_status",
+            json_body={"workOrder": {"status": previous_status}},
+        )
+
+    async def list_work_order_notes(self, work_order_id: str) -> Any:
+        return await self.get(f"/maintenance/api/work_orders/{work_order_id}/notes")
+
+    async def add_work_order_note(
+        self,
+        work_order_id: str,
+        *,
+        body_text: str,
+        files: list[FileUpload] | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {"note": {"body": body_text}}
+        if files:
+            body["files"] = _encode_files(files)
+        return await self.post(
+            f"/maintenance/api/work_orders/{work_order_id}/notes",
+            json_body=body,
+        )
+
+    async def update_work_order_note(
+        self,
+        work_order_id: str,
+        note_id: str,
+        *,
+        body_text: str,
+        files: list[FileUpload] | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {"note": {"body": body_text}}
+        if files:
+            body["files"] = _encode_files(files)
+        return await self.patch(
+            f"/maintenance/api/work_orders/{work_order_id}/notes/{note_id}",
+            json_body=body,
+        )
+
+    async def get_proxy_number(self, work_order_id: str) -> Any:
+        """Fetch AppFolio's anonymized proxy phone number for the tenant.
+
+        Vendors message tenants via a proxy number AppFolio mints per
+        work order. Calling this endpoint creates (or returns) the
+        number; the SMS itself goes through ``message_tenant`` below.
+        """
+        return await self.get(f"/maintenance/api/work_orders/{work_order_id}/get_proxy_number")
+
+    async def message_tenant(
+        self,
+        *,
+        work_order_id: str,
+        phone_number: str,
+        message: str,
+    ) -> Any:
+        return await self.post(
+            "/maintenance/api/tenant_vendor_conversations",
+            json_body={
+                "work_order_id": work_order_id,
+                "phone_number": phone_number,
+                "message": message,
+            },
+        )
+
 
 def build_service(
     credential: AppFolioCredential,
