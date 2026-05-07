@@ -65,5 +65,5 @@ Send a message to your assistant and Clawbolt will respond. If you configured an
 
 - [Configuration](./configuration.md) -- full list of environment variables
 - [Docker](./docker.md) -- Docker Compose details and troubleshooting
-- [Storage Providers](./storage.md) -- configure per-user Google Drive connections for file storage
+- [Google Drive Setup](./google-drive-setup.md) -- file storage integration, per-user OAuth
 - [Contributing](../../CONTRIBUTING.md) -- local development setup, tests, and PR guidelines

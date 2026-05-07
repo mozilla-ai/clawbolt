@@ -79,16 +79,16 @@ When `LINQ_API_TOKEN` is set, the iMessage channel is powered by Linq and users 
 
 When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage channel is powered by BlueBubbles. [BlueBubbles](https://github.com/BlueBubblesApp/bluebubbles-server) is a free, open-source iMessage bridge that runs on any Mac with iMessage signed in.
 
-## Storage settings
+## Google Drive integration
 
-File storage is per-user via Google Drive OAuth. Each user grants `drive.file` scope through `manage_integration` in chat; files land in the user's own Drive under a top-level "Clawbolt" folder. Without these credentials set, file storage stays disabled and the file tools (upload, retrieve, analyze) never load for any user.
+Google Drive is the integration Clawbolt uses for file storage. Each user grants `drive.file` scope through `manage_integration` in chat; files land in the user's own Drive under a top-level "Clawbolt" folder. Without these credentials set, the integration stays unavailable and the file tools (upload, retrieve, analyze) never load for any user.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GOOGLE_DRIVE_CLIENT_ID` | | OAuth client ID from the Google Cloud console (with the Drive API enabled) |
 | `GOOGLE_DRIVE_CLIENT_SECRET` | | OAuth client secret from the Google Cloud console |
 
-See [Storage Providers](./storage.md) for setup instructions.
+See [Google Drive Setup](./google-drive-setup.md) for the full walkthrough.
 
 ## LLM token limits
 

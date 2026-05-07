@@ -7,7 +7,7 @@ Send a photo to Clawbolt and it will analyze it using vision AI, providing a des
 1. **Send a photo**: Take a picture at the job site and send it to Clawbolt
 2. **AI analysis**: The image is processed by the LLM's vision capabilities
 3. **Description generated**: Clawbolt provides a text description of what it sees
-4. **Stored and organized**: The photo is uploaded to your [cloud storage](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/storage.md) and organized by date and client
+4. **Stored and organized**: If you have connected [Google Drive](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/google-drive-setup.md), the photo lands in your own Drive, organized by date and client
 
 ## Use cases
 

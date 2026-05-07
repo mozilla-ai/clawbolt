@@ -55,7 +55,7 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `llm_usage_logs` | Token usage tracking |
 | `tool_configs` | Per-user tool configuration |
 | `calendar_configs` | Per-user calendar integration settings |
-| `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, QuickBooks) |
+| `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, Google Drive, QuickBooks, etc.) |
 
 Key store modules:
 - `backend/app/agent/user_db.py` -- `UserStore` (singleton via `get_user_store()`)
@@ -67,7 +67,7 @@ Key store modules:
 - `backend/app/database.py` -- `Base`, `AsyncSessionLocal`, `db_session_async()`, `get_async_db()`, `get_async_engine()`
 - `backend/app/models.py` -- All SQLAlchemy ORM model classes
 
-File storage for uploads uses the local filesystem under `data/` (configurable via `DATA_DIR`).
+File storage is exposed through the Google Drive integration: each user grants the `drive.file` scope and uploads land in their own Drive under a top-level `Clawbolt` folder. The operator wires the OAuth client via `GOOGLE_DRIVE_CLIENT_ID` / `GOOGLE_DRIVE_CLIENT_SECRET`; without those, the file tools never load.
 
 ## Database access
 

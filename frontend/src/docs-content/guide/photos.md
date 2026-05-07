@@ -30,4 +30,4 @@ Job Photos/
     bathroom-tile.jpg
 ```
 
-Without cloud storage, photos are kept on the server's local storage. Cloud storage is configured by whoever set up your Clawbolt instance. See [Storage Providers](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/storage.md) for technical details.
+If you have not connected Google Drive, the assistant can still read and reply to photos you send, but it will not save them. Connect Drive (via the integrations panel or by asking the assistant) to turn on saving and retrieval. See [Google Drive Setup](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/google-drive-setup.md) for self-host operators.
