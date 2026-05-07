@@ -33,6 +33,11 @@ from sqlalchemy.orm import Session
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.dto import HeartbeatLogEntry
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
+from backend.app.agent.observer import (
+    PURPOSE_HEARTBEAT_DECISION,
+    LLMRequestPayload,
+    emit_llm_request,
+)
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.system_prompt import (
@@ -449,6 +454,38 @@ async def evaluate_heartbeat_need(
     time_context = build_time_user_context(user)
     max_retries = settings.llm_max_retries
     response: MessageResponse | None = None
+    heartbeat_system = prepare_system_with_caching(prompt)
+    heartbeat_messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": (
+                f"{time_context}\n\n"
+                "Review the context above and decide whether any tasks need attention."
+            ),
+        },
+    ]
+    heartbeat_tools = [HEARTBEAT_DECISION_TOOL]
+    heartbeat_thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
+    await emit_llm_request(
+        LLMRequestPayload(
+            schema_version=1,
+            purpose=PURPOSE_HEARTBEAT_DECISION,
+            user_id=user.id,
+            session_id=None,
+            request_id=None,
+            model=model,
+            provider=provider,
+            max_tokens=settings.llm_max_tokens_heartbeat,
+            thinking=heartbeat_thinking,
+            system=heartbeat_system,
+            messages=heartbeat_messages,
+            tools=heartbeat_tools,
+            # Heartbeat sends a synthetic single-message prompt -- there
+            # is no session history to derive an era marker from.
+            min_message_seq_in_prompt=None,
+            started_at=datetime.datetime.now(datetime.UTC),
+        )
+    )
     for attempt in range(max_retries):
         try:
             response = cast(
@@ -457,19 +494,11 @@ async def evaluate_heartbeat_need(
                     model=model,
                     provider=provider,
                     api_base=settings.llm_api_base,
-                    system=prepare_system_with_caching(prompt),
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": (
-                                f"{time_context}\n\n"
-                                "Review the context above and decide whether any tasks need attention."
-                            ),
-                        },
-                    ],
-                    tools=[HEARTBEAT_DECISION_TOOL],
+                    system=heartbeat_system,
+                    messages=heartbeat_messages,
+                    tools=heartbeat_tools,
                     max_tokens=settings.llm_max_tokens_heartbeat,
-                    thinking=reasoning_effort_to_thinking(settings.reasoning_effort),
+                    thinking=heartbeat_thinking,
                 ),
             )
             break
