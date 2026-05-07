@@ -17,6 +17,7 @@ export const TOOL_OAUTH_MAP: Record<string, string> = {
   quickbooks: 'quickbooks',
   calendar: 'google_calendar',
   companycam: 'companycam',
+  file: 'google_drive',
 };
 
 /** Human-readable display names for tool factories. */
@@ -29,7 +30,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   profile: 'Profile',
   memory: 'Memory',
   messaging: 'Messaging',
-  file: 'File Storage',
+  file: 'Google Drive',
   heartbeat: 'Heartbeat',
   permissions: 'Permissions',
 };

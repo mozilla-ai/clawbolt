@@ -49,4 +49,4 @@ GOOGLE_DRIVE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_DRIVE_CLIENT_SECRET=...
 ```
 
-See [Storage Providers](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/storage.md) for the full setup walkthrough.
+See [Google Drive Setup](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/google-drive-setup.md) for the full walkthrough.
