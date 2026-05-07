@@ -1,8 +1,8 @@
 # AppFolio Vendor Portal
 
-Read-only access to the user's AppFolio Vendor Portal: work orders,
-payments AppFolio has issued, and vendor profile. Write tools (notes,
-invoices, photos) ship in a follow-up.
+Read and write the user's AppFolio Vendor Portal: work orders, notes
+with photos, scheduling, status updates, tenant messaging, payments,
+and profile. Invoice creation ships in a follow-up.
 
 ## Tools
 
@@ -13,8 +13,23 @@ invoices, photos) ship in a follow-up.
 | appfolio_list_work_orders | List work orders, filter by status | Auto |
 | appfolio_search_work_orders | Search by address, number, or text | Auto |
 | appfolio_get_work_order | One work order's details | Auto |
+| appfolio_accept_work_order | Accept a work order assignment | Ask |
+| appfolio_schedule_work_order | Set the scheduled visit time | Ask |
+| appfolio_update_work_order_status | Update the status code | Ask |
+| appfolio_undo_work_order_status | Revert a recent status change | Ask |
+| appfolio_list_notes | List notes on a work order | Auto |
+| appfolio_add_note | Add a note (with optional photos) | Ask |
+| appfolio_update_note | Edit an existing note | Ask |
+| appfolio_message_tenant | SMS the tenant via AppFolio's proxy | Ask |
 | appfolio_list_payments | Payments AppFolio has issued | Auto |
 | appfolio_get_profile | Connected vendor profile | Auto |
+
+## Photos
+
+`appfolio_add_note` and `appfolio_update_note` accept a `media_refs`
+list. Each entry is either an `original_url` from a sent image in the
+conversation or a media handle (e.g. `media_xxxx`) returned by
+`analyze_photo`. AppFolio receives the photos inline with the note.
 
 ## Connecting
 

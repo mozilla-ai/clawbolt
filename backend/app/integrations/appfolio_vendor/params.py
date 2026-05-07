@@ -85,3 +85,94 @@ class AppFolioListPaymentsParams(BaseModel):
 
 class AppFolioGetProfileParams(BaseModel):
     """Empty param model — ``get_profile`` takes no arguments."""
+
+
+class AppFolioAcceptWorkOrderParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID to accept.")
+    notes: str = Field(
+        default="",
+        description="Optional acceptance notes the property manager will see.",
+    )
+
+
+class AppFolioScheduleWorkOrderParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID to schedule.")
+    scheduled_at: str = Field(
+        description=(
+            "When the visit will start, as an ISO 8601 timestamp (e.g."
+            " '2026-05-08T14:00:00-04:00'). Use the user's timezone."
+        ),
+    )
+    duration_minutes: int = Field(
+        default=0,
+        description="Estimated visit duration in minutes (0 to omit).",
+    )
+    notes: str = Field(
+        default="",
+        description="Optional scheduling notes for the tenant or PM.",
+    )
+
+
+class AppFolioUpdateWorkOrderStatusParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID to update.")
+    status_code: int = Field(
+        description=(
+            "Numeric status code AppFolio expects. Common values:"
+            " 0=new, 4=in progress, 8=completed."
+            " Confirm with the user when uncertain rather than guessing."
+        ),
+    )
+
+
+class AppFolioUndoWorkOrderStatusParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID.")
+    previous_status: str = Field(
+        description=(
+            "The status the work order should revert to. Pass the prior"
+            " status code or label as returned by appfolio_get_work_order."
+        ),
+    )
+
+
+class AppFolioListNotesParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID.")
+
+
+class AppFolioAddNoteParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID to add a note to.")
+    body: str = Field(description="Note text. Visible to the property manager.")
+    media_refs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional list of photo references from the conversation."
+            " Each entry is either an original_url from a sent image or a"
+            " media handle (e.g. 'media_xxxx') returned by analyze_photo."
+            " Photos are uploaded to AppFolio inline with the note."
+        ),
+    )
+
+
+class AppFolioUpdateNoteParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID.")
+    note_id: str = Field(description="AppFolio note ID to edit.")
+    body: str = Field(description="Replacement note text.")
+    media_refs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional list of photo references to attach, same shape as"
+            " appfolio_add_note. Existing attachments are preserved."
+        ),
+    )
+
+
+class AppFolioMessageTenantParams(BaseModel):
+    work_order_id: str = Field(
+        description=(
+            "AppFolio work order ID. AppFolio mints an anonymized proxy"
+            " number per work order, so the message routes to the right"
+            " tenant without exposing the vendor's real phone number."
+        ),
+    )
+    message: str = Field(
+        description="SMS body to send to the tenant via AppFolio's proxy.",
+    )

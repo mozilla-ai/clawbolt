@@ -71,6 +71,14 @@ class ToolName:
     APPFOLIO_GET_WORK_ORDER = "appfolio_get_work_order"
     APPFOLIO_LIST_PAYMENTS = "appfolio_list_payments"
     APPFOLIO_GET_PROFILE = "appfolio_get_profile"
+    APPFOLIO_ACCEPT_WORK_ORDER = "appfolio_accept_work_order"
+    APPFOLIO_SCHEDULE_WORK_ORDER = "appfolio_schedule_work_order"
+    APPFOLIO_UPDATE_WORK_ORDER_STATUS = "appfolio_update_work_order_status"
+    APPFOLIO_UNDO_WORK_ORDER_STATUS = "appfolio_undo_work_order_status"
+    APPFOLIO_LIST_NOTES = "appfolio_list_notes"
+    APPFOLIO_ADD_NOTE = "appfolio_add_note"
+    APPFOLIO_UPDATE_NOTE = "appfolio_update_note"
+    APPFOLIO_MESSAGE_TENANT = "appfolio_message_tenant"
 
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
