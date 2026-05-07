@@ -25,7 +25,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
@@ -59,13 +58,12 @@ async def _appfolio_auth_factory(ctx: ToolContext) -> list[Tool]:
 
     Returns the connect + 2FA tools so the user can authenticate from a
     fresh state. Registered as a core factory so the schema contract is
-    independent of credential state. Mirrors the user-facing ``appfolio_vendor``
-    factory's enabled state: if the user has disabled AppFolio, the auth
-    tools disappear too.
+    independent of credential state. Disabling the user-facing
+    ``appfolio_vendor`` integration cascades through ``manage_integration``
+    to also flip ``appfolio_auth`` in ``ToolConfigStore``, so the registry's
+    ``excluded_factories`` mechanism in ``tool_assembly`` removes both
+    factories together without a per-turn DB query in this factory body.
     """
-    disabled = await ToolConfigStore(ctx.user.id).get_disabled_tool_names()
-    if _DATA_FACTORY in disabled:
-        return []
     return list(build_auth_tools(ctx.user.id))
 
 
@@ -75,10 +73,17 @@ async def _appfolio_vendor_factory(ctx: ToolContext) -> list[Tool]:
     Callers should not invoke this when the user has no credential; the
     registry guards via ``_appfolio_vendor_auth_check`` and skips factory
     creation in that case. The defensive ``return []`` covers the rare
-    race where the credential disappears between auth check and create.
+    race where the credential disappears between auth check and create
+    (e.g. the user disconnected mid-turn). We log a warning so the race
+    is observable rather than silent.
     """
     cred = await load_credential(ctx.user.id)
     if cred is None or not cred.jwt:
+        logger.warning(
+            "AppFolio credential missing during factory creation for user %s "
+            "despite passing auth_check; user may have disconnected mid-turn",
+            ctx.user.id,
+        )
         return []
     service = build_service(cred, api_base=settings.appfolio_vendor_api_base)
     tools: list[Tool] = []
