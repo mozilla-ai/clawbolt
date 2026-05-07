@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import time
+from datetime import UTC
 from typing import Any, cast
 
 from any_llm import amessages
@@ -21,6 +22,11 @@ from any_llm.types.messages import MessageResponse
 from backend.app.agent.llm_parsing import get_response_text
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
+from backend.app.agent.observer import (
+    PURPOSE_COMPACTION,
+    LLMRequestPayload,
+    emit_llm_request,
+)
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.config import settings
@@ -239,18 +245,42 @@ async def compact_session(
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "\n".join(user_prompt_parts)},
     ]
+    compaction_system = prepare_system_with_caching(COMPACTION_SYSTEM_PROMPT)
+    compaction_thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
 
     try:
+        await emit_llm_request(
+            LLMRequestPayload(
+                schema_version=1,
+                purpose=PURPOSE_COMPACTION,
+                user_id=user_id,
+                session_id=None,
+                request_id=None,
+                model=model,
+                provider=provider,
+                max_tokens=settings.compaction_max_tokens,
+                thinking=compaction_thinking,
+                system=compaction_system,
+                messages=messages,
+                tools=None,
+                # Compaction operates on a synthetic prompt rebuilt from
+                # MEMORY/USER/SOUL/HEARTBEAT plus the trimmed conversation
+                # text, not on a session-aware message history. The
+                # era-marker field has no meaning here.
+                min_message_seq_in_prompt=None,
+                started_at=datetime.datetime.now(UTC),
+            )
+        )
         response = cast(
             MessageResponse,
             await amessages(
                 model=model,
                 provider=provider,
                 api_base=settings.llm_api_base,
-                system=prepare_system_with_caching(COMPACTION_SYSTEM_PROMPT),
+                system=compaction_system,
                 messages=messages,
                 max_tokens=settings.compaction_max_tokens,
-                thinking=reasoning_effort_to_thinking(settings.reasoning_effort),
+                thinking=compaction_thinking,
             ),
         )
     except Exception:
