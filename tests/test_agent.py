@@ -1807,7 +1807,7 @@ async def test_error_kind_service_produces_specific_hint(
 
     async def failing_service(**kwargs: object) -> ToolResult:
         return ToolResult(
-            content="Error: Dropbox API unavailable",
+            content="Error: Storage API unavailable",
             is_error=True,
             error_kind=ToolErrorKind.SERVICE,
         )

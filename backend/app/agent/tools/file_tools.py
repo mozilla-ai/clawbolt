@@ -223,7 +223,7 @@ def create_file_tools(
 
     Args:
         user: The user
-        storage: Storage backend (Dropbox, Google Drive, or mock)
+        storage: Storage backend (Google Drive or mock)
         pending_media: Dict of original_url -> file bytes available for upload.
             Includes bytes from the current message and any recent staged
             media bytes from prior turns (populated by ``_file_factory``).

@@ -19,7 +19,7 @@ Great for before/after documentation, damage records, material identification, a
 
 ## Where photos are stored
 
-With cloud storage connected (Dropbox or Google Drive), photos are organized into folders by date:
+Once you connect Google Drive (via the integrations panel), photos are organized into folders by date inside your own Drive under a top-level Clawbolt folder:
 
 ```
 Job Photos/
