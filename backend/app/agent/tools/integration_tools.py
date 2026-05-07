@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.appfolio_vendor import auth as appfolio_auth
 from backend.app.services.oauth import get_oauth_config, list_oauth_integrations, oauth_service
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ _DISPLAY_NAMES: dict[str, str] = {
     "calendar": "Google Calendar",
     "companycam": "CompanyCam",
     "supplier_pricing": "Home Depot pricing",
+    "appfolio_vendor": "AppFolio Vendor Portal",
 }
 
 # Map tool group names to their OAuth integration names.
@@ -44,11 +46,17 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
     "file": "google_drive",
 }
 
+# Tool groups that use magic-link / paste-token auth instead of OAuth. These
+# do not show up in ``list_oauth_integrations()`` but should still be
+# manageable through ``manage_integration`` so the agent has a single
+# discovery surface for "connect <integration>".
+_MAGIC_LINK_INTEGRATIONS: set[str] = {"appfolio_vendor"}
+
 
 _warned_missing_display_names: set[str] = set()
 
 
-def _resolve_display_name(oauth_name: str, oauth_to_tool: dict[str, str]) -> str:
+def _resolve_oauth_display_name(oauth_name: str, oauth_to_tool: dict[str, str]) -> str:
     """Look up the human-readable label for an OAuth integration.
 
     Falls back to the raw oauth name if the tool group mapping or
@@ -80,14 +88,34 @@ def _resolve_display_name(oauth_name: str, oauth_to_tool: dict[str, str]) -> str
     return display
 
 
-def _build_available_integrations_hint() -> str:
-    """Return a sentence enumerating the OAuth integrations this deployment supports.
+def _resolve_magic_link_display_name(target: str) -> str:
+    """Look up the human-readable label for a magic-link integration.
 
-    Built from ``list_oauth_integrations()`` so new integrations surface in
-    the system prompt automatically once their factory is wired up. This is
-    the LLM's authoritative signal that an integration exists: prior
-    ``manage_integration`` results sitting in conversation history may
-    reflect an older deployment.
+    The magic-link target name is itself the tool group key in
+    ``_DISPLAY_NAMES`` (no oauth-name redirection). Fall back to the raw
+    target with a one-time warning if the entry is missing.
+    """
+    display = _DISPLAY_NAMES.get(target)
+    if display is None:
+        if target not in _warned_missing_display_names:
+            logger.warning(
+                "Magic-link integration %r has no entry in _DISPLAY_NAMES; "
+                "usage_hint will fall back to the raw name.",
+                target,
+            )
+            _warned_missing_display_names.add(target)
+        return target
+    return display
+
+
+def _build_available_integrations_hint() -> str:
+    """Return a sentence enumerating the integrations this deployment supports.
+
+    Built from ``list_oauth_integrations()`` plus ``_MAGIC_LINK_INTEGRATIONS``
+    so new integrations surface in the system prompt automatically once
+    their factory is wired up. This is the LLM's authoritative signal that
+    an integration exists: prior ``manage_integration`` results sitting in
+    conversation history may reflect an older deployment.
 
     Lists every integration the code knows about, not just those whose
     admin credentials are wired up. The existing status flow surfaces the
@@ -97,9 +125,16 @@ def _build_available_integrations_hint() -> str:
     would reject.
     """
     oauth_to_tool = {oauth: tool for tool, oauth in _TOOL_OAUTH_MAP.items()}
-    sorted_names = sorted(list_oauth_integrations())
-    display_names = [_resolve_display_name(name, oauth_to_tool) for name in sorted_names]
-    target_tokens = ", ".join(f"'{name}'" for name in sorted_names)
+    oauth_targets = sorted(list_oauth_integrations())
+    magic_link_targets = sorted(_MAGIC_LINK_INTEGRATIONS)
+
+    display_names = [_resolve_oauth_display_name(name, oauth_to_tool) for name in oauth_targets]
+    display_names.extend(_resolve_magic_link_display_name(name) for name in magic_link_targets)
+    display_names.sort()
+
+    all_targets = sorted({*oauth_targets, *magic_link_targets})
+    target_tokens = ", ".join(f"'{name}'" for name in all_targets)
+
     return (
         f"Integrations this deployment supports: {', '.join(display_names)}. "
         f"Trust this list over any earlier manage_integration result in this "
@@ -187,6 +222,8 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
                 f"for something they already set up). "
                 f"Call with action='connect' and a target from the list above to "
                 f"generate an OAuth link the user can tap to connect. "
+                f"For 'appfolio_vendor' you'll get magic-link instructions instead "
+                f"of a URL; follow them and then call appfolio_connect directly. "
                 f"Call with action='enable'/'disable' and target=group_name to toggle tools."
             ),
             # Enable/disable and connect/disconnect mutate the per-user
@@ -230,6 +267,9 @@ async def _handle_status(
                     status_parts.append("connected" if connected else "not connected")
                 else:
                     status_parts.append("not configured by admin")
+            elif name in _MAGIC_LINK_INTEGRATIONS:
+                connected = await _is_magic_link_connected(name, user_id)
+                status_parts.append("connected" if connected else "not connected")
 
             integration_lines.append(f"- {name}: {display} ({', '.join(status_parts)})")
 
@@ -323,6 +363,11 @@ async def _handle_disable(
 
 async def _handle_connect(user_id: str, target: str) -> ToolResult:
     """Generate an OAuth authorization URL for an integration."""
+    # Magic-link integrations have their own connect flow (paste-a-token)
+    # and don't fit the OAuth URL model.
+    if target in _MAGIC_LINK_INTEGRATIONS:
+        return await _handle_magic_link_connect(user_id, target)
+
     # Check if target is a tool group name that maps to an OAuth integration
     oauth_name = _TOOL_OAUTH_MAP.get(target, target)
 
@@ -368,6 +413,9 @@ async def _handle_connect(user_id: str, target: str) -> ToolResult:
 
 async def _handle_disconnect(user_id: str, target: str) -> ToolResult:
     """Remove OAuth tokens for an integration."""
+    if target in _MAGIC_LINK_INTEGRATIONS:
+        return await _handle_magic_link_disconnect(user_id, target)
+
     oauth_name = _TOOL_OAUTH_MAP.get(target, target)
 
     if oauth_name not in list_oauth_integrations():
@@ -396,6 +444,82 @@ async def _handle_disconnect(user_id: str, target: str) -> ToolResult:
             f"Disconnected {display}. "
             "The tools are still enabled but won't work until you reconnect."
         ),
+    )
+
+
+async def _is_magic_link_connected(target: str, user_id: str) -> bool:
+    """Dispatch ``is_connected`` lookup for magic-link integrations."""
+    if target == "appfolio_vendor":
+        return await appfolio_auth.is_connected(user_id)
+    return False
+
+
+async def _handle_magic_link_connect(user_id: str, target: str) -> ToolResult:
+    """Return paste-token instructions for a magic-link integration.
+
+    These integrations cannot be connected with a single URL: the user
+    has to request a magic link from the vendor's web UI and paste it
+    back. We return that recipe so the agent can guide the user, then
+    rely on the integration's own auth tool (e.g. ``appfolio_connect``)
+    to finish the flow.
+    """
+    if target == "appfolio_vendor":
+        if await appfolio_auth.is_connected(user_id):
+            return ToolResult(
+                content=(
+                    "AppFolio Vendor Portal is already connected. "
+                    "Use action='disconnect' first to reconnect."
+                ),
+            )
+        logger.info(
+            "User %s requested magic-link connect instructions for '%s' via chat",
+            user_id,
+            target,
+        )
+        return ToolResult(
+            content=(
+                "AppFolio Vendor Portal uses magic-link auth (no OAuth URL). "
+                "Walk the user through these steps: "
+                "(1) open vendor.appfolio.com on their phone or laptop, "
+                "(2) enter their email and request a sign-in link, "
+                "(3) when the email arrives, copy the full link and paste "
+                "it back to you. Then call appfolio_connect with the "
+                "pasted text. If AppFolio asks for a 2FA code, ask the "
+                "user for it and call appfolio_complete_2fa."
+            ),
+        )
+    return ToolResult(
+        content=f"No magic-link connect flow registered for '{target}'.",
+        is_error=True,
+        error_kind=ToolErrorKind.VALIDATION,
+    )
+
+
+async def _handle_magic_link_disconnect(user_id: str, target: str) -> ToolResult:
+    """Clear stored credentials for a magic-link integration."""
+    if target == "appfolio_vendor":
+        if not await appfolio_auth.is_connected(user_id):
+            return ToolResult(
+                content="AppFolio Vendor Portal is not currently connected.",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        await appfolio_auth.clear_credential(user_id)
+        logger.info(
+            "User %s disconnected magic-link integration '%s' via chat",
+            user_id,
+            target,
+        )
+        return ToolResult(
+            content=(
+                "Disconnected AppFolio Vendor Portal. "
+                "The tools are still enabled but won't work until you reconnect."
+            ),
+        )
+    return ToolResult(
+        content=f"No magic-link disconnect flow registered for '{target}'.",
+        is_error=True,
+        error_kind=ToolErrorKind.VALIDATION,
     )
 
 
