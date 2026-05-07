@@ -164,13 +164,14 @@ def _mock_response(
     json_data: Any = None,
     status_code: int = 200,
     headers: dict[str, str] | None = None,
+    text: str = "stub error body",
 ) -> httpx.Response:
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
     resp.headers = headers or {"content-type": "application/json"}
     resp.content = b"{}" if json_data is None else b'{"x": 1}'
     resp.json.return_value = json_data if json_data is not None else {}
-    resp.text = "stub error body"
+    resp.text = text
     return resp
 
 
@@ -655,3 +656,311 @@ async def test_resolve_staged_files_empty_list_returns_empty_list() -> None:
     ctx.user.id = "u1"
     result = await resolve_staged_files(ctx, [])
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# PR3: invoices, compliance, estimates, profile update
+# ---------------------------------------------------------------------------
+
+
+def _patch_request(response: httpx.Response) -> Any:
+    client = AsyncMock()
+    client.request = AsyncMock(return_value=response)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=client)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm, client
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_serializes_line_items() -> None:
+    from backend.app.integrations.appfolio_vendor.service import FileUpload
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={"id": "inv-1"})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cm, client = _patch_request(response)
+        cls.return_value = cm
+        await service.create_invoice(
+            customer_id="cust-1",
+            work_order_id="wo-1",
+            line_items=[
+                {"description": "Labor 4hr", "quantity": 4.0, "rate": 75.0},
+                {"description": "Materials", "quantity": 1.0, "rate": 120.0},
+            ],
+            invoice_number="INV-001",
+            due_date="2026-06-01",
+            files=[FileUpload(name="receipt.pdf", data=b"%PDF-fake")],
+        )
+    args, kwargs = client.request.call_args
+    assert args[0] == "POST"
+    payload = kwargs["json"]
+    assert payload["customerId"] == "cust-1"
+    assert payload["workOrderId"] == "wo-1"
+    assert payload["lineItems"][0]["description"] == "Labor 4hr"
+    assert payload["invoiceNumber"] == "INV-001"
+    assert payload["dueDate"] == "2026-06-01"
+    assert len(payload["files"]) == 1
+
+
+@pytest.mark.asyncio()
+async def test_upload_invoice_pdf_omits_line_items() -> None:
+    from backend.app.integrations.appfolio_vendor.service import FileUpload
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cm, client = _patch_request(response)
+        cls.return_value = cm
+        await service.upload_invoice_pdf(
+            customer_id="cust-1",
+            work_order_id="wo-1",
+            files=[FileUpload(name="invoice.pdf", data=b"%PDF-fake")],
+        )
+    _, kwargs = client.request.call_args
+    payload = kwargs["json"]
+    assert "lineItems" not in payload
+    assert payload["customerId"] == "cust-1"
+    assert payload["workOrderId"] == "wo-1"
+    assert len(payload["files"]) == 1
+
+
+@pytest.mark.asyncio()
+async def test_upload_compliance_document_uses_singular_file() -> None:
+    from backend.app.integrations.appfolio_vendor.service import FileUpload
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cm, client = _patch_request(response)
+        cls.return_value = cm
+        await service.upload_compliance_document(
+            customer_id="cust-1",
+            compliance_type="w9",
+            file=FileUpload(name="w9.pdf", data=b"%PDF-fake"),
+        )
+    _, kwargs = client.request.call_args
+    payload = kwargs["json"]
+    assert payload["customerId"] == "cust-1"
+    assert payload["complianceType"] == "w9"
+    assert isinstance(payload["file"], dict)
+    assert payload["file"]["name"] == "w9.pdf"
+    assert "files" not in payload
+
+
+@pytest.mark.asyncio()
+async def test_update_estimate_wraps_jsonapi_envelope() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cm, client = _patch_request(response)
+        cls.return_value = cm
+        await service.update_estimate("est-7", attributes={"amount": 250.0})
+    args, kwargs = client.request.call_args
+    assert args[0] == "PATCH"
+    assert "/api/estimates/est-7" in args[1]
+    assert kwargs["json"] == {
+        "data": {"id": "est-7", "type": "estimates", "attributes": {"amount": 250.0}}
+    }
+
+
+@pytest.mark.asyncio()
+async def test_update_profile_includes_only_set_fields() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cm, client = _patch_request(response)
+        cls.return_value = cm
+        await service.update_profile(phone_number="+15551234567")
+    _, kwargs = client.request.call_args
+    assert kwargs["json"] == {"user": {"phoneNumber": "+15551234567"}}
+
+
+@pytest.mark.asyncio()
+async def test_update_profile_rejects_empty_payload() -> None:
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    with pytest.raises(ValueError, match="at least one field"):
+        await service.update_profile()
+
+
+# ---------------------------------------------------------------------------
+# Tool-level validation paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_tool_rejects_empty_line_items() -> None:
+    """The tool should validate before any HTTP call."""
+    from backend.app.agent.tools.base import ToolErrorKind
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+    result = await create.function(customer_id="cust-1", work_order_id="wo-1", line_items=[])
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_tool_rejects_malformed_line_item() -> None:
+    """Per-item Pydantic errors surface as a validation ToolResult, not an exception."""
+    from backend.app.agent.tools.base import ToolErrorKind
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+    # Missing rate; quantity wrong type.
+    result = await create.function(
+        customer_id="cust-1",
+        work_order_id="wo-1",
+        line_items=[{"description": "labor", "quantity": "two"}],
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+
+
+# ---------------------------------------------------------------------------
+# Logging diagnostics — failure paths surface enough info to debug
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_4xx_failure_logs_request_body_and_response(caplog: Any) -> None:
+    import logging
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(
+        json_data={"errors": ["scheduledAt: must be in the future"]},
+        status_code=422,
+        text='{"errors":["scheduledAt: must be in the future"]}',
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="backend.app.integrations.appfolio_vendor.service"),
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+    ):
+        cm, _ = _patch_request(response)
+        cls.return_value = cm
+        with pytest.raises(AppFolioError) as exc_info:
+            await service.schedule_work_order("42", scheduled_at="2024-01-01T00:00:00")
+
+    # ToolResult-side message includes status + response body.
+    assert "422" in str(exc_info.value)
+    assert "scheduledAt" in str(exc_info.value)
+
+    # Log line includes everything a dev needs to diagnose.
+    record_text = "\n".join(r.message for r in caplog.records)
+    assert "POST" in record_text
+    assert "/maintenance/api/work_orders/42/schedule" in record_text
+    assert "scheduledAt" in record_text  # request body logged
+    assert "422" in record_text
+
+
+@pytest.mark.asyncio()
+async def test_4xx_log_summarizes_base64_files(caplog: Any) -> None:
+    import logging
+
+    from backend.app.integrations.appfolio_vendor.service import FileUpload
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    big_blob = b"\x00" * 250_000  # large payload
+    response = _mock_response(
+        json_data={"errors": ["bad"]},
+        status_code=400,
+        text='{"errors":["bad"]}',
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="backend.app.integrations.appfolio_vendor.service"),
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+    ):
+        cm, _ = _patch_request(response)
+        cls.return_value = cm
+        with pytest.raises(AppFolioError):
+            await service.add_work_order_note(
+                "42", body_text="here", files=[FileUpload(name="big.jpg", data=big_blob)]
+            )
+
+    # The base64 content of the photo should NOT appear in logs.
+    encoded = __import__("base64").b64encode(big_blob).decode()
+    assert encoded not in caplog.text
+    # But the file name and a length marker should.
+    assert "big.jpg" in caplog.text
+    assert "chars base64" in caplog.text  # marker token
+
+
+@pytest.mark.asyncio()
+async def test_4xx_log_summarizes_singular_file_compliance_upload(caplog: Any) -> None:
+    """Compliance uploads use singular ``file: {...}``; the marker still applies."""
+    import logging
+
+    from backend.app.integrations.appfolio_vendor.service import FileUpload
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    big_blob = b"\x00" * 250_000
+    response = _mock_response(
+        json_data={"errors": ["bad"]},
+        status_code=400,
+        text='{"errors":["bad"]}',
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="backend.app.integrations.appfolio_vendor.service"),
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+    ):
+        cm, _ = _patch_request(response)
+        cls.return_value = cm
+        with pytest.raises(AppFolioError):
+            await service.upload_compliance_document(
+                customer_id="cust-1",
+                compliance_type="w9",
+                file=FileUpload(name="w9.pdf", data=big_blob),
+            )
+
+    encoded = __import__("base64").b64encode(big_blob).decode()
+    assert encoded not in caplog.text
+    assert "w9.pdf" in caplog.text
+    assert "chars base64" in caplog.text
+
+
+@pytest.mark.asyncio()
+async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
+    import logging
+
+    response = _mock_response(
+        json_data={"error": "expired"},
+        status_code=400,
+        text='{"error":"expired"}',
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="backend.app.integrations.appfolio_vendor.service"),
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+    ):
+        cls.return_value = _patch_async_client("post", response)
+        with pytest.raises(AppFolioError):
+            from backend.app.integrations.appfolio_vendor.service import (
+                exchange_magic_link,
+            )
+
+            await exchange_magic_link(
+                api_base="https://api.test",
+                magic_link_token="SUPER_SECRET_TOKEN",
+                fingerprint="FP_SECRET",
+            )
+
+    assert "SUPER_SECRET_TOKEN" not in caplog.text
+    assert "FP_SECRET" not in caplog.text
+    # Status and response body should still be in the log so we can debug.
+    assert "400" in caplog.text
+    assert "expired" in caplog.text

@@ -76,6 +76,62 @@ def _encode_files(files: list[FileUpload]) -> list[dict[str, str]]:
     ]
 
 
+_LOG_BODY_PREVIEW_LIMIT = 1500
+"""Cap on response/request body length surfaced in error logs and the
+:class:`AppFolioError` message. Long enough to capture a JSON validation
+error in full; short enough to keep individual log lines manageable."""
+
+
+def _summarize_body_for_log(body: Any) -> Any:
+    """Replace base64-encoded file payloads with size markers for log output.
+
+    AppFolio note/invoice bodies inline photo bytes as base64 strings,
+    which dwarf the rest of the JSON and bury the actual API contract
+    we're trying to debug. Replace each ``file_base64`` string with a
+    ``<base64 N bytes>`` marker; leave everything else intact.
+    """
+    if isinstance(body, dict):
+        return {k: _summarize_body_for_log(v) for k, v in body.items()}
+    if isinstance(body, list):
+        return [_summarize_body_for_log(v) for v in body]
+    if isinstance(body, str) and len(body) > 200:
+        return f"<{len(body)} char string>"
+    return body
+
+
+def _summarize_file_entry(entry: Any) -> Any:
+    """Replace a ``{file_base64, name}`` dict's payload with a size marker."""
+    if not isinstance(entry, dict):
+        return entry
+    summarized: dict[str, Any] = {}
+    for k, v in entry.items():
+        if k == "file_base64" and isinstance(v, str):
+            summarized[k] = f"<{len(v)} chars base64>"
+        else:
+            summarized[k] = v
+    return summarized
+
+
+def _summarize_files_field(body: Any) -> Any:
+    """Specialize the generic summarizer for AppFolio's file payload shapes.
+
+    Handles both the plural form (``files: [{file_base64, name}, ...]``,
+    used by notes and invoices) and the singular form (``file: {file_base64,
+    name}``, used by compliance uploads).
+    """
+    if not isinstance(body, dict):
+        return _summarize_body_for_log(body)
+    out: dict[str, Any] = {}
+    for k, v in body.items():
+        if k == "files" and isinstance(v, list):
+            out[k] = [_summarize_file_entry(e) for e in v]
+        elif k == "file" and isinstance(v, dict):
+            out[k] = _summarize_file_entry(v)
+        else:
+            out[k] = _summarize_body_for_log(v)
+    return out
+
+
 class AppFolioVendorService:
     """Async REST client bound to one user's credential.
 
@@ -127,23 +183,70 @@ class AppFolioVendorService:
         json_body: Any = None,
     ) -> Any:
         url = self._full_url(path)
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.request(
+        body_for_log = _summarize_files_field(json_body) if json_body is not None else None
+        logger.debug(
+            "AppFolio request: %s %s params=%r body=%r",
+            method,
+            path,
+            params,
+            body_for_log,
+        )
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.request(
+                    method,
+                    url,
+                    headers=self._headers(),
+                    params=params,
+                    json=json_body,
+                )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "AppFolio %s %s network failure: %s | params=%r body=%r",
                 method,
-                url,
-                headers=self._headers(),
-                params=params,
-                json=json_body,
+                path,
+                exc,
+                params,
+                body_for_log,
             )
+            raise AppFolioError(f"AppFolio {method} {path} network failure: {exc}") from exc
+
         if resp.status_code == 401:
             login_url = ""
             with contextlib.suppress(Exception):
                 login_url = resp.json().get("login_url") or ""
+            logger.warning(
+                "AppFolio %s %s rejected the JWT (401) | login_url=%r"
+                " | params=%r body=%r response=%s",
+                method,
+                path,
+                login_url,
+                params,
+                body_for_log,
+                resp.text[:_LOG_BODY_PREVIEW_LIMIT],
+            )
             raise AuthExpiredError(login_url=login_url)
         if resp.status_code >= 400:
-            raise AppFolioError(
-                f"AppFolio {method} {path} failed: {resp.status_code} {resp.text[:300]}"
+            response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
+            logger.warning(
+                "AppFolio %s %s failed: status=%d | params=%r body=%r response=%s",
+                method,
+                path,
+                resp.status_code,
+                params,
+                body_for_log,
+                response_text,
             )
+            raise AppFolioError(
+                f"AppFolio {method} {path} failed: {resp.status_code} {response_text}"
+            )
+        logger.debug(
+            "AppFolio %s %s ok (%d, %d bytes)",
+            method,
+            path,
+            resp.status_code,
+            len(resp.content or b""),
+        )
         if not resp.content:
             return None
         ctype = resp.headers.get("content-type", "")
@@ -333,6 +436,152 @@ class AppFolioVendorService:
             },
         )
 
+    # ------------------------------------------------------------------
+    # Domain helpers (PR3: invoices, compliance, estimates, profile)
+    # ------------------------------------------------------------------
+
+    async def create_invoice(
+        self,
+        *,
+        customer_id: str,
+        work_order_id: str,
+        line_items: list[dict[str, Any]],
+        invoice_number: str = "",
+        due_date: str = "",
+        files: list[FileUpload] | None = None,
+    ) -> Any:
+        """Create a line-itemized invoice tied to a work order.
+
+        ``line_items`` should be a list of ``{description, quantity, rate}``
+        entries (or whichever shape AppFolio's UI emits — confirmed
+        post-smoke-test). Optional ``files`` attach photos or supporting
+        docs inline as base64. ``invoice_number`` and ``due_date``
+        (ISO YYYY-MM-DD) are passed through when present.
+        """
+        body: dict[str, Any] = {
+            "customerId": customer_id,
+            "workOrderId": work_order_id,
+            "lineItems": line_items,
+        }
+        if invoice_number:
+            body["invoiceNumber"] = invoice_number
+        if due_date:
+            body["dueDate"] = due_date
+        if files:
+            body["files"] = _encode_files(files)
+        return await self.post("/maintenance/api/invoices", json_body=body)
+
+    async def upload_invoice_pdf(
+        self,
+        *,
+        customer_id: str,
+        work_order_id: str,
+        files: list[FileUpload],
+    ) -> Any:
+        """Upload one or more pre-built invoice PDFs as a single AppFolio invoice.
+
+        AppFolio reuses the ``/maintenance/api/invoices`` endpoint for
+        both shapes; the absence of ``lineItems`` plus presence of
+        ``files`` switches it to the "uploaded PDF" mode.
+        """
+        if not files:
+            raise ValueError("upload_invoice_pdf requires at least one file")
+        return await self.post(
+            "/maintenance/api/invoices",
+            json_body={
+                "customerId": customer_id,
+                "workOrderId": work_order_id,
+                "files": _encode_files(files),
+            },
+        )
+
+    async def upload_compliance_document(
+        self,
+        *,
+        customer_id: str,
+        compliance_type: str,
+        file: FileUpload,
+    ) -> Any:
+        """Upload a compliance doc (W-9, COI, license) for one customer.
+
+        Note the singular ``file`` field; AppFolio's compliance endpoint
+        does not take an array.
+        """
+        return await self.post(
+            "/maintenance/api/compliance_documents",
+            json_body={
+                "customerId": customer_id,
+                "complianceType": compliance_type,
+                "file": {
+                    "name": file.name,
+                    "file_base64": base64.b64encode(file.data).decode("ascii"),
+                },
+            },
+        )
+
+    async def get_estimate(self, estimate_id: str) -> Any:
+        return await self.get(
+            f"/api/estimates/{estimate_id}",
+            params={"include": "attachments"},
+        )
+
+    async def update_estimate(
+        self,
+        estimate_id: str,
+        *,
+        attributes: dict[str, Any],
+    ) -> Any:
+        """PATCH an estimate's attributes via JSON:API envelope.
+
+        The frontend wraps the payload as ``{data: {id, type: "estimates",
+        attributes: ...}}``. We mirror that shape; the agent supplies just
+        the attributes dict.
+        """
+        return await self.patch(
+            f"/api/estimates/{estimate_id}",
+            json_body={
+                "data": {
+                    "id": estimate_id,
+                    "type": "estimates",
+                    "attributes": attributes,
+                }
+            },
+        )
+
+    async def update_profile(
+        self,
+        *,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        phone_number: str | None = None,
+        company_name: str | None = None,
+    ) -> Any:
+        """PATCH /profiles with whatever subset of fields the user wants changed.
+
+        Mirror the SPA shape (``user: {...}, company: {...}``) but only
+        include each sub-object when at least one of its fields is set,
+        so we don't send empty objects that AppFolio could read as
+        "clear these values".
+        """
+        user: dict[str, Any] = {}
+        if first_name is not None:
+            user["firstName"] = first_name
+        if last_name is not None:
+            user["lastName"] = last_name
+        if phone_number is not None:
+            user["phoneNumber"] = phone_number
+        company: dict[str, Any] = {}
+        if company_name is not None:
+            company["name"] = company_name
+        body: dict[str, Any] = {}
+        if user:
+            body["user"] = user
+        if company:
+            body["company"] = company
+        if not body:
+            raise ValueError("update_profile requires at least one field to change")
+        return await self.patch("/profiles", json_body=body)
+
 
 def build_service(
     credential: AppFolioCredential,
@@ -390,17 +639,29 @@ async def exchange_magic_link(
         "X-Vendor-Portal-Web-Client": _CLIENT_VERSION,
         "Authorization": f"Bearer {magic_link_token}",
     }
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        resp = await client.post(
-            url,
-            headers=headers,
-            params={"magic_link_token": magic_link_token},
-            json=body,
-        )
+    logger.debug("AppFolio /access exchange starting (token redacted)")
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.post(
+                url,
+                headers=headers,
+                params={"magic_link_token": magic_link_token},
+                json=body,
+            )
+    except httpx.HTTPError as exc:
+        logger.warning("AppFolio /access network failure: %s", exc)
+        raise AppFolioError(f"AppFolio /access network failure: {exc}") from exc
     if resp.status_code >= 400:
-        raise AppFolioError(
-            f"AppFolio /access exchange failed: {resp.status_code} {resp.text[:300]}"
+        response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
+        # nfo is the only loggable body field — fingerprint and the magic
+        # link token are credential material.
+        logger.warning(
+            "AppFolio /access exchange failed: status=%d nfo=%r response=%s",
+            resp.status_code,
+            (body.get("nfo") if isinstance(body, dict) else None),
+            response_text,
         )
+        raise AppFolioError(f"AppFolio /access exchange failed: {resp.status_code} {response_text}")
     payload: dict[str, Any] = resp.json() if resp.content else {}
     jwt = (
         payload.get("access_token")
@@ -452,10 +713,21 @@ async def submit_two_factor(
         "Authorization": f"Bearer {jwt}",
     }
     body = {"twoFactorToken": {"twoFactorToken": code}}
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        resp = await client.post(url, headers=headers, json=body)
+    logger.debug("AppFolio 2FA onboard starting (code redacted)")
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.post(url, headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        logger.warning("AppFolio 2FA onboard network failure: %s", exc)
+        raise AppFolioError(f"AppFolio 2FA network failure: {exc}") from exc
     if resp.status_code >= 400:
-        raise AppFolioError(f"AppFolio 2FA onboard failed: {resp.status_code} {resp.text[:300]}")
+        response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
+        logger.warning(
+            "AppFolio 2FA onboard failed: status=%d response=%s",
+            resp.status_code,
+            response_text,
+        )
+        raise AppFolioError(f"AppFolio 2FA onboard failed: {resp.status_code} {response_text}")
     return resp.json() if resp.content else {}
 
 
