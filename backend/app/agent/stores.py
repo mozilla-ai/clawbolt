@@ -1,6 +1,6 @@
 """Database-backed replacements for file-based stores.
 
-Replaces HeartbeatStore, MediaStore, IdempotencyStore, LLMUsageStore, and
+Replaces HeartbeatStore, IdempotencyStore, LLMUsageStore, and
 ToolConfigStore from file_store.py. Uses the corresponding ORM models for
 persistence, while keeping Pydantic DTOs as the public API surface.
 
@@ -12,10 +12,9 @@ from __future__ import annotations
 import datetime
 import json
 import logging
-import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Delete, Select, delete, func, or_, select
+from sqlalchemy import Delete, Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
@@ -23,7 +22,6 @@ if TYPE_CHECKING:
 
 from backend.app.agent.dto import (
     HeartbeatLogEntry,
-    MediaData,
     ToolConfigEntry,
 )
 from backend.app.database import AsyncSessionLocal, db_session_async
@@ -31,7 +29,6 @@ from backend.app.models import (
     HeartbeatLog,
     IdempotencyKey,
     LLMUsageLog,
-    MediaFile,
     ToolConfig,
     User,
 )
@@ -54,20 +51,6 @@ def _heartbeat_log_to_dto(log: HeartbeatLog) -> HeartbeatLogEntry:
         reasoning=log.reasoning or "",
         tasks=log.tasks or "",
         created_at=log.created_at.isoformat() if log.created_at else "",
-    )
-
-
-def _media_to_dto(m: MediaFile) -> MediaData:
-    return MediaData(
-        id=m.id,
-        message_id=m.message_id,
-        user_id=m.user_id,
-        original_url=m.original_url,
-        mime_type=m.mime_type,
-        processed_text=m.processed_text,
-        storage_url=m.storage_url,
-        storage_path=m.storage_path,
-        created_at=m.created_at.isoformat() if m.created_at else "",
     )
 
 
@@ -99,15 +82,6 @@ def _tool_config_to_dto(tc: ToolConfig) -> ToolConfigEntry:
 # ---------------------------------------------------------------------------
 # HeartbeatStore
 # ---------------------------------------------------------------------------
-
-
-_MEDIA_UPDATABLE_FIELDS: frozenset[str] = frozenset(
-    {
-        "processed_text",
-        "storage_url",
-        "storage_path",
-    }
-)
 
 
 # Builders shared by sync and async heartbeat methods (issue #1154).
@@ -274,280 +248,6 @@ class HeartbeatStore:
     ) -> list[HeartbeatLogEntry]:
         """Deprecated alias of :meth:`get_recent_logs`."""
         return await self.get_recent_logs(since)
-
-
-# ---------------------------------------------------------------------------
-# MediaStore
-# ---------------------------------------------------------------------------
-
-
-# Builders shared by sync and async media methods (issue #1155). Pure
-# ``select(...)`` builders so the two paths stay in lockstep without a
-# class hierarchy. Same pattern as the IdempotencyStore pilot.
-def _media_list_select(user_id: str) -> Select[tuple[MediaFile]]:
-    """Builder shared by ``list_all`` / ``list_all_async``."""
-    return select(MediaFile).filter_by(user_id=user_id).order_by(MediaFile.created_at)
-
-
-def _media_existing_ids_select(user_id: str) -> Select[tuple[str]]:
-    """Builder shared by the ``create`` / ``create_async`` ID-allocation paths.
-
-    Locks the existing rows ``FOR UPDATE`` so two concurrent inserts do
-    not race to allocate the same ``media-NNN`` id.
-    """
-    return select(MediaFile.id).filter_by(user_id=user_id).with_for_update()
-
-
-def _media_by_id_select(user_id: str, media_id: str) -> Select[tuple[MediaFile]]:
-    """Builder shared by the ``update`` / ``update_async`` paths."""
-    return select(MediaFile).filter_by(id=media_id, user_id=user_id)
-
-
-def _media_by_url_select(user_id: str, original_url: str) -> Select[tuple[MediaFile]]:
-    """Builder shared by ``get_by_url`` / ``get_by_url_async``."""
-    return select(MediaFile).where(
-        MediaFile.user_id == user_id,
-        or_(
-            MediaFile.original_url == original_url,
-            MediaFile.storage_url == original_url,
-            MediaFile.storage_path == original_url,
-        ),
-    )
-
-
-def _media_count_by_prefix_select(user_id: str, prefix: str) -> Select[tuple[int]]:
-    """Builder shared by ``count_by_path_prefix`` / ``count_by_path_prefix_async``."""
-    return select(func.count(MediaFile.id)).where(
-        MediaFile.user_id == user_id,
-        MediaFile.storage_path.startswith(prefix),
-    )
-
-
-def _media_recent_select(user_id: str, limit: int) -> Select[tuple[MediaFile]]:
-    """Builder shared by read-side recent-media lookups."""
-    return (
-        select(MediaFile)
-        .where(MediaFile.user_id == user_id)
-        .order_by(MediaFile.created_at.desc())
-        .limit(limit)
-    )
-
-
-def _media_search_tokens(query: str) -> list[str]:
-    """Tokenize a search string for case-insensitive saved-file lookup."""
-    return [token for token in re.split(r"\W+", query.lower()) if token]
-
-
-def _media_search_select(user_id: str, query: str, limit: int) -> Select[tuple[MediaFile]]:
-    """Builder shared by read-side saved-file search."""
-    tokens = _media_search_tokens(query)
-    clauses: list[Any] = [MediaFile.user_id == user_id]
-    for token in tokens:
-        # Escape LIKE metacharacters so saved filenames like ``photo_001`` are
-        # treated as literals rather than ``photo<any>001`` wildcards.
-        escaped = token.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
-        needle = f"%{escaped}%"
-        clauses.append(
-            or_(
-                func.lower(MediaFile.storage_path).like(needle, escape="\\"),
-                func.lower(MediaFile.processed_text).like(needle, escape="\\"),
-                func.lower(MediaFile.mime_type).like(needle, escape="\\"),
-            )
-        )
-    return select(MediaFile).where(*clauses).order_by(MediaFile.created_at.desc()).limit(limit)
-
-
-def _next_media_id(existing_ids: list[str]) -> str:
-    """Compute the next ``media-NNN`` id from the locked existing-id set.
-
-    Pure helper so ``create`` / ``create_async`` use identical
-    allocation semantics. The caller owns the lock and the surrounding
-    transaction.
-    """
-    max_num = 0
-    for mid in existing_ids:
-        if mid.startswith("media-"):
-            try:
-                num = int(mid[6:])
-                max_num = max(max_num, num)
-            except ValueError:
-                pass
-    return f"media-{max_num + 1:03d}"
-
-
-def _apply_media_updates(m: MediaFile, fields: dict[str, Any]) -> None:
-    """Apply allowlisted attribute updates to a MediaFile row in place.
-
-    Pure helper so ``update`` / ``update_async`` use identical
-    field-allowlist semantics. ``None`` values are skipped to match the
-    existing partial-update contract.
-    """
-    for key, value in fields.items():
-        if value is not None and key in _MEDIA_UPDATABLE_FIELDS:
-            setattr(m, key, value)
-
-
-class MediaStore:
-    """Database-backed media file storage using MediaFile ORM model.
-
-    Async-only API (issue #1160). The dual sync+async surface from
-    issue #1155 has been collapsed: only the async implementation
-    remains. ``*_async`` aliases stay as thin wrappers so premium
-    continues to compile while it drops the suffix on its own callers.
-    """
-
-    def __init__(self, user_id: str) -> None:
-        self.user_id = user_id
-
-    async def list_all(self) -> list[MediaData]:
-        """Query all MediaFile rows, return as DTOs."""
-        db = AsyncSessionLocal()
-        try:
-            result = await db.execute(_media_list_select(self.user_id))
-            rows = result.scalars().all()
-            return [_media_to_dto(m) for m in rows]
-        finally:
-            await db.close()
-
-    async def list_all_async(self) -> list[MediaData]:
-        """Deprecated alias of :meth:`list_all`."""
-        return await self.list_all()
-
-    async def create(
-        self,
-        original_url: str = "",
-        mime_type: str = "",
-        processed_text: str = "",
-        storage_url: str = "",
-        storage_path: str = "",
-        message_id: str | None = None,
-    ) -> MediaData:
-        """Insert a new MediaFile row and return it as a DTO."""
-        async with db_session_async() as db:
-            result = await db.execute(_media_existing_ids_select(self.user_id))
-            existing_ids = list(result.scalars().all())
-            new_id = _next_media_id(existing_ids)
-
-            media = MediaFile(
-                id=new_id,
-                user_id=self.user_id,
-                message_id=message_id or "",
-                original_url=original_url,
-                mime_type=mime_type,
-                processed_text=processed_text,
-                storage_url=storage_url,
-                storage_path=storage_path,
-            )
-            db.add(media)
-            await db.commit()
-            await db.refresh(media)
-            return _media_to_dto(media)
-
-    async def create_async(
-        self,
-        original_url: str = "",
-        mime_type: str = "",
-        processed_text: str = "",
-        storage_url: str = "",
-        storage_path: str = "",
-        message_id: str | None = None,
-    ) -> MediaData:
-        """Deprecated alias of :meth:`create`."""
-        return await self.create(
-            original_url=original_url,
-            mime_type=mime_type,
-            processed_text=processed_text,
-            storage_url=storage_url,
-            storage_path=storage_path,
-            message_id=message_id,
-        )
-
-    async def update(self, media_id: str, **fields: Any) -> MediaData | None:
-        """Update a MediaFile row by id."""
-        async with db_session_async() as db:
-            m = (await db.execute(_media_by_id_select(self.user_id, media_id))).scalar_one_or_none()
-            if m is None:
-                return None
-            _apply_media_updates(m, fields)
-            await db.commit()
-            await db.refresh(m)
-            return _media_to_dto(m)
-
-    async def update_async(self, media_id: str, **fields: Any) -> MediaData | None:
-        """Deprecated alias of :meth:`update`."""
-        return await self.update(media_id, **fields)
-
-    async def get_by_url(self, original_url: str) -> MediaData | None:
-        """Query a MediaFile by any of its stored URLs or paths.
-
-        Matches ``original_url`` (channel attachment id, e.g. ``bb_<guid>``),
-        ``storage_url`` (backend-emitted URL shown to the LLM in upload
-        results, e.g. ``file:///...``), or ``storage_path`` (the folder path).
-        The agent only sees ``storage_url`` in upload_to_storage's result and
-        will pass that back to organize_file later; matching on all three
-        lets the lookup succeed regardless of which identifier the LLM used.
-        """
-        if not original_url:
-            return None
-        db = AsyncSessionLocal()
-        try:
-            m = (
-                await db.execute(_media_by_url_select(self.user_id, original_url))
-            ).scalar_one_or_none()
-            return _media_to_dto(m) if m else None
-        finally:
-            await db.close()
-
-    async def get_by_url_async(self, original_url: str) -> MediaData | None:
-        """Deprecated alias of :meth:`get_by_url`."""
-        return await self.get_by_url(original_url)
-
-    async def get_by_id(self, media_id: str) -> MediaData | None:
-        """Query a MediaFile by its durable ``media-NNN`` id."""
-        if not media_id:
-            return None
-        db = AsyncSessionLocal()
-        try:
-            m = (await db.execute(_media_by_id_select(self.user_id, media_id))).scalar_one_or_none()
-            return _media_to_dto(m) if m else None
-        finally:
-            await db.close()
-
-    async def get_by_id_async(self, media_id: str) -> MediaData | None:
-        """Deprecated alias of :meth:`get_by_id`."""
-        return await self.get_by_id(media_id)
-
-    async def count_by_path_prefix(self, prefix: str) -> int:
-        """Count MediaFile rows where storage_path starts with prefix."""
-        db = AsyncSessionLocal()
-        try:
-            count: int = (await db.scalar(_media_count_by_prefix_select(self.user_id, prefix))) or 0
-            return count
-        finally:
-            await db.close()
-
-    async def count_by_path_prefix_async(self, prefix: str) -> int:
-        """Deprecated alias of :meth:`count_by_path_prefix`."""
-        return await self.count_by_path_prefix(prefix)
-
-    async def search(self, query: str = "", limit: int = 5) -> list[MediaData]:
-        """Search saved files by path/description tokens, or list recent when blank."""
-        bounded_limit = max(1, min(limit, 20))
-        stmt = (
-            _media_recent_select(self.user_id, bounded_limit)
-            if not query.strip() or not _media_search_tokens(query)
-            else _media_search_select(self.user_id, query, bounded_limit)
-        )
-        db = AsyncSessionLocal()
-        try:
-            rows = (await db.execute(stmt)).scalars().all()
-            return [_media_to_dto(m) for m in rows]
-        finally:
-            await db.close()
-
-    async def search_async(self, query: str = "", limit: int = 5) -> list[MediaData]:
-        """Deprecated alias of :meth:`search`."""
-        return await self.search(query=query, limit=limit)
 
 
 # ---------------------------------------------------------------------------

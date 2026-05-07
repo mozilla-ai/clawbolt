@@ -3,17 +3,15 @@
 AppFolio's notes and invoice endpoints accept JSON-inlined files via
 ``files: [{file_base64, name}]`` rather than multipart upload. The
 agent receives photos through the OSS staging pipeline (current
-message ``downloaded_media``, then the in-memory media staging cache,
-then the persistent ``MediaStore``). This module hides that lookup
-behind one entry point so each write tool only needs to accept a list
-of media references.
+message ``downloaded_media`` then the in-memory media staging cache),
+and may also reference a previously saved file by its storage path.
+This module hides that lookup behind one entry point so each write
+tool only needs to accept a list of media references.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from backend.app.agent.tools.base import ToolErrorKind, ToolResult
@@ -32,13 +30,15 @@ async def resolve_staged_files(
 ) -> list[FileUpload] | ToolResult:
     """Resolve each ``media_ref`` to bytes and return a list of FileUpload.
 
-    Inputs are LLM-supplied references: either an ``original_url`` from
-    the conversation or a media handle (``media_abZtYWFs``) returned by
-    the ``analyze_photo`` flow. Each ref is checked against, in order:
+    Inputs are LLM-supplied references: a media handle (``media_abZtYWFs``)
+    from the ``analyze_photo`` flow, an inbound message ``original_url``,
+    or a Drive storage path (``/Astro Home/photos/foo.jpg``) for files
+    saved in earlier turns. Each ref is checked against, in order:
 
-    1. The current turn's ``ctx.downloaded_media``.
-    2. The ``media_staging`` cache (may have evicted older photos).
-    3. The persistent ``MediaStore`` (saved to storage).
+    1. Media handle resolution via ``media_staging.resolve_media_ref``.
+    2. The current turn's ``ctx.downloaded_media``.
+    3. The ``media_staging`` cache (may have evicted older photos).
+    4. The storage backend, if the ref looks like a saved file path.
 
     Returns a list of :class:`FileUpload` on success, or a populated
     :class:`ToolResult` with ``is_error=True`` when at least one ref
@@ -52,12 +52,11 @@ async def resolve_staged_files(
     if not media_refs:
         return []
 
-    # Lazy imports keep the test surface narrow and break what would
+    # Lazy import keeps the test surface narrow and breaks what would
     # otherwise be a circular dependency through ``backend.app.agent``.
     from backend.app.agent import media_staging
-    from backend.app.agent.stores import MediaStore
+    from backend.app.agent.saved_media import find_saved_file, read_saved_file_bytes
 
-    media_store = MediaStore(ctx.user.id)
     staged_cache = media_staging.get_all_for_user(ctx.user.id)
 
     resolved: list[FileUpload] = []
@@ -71,12 +70,12 @@ async def resolve_staged_files(
         file_bytes: bytes = b""
         mime_type = "image/jpeg"
 
-        # 0. Resolve a media handle to (original_url, bytes).
+        # 1. Resolve a media handle to (original_url, bytes).
         handle = media_staging.resolve_media_ref(ctx.user.id, ref)
         if handle is not None:
             original_url, file_bytes, mime_type = handle
 
-        # 1. Current message's downloaded_media.
+        # 2. Current message's downloaded_media.
         if not file_bytes:
             for media in ctx.downloaded_media:
                 if media.original_url != original_url:
@@ -85,20 +84,19 @@ async def resolve_staged_files(
                 mime_type = media.mime_type or mime_type
                 break
 
-        # 2. Media staging cache.
+        # 3. Media staging cache.
         if not file_bytes and original_url in staged_cache:
             file_bytes = staged_cache[original_url]
 
-        # 3. Persistent MediaStore.
-        if not file_bytes:
-            stored = await media_store.get_by_url(original_url)
-            if stored is not None:
-                mime_type = stored.mime_type or mime_type
-                storage_url = stored.storage_url or ""
-                if storage_url.startswith("file://"):
-                    local_path = Path(storage_url.removeprefix("file://"))
-                    if local_path.is_file():
-                        file_bytes = await asyncio.to_thread(local_path.read_bytes)
+        # 4. Saved file in Drive (path-quoted by the agent).
+        if not file_bytes and ctx.storage is not None:
+            saved = await find_saved_file(ctx.storage, ref)
+            if saved is not None:
+                try:
+                    file_bytes = await read_saved_file_bytes(ctx.storage, saved)
+                    mime_type = saved.mime_type or mime_type
+                except FileNotFoundError:
+                    logger.warning("Saved file missing from storage: %s", saved.path)
 
         if not file_bytes:
             missing.append(ref)

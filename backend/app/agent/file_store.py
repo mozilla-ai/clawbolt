@@ -5,7 +5,7 @@ All data classes, stores, and utilities have been migrated to dedicated modules:
 - User store: backend.app.agent.user_db
 - Session store: backend.app.agent.session_db
 - Memory store: backend.app.agent.memory_db
-- Heartbeat/Media/Idempotency/LLM/ToolConfig stores: backend.app.agent.stores
+- Heartbeat/Idempotency/LLM/ToolConfig stores: backend.app.agent.stores
 
 This module re-exports everything for backward compatibility.
 """
@@ -15,7 +15,6 @@ from __future__ import annotations
 # Re-export all DTOs
 from backend.app.agent.dto import (  # noqa: F401
     HeartbeatLogEntry,
-    MediaData,
     SessionMetadata,
     SessionState,
     StoredMessage,
@@ -34,7 +33,6 @@ from backend.app.agent.stores import (  # noqa: F401
     HeartbeatStore,
     IdempotencyStore,
     LLMUsageStore,
-    MediaStore,
     ToolConfigStore,
     get_idempotency_store,
     reset_stores,

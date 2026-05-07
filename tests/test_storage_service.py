@@ -21,10 +21,12 @@ def storage() -> MockStorageBackend:
 
 @pytest.mark.asyncio()
 async def test_upload_file(storage: MockStorageBackend) -> None:
-    """upload_file should store bytes and return a URL."""
-    url = await storage.upload_file(b"pdf-content", "/estimates", "EST-001.pdf")
-    assert "EST-001.pdf" in url
-    assert storage.files["/estimates/EST-001.pdf"] == b"pdf-content"
+    """upload_file should store bytes and return SavedFile metadata."""
+    saved = await storage.upload_file(b"pdf-content", "/estimates", "EST-001.pdf")
+    assert saved.path == "/estimates/EST-001.pdf"
+    assert saved.name == "EST-001.pdf"
+    assert "EST-001.pdf" in saved.web_view_link
+    assert storage.files["estimates/EST-001.pdf"] == b"pdf-content"
 
 
 @pytest.mark.asyncio()
@@ -44,7 +46,7 @@ async def test_list_folder(storage: MockStorageBackend) -> None:
 
     files = await storage.list_folder("/photos")
     assert len(files) == 2
-    names = [f["name"] for f in files]
+    names = [f.name for f in files]
     assert "photo1.jpg" in names
     assert "photo2.jpg" in names
 
@@ -70,12 +72,13 @@ async def test_mock_download_file(storage: MockStorageBackend) -> None:
 async def test_mock_move_file(storage: MockStorageBackend) -> None:
     """move_file should move bytes from old key to new key."""
     await storage.upload_file(b"data", "/Unsorted/2026-03-02", "file_001.jpg")
-    url = await storage.move_file(
+    moved = await storage.move_file(
         "/Unsorted/2026-03-02", "file_001.jpg", "/John/photos", "deck_001.jpg"
     )
-    assert "/Unsorted/2026-03-02/file_001.jpg" not in storage.files
-    assert storage.files["/John/photos/deck_001.jpg"] == b"data"
-    assert "deck_001.jpg" in url
+    assert "Unsorted/2026-03-02/file_001.jpg" not in storage.files
+    assert storage.files["John/photos/deck_001.jpg"] == b"data"
+    assert moved.name == "deck_001.jpg"
+    assert moved.path == "/John/photos/deck_001.jpg"
 
 
 @pytest.mark.asyncio()
@@ -127,27 +130,29 @@ def gdrive_storage(mock_drive_service: MagicMock) -> GoogleDriveStorage:
 
 
 @pytest.mark.asyncio()
-async def test_gdrive_upload_returns_web_link(
+async def test_gdrive_upload_returns_saved_file(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
-    """upload_file should return the webViewLink from Google Drive."""
+    """upload_file should return SavedFile carrying the Drive metadata."""
     gdrive_storage._folder_cache[f"{ROOT_FOLDER_NAME}/folder-id"] = "folder-id"
-    url = await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
-    assert url == "https://drive.google.com/file/d/123/view"
+    saved = await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
+    assert saved.web_view_link == "https://drive.google.com/file/d/123/view"
+    assert saved.metadata.get("id") == "file-123"
     mock_drive_service.files.return_value.create.assert_called_once()
 
 
 @pytest.mark.asyncio()
-async def test_gdrive_upload_fallback_to_id(
+async def test_gdrive_upload_records_storage_path_on_metadata(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
-    """When webViewLink is missing, should fall back to file id."""
+    """upload_file should round-trip the storage path through appProperties."""
     gdrive_storage._folder_cache[f"{ROOT_FOLDER_NAME}/folder-id"] = "folder-id"
     mock_drive_service.files.return_value.create.return_value.execute.return_value = {
-        "id": "file-456"
+        "id": "file-789",
+        "appProperties": {"clawbolt_path": "/folder-id/doc.pdf"},
     }
-    url = await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
-    assert url == "file-456"
+    saved = await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
+    assert saved.path == "/folder-id/doc.pdf"
 
 
 @pytest.mark.asyncio()
@@ -181,12 +186,14 @@ async def test_gdrive_create_folder_reuses_existing(
 async def test_gdrive_list_folder(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
-    """list_folder should query with resolved folder ID and return [{name, path}] dicts."""
+    """list_folder should query with resolved folder ID and return SavedFile entries."""
     gdrive_storage._folder_cache[f"{ROOT_FOLDER_NAME}/folder-id"] = "folder-id"
     files = await gdrive_storage.list_folder("folder-id")
     assert len(files) == 2
-    assert files[0] == {"name": "photo.jpg", "path": "https://drive.google.com/f1"}
-    assert files[1] == {"name": "doc.pdf", "path": "https://drive.google.com/f2"}
+    assert files[0].name == "photo.jpg"
+    assert files[0].path.endswith("/photo.jpg")
+    assert files[0].web_view_link == "https://drive.google.com/f1"
+    assert files[1].name == "doc.pdf"
     mock_drive_service.files.return_value.list.assert_called_once()
 
 
@@ -221,10 +228,11 @@ async def test_gdrive_move_file(
         "webViewLink": "https://drive.google.com/file/d/abc/view",
     }
 
-    url = await gdrive_storage.move_file(
+    moved = await gdrive_storage.move_file(
         "src-folder", "file_001.jpg", "dest-folder", "deck_001.jpg"
     )
-    assert url == "https://drive.google.com/file/d/abc/view"
+    assert moved.web_view_link == "https://drive.google.com/file/d/abc/view"
+    assert moved.path == "/dest-folder/deck_001.jpg"
     mock_drive_service.files.return_value.update.assert_called_once()
 
 
