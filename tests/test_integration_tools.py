@@ -106,15 +106,16 @@ async def test_usage_hint_instructs_status_check_first(test_user: User) -> None:
 @pytest.mark.asyncio()
 async def test_usage_hint_lists_current_oauth_integrations(test_user: User) -> None:
     """The manage_integration usage_hint must enumerate every OAuth integration
-    registered on the current deployment.
+    registered on the current deployment, render their human-readable labels,
+    and instruct the agent to trust the hint over stale tool results.
 
-    Regression for #INTEGRATION_FRESHNESS: when a new integration shipped
-    (e.g. google_drive in #1251), users with prior 'manage_integration'
-    results in their conversation history saw the agent claim the new
-    integration was unavailable, because the agent trusted the stale tool
-    result. The fix lives in the system prompt (via this usage_hint), which
-    is rebuilt every turn from the live registry, so the hint always
-    overrides stale tool history.
+    Regression for #1261: when a new integration shipped (e.g. google_drive
+    in #1251), users with prior 'manage_integration' results in their
+    conversation history saw the agent claim the new integration was
+    unavailable, because the agent trusted the stale tool result. The fix
+    lives in the system prompt (via this usage_hint), which is rebuilt
+    every turn from the live registry, so the hint always overrides stale
+    tool history.
     """
     from backend.app.services.oauth import list_oauth_integrations
 
@@ -122,11 +123,31 @@ async def test_usage_hint_lists_current_oauth_integrations(test_user: User) -> N
     tools = create_integration_tools(ctx)
     tool = next(t for t in tools if t.name == ToolName.MANAGE_INTEGRATION)
     assert tool.usage_hint is not None
+
+    # Every registered OAuth integration appears as a connect target.
     for oauth_name in list_oauth_integrations():
         assert oauth_name in tool.usage_hint, (
             f"usage_hint should reference every registered OAuth integration; "
             f"missing '{oauth_name}'"
         )
+
+    # Human-readable labels render for at least one well-known integration.
+    # If google_drive is ever removed from the codebase this assertion
+    # should be updated to a different known integration; the point is to
+    # lock in that display names render, not just raw oauth keys.
+    if "google_drive" in list_oauth_integrations():
+        assert "Google Drive" in tool.usage_hint, (
+            "usage_hint should render the human-readable display name "
+            "('Google Drive'), not just the raw 'google_drive' key"
+        )
+
+    # The freshness instruction is the whole point of the hint: without it,
+    # the model has no reason to override a stale tool result in history.
+    hint_lower = tool.usage_hint.lower()
+    assert "trust" in hint_lower and "earlier" in hint_lower, (
+        "usage_hint should tell the agent to trust the current list over "
+        "earlier (stale) manage_integration results"
+    )
 
 
 @pytest.mark.asyncio()

@@ -45,27 +45,66 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
 }
 
 
+_warned_missing_display_names: set[str] = set()
+
+
+def _resolve_display_name(oauth_name: str, oauth_to_tool: dict[str, str]) -> str:
+    """Look up the human-readable label for an OAuth integration.
+
+    Falls back to the raw oauth name if the tool group mapping or
+    ``_DISPLAY_NAMES`` entry is missing, and logs a one-time warning so the
+    gap surfaces in dev logs instead of in the LLM's mouth.
+    """
+    tool_group = oauth_to_tool.get(oauth_name)
+    if tool_group is None:
+        if oauth_name not in _warned_missing_display_names:
+            logger.warning(
+                "OAuth integration %r has no entry in _TOOL_OAUTH_MAP; "
+                "usage_hint will fall back to the raw name. Add it to "
+                "_TOOL_OAUTH_MAP and _DISPLAY_NAMES in integration_tools.py.",
+                oauth_name,
+            )
+            _warned_missing_display_names.add(oauth_name)
+        return oauth_name
+    display = _DISPLAY_NAMES.get(tool_group)
+    if display is None:
+        if oauth_name not in _warned_missing_display_names:
+            logger.warning(
+                "Tool group %r (for oauth %r) has no entry in _DISPLAY_NAMES; "
+                "usage_hint will fall back to the raw name.",
+                tool_group,
+                oauth_name,
+            )
+            _warned_missing_display_names.add(oauth_name)
+        return tool_group
+    return display
+
+
 def _build_available_integrations_hint() -> str:
-    """Return a sentence enumerating the OAuth integrations registered on this deployment.
+    """Return a sentence enumerating the OAuth integrations this deployment supports.
 
     Built from ``list_oauth_integrations()`` so new integrations surface in
     the system prompt automatically once their factory is wired up. This is
-    the LLM's only authoritative signal that an integration exists: prior
+    the LLM's authoritative signal that an integration exists: prior
     ``manage_integration`` results sitting in conversation history may
     reflect an older deployment.
+
+    Lists every integration the code knows about, not just those whose
+    admin credentials are wired up. The existing status flow surfaces the
+    "not configured by admin" case cleanly, and the hint already instructs
+    the agent to call action='status' before offering a connect link, so
+    the model never claims a connectable capability that the status check
+    would reject.
     """
     oauth_to_tool = {oauth: tool for tool, oauth in _TOOL_OAUTH_MAP.items()}
-    display_names = [
-        _DISPLAY_NAMES.get(oauth_to_tool.get(name, name), name)
-        for name in sorted(list_oauth_integrations())
-    ]
-    target_tokens = ", ".join(f"'{name}'" for name in sorted(list_oauth_integrations()))
+    sorted_names = sorted(list_oauth_integrations())
+    display_names = [_resolve_display_name(name, oauth_to_tool) for name in sorted_names]
+    target_tokens = ", ".join(f"'{name}'" for name in sorted_names)
     return (
-        f"Available integrations on this deployment: {', '.join(display_names)}. "
-        f"This list reflects the current code. If a previous manage_integration "
-        f"result earlier in this conversation listed fewer integrations, trust "
-        f"this line, not the stale result. Capabilities can change between "
-        f"deployments. Valid connect targets: {target_tokens}."
+        f"Integrations this deployment supports: {', '.join(display_names)}. "
+        f"Trust this list over any earlier manage_integration result in this "
+        f"conversation; capabilities can change between deployments. "
+        f"Valid connect targets: {target_tokens}."
     )
 
 
