@@ -1,7 +1,7 @@
 """Resolve staged photos into AppFolio's base64 file payload shape.
 
 AppFolio's notes and invoice endpoints accept JSON-inlined files via
-``files: [{file_base64, name}]`` rather than multipart upload. The
+``files: [{file_in_base64, name}]`` rather than multipart upload. The
 agent receives photos through the OSS staging pipeline (current
 message ``downloaded_media`` then the in-memory media staging cache),
 and may also reference a previously saved file by its storage path.
