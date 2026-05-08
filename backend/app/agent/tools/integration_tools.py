@@ -530,8 +530,7 @@ async def _handle_magic_link_connect(user_id: str, target: str) -> ToolResult:
                 "(2) enter their email and request a sign-in link, "
                 "(3) when the email arrives, copy the full link and paste "
                 "it back to you. Then call appfolio_connect with the "
-                "pasted text. If AppFolio asks for a 2FA code, ask the "
-                "user for it and call appfolio_complete_2fa."
+                "pasted text."
             ),
         )
     return ToolResult(

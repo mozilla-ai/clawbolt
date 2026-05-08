@@ -19,15 +19,6 @@ class AppFolioConnectParams(BaseModel):
     )
 
 
-class AppFolioCompleteTwoFactorParams(BaseModel):
-    code: str = Field(
-        description=(
-            "The 2FA verification code the user received via SMS or email"
-            " after starting the AppFolio connection."
-        ),
-    )
-
-
 class AppFolioListWorkOrdersParams(BaseModel):
     include_in_progress: bool = Field(
         default=True,

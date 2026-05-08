@@ -56,6 +56,7 @@ class AppFolioCredential:
     """AppFolio customer (property manager) IDs the vendor works under."""
 
     extra: dict[str, Any]
+    refresh_token: str = ""
 
 
 class MagicLinkError(ValueError):
@@ -131,6 +132,7 @@ async def _load_credential_in_session(
         fingerprint=fingerprint,
         customer_ids=list(extra.get("customer_ids") or []),
         extra=extra,
+        refresh_token=extra.get("refresh_token", ""),
     )
 
 
@@ -140,12 +142,15 @@ async def save_credential(
     fingerprint: str,
     customer_ids: list[str],
     extra_metadata: dict[str, Any] | None = None,
+    refresh_token: str = "",
 ) -> None:
     """Persist (or replace) the AppFolio credential for a user."""
     extra: dict[str, Any] = {
         "fingerprint": fingerprint,
         "customer_ids": customer_ids,
     }
+    if refresh_token:
+        extra["refresh_token"] = refresh_token
     if extra_metadata:
         extra.update(extra_metadata)
     now = datetime.now(UTC)

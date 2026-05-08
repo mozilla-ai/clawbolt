@@ -65,7 +65,6 @@ class ToolName:
 
     # AppFolio Vendor Portal
     APPFOLIO_CONNECT = "appfolio_connect"
-    APPFOLIO_COMPLETE_2FA = "appfolio_complete_2fa"
     APPFOLIO_LIST_WORK_ORDERS = "appfolio_list_work_orders"
     APPFOLIO_SEARCH_WORK_ORDERS = "appfolio_search_work_orders"
     APPFOLIO_GET_WORK_ORDER = "appfolio_get_work_order"

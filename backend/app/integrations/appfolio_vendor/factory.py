@@ -4,10 +4,9 @@ Picked up by the registry's ``ensure_tool_modules_imported`` scan; the
 ``_register()`` call at the bottom installs two factories at module-import
 time:
 
-* ``appfolio_auth`` (core, always on the schema): the magic-link connect
-  tools (``appfolio_connect``, ``appfolio_complete_2fa``). These must
-  stay reachable even when the user has no credential, since pasting
-  the token *is* the connect path.
+* ``appfolio_auth`` (core, always on the schema): the magic-link
+  ``appfolio_connect`` tool. This must stay reachable even when the user
+  has no credential, since pasting the token *is* the connect path.
 * ``appfolio_vendor`` (specialist, gated on connection state): the data
   tools (work orders, notes, invoices, payments, etc.). When the user
   is not yet connected, ``_appfolio_vendor_auth_check`` returns a reason
@@ -28,7 +27,7 @@ from typing import TYPE_CHECKING
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
-from backend.app.integrations.appfolio_vendor.auth import load_credential
+from backend.app.integrations.appfolio_vendor.auth import load_credential, save_credential
 from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
 from backend.app.integrations.appfolio_vendor.compliance import build_compliance_tools
 from backend.app.integrations.appfolio_vendor.conversations import build_conversation_tools
@@ -85,7 +84,23 @@ async def _appfolio_vendor_factory(ctx: ToolContext) -> list[Tool]:
             ctx.user.id,
         )
         return []
-    service = build_service(cred, api_base=settings.appfolio_vendor_api_base)
+
+    user_id = ctx.user.id
+
+    async def _persist_refreshed(jwt: str, refresh_token: str) -> None:
+        await save_credential(
+            user_id=user_id,
+            jwt=jwt,
+            fingerprint=cred.fingerprint,
+            customer_ids=cred.customer_ids,
+            refresh_token=refresh_token,
+        )
+
+    service = build_service(
+        cred,
+        api_base=settings.appfolio_vendor_api_base,
+        on_token_refresh=_persist_refreshed,
+    )
     tools: list[Tool] = []
     tools.extend(build_work_order_tools(service))
     tools.extend(build_work_order_write_tools(service))
@@ -133,11 +148,6 @@ def _register() -> None:
             SubToolInfo(
                 ToolName.APPFOLIO_CONNECT,
                 "Connect AppFolio Vendor Portal via magic link",
-                default_permission="always",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_COMPLETE_2FA,
-                "Submit AppFolio 2FA code",
                 default_permission="always",
             ),
         ],
