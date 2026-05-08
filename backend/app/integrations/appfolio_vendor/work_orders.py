@@ -55,7 +55,17 @@ def _service_error(method_label: str, exc: Exception) -> ToolResult:
 
 def _fmt_work_order_line(wo: dict[str, Any]) -> str:
     wo_id = wo.get("id") or wo.get("work_order_id") or "?"
-    number = wo.get("work_order_number") or wo.get("number") or wo_id
+    # ``numberForDisplay`` is the WO# rendered in the Vendor Portal UI; it
+    # can differ from the API ``id``. Prefer it so the agent's "WO #X"
+    # matches what the user sees in their AppFolio dashboard. Fall back to
+    # other plausible field names for forward compat, then to ``id``.
+    number = (
+        wo.get("numberForDisplay")
+        or wo.get("number_for_display")
+        or wo.get("work_order_number")
+        or wo.get("number")
+        or wo_id
+    )
     status = wo.get("status") or wo.get("status_label") or wo.get("statusCode") or ""
     address = wo.get("property_address") or wo.get("address") or wo.get("propertyAddress") or ""
     summary = wo.get("description") or wo.get("title") or wo.get("summary") or ""

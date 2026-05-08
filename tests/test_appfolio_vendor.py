@@ -383,6 +383,50 @@ async def test_service_5xx_raises_appfolio_error() -> None:
             await service.get("/x")
 
 
+def test_format_http_exception_falls_back_to_class_name() -> None:
+    """An httpx exception with no message must surface SOME description.
+
+    Bare ``WriteTimeout()``, ``RemoteProtocolError()`` and similar can
+    have empty ``str(exc)``, which previously produced
+    ``"network failure: "`` in the user-facing error.
+    """
+    from backend.app.integrations.appfolio_vendor.service import _format_http_exception
+
+    assert _format_http_exception(httpx.WriteTimeout("")) == "WriteTimeout"
+    assert _format_http_exception(httpx.RemoteProtocolError("")) == "RemoteProtocolError"
+    # Non-empty messages pass through unchanged.
+    assert _format_http_exception(httpx.ConnectError("dns lookup failed")) == "dns lookup failed"
+
+
+def test_fmt_work_order_line_prefers_number_for_display() -> None:
+    """The Vendor Portal UI shows ``numberForDisplay``, which can differ
+    from the API ``id``. The agent's "WO #X" rendering must match what
+    the user sees in their portal so they can find it.
+    """
+    from backend.app.integrations.appfolio_vendor.work_orders import _fmt_work_order_line
+
+    line = _fmt_work_order_line({"id": 114433, "numberForDisplay": "WO-2026-0042"})
+    assert "ID: 114433" in line
+    assert "#WO-2026-0042" in line
+    assert "#114433" not in line
+
+
+def test_fmt_work_order_line_falls_back_to_id_when_no_display_number() -> None:
+    from backend.app.integrations.appfolio_vendor.work_orders import _fmt_work_order_line
+
+    line = _fmt_work_order_line({"id": 114433})
+    assert "ID: 114433" in line
+    assert "#114433" in line
+
+
+def test_fmt_work_order_line_underscored_alias_also_supported() -> None:
+    """Some endpoints may use snake_case ``number_for_display``."""
+    from backend.app.integrations.appfolio_vendor.work_orders import _fmt_work_order_line
+
+    line = _fmt_work_order_line({"id": 1, "number_for_display": "WO-9"})
+    assert "#WO-9" in line
+
+
 @pytest.mark.asyncio()
 async def test_service_error_message_omits_response_body() -> None:
     """Raised AppFolioError must not echo the response body.

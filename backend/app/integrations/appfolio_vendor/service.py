@@ -36,7 +36,31 @@ from backend.app.integrations.appfolio_vendor.auth import AppFolioCredential
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_TIMEOUT_SECONDS = 30.0
+_DEFAULT_TIMEOUT_SECONDS = 120.0
+"""Per-request timeout. Raised from 30s to 120s after observing
+``add_work_order_note`` calls with multiple photos hit the original
+ceiling: 6 photos at typical phone-camera resolution become ~15-25 MB
+of base64 payload, and AppFolio's note endpoint then has to persist
+each one. The longer ceiling costs nothing on the read paths (which
+return in milliseconds) and keeps media-attaching writes from failing
+on perfectly normal uploads."""
+
+
+def _format_http_exception(exc: BaseException) -> str:
+    """Return a non-empty description of an httpx exception.
+
+    ``httpx.WriteTimeout()``, ``RemoteProtocolError()`` and friends are
+    sometimes constructed with no message, in which case ``str(exc)``
+    returns an empty string and we end up surfacing
+    ``"network failure: "`` to the user. Fall back to the exception class
+    name so the error is at least diagnosable.
+    """
+    msg = str(exc)
+    if msg:
+        return msg
+    return type(exc).__name__
+
+
 _CLIENT_VERSION = "clawbolt-1"
 """Sent in ``X-Vendor-Portal-Web-Client``. Opaque to AppFolio; used
 internally for log correlation if we need it."""
@@ -213,7 +237,9 @@ class AppFolioVendorService:
                 params,
                 body_for_log,
             )
-            raise AppFolioError(f"AppFolio {method} {path} network failure: {exc}") from exc
+            raise AppFolioError(
+                f"AppFolio {method} {path} network failure: {_format_http_exception(exc)}"
+            ) from exc
 
         if resp.status_code == 401:
             # One-shot refresh-and-retry when we have a refresh_token on file.
@@ -680,7 +706,9 @@ async def exchange_magic_link(
             resp = await client.post(OAUTH_TOKEN_URL, headers=headers, json=body)
     except httpx.HTTPError as exc:
         logger.warning("AppFolio OAuth exchange network failure: %s", exc)
-        raise AppFolioError(f"AppFolio OAuth exchange network failure: {exc}") from exc
+        raise AppFolioError(
+            f"AppFolio OAuth exchange network failure: {_format_http_exception(exc)}"
+        ) from exc
     if resp.status_code >= 400:
         response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
         logger.warning(
@@ -722,7 +750,9 @@ async def refresh_access_token(
             resp = await client.post(OAUTH_TOKEN_URL, headers=headers, json=body)
     except httpx.HTTPError as exc:
         logger.warning("AppFolio OAuth refresh network failure: %s", exc)
-        raise AppFolioError(f"AppFolio OAuth refresh network failure: {exc}") from exc
+        raise AppFolioError(
+            f"AppFolio OAuth refresh network failure: {_format_http_exception(exc)}"
+        ) from exc
     if resp.status_code >= 400:
         response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
         logger.warning(
