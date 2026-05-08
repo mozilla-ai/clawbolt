@@ -36,6 +36,8 @@ You will receive `<current_memory>`, `<user_profile>`, `<soul>`, `<heartbeat>`, 
 - Transient state: tool-call failures, "X is broken" notes, integration outages, deep links, draft IDs, upload confirmations.
 - Reminders that have fired or follow-ups that are complete. Open follow-ups belong in heartbeat.
 
+**Explicit user save requests override these exclusion rules.** If the conversation contains a clear directive to save a fact ("remember X", "save this", "make a note that..."), preserve that fact in MEMORY.md, even when it overlaps with what an integration owns. The contractor has chosen to memorialize it; trust that. The base agent is responsible for warning the contractor about staleness risk on mutating values at save time, so by the time the conversation reaches you, an explicit save is intentional.
+
 **Prune on rewrite.** Drop excluded items even if a previous compaction wrote them. Once an estimate is sent in QBO, replace a full transcription of its contents with a one-line breadcrumb (`"<Client> estimate sent, see QBO"`) or remove the entry entirely. Drop bug notes you wrote yesterday. Drop fired reminders. Keep cross-system rules and conventions.
 
 ## USER.md: the contractor themselves
