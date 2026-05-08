@@ -341,17 +341,26 @@ class CompanyCamService:
         page: int = 1,
         per_page: int = 50,
     ) -> list[Photo]:
-        """Search photos across all projects with optional filters."""
+        """Search photos with optional filters.
+
+        When ``project_id`` is set, requests the project-scoped
+        ``/projects/{project_id}/photos`` endpoint. The global
+        ``/photos`` endpoint silently ignores a singular ``project_id``
+        query param (its filter is ``project_ids[]``, an array), so
+        passing one through there returned the most-recent photos
+        across every project regardless of which project was requested.
+        Routing through the project-scoped endpoint is unambiguous and
+        accepts the same date / pagination filters.
+        """
         params: dict[str, str | int] = {"page": page, "per_page": per_page}
-        if project_id:
-            params["project_id"] = project_id
         if start_date is not None:
             params["start_date"] = start_date
         if end_date is not None:
             params["end_date"] = end_date
+        url = f"{_API_BASE}/projects/{project_id}/photos" if project_id else f"{_API_BASE}/photos"
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
-                f"{_API_BASE}/photos",
+                url,
                 params=params,
                 headers=self._headers(),
             )
