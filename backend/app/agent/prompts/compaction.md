@@ -29,6 +29,8 @@ You will receive five XML-tagged sections: `<current_memory>`, `<user_profile>`,
 
 Client-specific pricing or billing rules belong in MEMORY.md, not here.
 
+When you rewrite USER.md, preserve every existing field. Only change a field if the conversation contradicts it. If the conversation adds nothing profile-relevant, return an empty string instead of a rewrite, so the existing file is left untouched.
+
 ### memory (MEMORY.md): cross-system business knowledge
 
 **Include:**
@@ -47,6 +49,10 @@ Client-specific pricing or billing rules belong in MEMORY.md, not here.
 - Estimate contents, line-item maps, txnIds. Those live in QBO; a one-line breadcrumb is fine, full contents are not.
 - Project addresses or status. Those live in CompanyCam.
 - Work-order details, vendor-job state. Those live in AppFolio.
+
+A fact owned by an integration can change inside that integration without telling Clawbolt. Phone numbers, email addresses, statuses, amounts, IDs, addresses can all be edited, rotated, or replaced upstream at any time. Memorizing them creates a stale-cache risk: a value that was correct when written can become wrong, even dangerously wrong, by the time the agent reads it next.
+
+**Worked example (do not memorize this kind of value):** AppFolio rotates tenant contact phone numbers every few days for privacy. If we memorize `"Tenant Smith: 555-0123"` today and quote it back next week, that number now belongs to a different tenant. The contractor calls a stranger. Always look these values up live, even if it costs an extra tool call. Never memorize a value the source system can change without telling Clawbolt.
 
 **Do NOT include transient state**, even if it appeared in the conversation:
 
