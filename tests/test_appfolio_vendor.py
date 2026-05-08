@@ -1151,6 +1151,42 @@ async def test_4xx_log_summarizes_singular_file_compliance_upload(caplog: Any) -
 
 
 @pytest.mark.asyncio()
+async def test_appfolio_connect_message_omits_customer_count(async_test_user: Any) -> None:
+    """Regression for #1275: connect must not surface 'customer' counts.
+
+    The OAuth2 migration in #1269 stopped populating ``customer_ids`` on
+    the exchange result, leaving the receipt forever rendering "0
+    customer(s)". Rather than backfill via /profiles/me just to print a
+    number that vendors don't think in, we drop the framing entirely.
+    """
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
+    from backend.app.integrations.appfolio_vendor.service import AccessExchangeResult
+
+    user_id = async_test_user.id
+    tools = build_auth_tools(user_id)
+    connect = next(t for t in tools if t.name == ToolName.APPFOLIO_CONNECT)
+
+    fake_result = AccessExchangeResult(
+        jwt="jwt-1",
+        customer_ids=[],
+        raw={},
+        refresh_token="rt-1",
+    )
+    with patch(
+        "backend.app.integrations.appfolio_vendor.auth_tools.exchange_magic_link",
+        new=AsyncMock(return_value=fake_result),
+    ):
+        result = await connect.function(magic_link="eyJ.fake.token")
+
+    assert result.is_error is False
+    assert result.content == "AppFolio connected. Tools are now available."
+    assert "customer" not in result.content.lower()
+    assert result.receipt is not None
+    assert "customer" not in (result.receipt.target or "").lower()
+
+
+@pytest.mark.asyncio()
 async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
     import logging
 
