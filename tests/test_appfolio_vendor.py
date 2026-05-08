@@ -417,7 +417,7 @@ def test_encode_files_compresses_oversized_photos() -> None:
     encoded = _encode_files([FileUpload(name="damage.jpg", data=big)])
     assert len(encoded) == 1
     assert encoded[0]["name"] == "damage.jpg"
-    raw = base64.b64decode(encoded[0]["file_base64"])
+    raw = base64.b64decode(encoded[0]["file_in_base64"])
     assert len(raw) <= _APPFOLIO_PHOTO_TARGET_BYTES
     assert len(raw) < len(big)
 
@@ -428,7 +428,7 @@ def test_encode_files_passes_small_images_through() -> None:
 
     small = _noisy_jpeg(200, 150, quality=85)
     encoded = _encode_files([FileUpload(name="thumb.jpg", data=small)])
-    raw = base64.b64decode(encoded[0]["file_base64"])
+    raw = base64.b64decode(encoded[0]["file_in_base64"])
     assert raw == small  # bytes preserved exactly
 
 
@@ -438,7 +438,7 @@ def test_encode_files_passes_non_image_through() -> None:
 
     pdf_bytes = b"%PDF-1.4\n" + b"\x00" * 4_000_000
     encoded = _encode_files([FileUpload(name="invoice.pdf", data=pdf_bytes)])
-    raw = base64.b64decode(encoded[0]["file_base64"])
+    raw = base64.b64decode(encoded[0]["file_in_base64"])
     assert raw == pdf_bytes
 
 
@@ -449,7 +449,7 @@ def test_encode_files_falls_back_when_compression_fails() -> None:
     # Bytes that won't decode as any image despite the .jpg extension.
     junk = b"not actually a JPEG" + b"\xff" * 2_000_000
     encoded = _encode_files([FileUpload(name="broken.jpg", data=junk)])
-    raw = base64.b64decode(encoded[0]["file_base64"])
+    raw = base64.b64decode(encoded[0]["file_in_base64"])
     assert raw == junk
 
 
@@ -475,18 +475,18 @@ def test_fmt_work_order_line_prefers_number_for_display() -> None:
     """
     from backend.app.integrations.appfolio_vendor.work_orders import _fmt_work_order_line
 
-    line = _fmt_work_order_line({"id": 114433, "numberForDisplay": "WO-2026-0042"})
-    assert "ID: 114433" in line
+    line = _fmt_work_order_line({"id": 999001, "numberForDisplay": "WO-2026-0042"})
+    assert "ID: 999001" in line
     assert "#WO-2026-0042" in line
-    assert "#114433" not in line
+    assert "#999001" not in line
 
 
 def test_fmt_work_order_line_falls_back_to_id_when_no_display_number() -> None:
     from backend.app.integrations.appfolio_vendor.work_orders import _fmt_work_order_line
 
-    line = _fmt_work_order_line({"id": 114433})
-    assert "ID: 114433" in line
-    assert "#114433" in line
+    line = _fmt_work_order_line({"id": 999001})
+    assert "ID: 999001" in line
+    assert "#999001" in line
 
 
 def test_fmt_work_order_line_underscored_alias_also_supported() -> None:
@@ -503,8 +503,8 @@ def test_fmt_work_order_line_surfaces_customer_id() -> None:
     """
     from backend.app.integrations.appfolio_vendor.work_orders import _fmt_work_order_line
 
-    line = _fmt_work_order_line({"id": 114433, "customer_id": "1963538"})
-    assert "customer_id=1963538" in line
+    line = _fmt_work_order_line({"id": 999001, "customer_id": "cust-9001"})
+    assert "customer_id=cust-9001" in line
 
 
 @pytest.mark.asyncio()
@@ -519,7 +519,7 @@ async def test_add_work_order_note_includes_customer_id_in_body() -> None:
         user_id="u1",
         jwt="jwt-1",
         fingerprint="fp-1",
-        customer_ids=["1963538"],
+        customer_ids=["cust-9001"],
         extra={},
     )
     service = AppFolioVendorService(cred, api_base="https://api.test")
@@ -531,10 +531,10 @@ async def test_add_work_order_note_includes_customer_id_in_body() -> None:
         cm.__aenter__ = AsyncMock(return_value=client)
         cm.__aexit__ = AsyncMock(return_value=False)
         cls.return_value = cm
-        await service.add_work_order_note("114433", body_text="status update")
+        await service.add_work_order_note("999001", body_text="status update")
     _, kwargs = client.request.call_args
     sent = kwargs["json"]
-    assert sent["customer_id"] == "1963538"
+    assert sent["customer_id"] == "cust-9001"
     assert sent["note"] == {"body": "status update"}
     assert sent["files"] == []
 
@@ -555,7 +555,7 @@ async def test_add_work_order_note_resolves_customer_id_when_missing() -> None:
     service = AppFolioVendorService(cred, api_base="https://api.test")
 
     profile_response = _mock_response(
-        json_data={"customers": [{"customer_id": 1963538, "customer_name": "Arbors"}]}
+        json_data={"customers": [{"customer_id": "cust-9001", "customer_name": "Acme Properties"}]}
     )
     note_response = _mock_response(json_data={"id": 42})
 
@@ -566,7 +566,7 @@ async def test_add_work_order_note_resolves_customer_id_when_missing() -> None:
         cm.__aenter__ = AsyncMock(return_value=client)
         cm.__aexit__ = AsyncMock(return_value=False)
         cls.return_value = cm
-        await service.add_work_order_note("114433", body_text="status update")
+        await service.add_work_order_note("999001", body_text="status update")
 
     # First call: GET /profiles/me to discover customer_id
     first_args, _ = client.request.call_args_list[0]
@@ -576,10 +576,10 @@ async def test_add_work_order_note_resolves_customer_id_when_missing() -> None:
     second_args, second_kwargs = client.request.call_args_list[1]
     assert second_args[0] == "POST"
     assert "/notes" in second_args[1]
-    assert second_kwargs["json"]["customer_id"] == "1963538"
+    assert second_kwargs["json"]["customer_id"] == "cust-9001"
     # The credential should be backfilled in-memory so subsequent calls
     # don't refetch.
-    assert cred.customer_ids == ["1963538"]
+    assert cred.customer_ids == ["cust-9001"]
 
 
 @pytest.mark.asyncio()
@@ -599,7 +599,7 @@ async def test_resolve_customer_id_raises_when_profile_has_none() -> None:
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
         cls.return_value = _patch_async_client("request", response)
         with pytest.raises(AppFolioError, match="no customer IDs"):
-            await service.add_work_order_note("114433", body_text="x")
+            await service.add_work_order_note("999001", body_text="x")
 
 
 def test_client_version_header_is_opaque_hex() -> None:
@@ -887,7 +887,9 @@ async def test_accept_work_order_passes_ref_param() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_schedule_work_order_omits_unset_fields() -> None:
+async def test_schedule_work_order_uses_time_slot_id_shape() -> None:
+    """Verified against SPA capture: AppFolio expects time_slot_id +
+    customer_id, not free-form ISO timestamps."""
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={})
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -897,38 +899,18 @@ async def test_schedule_work_order_omits_unset_fields() -> None:
         cm.__aenter__ = AsyncMock(return_value=client)
         cm.__aexit__ = AsyncMock(return_value=False)
         cls.return_value = cm
-        await service.schedule_work_order("42", scheduled_at="2026-05-08T14:00:00-04:00")
+        await service.schedule_work_order("42", time_slot_id="slot-99")
     _, kwargs = client.request.call_args
-    assert kwargs["json"] == {"scheduledAt": "2026-05-08T14:00:00-04:00"}
+    sent = kwargs["json"]
+    assert sent["time_slot_id"] == "slot-99"
+    assert sent["customer_id"] == "c1"
 
 
 @pytest.mark.asyncio()
-async def test_schedule_work_order_includes_optional_fields() -> None:
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data={})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        client = AsyncMock()
-        client.request = AsyncMock(return_value=response)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=client)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        cls.return_value = cm
-        await service.schedule_work_order(
-            "42",
-            scheduled_at="2026-05-08T14:00:00",
-            duration_minutes=90,
-            notes="bring ladder",
-        )
-    _, kwargs = client.request.call_args
-    assert kwargs["json"] == {
-        "scheduledAt": "2026-05-08T14:00:00",
-        "durationMinutes": 90,
-        "notes": "bring ladder",
-    }
-
-
-@pytest.mark.asyncio()
-async def test_update_status_uses_camelcase_envelope() -> None:
+async def test_update_status_uses_snake_case_with_customer_id() -> None:
+    """Verified against SPA capture: snake_case body wrapping plus
+    ``customer_id`` at the top level. Previously sent camelCase and no
+    customer_id, which AppFolio rejects with a 422 + empty body."""
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={})
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -941,7 +923,7 @@ async def test_update_status_uses_camelcase_envelope() -> None:
         await service.update_work_order_status("42", status_code=8)
     args, kwargs = client.request.call_args
     assert args[0] == "PATCH"
-    assert kwargs["json"] == {"workOrder": {"statusCode": 8}}
+    assert kwargs["json"] == {"work_order": {"status_code": 8}, "customer_id": "c1"}
 
 
 @pytest.mark.asyncio()
@@ -968,7 +950,7 @@ async def test_add_note_inlines_base64_files() -> None:
     # base64 of b"\x89PNGfake"
     import base64
 
-    assert entry["file_base64"] == base64.b64encode(b"\x89PNGfake").decode("ascii")
+    assert entry["file_in_base64"] == base64.b64encode(b"\x89PNGfake").decode("ascii")
 
 
 @pytest.mark.asyncio()
@@ -1135,23 +1117,29 @@ async def test_create_invoice_serializes_line_items() -> None:
         cls.return_value = cm
         await service.create_invoice(
             customer_id="cust-1",
-            work_order_id="wo-1",
+            work_order_id="42",
             line_items=[
-                {"description": "Labor 4hr", "quantity": 4.0, "rate": 75.0},
-                {"description": "Materials", "quantity": 1.0, "rate": 120.0},
+                {"description": "Labor 4hr", "quantity": 4.0, "amount": 75.0},
+                {"description": "Materials", "quantity": 1.0, "amount": 120.0},
             ],
-            invoice_number="INV-001",
-            due_date="2026-06-01",
+            address={
+                "property_or_unit_name": "Acme Bldg Unit 1",
+                "address_1": "123 Example Street",
+            },
+            reference_number="REF-001",
             files=[FileUpload(name="receipt.pdf", data=b"%PDF-fake")],
         )
     args, kwargs = client.request.call_args
     assert args[0] == "POST"
     payload = kwargs["json"]
-    assert payload["customerId"] == "cust-1"
-    assert payload["workOrderId"] == "wo-1"
-    assert payload["lineItems"][0]["description"] == "Labor 4hr"
-    assert payload["invoiceNumber"] == "INV-001"
-    assert payload["dueDate"] == "2026-06-01"
+    # SPA-verified shape: snake_case keys, work_order_id as int, line_items
+    # with ``amount``, ``address`` block, ``reference_number``.
+    assert payload["customer_id"] == "cust-1"
+    assert payload["work_order_id"] == 42
+    assert payload["line_items"][0]["description"] == "Labor 4hr"
+    assert payload["line_items"][0]["amount"] == 75.0
+    assert payload["address"]["address_1"] == "123 Example Street"
+    assert payload["reference_number"] == "REF-001"
     assert len(payload["files"]) == 1
 
 
@@ -1166,14 +1154,14 @@ async def test_upload_invoice_pdf_omits_line_items() -> None:
         cls.return_value = cm
         await service.upload_invoice_pdf(
             customer_id="cust-1",
-            work_order_id="wo-1",
+            work_order_id="999001",
             files=[FileUpload(name="invoice.pdf", data=b"%PDF-fake")],
         )
     _, kwargs = client.request.call_args
     payload = kwargs["json"]
-    assert "lineItems" not in payload
-    assert payload["customerId"] == "cust-1"
-    assert payload["workOrderId"] == "wo-1"
+    assert "line_items" not in payload
+    assert payload["customer_id"] == "cust-1"
+    assert payload["work_order_id"] == 999001
     assert len(payload["files"]) == 1
 
 
@@ -1193,8 +1181,8 @@ async def test_upload_compliance_document_uses_singular_file() -> None:
         )
     _, kwargs = client.request.call_args
     payload = kwargs["json"]
-    assert payload["customerId"] == "cust-1"
-    assert payload["complianceType"] == "w9"
+    assert payload["customer_id"] == "cust-1"
+    assert payload["compliance_type"] == "w9"
     assert isinstance(payload["file"], dict)
     assert payload["file"]["name"] == "w9.pdf"
     assert "files" not in payload
@@ -1292,9 +1280,9 @@ async def test_4xx_failure_logs_request_body_and_response(caplog: Any) -> None:
 
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(
-        json_data={"errors": ["scheduledAt: must be in the future"]},
+        json_data={"errors": ["time_slot_id: not available"]},
         status_code=422,
-        text='{"errors":["scheduledAt: must be in the future"]}',
+        text='{"errors":["time_slot_id: not available"]}',
     )
 
     with (
@@ -1304,18 +1292,18 @@ async def test_4xx_failure_logs_request_body_and_response(caplog: Any) -> None:
         cm, _ = _patch_request(response)
         cls.return_value = cm
         with pytest.raises(AppFolioError) as exc_info:
-            await service.schedule_work_order("42", scheduled_at="2024-01-01T00:00:00")
+            await service.schedule_work_order("42", time_slot_id="slot-99")
 
     # ToolResult-side message carries the status only; the response body
     # is intentionally redacted so it cannot leak into user-visible chat.
     assert "422" in str(exc_info.value)
-    assert "scheduledAt" not in str(exc_info.value)
+    assert "time_slot_id: not available" not in str(exc_info.value)
 
     # Log line includes everything a dev needs to diagnose.
     record_text = "\n".join(r.message for r in caplog.records)
     assert "POST" in record_text
     assert "/maintenance/api/work_orders/42/schedule" in record_text
-    assert "scheduledAt" in record_text  # request body logged
+    assert "time_slot_id" in record_text  # request body logged
     assert "422" in record_text
 
 

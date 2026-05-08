@@ -35,11 +35,19 @@ logger = logging.getLogger(__name__)
 
 
 def _line_items_total(items: list[AppFolioInvoiceLineItem]) -> float:
-    return sum(item.quantity * item.rate for item in items)
+    return sum(item.quantity * item.amount for item in items)
 
 
 def _line_items_to_payload(items: list[AppFolioInvoiceLineItem]) -> list[dict[str, Any]]:
-    return [{"description": i.description, "quantity": i.quantity, "rate": i.rate} for i in items]
+    """Match the SPA's invoice line-item shape exactly.
+
+    SPA sends ``{amount, description, quantity}`` with ``quantity`` as a
+    string. AppFolio's API rejects payloads with the older ``rate`` key.
+    """
+    return [
+        {"amount": i.amount, "description": i.description, "quantity": str(i.quantity)}
+        for i in items
+    ]
 
 
 def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[Tool]:
@@ -49,8 +57,7 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         customer_id: str,
         work_order_id: str,
         line_items: list[dict[str, Any]],
-        invoice_number: str = "",
-        due_date: str = "",
+        reference_number: str = "",
         media_refs: list[str] | None = None,
     ) -> ToolResult:
         # Pydantic-coerce raw dicts the LLM emits into the typed shape.
@@ -62,7 +69,8 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
                 hint=(
-                    "Each line item needs description (str), quantity (number), and rate (number)."
+                    "Each line item needs description (str), quantity (number),"
+                    " and amount (number)."
                 ),
             )
         if not typed_items:
@@ -80,8 +88,7 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
                 customer_id=customer_id,
                 work_order_id=work_order_id,
                 line_items=_line_items_to_payload(typed_items),
-                invoice_number=invoice_number,
-                due_date=due_date,
+                reference_number=reference_number,
                 files=files or None,
             )
         except Exception as exc:
@@ -108,6 +115,7 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         customer_id: str,
         work_order_id: str,
         media_refs: list[str],
+        reference_number: str = "",
     ) -> ToolResult:
         if not media_refs:
             return ToolResult(
@@ -130,6 +138,7 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
                 customer_id=customer_id,
                 work_order_id=work_order_id,
                 files=files,
+                reference_number=reference_number,
             )
         except Exception as exc:
             return service_error_to_tool_result("uploading invoice", exc)

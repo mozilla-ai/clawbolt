@@ -88,7 +88,7 @@ class AuthExpiredError(AppFolioError):
 class FileUpload:
     """Binary file to attach to a note or invoice request body.
 
-    AppFolio expects ``{file_base64, name}`` JSON entries rather than
+    AppFolio expects ``{file_in_base64, name}`` JSON entries rather than
     multipart form-data. ``data`` is the raw bytes; the caller does not
     need to base64-encode them.
     """
@@ -147,7 +147,7 @@ def _encode_files(files: list[FileUpload]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for f in files:
         data = _maybe_compress_photo(f.name, f.data)
-        out.append({"name": f.name, "file_base64": base64.b64encode(data).decode("ascii")})
+        out.append({"name": f.name, "file_in_base64": base64.b64encode(data).decode("ascii")})
     return out
 
 
@@ -162,7 +162,7 @@ def _summarize_body_for_log(body: Any) -> Any:
 
     AppFolio note/invoice bodies inline photo bytes as base64 strings,
     which dwarf the rest of the JSON and bury the actual API contract
-    we're trying to debug. Replace each ``file_base64`` string with a
+    we're trying to debug. Replace each ``file_in_base64`` string with a
     ``<base64 N bytes>`` marker; leave everything else intact.
     """
     if isinstance(body, dict):
@@ -175,12 +175,12 @@ def _summarize_body_for_log(body: Any) -> Any:
 
 
 def _summarize_file_entry(entry: Any) -> Any:
-    """Replace a ``{file_base64, name}`` dict's payload with a size marker."""
+    """Replace a ``{file_in_base64, name}`` dict's payload with a size marker."""
     if not isinstance(entry, dict):
         return entry
     summarized: dict[str, Any] = {}
     for k, v in entry.items():
-        if k == "file_base64" and isinstance(v, str):
+        if k == "file_in_base64" and isinstance(v, str):
             summarized[k] = f"<{len(v)} chars base64>"
         else:
             summarized[k] = v
@@ -190,8 +190,8 @@ def _summarize_file_entry(entry: Any) -> Any:
 def _summarize_files_field(body: Any) -> Any:
     """Specialize the generic summarizer for AppFolio's file payload shapes.
 
-    Handles both the plural form (``files: [{file_base64, name}, ...]``,
-    used by notes and invoices) and the singular form (``file: {file_base64,
+    Handles both the plural form (``files: [{file_in_base64, name}, ...]``,
+    used by notes and invoices) and the singular form (``file: {file_in_base64,
     name}``, used by compliance uploads).
     """
     if not isinstance(body, dict):
@@ -405,7 +405,7 @@ class AppFolioVendorService:
     async def search_work_orders(self, search_term: str) -> Any:
         return await self.get(
             "/api/v1/search/work_order_search",
-            params={"searchTerm": search_term},
+            params={"search_term": search_term},
         )
 
     async def get_work_order(self, customer_id: str, work_order_id: str) -> Any:
@@ -491,39 +491,52 @@ class AppFolioVendorService:
         self,
         work_order_id: str,
         *,
-        scheduled_at: str,
-        duration_minutes: int | None = None,
-        notes: str = "",
+        time_slot_id: str,
+        customer_id: str | None = None,
     ) -> Any:
         """POST a schedule onto a work order.
 
-        Body shape mirrors the SPA: a flat dict whose keys are camelCase.
-        ``scheduled_at`` should be an ISO 8601 string with timezone (or
-        local with offset) so AppFolio can render it correctly back to
-        the property manager.
+        SPA-verified shape: ``{"time_slot_id": "<id>", "customer_id": "..."}``.
+        AppFolio's vendor portal does not accept arbitrary timestamps; the
+        property manager publishes available time slots and the vendor
+        picks one. Use :meth:`list_schedule_time_slots` to fetch the
+        available slots for a work order before calling this.
         """
-        body: dict[str, Any] = {"scheduledAt": scheduled_at}
-        if duration_minutes is not None:
-            body["durationMinutes"] = duration_minutes
-        if notes:
-            body["notes"] = notes
+        cid = customer_id or await self._resolve_primary_customer_id()
         return await self.post(
             f"/maintenance/api/work_orders/{work_order_id}/schedule",
-            json_body=body,
+            json_body={"time_slot_id": str(time_slot_id), "customer_id": cid},
         )
 
-    async def update_work_order_status(self, work_order_id: str, *, status_code: int) -> Any:
+    async def update_work_order_status(
+        self,
+        work_order_id: str,
+        *,
+        status_code: int,
+        customer_id: str | None = None,
+    ) -> Any:
+        """PATCH a work order's status code.
+
+        SPA-verified shape: ``{"work_order": {"status_code": N}, "customer_id": "..."}``.
+        snake_case throughout; ``customer_id`` is required.
+        """
+        cid = customer_id or await self._resolve_primary_customer_id()
         return await self.patch(
             f"/maintenance/api/work_orders/{work_order_id}",
-            json_body={"workOrder": {"statusCode": status_code}},
+            json_body={"work_order": {"status_code": status_code}, "customer_id": cid},
         )
 
     async def undo_work_order_status(
-        self, work_order_id: str, *, previous_status: int | str
+        self,
+        work_order_id: str,
+        *,
+        previous_status: int | str,
+        customer_id: str | None = None,
     ) -> Any:
+        cid = customer_id or await self._resolve_primary_customer_id()
         return await self.patch(
             f"/maintenance/api/work_orders/{work_order_id}/undo_status",
-            json_body={"workOrder": {"status": previous_status}},
+            json_body={"work_order": {"status": previous_status}, "customer_id": cid},
         )
 
     async def list_work_order_notes(self, work_order_id: str) -> Any:
@@ -612,27 +625,34 @@ class AppFolioVendorService:
         customer_id: str,
         work_order_id: str,
         line_items: list[dict[str, Any]],
-        invoice_number: str = "",
-        due_date: str = "",
+        address: dict[str, Any] | None = None,
+        reference_number: str = "",
         files: list[FileUpload] | None = None,
     ) -> Any:
         """Create a line-itemized invoice tied to a work order.
 
-        ``line_items`` should be a list of ``{description, quantity, rate}``
-        entries (or whichever shape AppFolio's UI emits — confirmed
-        post-smoke-test). Optional ``files`` attach photos or supporting
-        docs inline as base64. ``invoice_number`` and ``due_date``
-        (ISO YYYY-MM-DD) are passed through when present.
+        SPA-verified body shape (snake_case throughout):
+
+        ``{customer_id, work_order_id (int), line_items: [{amount, description,
+        quantity}], address: {property_or_unit_name, address_1, address_2,
+        city, state, zip_code}, reference_number}``
+
+        ``line_items`` entries use ``amount`` (not ``rate``) and the SPA sends
+        ``quantity`` as a string. ``address`` is sourced from the work-order
+        location and is part of the SPA's payload; we pass it through so the
+        invoice prints the correct property block. ``reference_number`` is
+        the vendor-side invoice number (the SPA auto-suggests one based on
+        the WO).
         """
         body: dict[str, Any] = {
-            "customerId": customer_id,
-            "workOrderId": work_order_id,
-            "lineItems": line_items,
+            "customer_id": str(customer_id),
+            "work_order_id": int(work_order_id) if str(work_order_id).isdigit() else work_order_id,
+            "line_items": line_items,
         }
-        if invoice_number:
-            body["invoiceNumber"] = invoice_number
-        if due_date:
-            body["dueDate"] = due_date
+        if address:
+            body["address"] = address
+        if reference_number:
+            body["reference_number"] = reference_number
         if files:
             body["files"] = _encode_files(files)
         return await self.post("/maintenance/api/invoices", json_body=body)
@@ -643,23 +663,27 @@ class AppFolioVendorService:
         customer_id: str,
         work_order_id: str,
         files: list[FileUpload],
+        address: dict[str, Any] | None = None,
+        reference_number: str = "",
     ) -> Any:
         """Upload one or more pre-built invoice PDFs as a single AppFolio invoice.
 
-        AppFolio reuses the ``/maintenance/api/invoices`` endpoint for
-        both shapes; the absence of ``lineItems`` plus presence of
-        ``files`` switches it to the "uploaded PDF" mode.
+        Uses the same ``/maintenance/api/invoices`` endpoint as line-itemized
+        invoices; the SPA distinguishes by sending ``files`` without
+        ``line_items``.
         """
         if not files:
             raise ValueError("upload_invoice_pdf requires at least one file")
-        return await self.post(
-            "/maintenance/api/invoices",
-            json_body={
-                "customerId": customer_id,
-                "workOrderId": work_order_id,
-                "files": _encode_files(files),
-            },
-        )
+        body: dict[str, Any] = {
+            "customer_id": str(customer_id),
+            "work_order_id": int(work_order_id) if str(work_order_id).isdigit() else work_order_id,
+            "files": _encode_files(files),
+        }
+        if address:
+            body["address"] = address
+        if reference_number:
+            body["reference_number"] = reference_number
+        return await self.post("/maintenance/api/invoices", json_body=body)
 
     async def upload_compliance_document(
         self,
@@ -673,14 +697,18 @@ class AppFolioVendorService:
         Note the singular ``file`` field; AppFolio's compliance endpoint
         does not take an array.
         """
+        # Body shape extrapolated from the snake_case pattern used by every
+        # other write endpoint we've SPA-verified (notes, status, schedule,
+        # invoice). Not yet directly Playwright-confirmed for compliance
+        # docs; revisit if AppFolio rejects.
         return await self.post(
             "/maintenance/api/compliance_documents",
             json_body={
-                "customerId": customer_id,
-                "complianceType": compliance_type,
+                "customer_id": customer_id,
+                "compliance_type": compliance_type,
                 "file": {
                     "name": file.name,
-                    "file_base64": base64.b64encode(file.data).decode("ascii"),
+                    "file_in_base64": base64.b64encode(file.data).decode("ascii"),
                 },
             },
         )
