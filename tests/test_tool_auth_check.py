@@ -177,13 +177,13 @@ class TestListCapabilitiesWithUnauthenticated:
         assert "not connected" in result.content.lower()
 
     @pytest.mark.asyncio
-    async def test_activating_authenticated_category_still_works(self) -> None:
+    async def test_lookup_authenticated_category_returns_guidance(self) -> None:
         summaries = {"heartbeat": "Manage heartbeats"}
         unauth = {"quickbooks": "QuickBooks is not connected."}
         tool = create_list_capabilities_tool(summaries, unauthenticated=unauth)
         result = await tool.function(category="heartbeat")
         assert not result.is_error
-        assert "activated" in result.content.lower()
+        assert "already loaded" in result.content.lower()
 
     @pytest.mark.asyncio
     async def test_usage_hint_mentions_unauthenticated(self) -> None:
@@ -409,13 +409,13 @@ class TestListCapabilitiesWithDisabledSubTools:
         assert "disabled" in result.content.lower()
 
     @pytest.mark.asyncio
-    async def test_activation_notes_disabled_tools(self) -> None:
+    async def test_lookup_notes_disabled_tools(self) -> None:
         summaries = {"quickbooks": "QB tools"}
         disabled = {"quickbooks": [SubToolInfo("qb_create", "Create")]}
         tool = create_list_capabilities_tool(summaries, disabled_sub_tools=disabled)
         result = await tool.function(category="quickbooks")
         assert not result.is_error
-        assert "activated" in result.content.lower()
+        assert "already loaded" in result.content.lower()
         assert "qb_create" in result.content
         assert "disabled" in result.content.lower()
 

@@ -73,12 +73,12 @@ def test_get_skill_instructions_returns_none_for_unknown() -> None:
 
 @pytest.mark.asyncio()
 async def test_list_capabilities_includes_skill_instructions() -> None:
-    """Activating a category with a SKILL.md should include instructions in the response."""
+    """Looking up a category with a SKILL.md should include the SKILL guidance."""
     load_all_skills()
     tool = create_list_capabilities_tool({"quickbooks": "QB tools"})
     result: ToolResult = await tool.function(category="quickbooks")
     assert result.is_error is False
-    assert "activated" in result.content.lower()
+    assert "already loaded" in result.content.lower()
     assert "QuickBooks" in result.content
     assert "qb_query" in result.content
     assert "Common Workflows" in result.content
@@ -86,11 +86,11 @@ async def test_list_capabilities_includes_skill_instructions() -> None:
 
 @pytest.mark.asyncio()
 async def test_list_capabilities_without_skill_instructions() -> None:
-    """Activating a category without a SKILL.md should just show the activation message."""
+    """Looking up a category without a SKILL.md should just show the guidance message."""
     tool = create_list_capabilities_tool({"other_category": "Some tools"})
     result: ToolResult = await tool.function(category="other_category")
     assert result.is_error is False
-    assert "activated" in result.content.lower()
+    assert "already loaded" in result.content.lower()
     # Should not contain skill instructions since "other_category" has no SKILL.md
     assert "SKILL" not in result.content
 

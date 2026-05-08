@@ -2,20 +2,13 @@
 
 The agent's runtime path in :mod:`backend.app.agent.router` builds its
 tool list inline because it needs a fully-populated :class:`ToolContext`
-(storage backend, outbound-publish hook, downloaded media) and a shared
-mutable ``activated_specialists`` set that the ``list_capabilities``
-closure and the agent loop can both observe. This module mirrors only
-the *start-of-turn* shape of that list with stubbed context fields, so
-preview consumers (the system-prompt endpoint, debugging surfaces) can
-render the same tool guidelines the LLM sees on a fresh turn without
-the runtime plumbing.
+(storage backend, outbound-publish hook, downloaded media). This module
+mirrors that shape with stubbed context fields so preview consumers (the
+system-prompt endpoint, debugging surfaces) can render the same tool
+guidelines the LLM sees on a fresh turn without the runtime plumbing.
 
-Keeping it intentionally separate avoids two coupling pitfalls:
-
-* the runtime's shared mutable activation set leaking into preview code
-  paths where it would be confusing or unsafe;
-* preview callers being forced to construct fake storage/publish hooks
-  just to read tool schemas.
+Kept separate so preview callers do not have to construct fake
+storage/publish hooks just to read tool schemas.
 """
 
 from __future__ import annotations
@@ -39,11 +32,10 @@ async def build_initial_turn_tools(
 ) -> list[Tool]:
     """Return the tools the agent would have at the start of a turn.
 
-    This is core tools (always-on) plus the ``list_capabilities``
-    meta-tool when there are specialist categories or unauthenticated
-    services to surface. Specialist tools that get activated mid-turn
-    via ``list_capabilities`` are NOT included here, matching how the
-    agent itself starts each turn fresh.
+    This is core tools (always-on), specialist tools for integrations
+    the user has authenticated for, plus the ``list_capabilities``
+    meta-tool when there are unconnected integrations to surface for
+    discovery.
 
     Storage, downloaded media, and outbound-publish hooks are left as
     stubs because callers of this helper only need the tools' schemas
@@ -75,12 +67,9 @@ async def build_initial_turn_tools(
         excluded_tool_names=disabled_sub_tools or None,
     )
     # Mirror router.py: specialist tools for connected integrations are
-    # pre-activated at agent boot, so the preview's tool list reflects what
-    # the LLM actually sees on a fresh turn.
-    (
-        ready_specialist_tools,
-        ready_specialist_names,
-    ) = await default_registry.create_ready_specialist_tools(
+    # loaded at agent boot, so the preview's tool list reflects what the
+    # LLM actually sees on a fresh turn.
+    ready_specialist_tools = await default_registry.create_ready_specialist_tools(
         tool_context,
         excluded_factories=disabled_groups or None,
         excluded_tool_names=disabled_sub_tools or None,
@@ -101,7 +90,6 @@ async def build_initial_turn_tools(
                 specialist_summaries,
                 unauthenticated=unauthenticated,
                 disabled_sub_tools=disabled_specialist_subs or None,
-                activated_specialists=ready_specialist_names,
             )
         )
     return tools
