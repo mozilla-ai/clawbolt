@@ -321,12 +321,9 @@ async def compact_session(
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)
 
-    # Treat "LLM returned content identical to what's already on disk" as a
-    # no-op rather than a write. Otherwise the persisted ``*_updated`` flags,
-    # the structured-summary log, and the admin "memory updated" indicator
-    # all flag every compaction event as a memory change even when nothing
-    # actually moved. The ``.strip()`` comparison ignores trailing-whitespace
-    # noise that ``write_*_async`` would normalize on its way to disk.
+    # An LLM that echoes existing content verbatim is not a memory change.
+    # ``.strip()`` ignores trailing-whitespace noise that ``write_*_async``
+    # would normalize anyway.
     memory_changed = (
         bool(result.memory_update)
         and result.memory_update.strip() != (current_memory or "").strip()
