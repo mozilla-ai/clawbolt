@@ -183,6 +183,15 @@ When `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set, users can co
 
 When `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` are set, users can connect their Google Calendar via the web dashboard. Once connected, the agent gains specialist calendar tools (`calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_check_availability`).
 
+## Gmail
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GMAIL_CLIENT_ID` | | OAuth client ID from the Google Cloud console |
+| `GMAIL_CLIENT_SECRET` | | OAuth client secret from the Google Cloud console |
+
+Use a separate Google OAuth client from Calendar/Drive so the `gmail.readonly` and `gmail.send` scopes can be approved on their own (Google's verification process treats each OAuth client independently). When both variables are set, users can connect Gmail via `manage_integration(action='connect', target='gmail')` or the Tools page. Once connected, the agent gains four tools: `gmail_search`, `gmail_get_message`, `gmail_list_recent`, and `gmail_send`. All four default to `ask` permission so the user is prompted before any inbox read or outbound send.
+
 ## CompanyCam
 
 | Variable | Default | Description |

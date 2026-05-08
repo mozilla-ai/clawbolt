@@ -33,6 +33,7 @@ _DISPLAY_NAMES: dict[str, str] = {
     "heartbeat": "Heartbeat",
     "quickbooks": "QuickBooks Online",
     "calendar": "Google Calendar",
+    "gmail": "Gmail",
     "companycam": "CompanyCam",
     "supplier_pricing": "Home Depot pricing",
     "appfolio_vendor": "AppFolio Vendor Portal",
@@ -44,6 +45,7 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
     "quickbooks": "quickbooks",
     "companycam": "companycam",
     "file": "google_drive",
+    "gmail": "gmail",
 }
 
 # Tool groups that use magic-link / paste-token auth instead of OAuth. These

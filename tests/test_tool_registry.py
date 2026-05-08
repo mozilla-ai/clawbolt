@@ -46,6 +46,7 @@ EXPECTED_INTEGRATION_MODULES: set[str] = {
     "backend.app.integrations.appfolio_vendor.factory",
     "backend.app.integrations.calendar.factory",
     "backend.app.integrations.companycam.factory",
+    "backend.app.integrations.gmail.factory",
     "backend.app.integrations.quickbooks.factory",
     "backend.app.integrations.supplier_pricing.factory",
 }

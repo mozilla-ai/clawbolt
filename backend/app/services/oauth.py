@@ -1169,13 +1169,33 @@ GOOGLE_DRIVE_SCOPES = [
     "https://www.googleapis.com/auth/drive.file",
 ]
 
+# Gmail OAuth 2.0 endpoints. Separate Google OAuth client from Calendar /
+# Drive so the Gmail scope set can be approved independently and so users
+# who only want one of the three never see the others on the consent
+# screen. ``gmail.readonly`` covers search + fetch; ``gmail.send`` covers
+# composing new messages and threaded replies. We deliberately avoid the
+# broader ``gmail.modify`` so the integration cannot delete, archive, or
+# label the user's mail.
+GMAIL_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+]
+
 # CompanyCam OAuth 2.0 endpoints
 COMPANYCAM_AUTHORIZE_URL = "https://app.companycam.com/oauth/authorize"
 COMPANYCAM_TOKEN_URL = "https://app.companycam.com/oauth/token"
 COMPANYCAM_SCOPES = ["read", "write", "destroy"]
 
 # Registry of all supported OAuth integrations.
-_OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar", "google_drive", "companycam")
+_OAUTH_INTEGRATIONS = (
+    "quickbooks",
+    "google_calendar",
+    "google_drive",
+    "gmail",
+    "companycam",
+)
 
 
 def get_quickbooks_oauth_config() -> OAuthConfig | None:
@@ -1228,6 +1248,21 @@ def get_google_drive_oauth_config() -> OAuthConfig | None:
     return config if config.is_configured else None
 
 
+def get_gmail_oauth_config() -> OAuthConfig | None:
+    """Build the Gmail OAuth config from settings."""
+    config = OAuthConfig(
+        integration="gmail",
+        client_id=settings.gmail_client_id,
+        client_secret=settings.gmail_client_secret,
+        authorize_url=GMAIL_AUTHORIZE_URL,
+        token_url=GMAIL_TOKEN_URL,
+        scopes=GMAIL_SCOPES,
+        use_pkce=False,
+        extra_auth_params={"access_type": "offline", "prompt": "consent"},
+    )
+    return config if config.is_configured else None
+
+
 def get_companycam_oauth_config() -> OAuthConfig | None:
     """Build the CompanyCam OAuth config from settings."""
     config = OAuthConfig(
@@ -1250,6 +1285,8 @@ def get_oauth_config(integration: str) -> OAuthConfig | None:
         return get_google_calendar_oauth_config()
     if integration == "google_drive":
         return get_google_drive_oauth_config()
+    if integration == "gmail":
+        return get_gmail_oauth_config()
     if integration == "companycam":
         return get_companycam_oauth_config()
     return None
