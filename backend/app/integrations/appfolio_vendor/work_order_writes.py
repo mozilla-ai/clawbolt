@@ -113,8 +113,11 @@ def build_work_order_write_tools(service: AppFolioVendorService) -> list[Tool]:
             function=appfolio_schedule_work_order,
             params_model=AppFolioScheduleWorkOrderParams,
             usage_hint=(
-                "Confirm the date, time, and timezone with the user before"
-                " calling. AppFolio sends the tenant a 24-hour reminder."
+                "Pick a time_slot_id from the slots the property manager"
+                " published on the work order; AppFolio does not accept"
+                " arbitrary timestamps. Confirm the chosen slot with the"
+                " user before calling. AppFolio sends the tenant a 24-hour"
+                " reminder."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
