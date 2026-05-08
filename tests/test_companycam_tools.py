@@ -1439,7 +1439,8 @@ async def test_upload_photo_evicts_staging_on_duplicate() -> None:
 @pytest.mark.asyncio()
 async def test_upload_photo_keeps_staging_on_upload_exception() -> None:
     """If the upload itself raises, the staged bytes must remain so the
-    user (or the agent on retry) can try again."""
+    user (or the agent on retry) can try again. Spy on ``evict`` so this
+    test would still fail if eviction were moved before the try/except."""
     from backend.app.agent import media_staging
     from backend.app.agent.tools.names import ToolName
     from backend.app.media.download import DownloadedMedia
@@ -1474,16 +1475,99 @@ async def test_upload_photo_keeps_staging_on_upload_exception() -> None:
                 "backend.app.routers.media_temp.create_temp_media_url",
                 return_value="https://tunnel.example.com/media/tmp/abc",
             ),
+            patch.object(media_staging, "evict", wraps=media_staging.evict) as evict_spy,
         ):
             tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
             result = await tool.function(project_id="55555555", original_url=photo_url)
 
         assert result.is_error
+        evict_spy.assert_not_called()
         assert photo_url in media_staging.get_all_for_user(user_id), (
             "staged bytes must survive a service-side failure so a retry still has the content"
         )
     finally:
         media_staging.clear_user(user_id)
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_keeps_staging_on_processing_error() -> None:
+    """Regression #1282: ``processing_error`` means CompanyCam could not
+    fetch the temp URL. A retry can succeed if the connectivity issue
+    resolves, so the staged bytes must remain available for it."""
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+    from backend.app.media.download import DownloadedMedia
+
+    user_id = "test-user-processing-error"
+    photo_url = "https://example.com/staged-processing-error.jpg"
+    media_staging.clear_user(user_id)
+    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="66666666",
+        processing_status="processing_error",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/err.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    ctx = MagicMock()
+    ctx.user.id = user_id
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url=photo_url,
+            filename="photo.jpg",
+        )
+    ]
+
+    try:
+        with (
+            patch(
+                "backend.app.services.webhook.discover_tunnel_url",
+                new_callable=AsyncMock,
+                return_value="https://tunnel.example.com",
+            ),
+            patch(
+                "backend.app.routers.media_temp.create_temp_media_url",
+                return_value="https://tunnel.example.com/media/tmp/abc",
+            ),
+        ):
+            tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+            result = await tool.function(project_id="77777777", original_url=photo_url)
+
+        assert result.is_error
+        assert photo_url in media_staging.get_all_for_user(user_id), (
+            "staged bytes must survive ``processing_error`` so a retry can "
+            "re-mint the temp URL with the same content"
+        )
+    finally:
+        media_staging.clear_user(user_id)
+
+
+def test_upload_photo_concurrency_group_serializes_per_project() -> None:
+    """Two parallel upload calls for the same project must serialize so
+    they cannot both reach CompanyCam and have one come back ``duplicate``.
+    Calls to different projects stay parallel."""
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    ctx = MagicMock()
+    ctx.user.id = "test-user-concurrency"
+    ctx.downloaded_media = []
+
+    tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+    assert callable(tool.concurrency_group), (
+        "upload tool must declare a per-project concurrency key, not a static string"
+    )
+    assert tool.concurrency_group({"project_id": "abc"}) == "companycam_upload:abc"
+    assert tool.concurrency_group({"project_id": "xyz"}) == "companycam_upload:xyz"
+    assert tool.concurrency_group({"project_id": "abc"}) != tool.concurrency_group(
+        {"project_id": "xyz"}
+    )
+    assert tool.concurrency_group({}) is None, "missing project_id should not block siblings"
 
 
 @pytest.mark.asyncio()
