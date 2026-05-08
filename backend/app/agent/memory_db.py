@@ -144,7 +144,7 @@ class MemoryStore:
         finally:
             await db.close()
 
-    async def append_history(self, entry: str) -> None:
+    async def append_history(self, entry: str) -> str:
         """Append an entry to history text (equivalent of HISTORY.md).
 
         Reads the current row under ``SELECT ... FOR UPDATE`` to
@@ -153,6 +153,17 @@ class MemoryStore:
         SQL-side concatenation is not viable because ``history_text``
         is an ``EncryptedString`` column whose envelope format is not
         concat-safe.
+
+        Guarantees a newline between the existing text and the new
+        entry: if the stored text is non-empty and does not already
+        end with a newline (e.g. a manual edit, or older text written
+        before this guarantee), a separator is inserted so two entries
+        never end up jammed together as one line.
+
+        Returns the row's new full plaintext so callers (compaction
+        audit) can record the post-append snapshot without re-reading
+        the row, which would race with concurrent compactions sharing
+        the same user.
         """
         suffix = entry + "\n"
         async with db_session_async() as db:
@@ -165,14 +176,19 @@ class MemoryStore:
                         history_text=suffix,
                     )
                 )
-            else:
-                full_new_text = (doc.history_text or "") + suffix
-                await db.execute(_append_history_update(doc.id, full_new_text))
+                await db.commit()
+                return suffix
+            current = doc.history_text or ""
+            if current and not current.endswith("\n"):
+                current += "\n"
+            full_new_text = current + suffix
+            await db.execute(_append_history_update(doc.id, full_new_text))
             await db.commit()
+            return full_new_text
 
-    async def append_history_async(self, entry: str) -> None:
+    async def append_history_async(self, entry: str) -> str:
         """Deprecated alias of :meth:`append_history`."""
-        await self.append_history(entry)
+        return await self.append_history(entry)
 
     # -- soul text ---------------------------------------------------------
 

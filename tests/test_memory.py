@@ -88,3 +88,50 @@ async def test_append_history_after_seed_round_trips(test_user: User) -> None:
     await store.append_history("follow-up")
 
     assert await store.read_history_async() == "seed\nfollow-up"
+
+
+@pytest.mark.asyncio()
+async def test_append_history_returns_new_full_text(test_user: User) -> None:
+    """append_history returns the row's new full plaintext under the same
+    row-level lock that wrote it. Compaction's audit-snapshot path relies
+    on this so the recorded ``history_text_after`` matches what landed in
+    the DB even when concurrent compactions race for the same user.
+    """
+    store = get_memory_store(test_user.id)
+
+    first_text = await store.append_history("first")
+    assert first_text == "first\n"
+
+    second_text = await store.append_history("second")
+    assert second_text == "first\nsecond\n"
+
+
+@pytest.mark.asyncio()
+async def test_append_history_inserts_separator_when_existing_lacks_newline(
+    test_user: User,
+) -> None:
+    """If the stored ``history_text`` does not end with a newline (e.g. an
+    older row written before this guarantee, or a manual edit), the next
+    append must still produce a clean separator. Two entries jammed
+    together as one line is the user-visible bug we're guarding against.
+    """
+    from sqlalchemy import update
+
+    from backend.app.database import db_session_async
+    from backend.app.models import MemoryDocument
+
+    store = get_memory_store(test_user.id)
+    await store.append_history("first")
+    # Force the stored text to lose its trailing newline, simulating a
+    # row written before the separator guarantee.
+    async with db_session_async() as db:
+        await db.execute(
+            update(MemoryDocument)
+            .where(MemoryDocument.user_id == test_user.id)
+            .values(history_text="first")
+        )
+        await db.commit()
+
+    new_full = await store.append_history("second")
+    assert new_full == "first\nsecond\n"
+    assert await store.read_history_async() == "first\nsecond"
