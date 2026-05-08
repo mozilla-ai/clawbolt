@@ -76,7 +76,13 @@ async def _seed_memory_doc(user_id: str, *, memory: str = "", history: str = "")
 
 
 def _huge() -> str:
-    """Return a payload guaranteed to exceed the 25 KiB budget."""
+    """Return a payload guaranteed to exceed the 25 KiB budget.
+
+    Pure ASCII so byte count == character count: the size assertion is
+    ``len(content.encode("utf-8")) == DEFAULT_BUDGET + 100``. Do not
+    swap in non-ASCII content here without also revisiting the size
+    math in callers (``DEFAULT_BUDGET // 4 + 1`` style).
+    """
     return "x" * (DEFAULT_BUDGET + 100)
 
 

@@ -38,7 +38,7 @@ async def update_memory(
         await store.write_memory_async(body.content)
     except BudgetExceededError as exc:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=str(exc),
         ) from exc
     return MemoryResponse(content=await store.read_memory_async())
