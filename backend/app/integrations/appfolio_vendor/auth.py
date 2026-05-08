@@ -14,10 +14,10 @@ Three concerns live here:
    life of the credential.
 
 3. **Token persistence.** We piggy-back on the existing ``oauth_tokens``
-   table: ``access_token`` holds the JWT, ``extra_json`` carries the
-   fingerprint and any AppFolio-specific metadata. There is no refresh
-   token. When the JWT expires the integration prompts the user for a
-   new magic link.
+   table: ``access_token`` holds the JWT, ``refresh_token`` holds the
+   OAuth2 refresh token (both envelope-encrypted at rest via
+   ``EncryptedString``), and ``extra_json`` carries the fingerprint plus
+   any AppFolio-specific metadata.
 """
 
 from __future__ import annotations
@@ -126,13 +126,18 @@ async def _load_credential_in_session(
     if not fingerprint:
         # Stale row from a previous failed connect; treat as not connected.
         return None
+    # Prefer the dedicated encrypted column; fall back to the legacy
+    # ``extra_json`` slot so credentials persisted before the column move
+    # keep working until the next refresh rewrites them. The fallback can
+    # be dropped once all live tokens have rotated past it.
+    refresh_token = row.refresh_token or extra.get("refresh_token", "")
     return AppFolioCredential(
         user_id=user_id,
         jwt=row.access_token,
         fingerprint=fingerprint,
         customer_ids=list(extra.get("customer_ids") or []),
         extra=extra,
-        refresh_token=extra.get("refresh_token", ""),
+        refresh_token=refresh_token,
     )
 
 
@@ -144,15 +149,21 @@ async def save_credential(
     extra_metadata: dict[str, Any] | None = None,
     refresh_token: str = "",
 ) -> None:
-    """Persist (or replace) the AppFolio credential for a user."""
+    """Persist (or replace) the AppFolio credential for a user.
+
+    The JWT and refresh token are written to the dedicated encrypted
+    columns on ``oauth_tokens``; only the fingerprint, customer IDs, and
+    free-form metadata land in ``extra_json``.
+    """
     extra: dict[str, Any] = {
         "fingerprint": fingerprint,
         "customer_ids": customer_ids,
     }
-    if refresh_token:
-        extra["refresh_token"] = refresh_token
     if extra_metadata:
         extra.update(extra_metadata)
+    # Strip any legacy ``refresh_token`` left in extra by an older code
+    # path so we never end up with both an encrypted and a plaintext copy.
+    extra.pop("refresh_token", None)
     now = datetime.now(UTC)
     async with db_session_async() as session:
         stmt = sa.select(OAuthToken).where(
@@ -166,6 +177,7 @@ async def save_credential(
                 user_id=user_id,
                 integration=INTEGRATION_NAME,
                 access_token=jwt,
+                refresh_token=refresh_token,
                 token_type="Bearer",
                 extra_json=json.dumps(extra),
                 created_at=now,
@@ -174,6 +186,7 @@ async def save_credential(
             session.add(row)
         else:
             row.access_token = jwt
+            row.refresh_token = refresh_token
             row.token_type = "Bearer"
             row.extra_json = json.dumps(extra)
             row.updated_at = now
