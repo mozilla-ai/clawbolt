@@ -296,12 +296,15 @@ async def test_list_payments_emits_filter_brackets() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_exchange_magic_link_returns_jwt_and_customer_ids() -> None:
+async def test_exchange_magic_link_posts_oauth_token_and_returns_jwt() -> None:
     response = _mock_response(
         json_data={
             "access_token": "jwt-from-server",
-            "customer_ids": ["c1", "c2"],
-            "requires_two_factor": False,
+            "refresh_token": "rt-1",
+            "token_type": "Bearer",
+            "expires_in": 7200,
+            "scope": "write",
+            "created_at": 1778198992,
         }
     )
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -317,33 +320,23 @@ async def test_exchange_magic_link_returns_jwt_and_customer_ids() -> None:
             fingerprint="fp",
         )
     assert result.jwt == "jwt-from-server"
-    assert result.customer_ids == ["c1", "c2"]
+    assert result.refresh_token == "rt-1"
+    assert result.customer_ids == []
     assert result.requires_two_factor is False
-    # Token sent both as query param and Bearer header.
-    _, kwargs = client.post.call_args
-    assert kwargs["params"]["magic_link_token"] == "link-tok"
-    assert kwargs["headers"]["Authorization"] == "Bearer link-tok"
-    assert kwargs["headers"]["X-Fingerprint"] == "fp"
-    assert kwargs["json"]["fingerprint"] == "fp"
+    args, kwargs = client.post.call_args
+    assert args[0] == "https://oauth.appf.io/oauth/token"
+    assert kwargs["json"]["property_token_credential"] == "link-tok"
+    assert kwargs["json"]["client_id"] == "passport-frontend"
+    assert kwargs["json"]["grant_type"] == "password"
+    assert kwargs["json"]["idp_type"] == "vendor"
 
 
 @pytest.mark.asyncio()
-async def test_exchange_magic_link_extracts_token_from_jwt_field() -> None:
-    response = _mock_response(json_data={"jwt": "alt-shape-jwt"})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        cls.return_value = _patch_async_client("post", response)
-        result = await exchange_magic_link(
-            api_base="https://api.test", magic_link_token="t", fingerprint="fp"
-        )
-    assert result.jwt == "alt-shape-jwt"
-
-
-@pytest.mark.asyncio()
-async def test_exchange_magic_link_raises_when_no_token_returned() -> None:
+async def test_exchange_magic_link_raises_when_no_access_token() -> None:
     response = _mock_response(json_data={"some_other_field": "x"})
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
         cls.return_value = _patch_async_client("post", response)
-        with pytest.raises(AppFolioError, match="did not return a bearer token"):
+        with pytest.raises(AppFolioError, match="no access_token"):
             await exchange_magic_link(
                 api_base="https://api.test",
                 magic_link_token="t",
@@ -356,12 +349,84 @@ async def test_exchange_magic_link_propagates_4xx() -> None:
     response = _mock_response(json_data={}, status_code=403)
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
         cls.return_value = _patch_async_client("post", response)
-        with pytest.raises(AppFolioError, match="/access exchange failed"):
+        with pytest.raises(AppFolioError, match="OAuth exchange failed"):
             await exchange_magic_link(
                 api_base="https://api.test",
                 magic_link_token="t",
                 fingerprint="fp",
             )
+
+
+@pytest.mark.asyncio()
+async def test_refresh_access_token_returns_new_jwt() -> None:
+    from backend.app.integrations.appfolio_vendor.service import refresh_access_token
+
+    response = _mock_response(
+        json_data={
+            "access_token": "fresh-jwt",
+            "refresh_token": "rt-2",
+            "token_type": "Bearer",
+            "expires_in": 7200,
+        }
+    )
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        result = await refresh_access_token(refresh_token="rt-1")
+    assert result.jwt == "fresh-jwt"
+    assert result.refresh_token == "rt-2"
+    args, kwargs = client.post.call_args
+    assert args[0] == "https://oauth.appf.io/oauth/token"
+    assert kwargs["json"]["grant_type"] == "refresh_token"
+    assert kwargs["json"]["refresh_token"] == "rt-1"
+
+
+@pytest.mark.asyncio()
+async def test_service_request_refreshes_on_401_and_retries() -> None:
+    from backend.app.integrations.appfolio_vendor.service import AppFolioVendorService
+
+    cred = AppFolioCredential(
+        user_id="u",
+        jwt="old-jwt",
+        fingerprint="fp",
+        customer_ids=[],
+        extra={},
+        refresh_token="rt-1",
+    )
+    refreshed_resp = _mock_response(
+        json_data={"access_token": "new-jwt", "refresh_token": "rt-2", "expires_in": 7200}
+    )
+    api_resp_401 = _mock_response(json_data={"login_url": ""}, status_code=401)
+    api_resp_ok = _mock_response(json_data={"ok": True})
+
+    persisted: list[tuple[str, str]] = []
+
+    async def on_refresh(jwt: str, refresh: str) -> None:
+        persisted.append((jwt, refresh))
+
+    svc = AppFolioVendorService(cred, api_base="https://api.test", on_token_refresh=on_refresh)
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        # Three sequential client uses: API 401, OAuth refresh 200, API retry 200.
+        clients = [AsyncMock(), AsyncMock(), AsyncMock()]
+        clients[0].request = AsyncMock(return_value=api_resp_401)
+        clients[1].post = AsyncMock(return_value=refreshed_resp)
+        clients[2].request = AsyncMock(return_value=api_resp_ok)
+        cms = []
+        for c in clients:
+            cm = MagicMock()
+            cm.__aenter__ = AsyncMock(return_value=c)
+            cm.__aexit__ = AsyncMock(return_value=False)
+            cms.append(cm)
+        cls.side_effect = cms
+        out = await svc.get("/profiles/me")
+    assert out == {"ok": True}
+    assert cred.jwt == "new-jwt"
+    assert cred.refresh_token == "rt-2"
+    assert persisted == [("new-jwt", "rt-2")]
 
 
 @pytest.mark.asyncio()

@@ -83,6 +83,7 @@ def build_auth_tools(user_id: str) -> list[Tool]:
             jwt=result.jwt,
             fingerprint=fingerprint,
             customer_ids=result.customer_ids,
+            refresh_token=result.refresh_token,
         )
 
         if result.requires_two_factor:

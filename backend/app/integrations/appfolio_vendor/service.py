@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -145,10 +146,13 @@ class AppFolioVendorService:
         credential: AppFolioCredential,
         api_base: str,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+        on_token_refresh: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         self._credential = credential
         self._api_base = api_base.rstrip("/")
         self._timeout = timeout_seconds
+        self._on_token_refresh = on_token_refresh
+        self._refreshed_once = False
 
     @property
     def credential(self) -> AppFolioCredential:
@@ -212,20 +216,48 @@ class AppFolioVendorService:
             raise AppFolioError(f"AppFolio {method} {path} network failure: {exc}") from exc
 
         if resp.status_code == 401:
-            login_url = ""
-            with contextlib.suppress(Exception):
-                login_url = resp.json().get("login_url") or ""
-            logger.warning(
-                "AppFolio %s %s rejected the JWT (401) | login_url=%r"
-                " | params=%r body=%r response=%s",
-                method,
-                path,
-                login_url,
-                params,
-                body_for_log,
-                resp.text[:_LOG_BODY_PREVIEW_LIMIT],
-            )
-            raise AuthExpiredError(login_url=login_url)
+            # One-shot refresh-and-retry when we have a refresh_token on file.
+            if self._credential.refresh_token and not self._refreshed_once:
+                self._refreshed_once = True
+                try:
+                    refreshed = await refresh_access_token(
+                        refresh_token=self._credential.refresh_token,
+                        timeout_seconds=self._timeout,
+                    )
+                except AppFolioError:
+                    pass
+                else:
+                    self._credential.jwt = refreshed.jwt
+                    self._credential.refresh_token = (
+                        refreshed.refresh_token or self._credential.refresh_token
+                    )
+                    if self._on_token_refresh:
+                        await self._on_token_refresh(
+                            self._credential.jwt, self._credential.refresh_token
+                        )
+                    async with httpx.AsyncClient(timeout=self._timeout) as client:
+                        resp = await client.request(
+                            method,
+                            url,
+                            headers=self._headers(),
+                            params=params,
+                            json=json_body,
+                        )
+            if resp.status_code == 401:
+                login_url = ""
+                with contextlib.suppress(Exception):
+                    login_url = resp.json().get("login_url") or ""
+                logger.warning(
+                    "AppFolio %s %s rejected the JWT (401) | login_url=%r"
+                    " | params=%r body=%r response=%s",
+                    method,
+                    path,
+                    login_url,
+                    params,
+                    body_for_log,
+                    resp.text[:_LOG_BODY_PREVIEW_LIMIT],
+                )
+                raise AuthExpiredError(login_url=login_url)
         if resp.status_code >= 400:
             response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
             logger.warning(
@@ -603,89 +635,108 @@ def build_service(
 # ----------------------------------------------------------------------
 
 
+# OAuth2 token endpoint that mints vendor-portal bearer JWTs from a
+# magic-link token. Replaces the legacy ``vendor.appf.io/access`` flow.
+OAUTH_TOKEN_URL = "https://oauth.appf.io/oauth/token"
+_OAUTH_CLIENT_ID = "passport-frontend"
+
+
 @dataclass
 class AccessExchangeResult:
-    """Outcome of a successful ``/access`` call."""
+    """Outcome of a successful magic-link exchange."""
 
     jwt: str
     customer_ids: list[str]
     requires_two_factor: bool
     raw: dict[str, Any]
+    refresh_token: str = ""
 
 
 async def exchange_magic_link(
     *,
     api_base: str,
     magic_link_token: str,
-    fingerprint: str,
+    fingerprint: str = "",
     nfo: dict[str, Any] | None = None,
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> AccessExchangeResult:
-    """Exchange a magic-link token for a Bearer JWT.
-
-    The SPA passes the ``magic_link_token`` as a query parameter on the
-    ``/access`` POST and the fingerprint plus an ``nfo`` JSON blob in the
-    body. We mirror that shape; ``nfo`` is opaque to AppFolio (the SPA
-    fills it with browser metadata) so a small ``{"client": "clawbolt"}``
-    is sufficient.
-    """
-    url = f"{api_base.rstrip('/')}/access"
-    body = {"fingerprint": fingerprint, "nfo": (nfo or {"client": "clawbolt"})}
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-        "X-Fingerprint": fingerprint,
-        "X-Vendor-Portal-Web-Client": _CLIENT_VERSION,
-        "Authorization": f"Bearer {magic_link_token}",
+    """Exchange a magic-link token for a Bearer JWT via the OAuth2 endpoint."""
+    body = {
+        "vhost": "vendor",
+        "property_token_credential": magic_link_token,
+        "idp_type": "vendor",
+        "client_id": _OAUTH_CLIENT_ID,
+        "grant_type": "password",
+        "require_reverification": True,
+        "sync_phone_numbers": True,
     }
-    logger.debug("AppFolio /access exchange starting (token redacted)")
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    logger.debug("AppFolio OAuth exchange starting (token redacted)")
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            resp = await client.post(
-                url,
-                headers=headers,
-                params={"magic_link_token": magic_link_token},
-                json=body,
-            )
+            resp = await client.post(OAUTH_TOKEN_URL, headers=headers, json=body)
     except httpx.HTTPError as exc:
-        logger.warning("AppFolio /access network failure: %s", exc)
-        raise AppFolioError(f"AppFolio /access network failure: {exc}") from exc
+        logger.warning("AppFolio OAuth exchange network failure: %s", exc)
+        raise AppFolioError(f"AppFolio OAuth exchange network failure: {exc}") from exc
     if resp.status_code >= 400:
         response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
-        # nfo is the only loggable body field — fingerprint and the magic
-        # link token are credential material.
         logger.warning(
-            "AppFolio /access exchange failed: status=%d nfo=%r response=%s",
+            "AppFolio OAuth exchange failed: status=%d response=%s",
             resp.status_code,
-            (body.get("nfo") if isinstance(body, dict) else None),
             response_text,
         )
-        raise AppFolioError(f"AppFolio /access exchange failed: {resp.status_code} {response_text}")
+        raise AppFolioError(f"AppFolio OAuth exchange failed: {resp.status_code} {response_text}")
     payload: dict[str, Any] = resp.json() if resp.content else {}
-    jwt = (
-        payload.get("access_token")
-        or payload.get("jwt")
-        or payload.get("token")
-        or _extract_bearer_from_headers(resp.headers)
-        or ""
-    )
+    jwt = payload.get("access_token") or ""
     if not jwt:
         raise AppFolioError(
-            "AppFolio /access did not return a bearer token"
-            f" (response keys: {sorted(payload.keys())})"
+            f"AppFolio OAuth exchange returned no access_token (keys: {sorted(payload.keys())})"
         )
-    customer_ids = _extract_customer_ids(payload)
-    requires_2fa = bool(
-        payload.get("requires_two_factor")
-        or payload.get("two_factor_required")
-        or payload.get("twoFactorRequired")
-    )
     return AccessExchangeResult(
         jwt=jwt,
-        customer_ids=customer_ids,
-        requires_two_factor=requires_2fa,
+        customer_ids=[],
+        requires_two_factor=False,
         raw=payload,
+        refresh_token=payload.get("refresh_token") or "",
+    )
+
+
+async def refresh_access_token(
+    *,
+    refresh_token: str,
+    timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+) -> AccessExchangeResult:
+    """Refresh an expired bearer JWT via the OAuth2 refresh-token grant."""
+    body = {
+        "client_id": _OAUTH_CLIENT_ID,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.post(OAUTH_TOKEN_URL, headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        logger.warning("AppFolio OAuth refresh network failure: %s", exc)
+        raise AppFolioError(f"AppFolio OAuth refresh network failure: {exc}") from exc
+    if resp.status_code >= 400:
+        response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
+        logger.warning(
+            "AppFolio OAuth refresh failed: status=%d response=%s",
+            resp.status_code,
+            response_text,
+        )
+        raise AuthExpiredError()
+    payload: dict[str, Any] = resp.json() if resp.content else {}
+    jwt = payload.get("access_token") or ""
+    if not jwt:
+        raise AuthExpiredError()
+    return AccessExchangeResult(
+        jwt=jwt,
+        customer_ids=[],
+        requires_two_factor=False,
+        raw=payload,
+        refresh_token=payload.get("refresh_token") or refresh_token,
     )
 
 
