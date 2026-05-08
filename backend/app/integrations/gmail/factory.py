@@ -207,7 +207,7 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
 def create_gmail_tools(service: GmailService) -> list[Tool]:
     """Create Gmail tools bound to a service instance."""
 
-    async def gmail_search(query: str, max_results: int = 10) -> ToolResult:
+    async def _run_search(query: str, max_results: int, empty_msg: str) -> ToolResult:
         try:
             results = await service.search_messages(query, max_results)
         except httpx.TimeoutException:
@@ -227,11 +227,14 @@ def create_gmail_tools(service: GmailService) -> list[Tool]:
             )
 
         if not results:
-            return ToolResult(content=f"No messages match '{query}'.")
+            return ToolResult(content=empty_msg)
         lines = [f"Found {len(results)} message(s):"]
         for s in results:
             lines.append(f"- {_format_summary(s)}")
         return ToolResult(content="\n".join(lines))
+
+    async def gmail_search(query: str, max_results: int = 10) -> ToolResult:
+        return await _run_search(query, max_results, f"No messages match '{query}'.")
 
     async def gmail_get_message(message_id: str) -> ToolResult:
         try:
@@ -256,7 +259,7 @@ def create_gmail_tools(service: GmailService) -> list[Tool]:
     async def gmail_list_recent(max_results: int = 10) -> ToolResult:
         # Empty query lists in reverse-chronological order, matching the
         # Gmail web UI's default inbox view.
-        return await gmail_search("", max_results)
+        return await _run_search("", max_results, "Inbox is empty.")
 
     async def gmail_send(
         to: list[str],

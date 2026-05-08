@@ -381,17 +381,22 @@ def _decode_part_data(part: dict[str, Any]) -> str:
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t]+")
 _NL_RE = re.compile(r"\n{3,}")
+# Match the whole opening anchor tag (not just the href attribute) so the URL
+# can be placed OUTSIDE the tag boundaries before the generic tag stripper
+# runs; otherwise the hoisted URL would land inside ``<a ... URL >`` and be
+# eaten by ``_TAG_RE``.
+_ANCHOR_OPEN_RE = re.compile(r"""<a\b[^>]*?href\s*=\s*['"]([^'"\s>]+)['"][^>]*>""", re.IGNORECASE)
 
 
 def _strip_tags(html: str) -> str:
     """Best-effort HTML to text conversion.
 
-    Not a real renderer: this is a regex strip plus whitespace squash, which
-    is good enough for extracting URLs and reading short transactional emails
-    (the only Gmail bodies the agent needs to reason about today). For
-    anything richer we'd swap in BeautifulSoup; not worth the dependency yet.
+    Anchor ``href`` URLs are surfaced inline before the tags get stripped, so
+    a magic-link email rendered as ``<a href="https://x">click</a>`` still
+    leaves the URL in the body for ``_extract_links`` to pick up.
     """
-    text = _TAG_RE.sub(" ", html)
+    hoisted = _ANCHOR_OPEN_RE.sub(r" \1 ", html)
+    text = _TAG_RE.sub(" ", hoisted)
     text = _WS_RE.sub(" ", text)
     text = _NL_RE.sub("\n\n", text)
     return text.strip()

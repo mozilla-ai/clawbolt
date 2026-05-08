@@ -174,6 +174,16 @@ def test_strip_tags_squashes_whitespace() -> None:
     assert "<" not in out
 
 
+def test_strip_tags_hoists_anchor_href_urls() -> None:
+    """An HTML-only email with the magic link inside an <a href=...> must
+    still surface the URL so _extract_links can find it."""
+    html = '<p>Click <a href="https://magic.example/?token=abc">here</a> to log in</p>'
+    out = _strip_tags(html)
+    assert "https://magic.example/?token=abc" in out
+    assert "<" not in out
+    assert _extract_links(out) == ["https://magic.example/?token=abc"]
+
+
 def test_build_rfc822_includes_threading_headers_when_set() -> None:
     raw = _build_rfc822(
         sender="me@example.com",
@@ -393,6 +403,43 @@ async def test_send_message_requires_recipient() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_request_refreshes_and_retries_on_401() -> None:
+    """A 401 from Gmail triggers a refresh+retry so a stale access token gets rotated."""
+    service = _make_service()
+
+    response_401 = MagicMock(status_code=401, content=b"")
+    response_401.raise_for_status = MagicMock()
+    response_200 = MagicMock(status_code=200, content=b'{"ok": true}')
+    response_200.json.return_value = {"ok": True}
+    response_200.raise_for_status = MagicMock()
+
+    fake_client = MagicMock()
+    fake_client.request = AsyncMock(side_effect=[response_401, response_200])
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=None)
+
+    def rotate_token(_client: httpx.AsyncClient) -> None:
+        service._access_token = "rotated-token"
+
+    with (
+        patch(
+            "backend.app.integrations.gmail.service.httpx.AsyncClient",
+            return_value=fake_client,
+        ),
+        patch.object(
+            service, "_refresh_access_token", new=AsyncMock(side_effect=rotate_token)
+        ) as mock_refresh,
+    ):
+        result = await service._request("GET", "/users/me/profile")
+
+    assert result == {"ok": True}
+    mock_refresh.assert_awaited_once()
+    assert fake_client.request.await_count == 2
+    second_headers = fake_client.request.await_args_list[1].kwargs["headers"]
+    assert second_headers["Authorization"] == "Bearer rotated-token"
+
+
+@pytest.mark.asyncio()
 async def test_send_message_resolves_sender_lazily() -> None:
     service = GmailService(
         access_token="t",
@@ -566,8 +613,10 @@ async def test_gmail_list_recent_calls_search_with_empty_query() -> None:
     with patch.object(service, "search_messages", new_callable=AsyncMock, return_value=[]) as m:
         tools = create_gmail_tools(service)
         tool = _get_tool(tools, ToolName.GMAIL_LIST_RECENT)
-        await tool.function(7)
+        result = await tool.function(7)
     m.assert_awaited_once_with("", 7)
+    # Empty inbox should render a friendly message, not the search-style fallback.
+    assert result.content == "Inbox is empty."
 
 
 # ---------------------------------------------------------------------------
