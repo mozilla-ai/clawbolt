@@ -144,6 +144,147 @@ async def test_load_credential_without_jwt_returns_none(async_test_user: Any) ->
     assert await is_connected(user_id) is False
 
 
+@pytest.mark.asyncio()
+async def test_save_credential_writes_refresh_token_to_encrypted_column(
+    async_test_user: Any,
+) -> None:
+    """Refresh token must land in the dedicated encrypted column, not extra_json."""
+    import json as _json
+
+    import sqlalchemy as sa
+
+    from backend.app.database import db_session_async
+    from backend.app.integrations.appfolio_vendor.auth import INTEGRATION_NAME
+    from backend.app.models import OAuthToken
+
+    user_id = async_test_user.id
+    await save_credential(
+        user_id=user_id,
+        jwt="jwt-abc",
+        fingerprint="fp-1",
+        customer_ids=["c1"],
+        refresh_token="refresh-secret",
+    )
+
+    async with db_session_async() as session:
+        row = (
+            await session.execute(
+                sa.select(OAuthToken).where(
+                    OAuthToken.user_id == user_id,
+                    OAuthToken.integration == INTEGRATION_NAME,
+                )
+            )
+        ).scalar_one()
+        extra = _json.loads(row.extra_json)
+
+    assert row.refresh_token == "refresh-secret"
+    assert "refresh_token" not in extra, "refresh token must not leak into plaintext extra_json"
+
+    cred = await load_credential(user_id)
+    assert cred is not None
+    assert cred.refresh_token == "refresh-secret"
+
+
+@pytest.mark.asyncio()
+async def test_load_credential_falls_back_to_legacy_extra_refresh_token(
+    async_test_user: Any,
+) -> None:
+    """Pre-fix rows store refresh_token in extra_json; load_credential must still find it."""
+    import json as _json
+    from datetime import UTC, datetime
+
+    from backend.app.database import db_session_async
+    from backend.app.integrations.appfolio_vendor.auth import INTEGRATION_NAME
+    from backend.app.models import OAuthToken
+
+    user_id = async_test_user.id
+    now = datetime.now(UTC)
+    async with db_session_async() as session:
+        session.add(
+            OAuthToken(
+                user_id=user_id,
+                integration=INTEGRATION_NAME,
+                access_token="legacy-jwt",
+                refresh_token="",  # legacy rows left this empty
+                token_type="Bearer",
+                extra_json=_json.dumps(
+                    {
+                        "fingerprint": "fp-legacy",
+                        "customer_ids": ["c1"],
+                        "refresh_token": "legacy-refresh",
+                    }
+                ),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+    cred = await load_credential(user_id)
+    assert cred is not None
+    assert cred.refresh_token == "legacy-refresh"
+
+
+@pytest.mark.asyncio()
+async def test_save_credential_strips_legacy_refresh_token_from_extra(
+    async_test_user: Any,
+) -> None:
+    """A subsequent save must wipe a legacy plaintext refresh_token left in extra_json."""
+    import json as _json
+    from datetime import UTC, datetime
+
+    import sqlalchemy as sa
+
+    from backend.app.database import db_session_async
+    from backend.app.integrations.appfolio_vendor.auth import INTEGRATION_NAME
+    from backend.app.models import OAuthToken
+
+    user_id = async_test_user.id
+    now = datetime.now(UTC)
+    async with db_session_async() as session:
+        session.add(
+            OAuthToken(
+                user_id=user_id,
+                integration=INTEGRATION_NAME,
+                access_token="legacy-jwt",
+                refresh_token="",
+                token_type="Bearer",
+                extra_json=_json.dumps(
+                    {
+                        "fingerprint": "fp-legacy",
+                        "customer_ids": [],
+                        "refresh_token": "old-plaintext",
+                    }
+                ),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+    await save_credential(
+        user_id=user_id,
+        jwt="new-jwt",
+        fingerprint="fp-legacy",
+        customer_ids=[],
+        refresh_token="new-encrypted",
+    )
+
+    async with db_session_async() as session:
+        row = (
+            await session.execute(
+                sa.select(OAuthToken).where(
+                    OAuthToken.user_id == user_id,
+                    OAuthToken.integration == INTEGRATION_NAME,
+                )
+            )
+        ).scalar_one()
+        extra = _json.loads(row.extra_json)
+
+    assert row.refresh_token == "new-encrypted"
+    assert "refresh_token" not in extra
+
+
 # ---------------------------------------------------------------------------
 # Service HTTP layer
 # ---------------------------------------------------------------------------
@@ -240,6 +381,26 @@ async def test_service_5xx_raises_appfolio_error() -> None:
         cls.return_value = _patch_async_client("request", response)
         with pytest.raises(AppFolioError):
             await service.get("/x")
+
+
+@pytest.mark.asyncio()
+async def test_service_error_message_omits_response_body() -> None:
+    """Raised AppFolioError must not echo the response body.
+
+    The error message flows into ToolResult.content (visible to the LLM
+    and the user). The body could include AppFolio-side context we don't
+    want to surface; logs are the right place for it.
+    """
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    secret = "INTERNAL_AF_TRACE_or_pii_we_dont_want_in_chat"
+    response = _mock_response(status_code=500, text=secret)
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cls.return_value = _patch_async_client("request", response)
+        with pytest.raises(AppFolioError) as exc_info:
+            await service.get("/x")
+    msg = str(exc_info.value)
+    assert "HTTP 500" in msg
+    assert secret not in msg
 
 
 @pytest.mark.asyncio()
@@ -341,6 +502,24 @@ async def test_exchange_magic_link_propagates_4xx() -> None:
         cls.return_value = _patch_async_client("post", response)
         with pytest.raises(AppFolioError, match="OAuth exchange failed"):
             await exchange_magic_link(magic_link_token="t")
+
+
+@pytest.mark.asyncio()
+async def test_exchange_magic_link_error_message_omits_response_body() -> None:
+    """The OAuth exchange's raised error must not include the response body.
+
+    Same reasoning as ``test_service_error_message_omits_response_body``:
+    the message reaches the user via ToolResult.content.
+    """
+    secret = "appfolio_internal_trace_id=abc123"
+    response = _mock_response(json_data={}, status_code=400, text=secret)
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cls.return_value = _patch_async_client("post", response)
+        with pytest.raises(AppFolioError) as exc_info:
+            await exchange_magic_link(magic_link_token="t")
+    msg = str(exc_info.value)
+    assert "HTTP 400" in msg
+    assert secret not in msg
 
 
 @pytest.mark.asyncio()
@@ -891,9 +1070,10 @@ async def test_4xx_failure_logs_request_body_and_response(caplog: Any) -> None:
         with pytest.raises(AppFolioError) as exc_info:
             await service.schedule_work_order("42", scheduled_at="2024-01-01T00:00:00")
 
-    # ToolResult-side message includes status + response body.
+    # ToolResult-side message carries the status only; the response body
+    # is intentionally redacted so it cannot leak into user-visible chat.
     assert "422" in str(exc_info.value)
-    assert "scheduledAt" in str(exc_info.value)
+    assert "scheduledAt" not in str(exc_info.value)
 
     # Log line includes everything a dev needs to diagnose.
     record_text = "\n".join(r.message for r in caplog.records)

@@ -269,9 +269,10 @@ class AppFolioVendorService:
                 body_for_log,
                 response_text,
             )
-            raise AppFolioError(
-                f"AppFolio {method} {path} failed: {resp.status_code} {response_text}"
-            )
+            # Don't echo response_text into the raised error: AppFolioError
+            # messages flow into ToolResult.content (visible to the LLM and
+            # the end user). The full body stays in the warning log above.
+            raise AppFolioError(f"AppFolio {method} {path} failed: HTTP {resp.status_code}")
         logger.debug(
             "AppFolio %s %s ok (%d, %d bytes)",
             method,
@@ -687,7 +688,9 @@ async def exchange_magic_link(
             resp.status_code,
             response_text,
         )
-        raise AppFolioError(f"AppFolio OAuth exchange failed: {resp.status_code} {response_text}")
+        # Body stays in the log; the raised message is shown to the user
+        # via ToolResult.content, so we keep it status-only.
+        raise AppFolioError(f"AppFolio OAuth exchange failed: HTTP {resp.status_code}")
     payload: dict[str, Any] = resp.json() if resp.content else {}
     jwt = payload.get("access_token") or ""
     if not jwt:
