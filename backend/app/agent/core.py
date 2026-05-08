@@ -324,10 +324,10 @@ class ClawboltAgent:
     def _get_or_build_tool_schemas(self) -> list[dict[str, Any]] | None:
         """Return Anthropic tool schemas, rebuilding only when tools changed.
 
-        The cached list is invalidated whenever ``self.tools`` grows or the
-        name sequence diverges from the cached prefix. Since specialist
-        activation only appends, in the common case this cache hits for
-        every round after the first.
+        The tool list is fixed at agent boot, so in the steady state this
+        cache hits for every round after the first. The invalidation
+        check (rebuild when the name sequence diverges from the cached
+        prefix) stays as defense-in-depth against future regressions.
 
         Callers (``_call_llm_with_retry`` via ``apply_tool_caching``)
         may mutate the last entry to stamp a ``cache_control`` marker.
@@ -352,9 +352,10 @@ class ClawboltAgent:
         """Warn if the current tool-name sequence fails to preserve the prior
         prefix, which would bust the Anthropic tools prompt cache.
 
-        The tool list is meant to grow append-only as specialists activate.
-        Any reorder, removal, or mid-list insert would reset the cache for
-        the tools block. Emits a DEBUG line on normal growth and a WARNING
+        The tool list is fixed at agent boot, so in the steady state the
+        sequence is identical every round. Any reorder, removal, or
+        mid-list insert would reset the cache for the tools block. Kept
+        as defense-in-depth: emits a DEBUG line on growth and a WARNING
         when the prefix diverges.
         """
         current = [t.name for t in self.tools]
@@ -1018,10 +1019,10 @@ class ClawboltAgent:
                 MAX_TOOL_ROUNDS,
                 len(messages),
             )
-            # Rebuild tool schemas only when the tool list changed
-            # (specialist activation appends new tools). Otherwise reuse the
-            # cached list so identical rounds don't re-serialize every
-            # Pydantic params model.
+            # Reuse cached tool schemas across rounds so identical rounds
+            # don't re-serialize every Pydantic params model. The tool
+            # list is fixed at agent boot, so this cache hits every round
+            # after the first.
             tool_schemas = self._get_or_build_tool_schemas()
             self._log_tool_prefix_stability(_round)
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))

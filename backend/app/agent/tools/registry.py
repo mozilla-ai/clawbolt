@@ -173,7 +173,9 @@ def create_list_capabilities_tool(
 
         guidance_msg = (
             f'Tools for "{category}" are already loaded and callable. '
-            "Call the specific tool to perform the user's request."
+            "Call the specific tool to perform the user's request. Do not "
+            "tell the user the action is complete until the corresponding "
+            "tool has run and returned a successful result."
         )
         disabled_for_cat = _disabled_subs.get(category, [])
         if disabled_for_cat:

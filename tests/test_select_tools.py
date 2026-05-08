@@ -194,15 +194,17 @@ class TestListCapabilitiesTool:
     @pytest.mark.asyncio
     async def test_lookup_directs_llm_to_call_tool(self) -> None:
         """Looking up a category must explicitly direct the LLM to call the
-        specific tool. Without this, the LLM occasionally treats the lookup
-        as completion and replies 'I uploaded the photo' without ever
-        calling the actual upload tool.
+        specific tool, and warn against claiming completion before the
+        tool has run. Without this, the LLM occasionally treats the
+        lookup as completion and replies 'I uploaded the photo' without
+        ever calling the actual upload tool.
         """
         tool = create_list_capabilities_tool({"companycam": "Photo uploads"})
         result = await tool.function(category="companycam")
         lower = result.content.lower()
         assert "already loaded" in lower
         assert "call the specific tool" in lower
+        assert "do not tell the user the action is complete" in lower
 
 
 class TestDefaultRegistryCoreSpecialistSplit:
