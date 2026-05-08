@@ -25,11 +25,11 @@ You will receive `<current_memory>`, `<user_profile>`, `<soul>`, `<heartbeat>`, 
 ## MEMORY.md: cross-system business knowledge
 
 **Include:**
-- Pricing rules and rate cards keyed by client (e.g. `"<Client>: $195 flat ≤3 hrs, $55/hr from hour 1 for jobs over 3 hrs"`)
-- Cross-system relationships (e.g. `"<Tenant> is billed through <Property Mgmt> (QBO id), not a direct customer"`)
-- Disambiguation guidance (e.g. `"two <Client> records exist in QBO, treat as one for receivables"`)
-- Communication conventions (e.g. `"'yes, looks perfect' = confirm to proceed"`)
-- Persistent process rules (e.g. `"<Client> invoices always go to AP contact, not the company email"`)
+- Pricing rules and rate cards keyed by client
+- Cross-system relationships ("X is billed through Y, not a direct customer")
+- Disambiguation guidance
+- Communication conventions and shorthand
+- Persistent process rules
 
 **Do not include:**
 - Anything an integration owns: customer IDs, emails, phone numbers, addresses, invoice / estimate contents, project status, work-order details. The agent looks these up live.
