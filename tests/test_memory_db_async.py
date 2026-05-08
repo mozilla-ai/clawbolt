@@ -94,9 +94,9 @@ async def test_async_append_history_creates_row(
     async_db: async_sessionmaker,
     async_test_user: User,
 ) -> None:
-    """``append_history_async`` creates the MemoryDocument row on first call."""
+    """``append_history`` creates the MemoryDocument row on first call."""
     store = MemoryStore(async_test_user.id)
-    await store.append_history_async("first entry")
+    await store.append_history("first entry")
 
     history = await store.read_history_async()
     assert "first entry" in history
@@ -114,13 +114,13 @@ async def test_async_append_history_multi_append_round_trips(
     concatenated ciphertext envelopes and broke decryption on read
     after the second append. The fix reads the row under
     ``SELECT ... FOR UPDATE``, concatenates plaintext in Python, and
-    rewrites the column with a fresh envelope. Both sync and async
-    paths share the rewritten ``_append_history_update`` helper.
+    rewrites the column with a fresh envelope via the
+    ``_append_history_update`` helper.
     """
     store = MemoryStore(async_test_user.id)
-    await store.append_history_async("first entry")
-    await store.append_history_async("second entry")
-    await store.append_history_async("third entry")
+    await store.append_history("first entry")
+    await store.append_history("second entry")
+    await store.append_history("third entry")
 
     history = await store.read_history_async()
     # Each entry was appended with a trailing newline. ``read_history_async``
@@ -142,8 +142,8 @@ async def test_async_append_history_sequential_appends_after_seed(
     concatenation glued two ciphertext envelopes together.
     """
     store = MemoryStore(async_test_user.id)
-    await store.append_history_async("seed")
-    await store.append_history_async("follow-up")
+    await store.append_history("seed")
+    await store.append_history("follow-up")
 
     history = await store.read_history_async()
     assert history == "seed\nfollow-up"
@@ -156,7 +156,7 @@ async def test_async_append_history_does_not_disturb_memory_text(
     """Appending history must not clobber memory_text on the same row."""
     store = MemoryStore(async_test_user.id)
     await store.write_memory_async("memory body")
-    await store.append_history_async("history line")
+    await store.append_history("history line")
 
     assert await store.read_memory_async() == "memory body"
     assert await store.read_history_async() == "history line"
