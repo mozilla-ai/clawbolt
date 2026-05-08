@@ -44,6 +44,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _companycam_upload_concurrency_key(args: dict[str, object]) -> str | None:
+    """Serialize parallel uploads that target the same CompanyCam project.
+
+    The agent runs tool calls from one model turn concurrently, so two
+    ``companycam_upload_photo`` calls for the same photo and project
+    would otherwise race the CompanyCam API and one would come back
+    flagged ``duplicate``. Keying by project keeps cross-project uploads
+    parallel.
+    """
+    project_id = args.get("project_id")
+    return f"companycam_upload:{project_id}" if project_id else None
+
+
 def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool]:
     """Return the CompanyCam photo and comment Tool instances.
 
@@ -191,6 +204,15 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             status,
             app_url,
         )
+
+        # CompanyCam dedupes by MD5 across the whole account, so re-uploading
+        # the same staged bytes in a later turn comes back as ``duplicate``.
+        # Drop the staged copy now that CompanyCam has accepted it, mirroring
+        # the post-upload eviction in ``file_tools.upload_to_storage``. Skip
+        # on ``processing_error``: that status means CompanyCam could not
+        # fetch our temp URL, so a retry can still source bytes from staging.
+        if original_url and status != "processing_error":
+            media_staging.evict(ctx.user.id, original_url)
 
         if status == "processing_error":
             return ToolResult(
@@ -425,6 +447,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 default_level=PermissionLevel.ASK,
                 description_builder=lambda args: "Upload a photo to CompanyCam",
             ),
+            concurrency_group=_companycam_upload_concurrency_key,
         ),
         Tool(
             name=ToolName.COMPANYCAM_ADD_COMMENT,
