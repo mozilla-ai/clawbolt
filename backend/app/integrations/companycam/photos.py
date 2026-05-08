@@ -170,6 +170,13 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 error_kind=ToolErrorKind.SERVICE,
             )
 
+        # CompanyCam dedupes by MD5 across the whole account, so re-uploading
+        # the same staged bytes in a later turn comes back as ``duplicate``.
+        # Drop the staged copy now that CompanyCam has accepted it, mirroring
+        # the post-upload eviction in ``file_tools.upload_to_storage``.
+        if original_url:
+            media_staging.evict(ctx.user.id, original_url)
+
         # Poll for processing status (CompanyCam downloads the image async)
         status = photo.processing_status or "pending"
         if status == "pending":

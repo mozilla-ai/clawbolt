@@ -1314,6 +1314,179 @@ async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_upload_photo_evicts_staging_on_success() -> None:
+    """Regression #1282: a successful upload must evict the staged bytes.
+
+    CompanyCam dedupes by MD5 account-wide, so if we leave the bytes in
+    media_staging the next turn's upload tool can re-grab them and trip
+    a spurious ``duplicate`` flag against a photo we just uploaded.
+    """
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+    from backend.app.media.download import DownloadedMedia
+
+    user_id = "test-user-evict-success"
+    photo_url = "https://example.com/staged-success.jpg"
+    media_staging.clear_user(user_id)
+    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+    assert photo_url in media_staging.get_all_for_user(user_id)
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="11111111",
+        processing_status="processed",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/ok.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    ctx = MagicMock()
+    ctx.user.id = user_id
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url=photo_url,
+            filename="photo.jpg",
+        )
+    ]
+
+    try:
+        with (
+            patch(
+                "backend.app.services.webhook.discover_tunnel_url",
+                new_callable=AsyncMock,
+                return_value="https://tunnel.example.com",
+            ),
+            patch(
+                "backend.app.routers.media_temp.create_temp_media_url",
+                return_value="https://tunnel.example.com/media/tmp/abc",
+            ),
+        ):
+            tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+            result = await tool.function(project_id="22222222", original_url=photo_url)
+
+        assert not result.is_error
+        assert photo_url not in media_staging.get_all_for_user(user_id), (
+            "staged bytes must be evicted after a successful upload so a "
+            "follow-up turn cannot re-upload them"
+        )
+    finally:
+        media_staging.clear_user(user_id)
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_evicts_staging_on_duplicate() -> None:
+    """Regression #1282: ``duplicate`` response must also evict the staged bytes.
+
+    When CompanyCam reports the upload was a duplicate, the bytes have
+    still been delivered. Keeping them staged invites another redundant
+    upload on the next turn.
+    """
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+    from backend.app.media.download import DownloadedMedia
+
+    user_id = "test-user-evict-duplicate"
+    photo_url = "https://example.com/staged-duplicate.jpg"
+    media_staging.clear_user(user_id)
+    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+    assert photo_url in media_staging.get_all_for_user(user_id)
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="33333333",
+        processing_status="duplicate",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/dup.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    ctx = MagicMock()
+    ctx.user.id = user_id
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url=photo_url,
+            filename="photo.jpg",
+        )
+    ]
+
+    try:
+        with (
+            patch(
+                "backend.app.services.webhook.discover_tunnel_url",
+                new_callable=AsyncMock,
+                return_value="https://tunnel.example.com",
+            ),
+            patch(
+                "backend.app.routers.media_temp.create_temp_media_url",
+                return_value="https://tunnel.example.com/media/tmp/abc",
+            ),
+        ):
+            tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+            await tool.function(project_id="44444444", original_url=photo_url)
+
+        assert photo_url not in media_staging.get_all_for_user(user_id), (
+            "staged bytes must be evicted after a duplicate response so "
+            "the LLM cannot trigger more redundant uploads"
+        )
+    finally:
+        media_staging.clear_user(user_id)
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_keeps_staging_on_upload_exception() -> None:
+    """If the upload itself raises, the staged bytes must remain so the
+    user (or the agent on retry) can try again."""
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.media.download import DownloadedMedia
+
+    user_id = "test-user-keep-on-error"
+    photo_url = "https://example.com/staged-error.jpg"
+    media_staging.clear_user(user_id)
+    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+
+    service = MagicMock(spec=CompanyCamService)
+    service.upload_photo = AsyncMock(side_effect=RuntimeError("network down"))
+
+    ctx = MagicMock()
+    ctx.user.id = user_id
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url=photo_url,
+            filename="photo.jpg",
+        )
+    ]
+
+    try:
+        with (
+            patch(
+                "backend.app.services.webhook.discover_tunnel_url",
+                new_callable=AsyncMock,
+                return_value="https://tunnel.example.com",
+            ),
+            patch(
+                "backend.app.routers.media_temp.create_temp_media_url",
+                return_value="https://tunnel.example.com/media/tmp/abc",
+            ),
+        ):
+            tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+            result = await tool.function(project_id="55555555", original_url=photo_url)
+
+        assert result.is_error
+        assert photo_url in media_staging.get_all_for_user(user_id), (
+            "staged bytes must survive a service-side failure so a retry still has the content"
+        )
+    finally:
+        media_staging.clear_user(user_id)
+
+
+@pytest.mark.asyncio()
 async def test_upload_photo_strips_dict_description() -> None:
     """Regression: LLM may pass a dict repr as the photo description.
     The tool must strip it before sending to CompanyCam so the project
