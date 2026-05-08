@@ -93,8 +93,9 @@ class MemoryStore:
 
     Async-only API after the issue #1160 final pass. The dual sync/async
     surface from issue #1153 (PR #1199 pilot) has been collapsed: only the
-    ``*_async`` peers remain. Premium and OSS callers all reach for the
-    async API directly.
+    ``*_async`` peers remain, plus ``append_history`` which keeps its
+    historical plain name (issue #1221). Premium and OSS callers all reach
+    for the async API directly.
     """
 
     def __init__(self, user_id: str) -> None:
@@ -185,10 +186,6 @@ class MemoryStore:
             await db.execute(_append_history_update(doc.id, full_new_text))
             await db.commit()
             return full_new_text
-
-    async def append_history_async(self, entry: str) -> str:
-        """Deprecated alias of :meth:`append_history`."""
-        return await self.append_history(entry)
 
     # -- soul text ---------------------------------------------------------
 
