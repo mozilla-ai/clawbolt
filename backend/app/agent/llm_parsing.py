@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from any_llm.types.messages import MessageResponse, TextBlock, ToolUseBlock
+from any_llm.types.messages import MessageResponse, TextBlock, ThinkingBlock, ToolUseBlock
 
 logger = logging.getLogger(__name__)
 
@@ -76,3 +76,23 @@ def get_response_text(response: MessageResponse) -> str:
         if isinstance(block, TextBlock) and block.text:
             parts.append(block.text)
     return "".join(parts)
+
+
+def get_response_thinking(response: MessageResponse) -> str:
+    """Extract the extended-thinking text from a ``MessageResponse``.
+
+    Concatenates the ``thinking`` field across every ``ThinkingBlock``
+    in ``response.content``, separated by blank lines so multi-block
+    streams remain readable when rendered. Returns an empty string when
+    no thinking blocks are present (the model didn't think, or thinking
+    wasn't enabled in the request). Empty thinking blocks are skipped.
+
+    The cryptographic ``signature`` field on each block is not surfaced;
+    it is only meaningful for replaying the block back to Anthropic and
+    has no audit value to a human reader.
+    """
+    parts: list[str] = []
+    for block in response.content:
+        if isinstance(block, ThinkingBlock) and block.thinking:
+            parts.append(block.thinking)
+    return "\n\n".join(parts)

@@ -54,6 +54,7 @@ class StoredMessage(BaseModel):
     body: str = ""
     processed_context: str = ""
     tool_interactions_json: str = ""
+    thinking_text: str = ""
     external_message_id: str = ""
     media_urls_json: str = "[]"
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())

@@ -282,14 +282,17 @@ class Message(Base):
     """A single message in a conversation, inbound or outbound.
 
     User-authored content (``body``, ``processed_context``,
-    ``tool_interactions_json``) is envelope-encrypted at rest via
-    ``EncryptedString``. ``body`` is the raw text the user / channel
-    sent; ``processed_context`` is the same content after media
+    ``tool_interactions_json``, ``thinking_text``) is envelope-encrypted
+    at rest via ``EncryptedString``. ``body`` is the raw text the user /
+    channel sent; ``processed_context`` is the same content after media
     transcription / OCR / preprocessing; ``tool_interactions_json``
     holds tool call args / results that frequently embed customer
     names, phone numbers, and addresses passed to QuickBooks /
-    CompanyCam / calendar tools. The decrypt path runs transparently
-    on every ORM read, so application code keeps reading
+    CompanyCam / calendar tools. ``thinking_text`` holds the LLM's
+    extended-thinking blocks for outbound messages (empty for inbound),
+    which can quote user content back at length and so receives the
+    same encryption treatment. The decrypt path runs transparently on
+    every ORM read, so application code keeps reading
     ``msg.tool_interactions_json`` and gets plaintext JSON.
 
     Other text columns intentionally left plaintext:
@@ -315,6 +318,11 @@ class Message(Base):
     )
     tool_interactions_json: Mapped[str] = mapped_column(
         EncryptedString(table="messages", column="tool_interactions_json"), default=""
+    )
+    thinking_text: Mapped[str] = mapped_column(
+        EncryptedString(table="messages", column="thinking_text"),
+        default="",
+        server_default="",
     )
     external_message_id: Mapped[str] = mapped_column(String, default="")
     media_urls_json: Mapped[str] = mapped_column(Text, default="")
