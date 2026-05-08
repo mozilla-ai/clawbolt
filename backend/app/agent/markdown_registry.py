@@ -280,7 +280,12 @@ def truncate_for_injection(name: str, content: str) -> str:
     marker_bytes = marker.encode("utf-8")
     keep = max(0, policy.byte_budget - len(marker_bytes))
     tail = encoded[-keep:].decode("utf-8", errors="ignore")
-    logger.warning(
+    # INFO rather than WARNING: this fires on every prompt build for a
+    # single legacy over-budget row (every turn for that user), so a
+    # WARNING here floods logs with the same message until the agent
+    # rewrites the file. INFO is enough for an operator searching for
+    # truncation events without crowding out actionable warnings.
+    logger.info(
         "markdown_registry: truncated %s for prompt injection (size=%d, budget=%d)",
         name,
         len(encoded),
@@ -296,11 +301,13 @@ def truncate_for_injection(name: str, content: str) -> str:
 
 # Compaction emits each history entry prefixed with ``[YYYY-MM-DD HH:MM]``
 # (see ``backend/app/agent/compaction.py`` and ``prompts/compaction.md``).
-# We split on lines that begin with ``[`` to find entry boundaries, so
-# whole entries can be dropped from the front instead of cutting a
-# sentence in half. Also tolerates the legacy case where a manually
-# edited history has content before the first timestamp.
-_ENTRY_HEAD_RE = re.compile(r"^\[", re.MULTILINE)
+# We split on lines that look like a date-shaped prefix to find entry
+# boundaries, so whole entries can be dropped from the front instead
+# of cutting a sentence in half. Requiring the date shape (rather than
+# a bare ``[``) means a multi-line summary whose body happens to start
+# a line with ``[`` is not mis-split into two entries: only true
+# timestamp-prefixed lines are recognized as boundaries.
+_ENTRY_HEAD_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2}", re.MULTILINE)
 
 
 def _split_history_entries(text: str) -> list[str]:

@@ -130,6 +130,31 @@ The intent is to make adding a new unbounded markdown surface
 either impossible (the integration paths route through the
 registry) or noisily test-failing.
 
+## Observability
+
+The current observability surfaces are intentionally minimal:
+
+- **Per-write rejection log.** Compaction logs at `WARNING` when an
+  LLM rewrite exceeds the cap, including the surface name, the
+  attempted size, and the budget. Operators can grep for "skipping
+  ... update for user" to find users whose compaction is failing the
+  cap.
+- **Per-injection truncation log.** `truncate_for_injection` logs at
+  `INFO` when a legacy over-budget row is tail-truncated for prompt
+  injection. INFO rather than WARNING because this fires every turn
+  for the affected user until the agent rewrites the file, and a
+  per-turn WARNING would crowd out actionable signals.
+- **`compaction_events` audit rows.** Every compaction event already
+  records the before / after snapshot for each surface (capped at
+  100 KB per file in the audit row); the existing admin compaction
+  feed surfaces these.
+
+A dedicated admin dashboard for tracking per-user file sizes over
+time is a useful follow-up but is out of scope here. A reasonable
+shape would be a histogram of stored bytes per surface plus a
+counter for `BudgetExceededError` events, both exposed from the
+existing admin observability surface.
+
 ## What this PR deliberately does not do
 
 - **Periodic / size-triggered compaction of working memory.** The
@@ -143,11 +168,9 @@ registry) or noisily test-failing.
   pattern ranks observations by importance and reflects only when the
   cumulative score crosses a threshold. Worth exploring; out of scope
   here.
-- **Admin observability dashboard for surface sizes.** The
-  observability hook is the existing structured `compaction.summary`
-  log line plus the new `markdown_registry: truncated ...` warning
-  log. A dedicated UI for tracking per-user file sizes over time is
-  separate work.
+- **Admin observability dashboard for surface sizes.** See the
+  Observability section above for the current state and the shape
+  of a follow-up.
 - **Rewriting the SOUL.md / USER.md / HEARTBEAT.md compaction
   prompts.** Issue #1243 already tightened the durable-memory
   rules; this PR is about adding policy enforcement, not rewriting

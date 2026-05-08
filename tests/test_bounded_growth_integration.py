@@ -138,6 +138,27 @@ async def test_write_file_under_budget_still_succeeds(test_user: User) -> None:
     assert result.is_error is False
 
 
+@pytest.mark.asyncio()
+async def test_write_file_rejects_over_budget_disk_bootstrap_md(test_user: User) -> None:
+    """BOOTSTRAP.md is in the registry but lives on disk, so it
+    exercises the third branch in write_file (after column-backed and
+    memory-doc paths). The cap must still apply."""
+    write_fn = _get_tool_fn(test_user.id, "write_file")
+    result = await write_fn(path="BOOTSTRAP.md", content=_huge())
+    assert result.is_error is True
+    assert "BOOTSTRAP.md" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_write_file_unknown_disk_markdown_unconstrained(test_user: User) -> None:
+    """Unknown disk markdown (scratch notes) is not in the registry and
+    must not be policed by the cap. The registry is opt-in; arbitrary
+    scratch files do not feed prompt context."""
+    write_fn = _get_tool_fn(test_user.id, "write_file")
+    result = await write_fn(path="memory/scratch_notes.md", content=_huge())
+    assert result.is_error is False
+
+
 # ---------------------------------------------------------------------------
 # workspace_tools: edit_file enforcement
 # ---------------------------------------------------------------------------
@@ -210,22 +231,31 @@ async def test_append_history_keeps_storage_bounded_across_many_appends(
     test_user: User,
 ) -> None:
     """Repeated compaction-style appends must not cause unbounded
-    growth on disk. Maps to the issue's acceptance criterion: 'tests
-    cover repeated-update growth behavior for the important files'.
+    growth on disk, and the windowing must be FIFO (oldest first).
+
+    Maps to the issue's acceptance criterion: 'tests cover
+    repeated-update growth behavior for the important files'. Each
+    entry is tagged with a unique ``iter=NNNN`` sentinel so the test
+    proves the actual FIFO drop rather than relying on cycling
+    timestamps that would re-introduce earlier dates.
     """
     reset_memory_stores()
     store = get_memory_store(test_user.id)
     # Each entry is ~600 bytes; 200 of them would otherwise be ~120 KB,
-    # well past the 25 KiB cap. After windowing, storage must stay
-    # under the cap and only the most recent entries should survive.
+    # well past the 25 KiB cap.
     body = "x" * 600
-    for i in range(200):
-        await store.append_history(f"[2026-05-{(i % 28) + 1:02d} 00:00] {body}")
+    iterations = 200
+    for i in range(iterations):
+        await store.append_history(f"[2026-05-{(i % 28) + 1:02d} 00:00] iter={i:04d} {body}")
     history = await store.read_history_async()
     encoded = len(history.encode("utf-8"))
     assert encoded <= DEFAULT_BUDGET, f"history grew to {encoded} bytes; budget is {DEFAULT_BUDGET}"
-    # The newest entry is preserved; the very first one is gone.
-    assert "[2026-05-01" not in history or "[2026-05-28" in history
+    # FIFO: the very first append's sentinel is gone and the very last
+    # append's sentinel is present. These are the only two assertions
+    # that actually pin the windowing semantics; everything else here
+    # is just bytes-budget bookkeeping.
+    assert "iter=0000" not in history, "earliest entry should have been dropped"
+    assert f"iter={iterations - 1:04d}" in history, "latest entry should be retained"
 
 
 @pytest.mark.asyncio()
