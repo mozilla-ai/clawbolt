@@ -25,18 +25,18 @@ You will receive `<current_memory>`, `<user_profile>`, `<soul>`, `<heartbeat>`, 
 ## MEMORY.md: cross-system business knowledge
 
 **Include:**
-- Pricing rules and rate cards keyed by client (e.g. `"Arbors: $195 flat ≤3 hrs, $55/hr from hour 1 for jobs over 3 hrs"`)
-- Cross-system relationships (e.g. `"Brett Rentschler is billed through Wilham QBO id 16, not a direct customer"`)
-- Disambiguation guidance (e.g. `"two Wilham records exist in QBO, treat as one for receivables"`)
+- Pricing rules and rate cards keyed by client (e.g. `"<Client>: $195 flat ≤3 hrs, $55/hr from hour 1 for jobs over 3 hrs"`)
+- Cross-system relationships (e.g. `"<Tenant> is billed through <Property Mgmt> (QBO id), not a direct customer"`)
+- Disambiguation guidance (e.g. `"two <Client> records exist in QBO, treat as one for receivables"`)
 - Communication conventions (e.g. `"'yes, looks perfect' = confirm to proceed"`)
-- Persistent process rules (e.g. `"Wilham invoices always go to paula@..., not the company email"`)
+- Persistent process rules (e.g. `"<Client> invoices always go to AP contact, not the company email"`)
 
 **Do not include:**
 - Anything an integration owns: customer IDs, emails, phone numbers, addresses, invoice / estimate contents, project status, work-order details. The agent looks these up live.
 - Transient state: tool-call failures, "X is broken" notes, integration outages, deep links, draft IDs, upload confirmations.
 - Reminders that have fired or follow-ups that are complete. Open follow-ups belong in heartbeat.
 
-**Prune on rewrite.** Drop excluded items even if a previous compaction wrote them. Once an estimate is sent in QBO, replace `"Surman estimate (txnId=544): $7,413.49, 6 line items..."` with `"Surman estimate sent, see QBO"` or remove. Drop bug notes you wrote yesterday. Drop fired reminders. Keep cross-system rules and conventions.
+**Prune on rewrite.** Drop excluded items even if a previous compaction wrote them. Once an estimate is sent in QBO, replace a full transcription of its contents with a one-line breadcrumb (`"<Client> estimate sent, see QBO"`) or remove the entry entirely. Drop bug notes you wrote yesterday. Drop fired reminders. Keep cross-system rules and conventions.
 
 ## USER.md: the contractor themselves
 
@@ -59,7 +59,7 @@ The `<heartbeat>` section is read-only context. Do not promote already-fired hea
 A breadcrumb log, not a transaction log. The agent uses it to answer "did we work on this recently?" before referring back to integrations.
 
 - One terse 1 to 3 sentence entry per event, prefixed `[TIMESTAMP]`.
-- Pointers over numbers: `"Sent Surman estimate, details in QBO"` beats `"Sent $7,413.49 estimate (txnId=544) with 6 line items..."`.
+- Pointers over numbers: `"Sent <Client> estimate, details in QBO"` beats `"Sent $X,XXX estimate (txnId=NNN) with N line items..."`.
 - Drop deep links, draft IDs, and dollar amounts (unless the dollar is genuinely the news).
 - Skip trivial small talk. Return an empty string.
 
