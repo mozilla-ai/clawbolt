@@ -620,13 +620,19 @@ def build_service(
     *,
     api_base: str,
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+    on_token_refresh: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> AppFolioVendorService:
     """Construct an :class:`AppFolioVendorService` for a credential."""
     if not credential.jwt:
         raise ValueError("AppFolio credential has no JWT")
     if not credential.fingerprint:
         raise ValueError("AppFolio credential has no fingerprint")
-    return AppFolioVendorService(credential, api_base=api_base, timeout_seconds=timeout_seconds)
+    return AppFolioVendorService(
+        credential,
+        api_base=api_base,
+        timeout_seconds=timeout_seconds,
+        on_token_refresh=on_token_refresh,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -647,17 +653,13 @@ class AccessExchangeResult:
 
     jwt: str
     customer_ids: list[str]
-    requires_two_factor: bool
     raw: dict[str, Any]
     refresh_token: str = ""
 
 
 async def exchange_magic_link(
     *,
-    api_base: str,
     magic_link_token: str,
-    fingerprint: str = "",
-    nfo: dict[str, Any] | None = None,
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> AccessExchangeResult:
     """Exchange a magic-link token for a Bearer JWT via the OAuth2 endpoint."""
@@ -695,7 +697,6 @@ async def exchange_magic_link(
     return AccessExchangeResult(
         jwt=jwt,
         customer_ids=[],
-        requires_two_factor=False,
         raw=payload,
         refresh_token=payload.get("refresh_token") or "",
     )
@@ -734,88 +735,6 @@ async def refresh_access_token(
     return AccessExchangeResult(
         jwt=jwt,
         customer_ids=[],
-        requires_two_factor=False,
         raw=payload,
         refresh_token=payload.get("refresh_token") or refresh_token,
     )
-
-
-async def submit_two_factor(
-    *,
-    api_base: str,
-    jwt: str,
-    fingerprint: str,
-    code: str,
-    timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
-) -> dict[str, Any]:
-    """Submit a 2FA code against ``/two_factor_authentication/onboard``.
-
-    Some AppFolio tenants gate the first ``/access`` exchange behind a
-    one-time code sent over SMS or email. Returns the full response
-    payload so callers can inspect any updated tokens.
-    """
-    url = f"{api_base.rstrip('/')}/two_factor_authentication/onboard"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
-        "X-Fingerprint": fingerprint,
-        "X-Vendor-Portal-Web-Client": _CLIENT_VERSION,
-        "Authorization": f"Bearer {jwt}",
-    }
-    body = {"twoFactorToken": {"twoFactorToken": code}}
-    logger.debug("AppFolio 2FA onboard starting (code redacted)")
-    try:
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            resp = await client.post(url, headers=headers, json=body)
-    except httpx.HTTPError as exc:
-        logger.warning("AppFolio 2FA onboard network failure: %s", exc)
-        raise AppFolioError(f"AppFolio 2FA network failure: {exc}") from exc
-    if resp.status_code >= 400:
-        response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
-        logger.warning(
-            "AppFolio 2FA onboard failed: status=%d response=%s",
-            resp.status_code,
-            response_text,
-        )
-        raise AppFolioError(f"AppFolio 2FA onboard failed: {resp.status_code} {response_text}")
-    return resp.json() if resp.content else {}
-
-
-def _extract_bearer_from_headers(headers: httpx.Headers) -> str:
-    auth = headers.get("authorization") or ""
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return ""
-
-
-def _extract_customer_ids(payload: dict[str, Any]) -> list[str]:
-    """Pull customer IDs out of the /access response.
-
-    AppFolio returns multiple shapes across endpoints (sometimes a flat
-    list, sometimes nested under ``customers``, sometimes ``customer_ids``).
-    Walk each known shape and dedupe in iteration order.
-    """
-    raw_lists: list[Any] = [
-        payload.get("customer_ids"),
-        payload.get("customerIds"),
-        payload.get("customers"),
-    ]
-    out: list[str] = []
-    for entry in raw_lists:
-        if not entry:
-            continue
-        if isinstance(entry, list):
-            for item in entry:
-                if isinstance(item, str):
-                    if item not in out:
-                        out.append(item)
-                elif isinstance(item, dict):
-                    cid = item.get("id") or item.get("customer_id") or item.get("customerId")
-                    if isinstance(cid, str) and cid not in out:
-                        out.append(cid)
-                    elif isinstance(cid, int):
-                        s = str(cid)
-                        if s not in out:
-                            out.append(s)
-    return out

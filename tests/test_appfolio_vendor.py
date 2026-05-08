@@ -28,7 +28,6 @@ from backend.app.integrations.appfolio_vendor.service import (
     AuthExpiredError,
     build_service,
     exchange_magic_link,
-    submit_two_factor,
 )
 
 # ---------------------------------------------------------------------------
@@ -314,15 +313,10 @@ async def test_exchange_magic_link_posts_oauth_token_and_returns_jwt() -> None:
         cm.__aenter__ = AsyncMock(return_value=client)
         cm.__aexit__ = AsyncMock(return_value=False)
         cls.return_value = cm
-        result = await exchange_magic_link(
-            api_base="https://api.test",
-            magic_link_token="link-tok",
-            fingerprint="fp",
-        )
+        result = await exchange_magic_link(magic_link_token="link-tok")
     assert result.jwt == "jwt-from-server"
     assert result.refresh_token == "rt-1"
     assert result.customer_ids == []
-    assert result.requires_two_factor is False
     args, kwargs = client.post.call_args
     assert args[0] == "https://oauth.appf.io/oauth/token"
     assert kwargs["json"]["property_token_credential"] == "link-tok"
@@ -337,11 +331,7 @@ async def test_exchange_magic_link_raises_when_no_access_token() -> None:
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
         cls.return_value = _patch_async_client("post", response)
         with pytest.raises(AppFolioError, match="no access_token"):
-            await exchange_magic_link(
-                api_base="https://api.test",
-                magic_link_token="t",
-                fingerprint="fp",
-            )
+            await exchange_magic_link(magic_link_token="t")
 
 
 @pytest.mark.asyncio()
@@ -350,11 +340,7 @@ async def test_exchange_magic_link_propagates_4xx() -> None:
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
         cls.return_value = _patch_async_client("post", response)
         with pytest.raises(AppFolioError, match="OAuth exchange failed"):
-            await exchange_magic_link(
-                api_base="https://api.test",
-                magic_link_token="t",
-                fingerprint="fp",
-            )
+            await exchange_magic_link(magic_link_token="t")
 
 
 @pytest.mark.asyncio()
@@ -429,27 +415,21 @@ async def test_service_request_refreshes_on_401_and_retries() -> None:
     assert persisted == [("new-jwt", "rt-2")]
 
 
-@pytest.mark.asyncio()
-async def test_submit_two_factor_posts_expected_body() -> None:
-    response = _mock_response(json_data={"ok": True})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        client = AsyncMock()
-        client.post = AsyncMock(return_value=response)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=client)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        cls.return_value = cm
-        out = await submit_two_factor(
-            api_base="https://api.test",
-            jwt="jwt-1",
-            fingerprint="fp",
-            code="123456",
-        )
-    assert out == {"ok": True}
-    args, kwargs = client.post.call_args
-    assert "/two_factor_authentication/onboard" in args[0]
-    assert kwargs["json"] == {"twoFactorToken": {"twoFactorToken": "123456"}}
-    assert kwargs["headers"]["Authorization"] == "Bearer jwt-1"
+def test_build_service_passes_on_token_refresh_callback() -> None:
+    """build_service must thread the persistence callback into the service."""
+    cred = AppFolioCredential(
+        user_id="u",
+        jwt="j",
+        fingerprint="fp",
+        customer_ids=[],
+        extra={},
+    )
+
+    async def cb(_jwt: str, _refresh: str) -> None:
+        pass
+
+    svc = build_service(cred, api_base="https://api.test", on_token_refresh=cb)
+    assert svc._on_token_refresh is cb
 
 
 # ---------------------------------------------------------------------------
@@ -1010,14 +990,9 @@ async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
                 exchange_magic_link,
             )
 
-            await exchange_magic_link(
-                api_base="https://api.test",
-                magic_link_token="SUPER_SECRET_TOKEN",
-                fingerprint="FP_SECRET",
-            )
+            await exchange_magic_link(magic_link_token="SUPER_SECRET_TOKEN")
 
     assert "SUPER_SECRET_TOKEN" not in caplog.text
-    assert "FP_SECRET" not in caplog.text
     # Status and response body should still be in the log so we can debug.
     assert "400" in caplog.text
     assert "expired" in caplog.text
@@ -1078,7 +1053,6 @@ async def test_auth_tools_always_in_schema_when_disconnected() -> None:
     auth_tools = await _appfolio_auth_factory(ctx)
     auth_names = {t.name for t in auth_tools}
     assert ToolName.APPFOLIO_CONNECT in auth_names
-    assert ToolName.APPFOLIO_COMPLETE_2FA in auth_names
 
     # The data factory returns nothing when the credential is missing.
     with patch(
