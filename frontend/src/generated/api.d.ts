@@ -326,6 +326,14 @@ export interface paths {
         /**
          * Update Profile
          * @description Partial update of the current user's profile.
+         *
+         *     Bounded-growth columns (``user_text``, ``soul_text``,
+         *     ``heartbeat_text``) are routed through
+         *     :func:`backend.app.agent.markdown_registry.assert_column_within_budget`
+         *     so the dashboard editor cannot bypass the byte cap that the agent's
+         *     workspace tools and compaction paths already respect. Returns
+         *     ``413 Payload Too Large`` with the registry's actual / allowed
+         *     sizes so a client-side editor can show a useful error.
          */
         put: operations["update_profile_api_user_profile_put"];
         post?: never;
@@ -717,6 +725,12 @@ export interface paths {
         /**
          * Update Memory
          * @description Overwrite MEMORY.md with new content.
+         *
+         *     Returns ``413 Payload Too Large`` when *body.content* exceeds the
+         *     bounded-growth byte budget for ``MEMORY.md`` (see
+         *     :mod:`backend.app.agent.markdown_registry`). The original message
+         *     from the registry includes the actual size and the budget so a
+         *     user-side editor can show a useful error.
          */
         put: operations["update_memory_api_user_memory_put"];
         post?: never;

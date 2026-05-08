@@ -86,6 +86,49 @@ def test_update_profile_empty_body(client: TestClient) -> None:
     assert resp.status_code == 400
 
 
+def test_update_profile_rejects_over_budget_user_text(client: TestClient) -> None:
+    """The dashboard editor must respect the same 25 KiB cap that the
+    workspace tools and compaction paths enforce, otherwise an admin
+    paste of a huge profile would silently bloat every system prompt
+    until the read-side truncation kicks in. Returns 413 with a useful
+    detail so a frontend can show the actual / allowed sizes.
+    """
+    from backend.app.agent.markdown_registry import DEFAULT_BUDGET
+
+    too_big = "x" * (DEFAULT_BUDGET + 100)
+    resp = client.put("/api/user/profile", json={"user_text": too_big})
+    assert resp.status_code == 413
+    assert "USER.md" in resp.json()["detail"]
+
+
+def test_update_profile_rejects_over_budget_soul_text(client: TestClient) -> None:
+    from backend.app.agent.markdown_registry import DEFAULT_BUDGET
+
+    too_big = "x" * (DEFAULT_BUDGET + 100)
+    resp = client.put("/api/user/profile", json={"soul_text": too_big})
+    assert resp.status_code == 413
+    assert "SOUL.md" in resp.json()["detail"]
+
+
+def test_update_profile_rejects_over_budget_heartbeat_text(client: TestClient) -> None:
+    from backend.app.agent.markdown_registry import DEFAULT_BUDGET
+
+    too_big = "x" * (DEFAULT_BUDGET + 100)
+    resp = client.put("/api/user/profile", json={"heartbeat_text": too_big})
+    assert resp.status_code == 413
+    assert "HEARTBEAT.md" in resp.json()["detail"]
+
+
+def test_update_profile_under_budget_user_text_succeeds(client: TestClient) -> None:
+    """Sanity check: a normal-sized profile update still works."""
+    resp = client.put(
+        "/api/user/profile",
+        json={"user_text": "# User\n\n- Name: Alice\n- Trade: General contractor\n"},
+    )
+    assert resp.status_code == 200
+    assert "Alice" in resp.json()["user_text"]
+
+
 def test_get_profile_includes_heartbeat_max_daily(client: TestClient) -> None:
     """GET /api/user/profile returns heartbeat_max_daily field."""
     resp = client.get("/api/user/profile")
