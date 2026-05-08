@@ -167,8 +167,8 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
             function=appfolio_create_invoice,
             params_model=AppFolioCreateInvoiceParams,
             usage_hint=(
-                "Confirm each line item's description, quantity, and rate with"
-                " the user before submitting; this is a billing action."
+                "Confirm each line item's description, quantity, and amount"
+                " with the user before submitting; this is a billing action."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
