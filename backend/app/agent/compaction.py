@@ -12,6 +12,7 @@ import datetime
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import UTC
 from typing import Any, cast
@@ -80,6 +81,22 @@ def _serialize_snapshot(text: str | None, cap: int) -> str | None:
     )
 
 
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _strip_assistant_noise(text: str) -> str:
+    """Strip URLs from an assistant reply before sending it to the compactor.
+
+    Assistant replies often quote tool-receipt links (CompanyCam photo URLs,
+    QBO deep links, AppFolio work-order URLs) verbatim alongside the actual
+    durable content. The URLs are operational chatter the compactor wastes
+    context summarizing. The semantic prose around them is what we care
+    about. User messages are left alone, since URLs the contractor pastes
+    are usually intentional.
+    """
+    return _URL_RE.sub("", text)
+
+
 def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
     """Format a list of agent messages into a readable text block for the LLM."""
     lines: list[str] = []
@@ -87,7 +104,8 @@ def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
         if isinstance(msg, UserMessage):
             lines.append(f"User: {msg.content}")
         elif isinstance(msg, AssistantMessage) and msg.content:
-            lines.append(f"Assistant: {msg.content}")
+            cleaned = _strip_assistant_noise(msg.content)
+            lines.append(f"Assistant: {cleaned}")
     return "\n".join(lines)
 
 
@@ -303,36 +321,53 @@ async def compact_session(
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)
 
-    # Capture exactly what got appended to HISTORY.md so we can compute the
-    # "after" snapshot deterministically below. ``None`` means no append
-    # happened this event.
-    appended_history_entry: str | None = None
+    # Treat "LLM returned content identical to what's already on disk" as a
+    # no-op rather than a write. Otherwise the persisted ``*_updated`` flags,
+    # the structured-summary log, and the admin "memory updated" indicator
+    # all flag every compaction event as a memory change even when nothing
+    # actually moved. The ``.strip()`` comparison ignores trailing-whitespace
+    # noise that ``write_*_async`` would normalize on its way to disk.
+    memory_changed = (
+        bool(result.memory_update)
+        and result.memory_update.strip() != (current_memory or "").strip()
+    )
+    user_changed = (
+        bool(result.user_profile_update)
+        and result.user_profile_update.strip() != (current_user_profile or "").strip()
+    )
+    soul_changed = (
+        bool(result.soul_update) and result.soul_update.strip() != (current_soul or "").strip()
+    )
 
-    # Write updated MEMORY.md if the LLM produced content
-    if result.memory_update:
+    # Track the post-append HISTORY text for the audit snapshot. Stays
+    # equal to ``current_history`` when no entry was appended this event.
+    new_history: str = current_history
+
+    # Write updated MEMORY.md only when the rewrite actually differs.
+    if memory_changed:
         await memory_store.write_memory_async(result.memory_update)
         logger.info("Compaction rewrote MEMORY.md for user %s", user_id)
 
-    # Append summary to HISTORY.md if the LLM produced one
+    # Append summary to HISTORY.md if the LLM produced one. ``append_history``
+    # returns the new full text under the same row-level lock that protected
+    # the read-and-write, so the snapshot we record matches what landed in
+    # the DB even when two compactions race.
     if result.summary:
         timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M")
         entry = result.summary.replace("[TIMESTAMP]", f"[{timestamp}]")
         try:
-            await memory_store.append_history(entry)
-            # Mirror the suffix that ``MemoryStore.append_history`` adds at
-            # the SQL level so the deterministic snapshot below matches.
-            appended_history_entry = entry + "\n"
+            new_history = await memory_store.append_history(entry)
             logger.info("Compaction appended history entry for user %s", user_id)
         except Exception:
             logger.exception("Failed to append history for user %s", user_id)
 
-    # Write updated USER.md if the LLM detected new profile info
-    if result.user_profile_update:
+    # Write updated USER.md only when the rewrite actually differs.
+    if user_changed:
         await memory_store.write_user_async(result.user_profile_update)
         logger.info("Compaction updated USER.md for user %s", user_id)
 
-    # Write updated SOUL.md if the LLM detected personality changes
-    if result.soul_update:
+    # Write updated SOUL.md only when the rewrite actually differs.
+    if soul_changed:
         await memory_store.write_soul_async(result.soul_update)
         logger.info("Compaction updated SOUL.md for user %s", user_id)
 
@@ -340,8 +375,9 @@ async def compact_session(
     # so log aggregators (Railway, Loki) can group / filter without
     # needing JSON. ``input_tokens`` reflects the tokens Anthropic
     # billed; the ``trimmed_chars`` field gives a provider-agnostic
-    # input-size proxy. ``*_updated`` flags reveal whether the LLM
-    # actually produced content for each file vs returning empty.
+    # input-size proxy. ``*_updated`` flags reflect real persisted
+    # diffs: an LLM that returns content identical to what was already
+    # on disk produces ``False`` here, not ``True``.
     _input_tokens = response.usage.input_tokens or 0 if response.usage else 0
     _output_tokens = response.usage.output_tokens or 0 if response.usage else 0
     _duration_ms = int((time.monotonic() - _start_monotonic) * 1000)
@@ -355,9 +391,9 @@ async def compact_session(
         _input_tokens,
         _output_tokens,
         _duration_ms,
-        bool(result.memory_update),
-        bool(result.user_profile_update),
-        bool(result.soul_update),
+        memory_changed,
+        user_changed,
+        soul_changed,
         len(result.summary or ""),
     )
 
@@ -368,16 +404,12 @@ async def compact_session(
     # they share ``get_memory_store(user_id)``. A re-read could pick up the
     # other task's write and record a misleading "after" in this row's
     # audit log. The compaction prompt returns full rewrites for memory /
-    # user / soul, and ``append_history`` is a SQL-level concatenation we
-    # mirror via ``appended_history_entry`` above, so all four "after"
-    # values are computable without re-reading.
-    new_memory = result.memory_update if result.memory_update else current_memory
-    new_user = result.user_profile_update if result.user_profile_update else current_user_profile
-    new_soul = result.soul_update if result.soul_update else current_soul
-    if appended_history_entry is not None:
-        new_history = (current_history or "") + appended_history_entry
-    else:
-        new_history = current_history
+    # user / soul, and ``append_history`` returns the row's new full
+    # plaintext under the same row-level lock that wrote it, so all four
+    # "after" values are computable without re-reading.
+    new_memory = result.memory_update if memory_changed else current_memory
+    new_user = result.user_profile_update if user_changed else current_user_profile
+    new_soul = result.soul_update if soul_changed else current_soul
 
     cap = settings.compaction_event_snapshot_max_bytes_per_file
     snapshots = _build_snapshot_pairs(
@@ -428,9 +460,9 @@ async def compact_session(
             output_tokens=_output_tokens,
             duration_ms=_duration_ms,
             max_message_seq=max_message_seq,
-            memory_updated=bool(result.memory_update),
-            user_profile_updated=bool(result.user_profile_update),
-            soul_updated=bool(result.soul_update),
+            memory_updated=memory_changed,
+            user_profile_updated=user_changed,
+            soul_updated=soul_changed,
             summary_len=len(result.summary or ""),
             snapshots=snapshots,
             llm_call=llm_call,
@@ -438,7 +470,7 @@ async def compact_session(
     except Exception:
         logger.exception("Failed to persist compaction event for user %s", user_id)
 
-    return result.memory_update, max_message_seq
+    return (result.memory_update if memory_changed else ""), max_message_seq
 
 
 def _build_snapshot_pairs(

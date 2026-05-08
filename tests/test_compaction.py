@@ -1239,8 +1239,159 @@ def test_build_snapshot_pairs_skips_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
-# load_conversation_history watermark filter
+# Issue #1243 sub-task 2: assistant URL stripping before compaction
 # ---------------------------------------------------------------------------
+
+
+def test_format_messages_strips_urls_from_assistant_content() -> None:
+    """Tool-receipt deep links in assistant replies should not reach the
+    compaction model. The links are operational chatter the compactor
+    wastes context summarizing; the prose around them is what matters.
+    """
+    messages: list[AgentMessage] = [
+        AssistantMessage(
+            content=(
+                "Photo uploaded to CompanyCam project 99101890. "
+                "View it at https://app.companycam.com/photos/3166227657 "
+                "or check the project at https://app.companycam.com/projects/99101890."
+            )
+        ),
+    ]
+    out = _format_messages_for_compaction(messages)
+    assert "https://" not in out
+    assert "Photo uploaded to CompanyCam project 99101890" in out
+
+
+def test_format_messages_keeps_user_content_urls() -> None:
+    """User-pasted URLs are intentional and should pass through unchanged.
+    Only assistant noise gets stripped; we don't want to silently drop a
+    spec or photo URL the contractor sent us.
+    """
+    messages: list[AgentMessage] = [
+        UserMessage(content="Spec is at https://example.com/spec.pdf, can you check it?"),
+        AssistantMessage(content="Got it."),
+    ]
+    out = _format_messages_for_compaction(messages)
+    assert "https://example.com/spec.pdf" in out
+
+
+# ---------------------------------------------------------------------------
+# Issue #1243 sub-task 4: *_updated flags reflect real persisted diffs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_does_not_write_when_memory_unchanged(
+    test_user: UserData,
+) -> None:
+    """LLM returning the existing MEMORY.md verbatim must not be recorded
+    as a memory update. Otherwise every compaction event flips ``memory_updated``
+    to True and the admin "memory updated" indicator becomes meaningless.
+    """
+    store = get_memory_store(test_user.id)
+    existing = "## Pricing\n- Arbors: $195 flat ≤3hrs"
+    await store.write_memory_async(existing)
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": existing, "summary": "[TIMESTAMP] Trivial chat."})
+    )
+    messages: list[AgentMessage] = [
+        UserMessage(content="just checking in"),
+        AssistantMessage(content="No updates needed."),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        memory_update, _ = await compact_session(test_user.id, messages)
+
+    # Return value reflects "no real diff": empty string, not the verbatim
+    # echo of the existing memory.
+    assert memory_update == ""
+
+    async with db_session_async() as db:
+        event = (
+            await db.execute(select(CompactionEvent).filter_by(user_id=test_user.id))
+        ).scalar_one_or_none()
+    assert event is not None
+    assert event.memory_updated is False
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_summary_log_marks_memory_unchanged_when_llm_echoes(
+    test_user: UserData, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The structured-summary log line must mirror the persisted flag: an
+    LLM that echoes the existing memory verbatim is not a memory change.
+    """
+    import logging
+
+    store = get_memory_store(test_user.id)
+    existing = "## Pricing\n- Default: $500/day"
+    await store.write_memory_async(existing)
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": existing, "summary": "[TIMESTAMP] Trivial."})
+    )
+    messages: list[AgentMessage] = [UserMessage(content="hi")]
+
+    with (
+        caplog.at_level(logging.INFO, logger="backend.app.agent.compaction"),
+        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+    ):
+        await compact_session(test_user.id, messages)
+
+    summary_lines = [r for r in caplog.records if "compaction.summary" in r.getMessage()]
+    assert len(summary_lines) == 1
+    assert "memory_updated=False" in summary_lines[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# Issue #1243 sub-task 1: HISTORY.md append integrity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_compaction_history_snapshot_matches_db_after_append(
+    test_user: UserData,
+) -> None:
+    """Regression: the persisted ``history_text_after`` snapshot in the
+    audit row must equal the live ``MemoryDocument.history_text``. Older
+    code reconstructed the snapshot from a ``.strip()``'d read of the
+    pre-write text, which silently dropped the trailing newline that the
+    DB write actually retains, so two consecutive history entries showed
+    up jammed together in the audit even though they were separated in
+    the live row.
+    """
+    store = get_memory_store(test_user.id)
+    # Seed an existing entry so the new entry's append crosses the
+    # entry-to-entry boundary the bug used to corrupt.
+    await store.append_history("[2026-05-01 09:00] First entry")
+
+    mock_response = make_text_response(
+        json.dumps(
+            {
+                "memory_update": "",
+                "summary": "[TIMESTAMP] Second entry from compaction.",
+            }
+        )
+    )
+    messages: list[AgentMessage] = [UserMessage(content="something happened")]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, messages)
+
+    live_history = await store.read_history_async()
+    async with db_session_async() as db:
+        event = (
+            await db.execute(select(CompactionEvent).filter_by(user_id=test_user.id))
+        ).scalar_one_or_none()
+    assert event is not None
+    snapshot = event.history_text_after
+    assert snapshot is not None
+    # Both views must show the entries cleanly separated by a newline.
+    assert "First entry\n[" in snapshot
+    # Snapshot mirrors the DB plaintext (modulo the trailing newline that
+    # ``read_history_async`` strips for callers).
+    assert snapshot.rstrip("\n") == live_history
 
 
 async def _seed_session_with_messages(user: User, message_count: int) -> ChatSession:
