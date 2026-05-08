@@ -5,10 +5,20 @@ The router calls ``create_tools(context)`` instead of manually importing
 and assembling tools from every module.
 
 Factories are classified as **core** (always-available) or **specialist**
-(discovered on demand via the ``list_capabilities`` meta-tool).  Core tools
-are registered to the LLM on every message; specialist tools require the
-agent to explicitly activate them, keeping the initial schema payload small
-and enabling progressive disclosure as tool count grows.
+(per-integration, listed via the ``list_capabilities`` meta-tool). Both
+tiers are loaded on every message for a given user when their
+dependencies are met: core unconditionally, specialists when the user is
+authenticated for the underlying integration (see
+``create_ready_specialist_tools``). The Anthropic prompt-cache key
+includes the tools block, so the per-message tool list is held stable as
+a function of the user's auth state and dashboard config; varying it per
+message busts the cached system prompt prefix (issue #1170).
+
+The ``list_capabilities`` meta-tool is a discovery hint, not an
+activation mechanism: it tells the LLM which integrations the user could
+connect, so the agent can prompt the user to authenticate. Tools for
+authenticated integrations are already on the schema from turn 1 and do
+not need a runtime activation round trip.
 """
 
 from __future__ import annotations
@@ -88,7 +98,10 @@ class ListCapabilitiesParams(BaseModel):
 
     category: str | None = Field(
         default=None,
-        description="Category name to activate. Omit to see all available categories.",
+        description=(
+            "Category name to look up usage guidance for. Omit to see all "
+            "available categories and connection status."
+        ),
     )
 
 
@@ -96,32 +109,27 @@ def create_list_capabilities_tool(
     specialist_summaries: dict[str, str],
     unauthenticated: dict[str, str] | None = None,
     disabled_sub_tools: dict[str, list[SubToolInfo]] | None = None,
-    activated_specialists: set[str] | None = None,
 ) -> Tool:
     """Create the ``list_capabilities`` meta-tool.
 
-    The tool itself only returns text describing available specialist
-    categories.  Actual tool schema injection is handled by the agent
-    loop in ``core.py`` after detecting a ``list_capabilities`` call.
-
-    When a category is activated that has an associated SKILL.md, the
-    skill instructions are included in the response so the LLM has
-    usage guidance alongside the new tool schemas.
+    Discovery and documentation lookup for specialist tool categories.
+    Tools for authenticated integrations are already loaded on the
+    schema; this tool exists to surface unconnected integrations and
+    deliver SKILL.md usage guidance on demand.
 
     *unauthenticated* maps category names to human-readable reasons why
-    the integration is not yet connected (e.g. missing OAuth).  These
-    categories are listed but cannot be activated.
+    the integration is not yet connected (e.g. missing OAuth). These
+    categories are listed but their tools are not loaded.
 
     *disabled_sub_tools* maps specialist factory names to lists of
-    ``SubToolInfo`` for individual tools the user has disabled.  This
-    information is surfaced in listings and activation messages so the
-    LLM can tell users about disabled capabilities.
+    ``SubToolInfo`` for individual tools the user has disabled. This
+    information is surfaced so the LLM can tell users about disabled
+    capabilities.
     """
     from backend.app.agent.skills.loader import get_skill_instructions
 
     _unauthenticated = unauthenticated or {}
     _disabled_subs = disabled_sub_tools or {}
-    _activated = activated_specialists
 
     async def list_capabilities(category: str | None = None) -> ToolResult:
         if category is None:
@@ -130,8 +138,9 @@ def create_list_capabilities_tool(
             lines: list[str] = []
             if specialist_summaries:
                 lines.append(
-                    "Available specialist capabilities "
-                    "(call list_capabilities with a category name to activate):"
+                    "Connected specialist capabilities "
+                    "(tools are already loaded; call list_capabilities with a "
+                    "category name for usage guidance):"
                 )
                 for name, summary in sorted(specialist_summaries.items()):
                     disabled_for_cat = _disabled_subs.get(name, [])
@@ -162,34 +171,22 @@ def create_list_capabilities_tool(
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
 
-        if _activated is not None and category in _activated:
-            return ToolResult(
-                content=(
-                    f'Category "{category}" is already active. No action has been performed. '
-                    "Call the specific tool now to actually do the work the user asked for."
-                ),
-            )
-
-        activation_msg = (
-            f'Category "{category}" activated: the tools are now callable, '
-            "but no work has been done yet. To actually perform the user's "
-            "request, call the specific tool (for example upload_photo, "
-            "qb_create_invoice) in your next response. Do not tell the user "
-            "an action is complete until the corresponding tool has run and "
-            "returned a successful result."
+        guidance_msg = (
+            f'Tools for "{category}" are already loaded and callable. '
+            "Call the specific tool to perform the user's request."
         )
         disabled_for_cat = _disabled_subs.get(category, [])
         if disabled_for_cat:
             disabled_names = ", ".join(st.name for st in disabled_for_cat)
-            activation_msg += (
+            guidance_msg += (
                 f"\nNote: the following tools in this category are disabled by the user "
                 f"and will not be available: {disabled_names}. "
                 "The user can re-enable them in Settings."
             )
         skill_instructions = get_skill_instructions(category)
         if skill_instructions:
-            activation_msg += f"\n\n{skill_instructions}"
-        return ToolResult(content=activation_msg)
+            guidance_msg += f"\n\n{skill_instructions}"
+        return ToolResult(content=guidance_msg)
 
     summary_lines = [
         f"  - {name}: {summary}" for name, summary in sorted(specialist_summaries.items())
@@ -201,8 +198,8 @@ def create_list_capabilities_tool(
         unauth_hint = (
             "\nThe following integrations are configured but not yet connected:\n"
             + "\n".join(unauth_lines)
-            + "\nDo NOT attempt to activate these. If the user asks about them, "
-            "let them know they need to connect the integration first."
+            + "\nIf the user asks about them, let them know they need to "
+            "connect the integration first."
         )
     disabled_hint = ""
     if _disabled_subs:
@@ -214,18 +211,18 @@ def create_list_capabilities_tool(
     return Tool(
         name=ToolName.LIST_CAPABILITIES,
         description=(
-            "Discover and activate specialist tool capabilities. "
-            "Call without arguments to see available categories. "
-            "Call with a category name to activate those tools."
+            "Discover specialist capabilities and look up usage guidance. "
+            "Call without arguments to see connected and unconnected categories. "
+            "Call with a category name for detailed usage guidance for that "
+            "category's already-loaded tools."
         ),
         function=list_capabilities,
         params_model=ListCapabilitiesParams,
         usage_hint=(
-            "You have specialist capabilities:\n"
+            "You have specialist capabilities (tools already loaded):\n"
             f"{summary_block}\n"
-            "Call list_capabilities with a category name to activate the tools "
-            "before using them. Activate proactively when the user's message "
-            "relates to a specialist category."
+            "Call list_capabilities with a category name when you need usage "
+            "guidance for that category's tools."
             f"{unauth_hint}"
             f"{disabled_hint}"
         ),
@@ -401,7 +398,7 @@ class ToolRegistry:
         *,
         excluded_factories: set[str] | None = None,
         excluded_tool_names: set[str] | None = None,
-    ) -> tuple[list[Tool], set[str]]:
+    ) -> list[Tool]:
         """Materialize specialist tools for categories the user is ready to use.
 
         A specialist is "ready" when:
@@ -409,11 +406,8 @@ class ToolRegistry:
         - its infrastructure deps (storage, outbound) are met,
         - its ``auth_check`` is None OR returns None (user authenticated).
 
-        Returns ``(tools, factory_names)`` so callers can both register the
-        tools with the agent AND pre-populate the shared
-        ``activated_specialists`` set. Pre-activation skips the otherwise-mandatory
-        round trip through ``list_capabilities`` for users with connected
-        integrations: the calendar tools are simply on the schema from turn 1.
+        Loaded onto the schema from turn 1 so the LLM can call them
+        directly without a discovery round trip.
         """
         ready: set[str] = set()
         for name, factory in self._factories.items():
@@ -429,13 +423,12 @@ class ToolRegistry:
                 continue
             ready.add(name)
         if not ready:
-            return [], set()
-        tools = await self.create_tools(
+            return []
+        return await self.create_tools(
             context,
             selected_factories=ready,
             excluded_tool_names=excluded_tool_names,
         )
-        return tools, ready
 
     async def get_unauthenticated_specialists(
         self,

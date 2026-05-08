@@ -96,8 +96,8 @@ async def test_create_ready_specialist_tools_skips_unauthenticated() -> None:
 
     Regression for the prod calendar bug observed 2026-04-29: the LLM was
     forced to call ``list_capabilities('calendar')`` on every turn because
-    specialist tools were never pre-activated. Pre-activation now happens
-    at agent boot for ready specialists, but only those passing auth.
+    specialist tools were not loaded at agent boot. Connected specialists
+    now load at boot; unconnected ones stay out of the schema.
     """
     from backend.app.agent.tools.registry import ToolRegistry
 
@@ -129,18 +129,13 @@ async def test_create_ready_specialist_tools_skips_unauthenticated() -> None:
     ctx.storage = MagicMock()
     ctx.publish_outbound = AsyncMock()
 
-    tools, names = await reg.create_ready_specialist_tools(ctx)
-    assert names == {"calendar"}
+    tools = await reg.create_ready_specialist_tools(ctx)
     assert len(tools) == 1
 
 
 @pytest.mark.asyncio()
 async def test_create_ready_specialist_tools_returns_empty_when_none_ready() -> None:
-    """No connected specialists -> empty tool list and empty name set.
-
-    Important: the caller uses the returned name set to seed
-    ``activated_specialists``. An empty set must not pre-activate anything.
-    """
+    """No connected specialists -> empty tool list."""
     from backend.app.agent.tools.registry import ToolRegistry
 
     reg = ToolRegistry()
@@ -161,14 +156,13 @@ async def test_create_ready_specialist_tools_returns_empty_when_none_ready() -> 
     ctx.storage = MagicMock()
     ctx.publish_outbound = AsyncMock()
 
-    tools, names = await reg.create_ready_specialist_tools(ctx)
+    tools = await reg.create_ready_specialist_tools(ctx)
     assert tools == []
-    assert names == set()
 
 
 @pytest.mark.asyncio()
 async def test_create_ready_specialist_tools_respects_excluded_factories() -> None:
-    """User-disabled tool groups must not be pre-activated even when connected."""
+    """User-disabled tool groups must not load even when connected."""
     from backend.app.agent.tools.registry import ToolRegistry
 
     reg = ToolRegistry()
@@ -189,9 +183,8 @@ async def test_create_ready_specialist_tools_respects_excluded_factories() -> No
     ctx.storage = MagicMock()
     ctx.publish_outbound = AsyncMock()
 
-    tools, names = await reg.create_ready_specialist_tools(ctx, excluded_factories={"calendar"})
+    tools = await reg.create_ready_specialist_tools(ctx, excluded_factories={"calendar"})
     assert tools == []
-    assert names == set()
 
 
 @pytest.mark.asyncio()

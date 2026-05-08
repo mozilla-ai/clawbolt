@@ -582,8 +582,6 @@ async def execute_heartbeat_tasks(
 
     excluded = disabled_groups or set()
 
-    activated_specialists: set[str] = set()
-
     agent = ClawboltAgent(
         user=user,
         channel=channel,
@@ -592,29 +590,23 @@ async def execute_heartbeat_tasks(
         tool_context=tool_context,
         registry=default_registry,
         excluded_tool_names=disabled_sub_tools or None,
-        activated_specialists=activated_specialists,
     )
 
     # Follow the same pattern as run_agent() in router.py:
     # 1. Core tools (always available, respects disabled groups/sub-tools)
-    # 2. Specialist tools the user is already authenticated for, pre-activated
-    #    so the heartbeat agent does not waste a turn calling list_capabilities
+    # 2. Specialist tools the user is already authenticated for
     # 3. list_capabilities meta-tool for discovering unconnected integrations
     tools = await default_registry.create_core_tools(
         tool_context,
         excluded_factories=excluded,
         excluded_tool_names=disabled_sub_tools or None,
     )
-    (
-        ready_specialist_tools,
-        ready_specialist_names,
-    ) = await default_registry.create_ready_specialist_tools(
+    ready_specialist_tools = await default_registry.create_ready_specialist_tools(
         tool_context,
         excluded_factories=excluded,
         excluded_tool_names=disabled_sub_tools or None,
     )
     tools.extend(ready_specialist_tools)
-    activated_specialists |= ready_specialist_names
 
     # Auto-approve the media-delivery tool in heartbeat context (#932).
     # Phase 1 already decided to send this message; asking the user for
@@ -641,7 +633,6 @@ async def execute_heartbeat_tasks(
                 specialist_summaries,
                 unauthenticated=unauthenticated,
                 disabled_sub_tools=disabled_specialist_subs or None,
-                activated_specialists=activated_specialists,
             )
         )
     agent.register_tools(tools)
