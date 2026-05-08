@@ -11,6 +11,7 @@ import datetime
 import logging
 import zoneinfo
 
+from backend.app.agent.markdown_registry import truncate_for_injection
 from backend.app.agent.memory_db import build_memory_context
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.session_db import get_session_store
@@ -97,8 +98,13 @@ def build_soul_prompt(user: User) -> str:
 
     Returns the SOUL.md content directly. Identity info (name, personality)
     lives in the markdown, written by the agent during onboarding.
+
+    Tail-truncates over-budget rows via
+    :func:`backend.app.agent.markdown_registry.truncate_for_injection`
+    so a row that pre-dates the write-time cap (or that was migrated
+    in by an earlier release) cannot bloat every system prompt.
     """
-    return user.soul_text or ""
+    return truncate_for_injection("SOUL.md", user.soul_text or "")
 
 
 def build_identity_section(user: User) -> str:
@@ -107,17 +113,27 @@ def build_identity_section(user: User) -> str:
 
 
 def build_user_section(user: User) -> str:
-    """Build the user profile section from USER.md content."""
-    return user.user_text or ""
+    """Build the user profile section from USER.md content.
+
+    Tail-truncates over-budget rows for prompt injection; see
+    :func:`build_soul_prompt` for the rationale.
+    """
+    return truncate_for_injection("USER.md", user.user_text or "")
 
 
 async def build_memory_section(
     user_id: str,
     query: str | None = None,
 ) -> str:
-    """Build the memory context section content."""
+    """Build the memory context section content.
+
+    Tail-truncates over-budget rows for prompt injection; see
+    :func:`build_soul_prompt` for the rationale.
+    """
     ctx = await build_memory_context(user_id)
-    return ctx or "(No memories saved yet)"
+    if not ctx:
+        return "(No memories saved yet)"
+    return truncate_for_injection("MEMORY.md", ctx)
 
 
 def build_instructions_section() -> str:
@@ -303,7 +319,9 @@ async def build_heartbeat_system_prompt(
 
     builder.add_section(
         "User's heartbeat (HEARTBEAT.md)",
-        heartbeat_md or "(no heartbeat items configured)",
+        truncate_for_injection("HEARTBEAT.md", heartbeat_md)
+        if heartbeat_md
+        else "(no heartbeat items configured)",
     )
 
     if heartbeat_history:

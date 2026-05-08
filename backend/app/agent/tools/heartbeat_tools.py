@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.heartbeat import SCHEDULED_TASK_PREFIX
+from backend.app.agent.markdown_registry import BudgetExceededError
 from backend.app.agent.stores import HeartbeatStore
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 
 if TYPE_CHECKING:
@@ -44,7 +45,14 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
         """
         store = HeartbeatStore(user_id)
         previous = await store.read_heartbeat_md_async()
-        await store.write_heartbeat_md(text)
+        try:
+            await store.write_heartbeat_md(text)
+        except BudgetExceededError as exc:
+            return ToolResult(
+                content=str(exc),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
         if previous:
             return ToolResult(content=f"Heartbeat notes updated.\n\nPrevious content:\n{previous}")
         return ToolResult(content="Heartbeat notes updated (was empty).")

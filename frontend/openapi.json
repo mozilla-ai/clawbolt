@@ -1090,7 +1090,7 @@
       },
       "put": {
         "summary": "Update Memory",
-        "description": "Overwrite MEMORY.md with new content.",
+        "description": "Overwrite MEMORY.md with new content.\n\nReturns ``413 Payload Too Large`` when *body.content* exceeds the\nbounded-growth byte budget for ``MEMORY.md`` (see\n:mod:`backend.app.agent.markdown_registry`). The original message\nfrom the registry includes the actual size and the budget so a\nuser-side editor can show a useful error.",
         "operationId": "update_memory_api_user_memory_put",
         "requestBody": {
           "content": {

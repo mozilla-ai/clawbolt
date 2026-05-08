@@ -717,6 +717,12 @@ export interface paths {
         /**
          * Update Memory
          * @description Overwrite MEMORY.md with new content.
+         *
+         *     Returns ``413 Payload Too Large`` when *body.content* exceeds the
+         *     bounded-growth byte budget for ``MEMORY.md`` (see
+         *     :mod:`backend.app.agent.markdown_registry`). The original message
+         *     from the registry includes the actual size and the budget so a
+         *     user-side editor can show a useful error.
          */
         put: operations["update_memory_api_user_memory_put"];
         post?: never;
