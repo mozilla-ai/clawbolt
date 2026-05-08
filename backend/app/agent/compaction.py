@@ -21,6 +21,7 @@ from any_llm import amessages
 from any_llm.types.messages import MessageResponse
 
 from backend.app.agent.llm_parsing import get_response_text
+from backend.app.agent.markdown_registry import BudgetExceededError
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.observer import (
@@ -341,9 +342,24 @@ async def compact_session(
     new_history: str = current_history
 
     # Write updated MEMORY.md only when the rewrite actually differs.
+    # An LLM that returns a rewrite over the bounded-growth byte budget
+    # (see ``backend/app/agent/markdown_registry.py``) is treated as a
+    # failed compaction for that file: log a warning and keep the
+    # current memory rather than truncating mid-sentence and producing
+    # silently corrupt durable state. The conversation that triggered
+    # this compaction will still trim, and the next compaction will get
+    # another chance to produce an in-budget rewrite.
     if memory_changed:
-        await memory_store.write_memory_async(result.memory_update)
-        logger.info("Compaction rewrote MEMORY.md for user %s", user_id)
+        try:
+            await memory_store.write_memory_async(result.memory_update)
+            logger.info("Compaction rewrote MEMORY.md for user %s", user_id)
+        except BudgetExceededError as exc:
+            logger.warning(
+                "Compaction skipping MEMORY.md update for user %s: %s",
+                user_id,
+                exc,
+            )
+            memory_changed = False
 
     # Append summary to HISTORY.md if the LLM produced one. ``append_history``
     # returns the new full text under the same row-level lock that protected
@@ -359,14 +375,31 @@ async def compact_session(
             logger.exception("Failed to append history for user %s", user_id)
 
     # Write updated USER.md only when the rewrite actually differs.
+    # See MEMORY.md branch above for the BudgetExceededError handling.
     if user_changed:
-        await memory_store.write_user_async(result.user_profile_update)
-        logger.info("Compaction updated USER.md for user %s", user_id)
+        try:
+            await memory_store.write_user_async(result.user_profile_update)
+            logger.info("Compaction updated USER.md for user %s", user_id)
+        except BudgetExceededError as exc:
+            logger.warning(
+                "Compaction skipping USER.md update for user %s: %s",
+                user_id,
+                exc,
+            )
+            user_changed = False
 
     # Write updated SOUL.md only when the rewrite actually differs.
     if soul_changed:
-        await memory_store.write_soul_async(result.soul_update)
-        logger.info("Compaction updated SOUL.md for user %s", user_id)
+        try:
+            await memory_store.write_soul_async(result.soul_update)
+            logger.info("Compaction updated SOUL.md for user %s", user_id)
+        except BudgetExceededError as exc:
+            logger.warning(
+                "Compaction skipping SOUL.md update for user %s: %s",
+                user_id,
+                exc,
+            )
+            soul_changed = False
 
     # Single structured summary line. Fields are space-separated key=value
     # so log aggregators (Railway, Loki) can group / filter without

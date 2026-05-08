@@ -24,6 +24,7 @@ from backend.app.agent.dto import (
     HeartbeatLogEntry,
     ToolConfigEntry,
 )
+from backend.app.agent.markdown_registry import assert_within_budget
 from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import (
     HeartbeatLog,
@@ -153,7 +154,15 @@ class HeartbeatStore:
             await db.close()
 
     async def write_heartbeat_md(self, text: str) -> None:
-        """Write freeform heartbeat markdown to User.heartbeat_text."""
+        """Write freeform heartbeat markdown to User.heartbeat_text.
+
+        Raises :class:`BudgetExceededError` when *text* exceeds the
+        ``HEARTBEAT.md`` byte budget. The heartbeat engine is the only
+        non-tool caller and writes short task summaries, so an over-
+        budget value almost certainly indicates an LLM bug worth
+        surfacing rather than silently swallowing.
+        """
+        assert_within_budget("HEARTBEAT.md", text)
         async with db_session_async() as db:
             user = (await db.execute(_heartbeat_user_select(self.user_id))).scalar_one_or_none()
             if user is not None:

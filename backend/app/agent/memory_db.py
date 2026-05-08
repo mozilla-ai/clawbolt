@@ -12,6 +12,11 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Select, Update, select, update
 
+from backend.app.agent.markdown_registry import (
+    append_with_window,
+    assert_within_budget,
+    get_policy,
+)
 from backend.app.agent.store_cache import StoreCache
 from backend.app.database import (
     AsyncSessionLocal,
@@ -126,10 +131,19 @@ class MemoryStore:
             await db.close()
 
     async def write_memory_async(self, content: str) -> None:
-        """Write memory text (full rewrite, equivalent of MEMORY.md)."""
+        """Write memory text (full rewrite, equivalent of MEMORY.md).
+
+        Raises :class:`BudgetExceededError` when the value exceeds the
+        ``MEMORY.md`` byte budget declared in
+        :mod:`backend.app.agent.markdown_registry`. Callers that may
+        produce LLM-generated rewrites (compaction) are expected to
+        catch and log this rather than crash.
+        """
+        stored = content.rstrip() + "\n"
+        assert_within_budget("MEMORY.md", stored)
         async with db_session_async() as db:
             doc = await self._get_or_create_doc_async(db)
-            doc.memory_text = content.rstrip() + "\n"
+            doc.memory_text = stored
             await db.commit()
 
     # -- history text ------------------------------------------------------
@@ -161,28 +175,42 @@ class MemoryStore:
         before this guarantee), a separator is inserted so two entries
         never end up jammed together as one line.
 
+        Applies the HISTORY.md byte budget windowing policy from
+        :mod:`backend.app.agent.markdown_registry`: when the post-append
+        text would exceed the budget, the oldest entries are dropped
+        whole (FIFO). This bounds runaway growth on long-lived users
+        without losing the row-level lock semantics. The full archive
+        of compaction events still lives in ``compaction_events`` rows.
+
         Returns the row's new full plaintext so callers (compaction
         audit) can record the post-append snapshot without re-reading
         the row, which would race with concurrent compactions sharing
         the same user.
         """
-        suffix = entry + "\n"
+        policy = get_policy("HISTORY.md")
+        budget = policy.byte_budget if policy is not None else None
         async with db_session_async() as db:
             doc = (await db.execute(_doc_select_for_update(self.user_id))).scalar_one_or_none()
             if doc is None:
+                full_new_text = (
+                    append_with_window("", entry, budget) if budget is not None else entry + "\n"
+                )
                 db.add(
                     MemoryDocument(
                         user_id=self.user_id,
                         memory_text="",
-                        history_text=suffix,
+                        history_text=full_new_text,
                     )
                 )
                 await db.commit()
-                return suffix
+                return full_new_text
             current = doc.history_text or ""
-            if current and not current.endswith("\n"):
-                current += "\n"
-            full_new_text = current + suffix
+            if budget is not None:
+                full_new_text = append_with_window(current, entry, budget)
+            else:
+                if current and not current.endswith("\n"):
+                    current += "\n"
+                full_new_text = current + entry + "\n"
             await db.execute(_append_history_update(doc.id, full_new_text))
             await db.commit()
             return full_new_text
@@ -201,11 +229,18 @@ class MemoryStore:
             await db.close()
 
     async def write_soul_async(self, content: str) -> None:
-        """Write soul text to User model."""
+        """Write soul text to User model.
+
+        Raises :class:`BudgetExceededError` when the wrapped value
+        exceeds the ``SOUL.md`` byte budget. Compaction wraps the call
+        in a try/except and logs on failure rather than crashing.
+        """
+        stored = f"# Soul\n\n{content}\n"
+        assert_within_budget("SOUL.md", stored)
         async with db_session_async() as db:
             user = (await db.execute(_user_select(self.user_id))).scalar_one_or_none()
             if user is not None:
-                user.soul_text = f"# Soul\n\n{content}\n"
+                user.soul_text = stored
                 await db.commit()
 
     # -- user text ---------------------------------------------------------
@@ -222,11 +257,18 @@ class MemoryStore:
             await db.close()
 
     async def write_user_async(self, content: str) -> None:
-        """Write user text to User model."""
+        """Write user text to User model.
+
+        Raises :class:`BudgetExceededError` when the wrapped value
+        exceeds the ``USER.md`` byte budget. Compaction wraps the call
+        in a try/except and logs on failure rather than crashing.
+        """
+        stored = f"# User\n\n{content}\n"
+        assert_within_budget("USER.md", stored)
         async with db_session_async() as db:
             user = (await db.execute(_user_select(self.user_id))).scalar_one_or_none()
             if user is not None:
-                user.user_text = f"# User\n\n{content}\n"
+                user.user_text = stored
                 await db.commit()
 
     # -- composite helpers -------------------------------------------------

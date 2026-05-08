@@ -21,6 +21,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+from backend.app.agent.markdown_registry import (
+    BudgetExceededError,
+    assert_column_within_budget,
+    assert_within_budget,
+)
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
@@ -364,11 +369,41 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         """Write or overwrite a markdown file in the workspace."""
         canon = _canonical_name(path)
         if canon:
+            try:
+                assert_column_within_budget(_DB_FILE_COLUMN[canon], content)
+            except BudgetExceededError as exc:
+                return ToolResult(
+                    content=str(exc),
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
             await _db_write(user_id, _DB_FILE_COLUMN[canon], content)
             return ToolResult(content=f"Wrote {path}")
 
         mem_col = _memory_doc_column(path)
         if mem_col:
+            if mem_col == "history_text":
+                # HISTORY.md is append-only and managed by compaction
+                # (see backend/app/agent/memory_db.py::append_history).
+                # A full rewrite via write_file would silently bypass the
+                # append-with-window invariant and lose the integrity
+                # guarantee from issue #1243 / PR #1273.
+                return ToolResult(
+                    content=(
+                        "HISTORY.md is append-only and managed by compaction. "
+                        "It cannot be rewritten via write_file."
+                    ),
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
+            try:
+                assert_column_within_budget(mem_col, content)
+            except BudgetExceededError as exc:
+                return ToolResult(
+                    content=str(exc),
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
             await _memory_doc_write(user_id, mem_col, content)
             return ToolResult(content=f"Wrote {path}")
 
@@ -379,6 +414,19 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         resolved, err = _resolve_path(user_id, path)
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
+        # Disk-backed surfaces have no per-file column, so look up by
+        # filename. Unknown disk markdown gets no enforcement; the agent
+        # can scribble notes in arbitrary scratch files without the cap
+        # rejecting them. The cap matters only for surfaces that feed
+        # prompt context.
+        try:
+            assert_within_budget(resolved.name, content)
+        except BudgetExceededError as exc:
+            return ToolResult(
+                content=str(exc),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
         resolved.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(resolved.write_text, content, "utf-8")
         return ToolResult(content=f"Wrote {path}")
@@ -403,11 +451,29 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                     error_kind=ToolErrorKind.VALIDATION,
                 )
             updated = text.replace(old_text, new_text, 1)
+            try:
+                assert_column_within_budget(column, updated)
+            except BudgetExceededError as exc:
+                return ToolResult(
+                    content=str(exc),
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
             await _db_write(user_id, column, updated)
             return ToolResult(content=f"Updated {path}")
 
         mem_col = _memory_doc_column(path)
         if mem_col:
+            if mem_col == "history_text":
+                # HISTORY.md is append-only; see write_file for rationale.
+                return ToolResult(
+                    content=(
+                        "HISTORY.md is append-only and managed by compaction. "
+                        "It cannot be edited directly."
+                    ),
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
             text = await _memory_doc_read(user_id, mem_col)
             if old_text not in text:
                 return ToolResult(
@@ -423,6 +489,14 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                     error_kind=ToolErrorKind.VALIDATION,
                 )
             updated = text.replace(old_text, new_text, 1)
+            try:
+                assert_column_within_budget(mem_col, updated)
+            except BudgetExceededError as exc:
+                return ToolResult(
+                    content=str(exc),
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
             await _memory_doc_write(user_id, mem_col, updated)
             return ToolResult(content=f"Updated {path}")
 

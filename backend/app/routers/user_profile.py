@@ -3,11 +3,15 @@
 import datetime
 from typing import cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.agent.markdown_registry import (
+    BudgetExceededError,
+    assert_column_within_budget,
+)
 from backend.app.auth.dependencies import get_current_user
 from backend.app.channel_state import realign_preferred_channel_async
 from backend.app.channels import is_bluebubbles_configured, reset_channel_clients
@@ -87,10 +91,31 @@ async def update_profile(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> UserProfileResponse:
-    """Partial update of the current user's profile."""
+    """Partial update of the current user's profile.
+
+    Bounded-growth columns (``user_text``, ``soul_text``,
+    ``heartbeat_text``) are routed through
+    :func:`backend.app.agent.markdown_registry.assert_column_within_budget`
+    so the dashboard editor cannot bypass the byte cap that the agent's
+    workspace tools and compaction paths already respect. Returns
+    ``413 Payload Too Large`` with the registry's actual / allowed
+    sizes so a client-side editor can show a useful error.
+    """
     updates = body.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Validate bounded-growth columns up front so a partial commit
+    # cannot land before we reject the payload.
+    for key, value in updates.items():
+        if isinstance(value, str):
+            try:
+                assert_column_within_budget(key, value)
+            except BudgetExceededError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail=str(exc),
+                ) from exc
 
     # Re-query user in the current session to avoid detached instance issues
     user = await get_or_404_async(db, User, detail="User not found", id=current_user.id)

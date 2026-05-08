@@ -1969,3 +1969,43 @@ async def test_compact_session_no_admin_note_no_prefix(test_user: User) -> None:
 
     user_content = mock_llm.call_args.kwargs["messages"][0]["content"]
     assert "[admin note:" not in user_content
+
+
+# --- Bounded-growth: compaction must survive over-budget LLM rewrites ---
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_skips_memory_update_when_llm_rewrite_exceeds_budget(
+    test_user: User,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the LLM returns a memory rewrite that exceeds the bounded-growth
+    cap, compaction must log a warning, leave MEMORY.md untouched, and
+    return an empty ``memory_update``. Crashing here would block trim-driven
+    compaction for the whole conversation; truncating mid-rewrite would
+    silently corrupt durable memory.
+    """
+    from backend.app.agent.markdown_registry import DEFAULT_BUDGET
+
+    store = get_memory_store(test_user.id)
+    await store.write_memory_async("## Existing\n- before: kept\n")
+
+    too_big = "x" * (DEFAULT_BUDGET + 1_000)
+    mock_response = make_text_response(
+        json.dumps({"memory_update": too_big, "summary": "[TIMESTAMP] tried to write a lot."})
+    )
+    messages: list[AgentMessage] = [UserMessage(content="anything", seq=1)]
+
+    caplog.set_level("WARNING", logger="backend.app.agent.compaction")
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        memory_update, _ = await compact_session(test_user.id, messages)
+
+    # Return value reflects "no MEMORY.md update happened".
+    assert memory_update == ""
+    # Original memory text is preserved.
+    after = await store.read_memory_async()
+    assert "before: kept" in after
+    # A warning was logged so the operator can correlate.
+    assert any(
+        "MEMORY.md" in r.getMessage() and "skip" in r.getMessage().lower() for r in caplog.records
+    )
