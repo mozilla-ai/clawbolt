@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -383,6 +384,75 @@ async def test_service_5xx_raises_appfolio_error() -> None:
             await service.get("/x")
 
 
+def _noisy_jpeg(width: int, height: int, quality: int = 98) -> bytes:
+    """Build a noise JPEG of approximately ``width x height`` at given quality."""
+    import io
+    import os
+
+    from PIL import Image
+
+    data = os.urandom(width * height * 3)
+    img = Image.frombytes("RGB", (width, height), data)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
+def test_encode_files_compresses_oversized_photos() -> None:
+    """Photos above the AppFolio target should be compressed before encoding.
+
+    Six full-resolution phone photos easily exceed the upload timeout
+    when inlined as base64; we shrink each one to a documentary-quality
+    JPEG before send.
+    """
+    from backend.app.integrations.appfolio_vendor.service import (
+        _APPFOLIO_PHOTO_TARGET_BYTES,
+        FileUpload,
+        _encode_files,
+    )
+
+    big = _noisy_jpeg(4000, 3000)
+    assert len(big) > _APPFOLIO_PHOTO_TARGET_BYTES, "test setup: need oversized image"
+
+    encoded = _encode_files([FileUpload(name="damage.jpg", data=big)])
+    assert len(encoded) == 1
+    assert encoded[0]["name"] == "damage.jpg"
+    raw = base64.b64decode(encoded[0]["file_base64"])
+    assert len(raw) <= _APPFOLIO_PHOTO_TARGET_BYTES
+    assert len(raw) < len(big)
+
+
+def test_encode_files_passes_small_images_through() -> None:
+    """Photos already under the target should not be recompressed."""
+    from backend.app.integrations.appfolio_vendor.service import FileUpload, _encode_files
+
+    small = _noisy_jpeg(200, 150, quality=85)
+    encoded = _encode_files([FileUpload(name="thumb.jpg", data=small)])
+    raw = base64.b64decode(encoded[0]["file_base64"])
+    assert raw == small  # bytes preserved exactly
+
+
+def test_encode_files_passes_non_image_through() -> None:
+    """Non-image attachments (PDFs, etc.) must not be touched."""
+    from backend.app.integrations.appfolio_vendor.service import FileUpload, _encode_files
+
+    pdf_bytes = b"%PDF-1.4\n" + b"\x00" * 4_000_000
+    encoded = _encode_files([FileUpload(name="invoice.pdf", data=pdf_bytes)])
+    raw = base64.b64decode(encoded[0]["file_base64"])
+    assert raw == pdf_bytes
+
+
+def test_encode_files_falls_back_when_compression_fails() -> None:
+    """If Pillow can't open the image, upload the original bytes."""
+    from backend.app.integrations.appfolio_vendor.service import FileUpload, _encode_files
+
+    # Bytes that won't decode as any image despite the .jpg extension.
+    junk = b"not actually a JPEG" + b"\xff" * 2_000_000
+    encoded = _encode_files([FileUpload(name="broken.jpg", data=junk)])
+    raw = base64.b64decode(encoded[0]["file_base64"])
+    assert raw == junk
+
+
 def test_format_http_exception_falls_back_to_class_name() -> None:
     """An httpx exception with no message must surface SOME description.
 
@@ -425,6 +495,122 @@ def test_fmt_work_order_line_underscored_alias_also_supported() -> None:
 
     line = _fmt_work_order_line({"id": 1, "number_for_display": "WO-9"})
     assert "#WO-9" in line
+
+
+def test_fmt_work_order_line_surfaces_customer_id() -> None:
+    """Agent needs the customer_id available in listings to route subsequent
+    write calls (notes, invoices) to the right property manager.
+    """
+    from backend.app.integrations.appfolio_vendor.work_orders import _fmt_work_order_line
+
+    line = _fmt_work_order_line({"id": 114433, "customer_id": "1963538"})
+    assert "customer_id=1963538" in line
+
+
+@pytest.mark.asyncio()
+async def test_add_work_order_note_includes_customer_id_in_body() -> None:
+    """AppFolio's note POST requires ``customer_id`` at the top level.
+
+    The OAuth migration in #1269 stopped populating ``customer_ids`` on
+    the credential, which caused 422-with-empty-body rejections on every
+    note attempt. Verified against the SPA via Playwright capture.
+    """
+    cred = AppFolioCredential(
+        user_id="u1",
+        jwt="jwt-1",
+        fingerprint="fp-1",
+        customer_ids=["1963538"],
+        extra={},
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    response = _mock_response(json_data={"id": 42})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.add_work_order_note("114433", body_text="status update")
+    _, kwargs = client.request.call_args
+    sent = kwargs["json"]
+    assert sent["customer_id"] == "1963538"
+    assert sent["note"] == {"body": "status update"}
+    assert sent["files"] == []
+
+
+@pytest.mark.asyncio()
+async def test_add_work_order_note_resolves_customer_id_when_missing() -> None:
+    """A credential persisted before the customer_id backfill landed has
+    ``customer_ids=[]``. The service must lazy-fetch ``/profiles/me`` so
+    existing connected users don't have to disconnect/reconnect.
+    """
+    cred = AppFolioCredential(
+        user_id="u1",
+        jwt="jwt-1",
+        fingerprint="fp-1",
+        customer_ids=[],
+        extra={},
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+
+    profile_response = _mock_response(
+        json_data={"customers": [{"customer_id": 1963538, "customer_name": "Arbors"}]}
+    )
+    note_response = _mock_response(json_data={"id": 42})
+
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(side_effect=[profile_response, note_response])
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.add_work_order_note("114433", body_text="status update")
+
+    # First call: GET /profiles/me to discover customer_id
+    first_args, _ = client.request.call_args_list[0]
+    assert first_args[0] == "GET"
+    assert "/profiles/me" in first_args[1]
+    # Second call: POST /notes with the resolved customer_id
+    second_args, second_kwargs = client.request.call_args_list[1]
+    assert second_args[0] == "POST"
+    assert "/notes" in second_args[1]
+    assert second_kwargs["json"]["customer_id"] == "1963538"
+    # The credential should be backfilled in-memory so subsequent calls
+    # don't refetch.
+    assert cred.customer_ids == ["1963538"]
+
+
+@pytest.mark.asyncio()
+async def test_resolve_customer_id_raises_when_profile_has_none() -> None:
+    """A credential with no customers and a profile that returns no
+    customers should raise rather than silently succeed with bad data.
+    """
+    cred = AppFolioCredential(
+        user_id="u1",
+        jwt="jwt-1",
+        fingerprint="fp-1",
+        customer_ids=[],
+        extra={},
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    response = _mock_response(json_data={"customers": []})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cls.return_value = _patch_async_client("request", response)
+        with pytest.raises(AppFolioError, match="no customer IDs"):
+            await service.add_work_order_note("114433", body_text="x")
+
+
+def test_client_version_header_is_opaque_hex() -> None:
+    """The ``X-Vendor-Portal-Web-Client`` header value must not identify
+    Clawbolt to AppFolio. Match the SPA's git-SHA shape (40-char hex)."""
+    import re
+
+    from backend.app.integrations.appfolio_vendor.service import _CLIENT_VERSION
+
+    assert re.fullmatch(r"[0-9a-f]{40}", _CLIENT_VERSION) is not None
+    assert "clawbolt" not in _CLIENT_VERSION.lower()
 
 
 @pytest.mark.asyncio()
@@ -786,7 +972,10 @@ async def test_add_note_inlines_base64_files() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_add_note_omits_files_key_when_empty() -> None:
+async def test_add_note_sends_empty_files_array_when_no_attachments() -> None:
+    """The SPA always sends ``files: []`` rather than omitting it; we
+    mirror that shape so AppFolio's request validator can't get clever
+    about a missing-versus-empty distinction."""
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={"id": "999"})
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -798,7 +987,10 @@ async def test_add_note_omits_files_key_when_empty() -> None:
         cls.return_value = cm
         await service.add_work_order_note("42", body_text="status")
     _, kwargs = client.request.call_args
-    assert kwargs["json"] == {"note": {"body": "status"}}
+    sent = kwargs["json"]
+    assert sent["note"] == {"body": "status"}
+    assert sent["files"] == []
+    assert sent["customer_id"] == "c1"
 
 
 @pytest.mark.asyncio()

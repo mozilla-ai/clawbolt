@@ -66,10 +66,16 @@ def _fmt_work_order_line(wo: dict[str, Any]) -> str:
         or wo.get("number")
         or wo_id
     )
+    customer_id = wo.get("customer_id") or wo.get("customerId") or ""
     status = wo.get("status") or wo.get("status_label") or wo.get("statusCode") or ""
     address = wo.get("property_address") or wo.get("address") or wo.get("propertyAddress") or ""
     summary = wo.get("description") or wo.get("title") or wo.get("summary") or ""
     pieces = [f"#{number}"]
+    if customer_id:
+        # Surface the customer_id so the agent can pass it back to write
+        # endpoints (notes, invoices) without an extra round-trip. The
+        # vendor's "customer" is their property-management company.
+        pieces.append(f"customer_id={customer_id}")
     if status:
         pieces.append(f"[{status}]")
     if address:

@@ -61,9 +61,11 @@ def _format_http_exception(exc: BaseException) -> str:
     return type(exc).__name__
 
 
-_CLIENT_VERSION = "clawbolt-1"
-"""Sent in ``X-Vendor-Portal-Web-Client``. Opaque to AppFolio; used
-internally for log correlation if we need it."""
+_CLIENT_VERSION = "b3b7f2f73bc52946cf8dab2e61208b9d37996479"
+"""Sent in ``X-Vendor-Portal-Web-Client``. The SPA sends a 40-char hex
+(looks like a git SHA); we mirror that shape with a stable random hex
+value so the header doesn't identify which integrator is calling. The
+value itself is opaque to AppFolio."""
 
 
 class AppFolioError(RuntimeError):
@@ -95,10 +97,58 @@ class FileUpload:
     data: bytes
 
 
+# Target raw-byte ceiling for individual photos uploaded to AppFolio.
+# A typical work-order note attaches 1-6 photos in a single JSON body;
+# at 4-5 MB raw each the request becomes ~25 MB once base64-inflated and
+# routinely trips upload timeouts. 1.5 MB raw is plenty for documentary
+# photos of property damage / completed work and keeps a six-photo note
+# under ~12 MB on the wire.
+_APPFOLIO_PHOTO_TARGET_BYTES = 1_500_000
+
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"}
+
+
+def _looks_like_image(name: str) -> bool:
+    lower = name.lower()
+    return any(lower.endswith(ext) for ext in _IMAGE_EXTENSIONS)
+
+
+def _maybe_compress_photo(name: str, data: bytes) -> bytes:
+    """Compress a photo down to ``_APPFOLIO_PHOTO_TARGET_BYTES`` if needed.
+
+    Non-image files and anything Pillow can't open pass through unchanged.
+    Compression uses the same JPEG quality + resize ladder as the vision
+    pipeline (see :func:`backend.app.media.vision.compress_image_for_api`)
+    so behavior stays consistent across the codebase.
+    """
+    if not _looks_like_image(name):
+        return data
+    if len(data) <= _APPFOLIO_PHOTO_TARGET_BYTES:
+        return data
+    try:
+        from backend.app.media.vision import compress_image_for_api
+
+        compressed, _ = compress_image_for_api(
+            data, "image/jpeg", max_raw_bytes=_APPFOLIO_PHOTO_TARGET_BYTES
+        )
+        logger.info(
+            "AppFolio photo %s compressed: %d -> %d bytes", name, len(data), len(compressed)
+        )
+        return compressed
+    except Exception as exc:
+        # Pillow can't open every format (HEIC without pillow-heif, PSD,
+        # etc.). Don't fail the upload over a compression miss; AppFolio
+        # may still accept the original.
+        logger.warning("AppFolio photo %s could not be compressed (%s); uploading as-is", name, exc)
+        return data
+
+
 def _encode_files(files: list[FileUpload]) -> list[dict[str, str]]:
-    return [
-        {"name": f.name, "file_base64": base64.b64encode(f.data).decode("ascii")} for f in files
-    ]
+    out: list[dict[str, str]] = []
+    for f in files:
+        data = _maybe_compress_photo(f.name, f.data)
+        out.append({"name": f.name, "file_base64": base64.b64encode(data).decode("ascii")})
+    return out
 
 
 _LOG_BODY_PREVIEW_LIMIT = 1500
@@ -381,6 +431,46 @@ class AppFolioVendorService:
     async def get_profile(self) -> Any:
         return await self.get("/profiles/me", params={"viewed": "true"})
 
+    async def _resolve_primary_customer_id(self) -> str:
+        """Return the vendor's primary customer ID.
+
+        AppFolio's note POST and several other write endpoints require a
+        ``customer_id`` (the property manager's ID) at the request level.
+        The legacy ``/access`` exchange returned this in the body and we
+        cached it on the credential; the new OAuth2 endpoint does not, so
+        existing connected users have ``customer_ids=[]`` on their
+        persisted credential. Fall back to ``/profiles/me`` for those
+        cases and stash the result on the credential so we don't refetch
+        every call within the same service-instance lifetime.
+
+        Single-customer vendors (the common case) get the lone customer
+        back. Multi-customer vendors get the first one; tools that need
+        a specific customer should accept it as a parameter and bypass
+        this helper.
+        """
+        if self._credential.customer_ids:
+            return str(self._credential.customer_ids[0])
+        profile = await self.get_profile()
+        ids: list[str] = []
+        if isinstance(profile, dict):
+            customers = profile.get("customers") or []
+            if isinstance(customers, list):
+                for c in customers:
+                    if isinstance(c, dict):
+                        cid = c.get("customer_id") or c.get("customerId")
+                        if cid is not None:
+                            s = str(cid)
+                            if s not in ids:
+                                ids.append(s)
+        if not ids:
+            raise AppFolioError(
+                "AppFolio /profiles/me returned no customer IDs; cannot make this request"
+            )
+        # Cache on the in-memory credential for the rest of this turn.
+        # Persistence to oauth_tokens.extra_json happens at next refresh.
+        self._credential.customer_ids = ids
+        return ids[0]
+
     # ------------------------------------------------------------------
     # Domain helpers (PR2: write surface)
     # ------------------------------------------------------------------
@@ -445,10 +535,23 @@ class AppFolioVendorService:
         *,
         body_text: str,
         files: list[FileUpload] | None = None,
+        customer_id: str | None = None,
     ) -> Any:
-        body: dict[str, Any] = {"note": {"body": body_text}}
-        if files:
-            body["files"] = _encode_files(files)
+        """POST a note (text + optional photos) onto a work order.
+
+        AppFolio's note endpoint requires ``customer_id`` (the property
+        manager's ID) at the request top level. The legacy ``/access``
+        flow returned this on the credential and we cached it; the new
+        OAuth2 flow does not, so we resolve it via ``/profiles/me`` when
+        the caller does not pass one explicitly. Without ``customer_id``
+        AppFolio rejects with a 422 + empty body.
+        """
+        cid = customer_id or await self._resolve_primary_customer_id()
+        body: dict[str, Any] = {
+            "note": {"body": body_text},
+            "files": _encode_files(files) if files else [],
+            "customer_id": cid,
+        }
         return await self.post(
             f"/maintenance/api/work_orders/{work_order_id}/notes",
             json_body=body,
@@ -461,10 +564,14 @@ class AppFolioVendorService:
         *,
         body_text: str,
         files: list[FileUpload] | None = None,
+        customer_id: str | None = None,
     ) -> Any:
-        body: dict[str, Any] = {"note": {"body": body_text}}
-        if files:
-            body["files"] = _encode_files(files)
+        cid = customer_id or await self._resolve_primary_customer_id()
+        body: dict[str, Any] = {
+            "note": {"body": body_text},
+            "files": _encode_files(files) if files else [],
+            "customer_id": cid,
+        }
         return await self.patch(
             f"/maintenance/api/work_orders/{work_order_id}/notes/{note_id}",
             json_body=body,
