@@ -26,19 +26,26 @@ _JPEG_QUALITY_STEPS = [85, 70, 50, 30]
 _RESIZE_SCALES = [0.75, 0.5, 0.35]
 
 
-def compress_image_for_api(image_bytes: bytes, mime_type: str) -> tuple[bytes, str]:
-    """Compress an image so its base64 encoding stays under the API size limit.
+def compress_image_for_api(
+    image_bytes: bytes,
+    mime_type: str,
+    max_raw_bytes: int = _MAX_RAW_BYTES,
+) -> tuple[bytes, str]:
+    """Compress an image so its raw bytes stay under ``max_raw_bytes``.
 
     Returns the (possibly compressed) bytes and the output MIME type.
-    If the image already fits, the original bytes and MIME type are returned unchanged.
+    If the image already fits, the original bytes and MIME type are
+    returned unchanged. The default ceiling matches Anthropic's vision
+    API; AppFolio uploads pass a smaller value to keep multi-photo note
+    bodies from blowing past the upload timeout.
     """
-    if len(image_bytes) <= _MAX_RAW_BYTES:
+    if len(image_bytes) <= max_raw_bytes:
         return image_bytes, mime_type
 
     logger.info(
         "Image too large for API (%d bytes, limit %d). Compressing.",
         len(image_bytes),
-        _MAX_RAW_BYTES,
+        max_raw_bytes,
     )
 
     img = Image.open(io.BytesIO(image_bytes))
@@ -49,7 +56,7 @@ def compress_image_for_api(image_bytes: bytes, mime_type: str) -> tuple[bytes, s
     for quality in _JPEG_QUALITY_STEPS:
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=quality, optimize=True)
-        if buf.tell() <= _MAX_RAW_BYTES:
+        if buf.tell() <= max_raw_bytes:
             logger.info("Compressed to %d bytes at quality=%d", buf.tell(), quality)
             return buf.getvalue(), "image/jpeg"
 
@@ -60,7 +67,7 @@ def compress_image_for_api(image_bytes: bytes, mime_type: str) -> tuple[bytes, s
         for quality in _JPEG_QUALITY_STEPS:
             buf = io.BytesIO()
             resized.save(buf, format="JPEG", quality=quality, optimize=True)
-            if buf.tell() <= _MAX_RAW_BYTES:
+            if buf.tell() <= max_raw_bytes:
                 logger.info(
                     "Compressed to %d bytes at scale=%.2f, quality=%d",
                     buf.tell(),
@@ -70,7 +77,7 @@ def compress_image_for_api(image_bytes: bytes, mime_type: str) -> tuple[bytes, s
                 return buf.getvalue(), "image/jpeg"
 
     # Last resort: return the smallest version we produced.
-    logger.warning("Could not compress image below %d bytes; using smallest result", _MAX_RAW_BYTES)
+    logger.warning("Could not compress image below %d bytes; using smallest result", max_raw_bytes)
     return buf.getvalue(), "image/jpeg"
 
 
