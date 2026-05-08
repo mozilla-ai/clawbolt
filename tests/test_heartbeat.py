@@ -1883,7 +1883,7 @@ class TestExecuteHeartbeatTasks:
             mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
             MockAgent.return_value = mock_agent_instance
             mock_registry.create_core_tools = AsyncMock(return_value=[])
-            mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+            mock_registry.create_ready_specialist_tools = AsyncMock(return_value=[])
             mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
             mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
             mock_registry.get_disabled_specialist_sub_tools.return_value = {}
@@ -1915,7 +1915,7 @@ class TestExecuteHeartbeatTasks:
             mock_agent_instance.process_message = AsyncMock(side_effect=Exception("LLM down"))
             MockAgent.return_value = mock_agent_instance
             mock_registry.create_core_tools = AsyncMock(return_value=[])
-            mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+            mock_registry.create_ready_specialist_tools = AsyncMock(return_value=[])
             mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
             mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
             mock_registry.get_disabled_specialist_sub_tools.return_value = {}
@@ -1949,7 +1949,7 @@ class TestExecuteHeartbeatTasks:
             mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
             MockAgent.return_value = mock_agent_instance
             mock_registry.create_core_tools = AsyncMock(return_value=[])
-            mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+            mock_registry.create_ready_specialist_tools = AsyncMock(return_value=[])
             mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
             mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
             mock_registry.get_disabled_specialist_sub_tools.return_value = {}
@@ -1985,7 +1985,7 @@ class TestExecuteHeartbeatTasks:
             mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
             MockAgent.return_value = mock_agent_instance
             mock_registry.create_core_tools = AsyncMock(return_value=[])
-            mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+            mock_registry.create_ready_specialist_tools = AsyncMock(return_value=[])
             mock_registry.get_available_specialist_summaries = AsyncMock(
                 return_value={"quickbooks": "QB tools"}
             )
@@ -3606,7 +3606,7 @@ async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: Use
 
     mock_registry = MagicMock()
     mock_registry.create_core_tools = AsyncMock(return_value=[MagicMock(name="core_tool")])
-    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=[])
     mock_registry.get_available_specialist_summaries = AsyncMock(
         return_value={"quickbooks": "QB tools"}
     )
@@ -3666,7 +3666,7 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
 
     mock_registry = MagicMock()
     mock_registry.create_core_tools = AsyncMock(return_value=[])
-    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=[])
     mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
     mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
     mock_registry.get_disabled_specialist_sub_tools.return_value = {}
@@ -3723,7 +3723,7 @@ async def test_execute_heartbeat_task_context_includes_cleanup_instruction(
 
     mock_registry = MagicMock()
     mock_registry.create_core_tools = AsyncMock(return_value=[])
-    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=[])
     mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
     mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
     mock_registry.get_disabled_specialist_sub_tools.return_value = {}
@@ -3965,7 +3965,7 @@ async def test_heartbeat_auto_approves_send_media_reply(user: User) -> None:
 
     mock_registry = MagicMock()
     mock_registry.create_core_tools = AsyncMock(return_value=core_tools)
-    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=[])
     mock_registry.get_available_specialist_summaries = AsyncMock(return_value={})
     mock_registry.get_unauthenticated_specialists = AsyncMock(return_value={})
     mock_registry.get_disabled_specialist_sub_tools.return_value = {}

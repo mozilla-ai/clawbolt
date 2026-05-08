@@ -287,13 +287,6 @@ async def run_agent(
 
     await get_approval_store().ensure_complete(user.id)
 
-    # Shared mutable set so the list_capabilities tool closure and the
-    # agent loop both see the same activation state.  This prevents the
-    # tool from returning the full SKILL.md instructions a second time
-    # when the LLM redundantly calls list_capabilities for a category
-    # that was already activated in a prior round.
-    activated_specialists: set[str] = set()
-
     agent = ClawboltAgent(
         user=user,
         channel=channel,
@@ -304,7 +297,6 @@ async def run_agent(
         session_id=session_id,
         excluded_tool_names=disabled_sub_tools or None,
         request_id=request_id,
-        activated_specialists=activated_specialists,
         llm_provider_override=llm_provider_override,
         llm_model_override=llm_model_override,
     )
@@ -315,22 +307,16 @@ async def run_agent(
         excluded_factories=disabled_groups or None,
         excluded_tool_names=disabled_sub_tools or None,
     )
-    # Pre-activate specialists the user is already authenticated for. Without
-    # this, the LLM had to call list_capabilities('calendar') / ('quickbooks')
-    # / ('companycam') on every inbound, which adds a round trip per turn for
-    # users who text about their calendar daily. Now those tools are on the
-    # schema from turn 1; list_capabilities still surfaces unconnected
+    # Specialist tools for integrations the user is authenticated for are
+    # loaded from turn 1 so the LLM can call them without a discovery
+    # round trip; list_capabilities still surfaces unconnected
     # integrations for discovery.
-    (
-        ready_specialist_tools,
-        ready_specialist_names,
-    ) = await default_registry.create_ready_specialist_tools(
+    ready_specialist_tools = await default_registry.create_ready_specialist_tools(
         tool_context,
         excluded_factories=disabled_groups or None,
         excluded_tool_names=disabled_sub_tools or None,
     )
     tools.extend(ready_specialist_tools)
-    activated_specialists |= ready_specialist_names
     specialist_summaries = await default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=disabled_groups or None
     )
@@ -346,7 +332,6 @@ async def run_agent(
                 specialist_summaries,
                 unauthenticated=unauthenticated,
                 disabled_sub_tools=disabled_specialist_subs or None,
-                activated_specialists=activated_specialists,
             )
         )
     agent.register_tools(tools)

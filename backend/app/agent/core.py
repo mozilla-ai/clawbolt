@@ -71,7 +71,6 @@ from backend.app.agent.tools.base import (
     ToolTags,
     tool_to_function_schema,
 )
-from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
@@ -209,7 +208,6 @@ class ClawboltAgent:
         session_id: str = "",
         excluded_tool_names: set[str] | None = None,
         request_id: str = "",
-        activated_specialists: set[str] | None = None,
         llm_provider_override: str = "",
         llm_model_override: str = "",
     ) -> None:
@@ -222,9 +220,6 @@ class ClawboltAgent:
         self._subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = []
         self._tool_context = tool_context
         self._registry = registry
-        self._activated_specialists: set[str] = (
-            activated_specialists if activated_specialists is not None else set()
-        )
         self._last_input_tokens: int = 0
         self._session_id = session_id
         self._excluded_tool_names = excluded_tool_names
@@ -237,9 +232,8 @@ class ClawboltAgent:
         # a non-monotonic change is logged as a warning.
         self._prev_tool_names: list[str] = []
         # Cached Anthropic tool schemas keyed by the tool-name sequence that
-        # produced them. Rebuilt only when the tool list grows (specialist
-        # activation); otherwise the same list instance is reused across
-        # rounds to avoid recomputing identical JSON schemas every turn.
+        # produced them. Reused across rounds to avoid recomputing identical
+        # JSON schemas every turn.
         self._cached_tool_schemas: list[dict[str, Any]] | None = None
         self._reactive_trim_dropped: list[AgentMessage] = []
         # Remembers ASK decisions within a single agent run so the user is not
@@ -330,10 +324,10 @@ class ClawboltAgent:
     def _get_or_build_tool_schemas(self) -> list[dict[str, Any]] | None:
         """Return Anthropic tool schemas, rebuilding only when tools changed.
 
-        The cached list is invalidated whenever ``self.tools`` grows or the
-        name sequence diverges from the cached prefix. Since specialist
-        activation only appends, in the common case this cache hits for
-        every round after the first.
+        The tool list is fixed at agent boot, so in the steady state this
+        cache hits for every round after the first. The invalidation
+        check (rebuild when the name sequence diverges from the cached
+        prefix) stays as defense-in-depth against future regressions.
 
         Callers (``_call_llm_with_retry`` via ``apply_tool_caching``)
         may mutate the last entry to stamp a ``cache_control`` marker.
@@ -358,9 +352,10 @@ class ClawboltAgent:
         """Warn if the current tool-name sequence fails to preserve the prior
         prefix, which would bust the Anthropic tools prompt cache.
 
-        The tool list is meant to grow append-only as specialists activate.
-        Any reorder, removal, or mid-list insert would reset the cache for
-        the tools block. Emits a DEBUG line on normal growth and a WARNING
+        The tool list is fixed at agent boot, so in the steady state the
+        sequence is identical every round. Any reorder, removal, or
+        mid-list insert would reset the cache for the tools block. Kept
+        as defense-in-depth: emits a DEBUG line on growth and a WARNING
         when the prefix diverges.
         """
         current = [t.name for t in self.tools]
@@ -383,65 +378,6 @@ class ClawboltAgent:
                 len(current),
             )
         self._prev_tool_names = current
-
-    async def _activate_specialist(self, factory_name: str) -> None:
-        """Activate a specialist tool factory, injecting its tools for the next round.
-
-        Only marks the factory as activated if at least one tool was
-        actually created (dependencies like storage may prevent creation).
-        """
-        if factory_name in self._activated_specialists:
-            return
-        if self._registry is None or self._tool_context is None:
-            return
-        new_tools = await self._registry.create_tools(
-            self._tool_context,
-            selected_factories={factory_name},
-            excluded_tool_names=self._excluded_tool_names,
-        )
-        if not new_tools:
-            logger.debug(
-                "Specialist factory %r produced no tools (dependencies unmet?)", factory_name
-            )
-            return
-        self._activated_specialists.add(factory_name)
-        new_names: list[str] = []
-        for tool in new_tools:
-            if tool.name not in self._tools_by_name:
-                self.tools.append(tool)
-                self._tools_by_name[tool.name] = tool
-                new_names.append(tool.name)
-        logger.debug(
-            "Activated specialist %r, added tools: %s",
-            factory_name,
-            ", ".join(new_names) or "(none new)",
-        )
-
-    async def _check_specialist_activations(
-        self,
-        parsed_calls: list[ToolCallRequest],
-    ) -> bool:
-        """Check for list_capabilities calls and activate requested specialists.
-
-        Returns True if any new specialist factories were activated (meaning
-        tool schemas need to be rebuilt for the next round).
-        """
-        if self._registry is None:
-            return False
-        activated_any = False
-        specialist_names = self._registry.specialist_factory_names
-        for tc_req in parsed_calls:
-            if tc_req.name != ToolName.LIST_CAPABILITIES:
-                continue
-            category = tc_req.arguments.get("category")
-            if (
-                category
-                and category in specialist_names
-                and category not in self._activated_specialists
-            ):
-                await self._activate_specialist(category)
-                activated_any = True
-        return activated_any
 
     async def _build_system_prompt(self, message_context: str) -> str:
         """Build the full system prompt via the composable builder."""
@@ -1083,10 +1019,10 @@ class ClawboltAgent:
                 MAX_TOOL_ROUNDS,
                 len(messages),
             )
-            # Rebuild tool schemas only when the tool list changed
-            # (specialist activation appends new tools). Otherwise reuse the
-            # cached list so identical rounds don't re-serialize every
-            # Pydantic params model.
+            # Reuse cached tool schemas across rounds so identical rounds
+            # don't re-serialize every Pydantic params model. The tool
+            # list is fixed at agent boot, so this cache hits every round
+            # after the first.
             tool_schemas = self._get_or_build_tool_schemas()
             self._log_tool_prefix_stability(_round)
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
@@ -1220,20 +1156,6 @@ class ClawboltAgent:
             # generating a tool call, the JSON payload may be incomplete.
             response_truncated = response.stop_reason == "max_tokens"
 
-            # Activate any specialist factories requested via list_capabilities
-            # BEFORE executing tools so specialist tools called in the same
-            # round (e.g. qb_query alongside list_capabilities) are available
-            # immediately rather than failing as "unknown tool".
-            #
-            # We temporarily hide newly activated factories from the shared
-            # _activated_specialists set so that the list_capabilities closure
-            # still returns the full SKILL.md instructions during execution
-            # (it skips instructions for categories already in the set).
-            pre_activated = set(self._activated_specialists)
-            await self._check_specialist_activations(parsed_calls)
-            newly_activated = self._activated_specialists - pre_activated
-            self._activated_specialists -= newly_activated
-
             # Execute the tool round (validate, approve, run)
             tool_results = await self._execute_tool_round(
                 parsed_calls,
@@ -1243,9 +1165,6 @@ class ClawboltAgent:
                 tool_call_records,
                 response_truncated=response_truncated,
             )
-
-            # Mark the specialists as fully activated for future rounds.
-            self._activated_specialists |= newly_activated
 
             # If the response was truncated and produced validation errors,
             # auto-increase max_tokens for the next round so the LLM has

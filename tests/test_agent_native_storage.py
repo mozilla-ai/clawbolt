@@ -1,8 +1,8 @@
 """Tests for the agent-native storage refactor.
 
 Covers: MediaHandle minting + reverse lookup, pipeline gating on
-``agent_native_storage``, analyze_photo / discard_media tools, the registry
-predicate that gates the media factory on staged media, and the startup
+``agent_native_storage``, analyze_photo / discard_media tools, the media
+factory's always-on registration (issue #1170), and the startup
 mutual-exclusion check for personal storage backends.
 """
 
@@ -272,14 +272,20 @@ async def test_discard_media_missing_handle_returns_idempotent_success(
 
 
 # ---------------------------------------------------------------------------
-# Registry gating
+# Registry: always-on media tools (issue #1170)
 # ---------------------------------------------------------------------------
 
 
-def test_media_factory_returns_empty_when_no_media(test_user: User) -> None:
-    """No media attached and none staged = no tool surface (avoid prompt bloat)."""
+def test_media_factory_always_registers_tools(test_user: User) -> None:
+    """Tools are present even with no current or staged media.
+
+    Regression for #1170: gating on per-message media presence flipped the
+    tool count between turns, busting the Anthropic prompt cache.
+    """
     ctx = ToolContext(user=test_user, downloaded_media=[])
-    assert _media_factory(ctx) == []
+    tools = _media_factory(ctx)
+    names = {t.name for t in tools}
+    assert names == {ToolName.ANALYZE_PHOTO, ToolName.DISCARD_MEDIA}
 
 
 def test_media_factory_registers_tools_when_staged(test_user: User) -> None:
@@ -291,12 +297,21 @@ def test_media_factory_registers_tools_when_staged(test_user: User) -> None:
     assert ToolName.DISCARD_MEDIA in names
 
 
-def test_media_factory_registers_when_staged_without_current_downloads(test_user: User) -> None:
-    """Agent may call analyze_photo on a later turn that has no new attachments."""
+def test_media_factory_tool_list_stable_across_media_state(test_user: User) -> None:
+    """The tool name sequence must be identical regardless of media state.
+
+    The Anthropic prompt-cache key includes the tools block, so any
+    per-message variance in the tool list invalidates the cache for the
+    ~135k-token system prompt prefix (issue #1170).
+    """
+    no_media_ctx = ToolContext(user=test_user, downloaded_media=[])
+    no_media_names = [t.name for t in _media_factory(no_media_ctx)]
+
     media_staging.stage(test_user.id, "url-1", b"b", "image/jpeg")
-    ctx = ToolContext(user=test_user, downloaded_media=[])
-    tools = _media_factory(ctx)
-    assert len(tools) == 2
+    with_media_ctx = ToolContext(user=test_user, downloaded_media=[_make_media("url-1")])
+    with_media_names = [t.name for t in _media_factory(with_media_ctx)]
+
+    assert no_media_names == with_media_names
 
 
 # ---------------------------------------------------------------------------

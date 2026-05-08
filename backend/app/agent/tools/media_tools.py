@@ -178,11 +178,16 @@ def create_media_tools(
 
 
 def _media_factory(ctx: ToolContext) -> list[Tool]:
-    """Factory for agent-native media tools. Gated on presence of staged media."""
-    has_downloaded = bool(ctx.downloaded_media)
-    has_staged = bool(media_staging.get_all_for_user(ctx.user.id))
-    if not has_downloaded and not has_staged:
-        return []
+    """Factory for agent-native media tools.
+
+    Always returns the two tools so the Anthropic prompt-cache key (which
+    includes the tools block) stays stable across text-only and media
+    turns. Gating on per-message media presence flipped the tool count
+    between turns, busting the cache prefix and rewriting the ~135k-token
+    system prompt at ~$0.65 per miss (issue #1170). The runtime tools
+    handle missing handles gracefully (analyze_photo returns NOT_FOUND,
+    discard_media is idempotent), so always-on is safe.
+    """
     # Per-turn analysis cache. Scoped to the factory call so it lives for the
     # duration of the agent loop for this message.
     analyze_cache: dict[str, str] = {}
