@@ -573,6 +573,75 @@ async def test_search_photos_normalize() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_search_photos_with_project_id_uses_project_scoped_endpoint() -> None:
+    """Regression: a singular project_id query param on /v2/photos is silently
+    ignored by CompanyCam (its filter is project_ids[], an array), so the
+    service routes through /projects/{id}/photos when a project is named.
+    Without this, two different project_ids returned the same recent-photos
+    list and the agent reported "the search isn't filtering by project."
+    """
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response([]))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.search_photos(project_id="98845509")
+
+    url = client.get.call_args.args[0]
+    params = client.get.call_args.kwargs.get("params", {})
+    assert url.endswith("/projects/98845509/photos")
+    assert "project_id" not in params
+    assert "project_ids" not in params
+
+
+@pytest.mark.asyncio()
+async def test_search_photos_without_project_id_uses_global_endpoint() -> None:
+    """When no project_id is given, hit the global /photos endpoint."""
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response([]))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.search_photos()
+
+    url = client.get.call_args.args[0]
+    assert url.endswith("/v2/photos")
+
+
+@pytest.mark.asyncio()
+async def test_search_photos_passes_dates_and_pagination_on_project_route() -> None:
+    """Date and pagination filters must travel through the project-scoped path,
+    not get dropped when project_id is supplied."""
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response([]))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.search_photos(
+            project_id="42",
+            start_date=1700000000,
+            end_date=1700086399,
+            page=2,
+            per_page=25,
+        )
+
+    params = client.get.call_args.kwargs.get("params", {})
+    assert params["start_date"] == 1700000000
+    assert params["end_date"] == 1700086399
+    assert params["page"] == 2
+    assert params["per_page"] == 25
+
+
+@pytest.mark.asyncio()
 async def test_delete_photo() -> None:
     service = CompanyCamService(access_token="test-token")
 
