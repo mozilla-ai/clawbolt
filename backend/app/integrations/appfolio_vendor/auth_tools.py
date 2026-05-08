@@ -69,13 +69,11 @@ def build_auth_tools(user_id: str) -> list[Tool]:
             refresh_token=result.refresh_token,
         )
 
-        count = len(result.customer_ids)
-        customers = f" across {count} customer account(s)" if count else ""
         return ToolResult(
-            content=f"AppFolio connected{customers}. Tools are now available.",
+            content="AppFolio connected. Tools are now available.",
             receipt=ToolReceipt(
                 action="Connected AppFolio Vendor Portal",
-                target=f"{len(result.customer_ids)} customer(s)",
+                target="vendor account",
             ),
         )
 
