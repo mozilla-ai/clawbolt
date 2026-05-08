@@ -88,19 +88,13 @@ class AppFolioAcceptWorkOrderParams(BaseModel):
 
 class AppFolioScheduleWorkOrderParams(BaseModel):
     work_order_id: str = Field(description="AppFolio work order ID to schedule.")
-    scheduled_at: str = Field(
+    time_slot_id: str = Field(
         description=(
-            "When the visit will start, as an ISO 8601 timestamp (e.g."
-            " '2026-05-08T14:00:00-04:00'). Use the user's timezone."
+            "Pre-defined time-slot ID published by the property manager."
+            " AppFolio's vendor portal does not accept arbitrary timestamps;"
+            " vendors pick from offered slots. Slot IDs come from the work"
+            " order's ``time_slots`` (or from ``appfolio_get_work_order``)."
         ),
-    )
-    duration_minutes: int = Field(
-        default=0,
-        description="Estimated visit duration in minutes (0 to omit).",
-    )
-    notes: str = Field(
-        default="",
-        description="Optional scheduling notes for the tenant or PM.",
     )
 
 
@@ -172,7 +166,9 @@ class AppFolioMessageTenantParams(BaseModel):
 class AppFolioInvoiceLineItem(BaseModel):
     description: str = Field(description="Line-item description (e.g. 'Labor: 4hr').")
     quantity: float = Field(default=1.0, description="Quantity (decimal supported).")
-    rate: float = Field(description="Per-unit rate in dollars.")
+    amount: float = Field(
+        description="Per-unit amount in dollars (the SPA calls this 'amount', not 'rate').",
+    )
 
 
 class AppFolioCreateInvoiceParams(BaseModel):
@@ -182,16 +178,16 @@ class AppFolioCreateInvoiceParams(BaseModel):
     work_order_id: str = Field(description="Work order ID this invoice bills against.")
     line_items: list[AppFolioInvoiceLineItem] = Field(
         description=(
-            "List of line items for the invoice. Each entry has description, quantity, and rate."
+            "List of line items for the invoice. Each entry has description, quantity, and amount."
         ),
     )
-    invoice_number: str = Field(
+    reference_number: str = Field(
         default="",
-        description="Optional vendor-side invoice number to print on the document.",
-    )
-    due_date: str = Field(
-        default="",
-        description="Optional due date in ISO YYYY-MM-DD format.",
+        description=(
+            "Optional vendor-side reference number to print on the invoice."
+            " The SPA defaults this to '<workOrderNumber>-<sequence>'; leave"
+            " empty to let AppFolio generate one."
+        ),
     )
     media_refs: list[str] = Field(
         default_factory=list,
@@ -213,6 +209,10 @@ class AppFolioUploadInvoicePdfParams(BaseModel):
             " an original_url or a media handle. AppFolio uploads them as"
             " a single invoice document."
         ),
+    )
+    reference_number: str = Field(
+        default="",
+        description="Optional vendor-side reference number printed on the invoice.",
     )
 
 

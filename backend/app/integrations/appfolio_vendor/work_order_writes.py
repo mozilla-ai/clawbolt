@@ -45,24 +45,17 @@ def build_work_order_write_tools(service: AppFolioVendorService) -> list[Tool]:
 
     async def appfolio_schedule_work_order(
         work_order_id: str,
-        scheduled_at: str,
-        duration_minutes: int = 0,
-        notes: str = "",
+        time_slot_id: str,
     ) -> ToolResult:
         try:
-            await service.schedule_work_order(
-                work_order_id,
-                scheduled_at=scheduled_at,
-                duration_minutes=duration_minutes or None,
-                notes=notes,
-            )
+            await service.schedule_work_order(work_order_id, time_slot_id=time_slot_id)
         except Exception as exc:
             return service_error_to_tool_result("scheduling work order", exc)
         return ToolResult(
-            content=f"Scheduled work order {work_order_id} for {scheduled_at}.",
+            content=f"Scheduled work order {work_order_id} (slot {time_slot_id}).",
             receipt=ToolReceipt(
                 action="Scheduled AppFolio work order",
-                target=f"#{work_order_id} at {scheduled_at}",
+                target=f"#{work_order_id} slot {time_slot_id}",
             ),
         )
 
@@ -127,7 +120,7 @@ def build_work_order_write_tools(service: AppFolioVendorService) -> list[Tool]:
                 default_level=PermissionLevel.ASK,
                 description_builder=lambda args: (
                     f"Schedule AppFolio work order #{args.get('work_order_id', '?')}"
-                    f" for {args.get('scheduled_at', '?')}"
+                    f" (slot {args.get('time_slot_id', '?')})"
                 ),
             ),
         ),
