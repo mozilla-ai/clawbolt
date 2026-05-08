@@ -161,6 +161,38 @@ async def test_add_message_async_inserts_and_assigns_seq(
     assert session.messages[-1].body == "hello"
 
 
+async def test_add_message_async_round_trips_thinking_text(
+    async_db: async_sessionmaker,
+) -> None:
+    """Outbound messages persist and re-read the LLM's extended-thinking text.
+
+    Guards three things at once: the new ``thinking_text`` column is
+    written by ``add_message_async``, the ``EncryptedString`` decorator
+    round-trips the value (a non-envelope value would raise on read), and
+    the in-memory ``StoredMessage`` carries the same field so callers do
+    not have to re-fetch.
+    """
+    user_id = await _create_user(async_db)
+    store = SessionStore(user_id)
+    session, _ = await store.get_or_create_session_async()
+
+    saved = await store.add_message_async(
+        session,
+        direction="outbound",
+        body="here is the answer",
+        thinking_text="step 1: parse the ask\nstep 2: pick the tool\nstep 3: phrase the reply",
+    )
+    assert saved.thinking_text == (
+        "step 1: parse the ask\nstep 2: pick the tool\nstep 3: phrase the reply"
+    )
+
+    reloaded = await store.load_session_async(session.session_id)
+    assert reloaded is not None
+    assert reloaded.messages[-1].thinking_text == (
+        "step 1: parse the ask\nstep 2: pick the tool\nstep 3: phrase the reply"
+    )
+
+
 async def test_add_message_by_session_id_async_assigns_seq_independently(
     async_db: async_sessionmaker,
 ) -> None:

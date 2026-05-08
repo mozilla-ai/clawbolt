@@ -1,14 +1,26 @@
 """Tests for shared LLM response parsing utilities."""
 
 import json
+from typing import Any
 
-from any_llm.types.messages import MessageResponse, MessageUsage, TextBlock, ToolUseBlock
+from any_llm.types.messages import (
+    MessageResponse,
+    MessageUsage,
+    TextBlock,
+    ThinkingBlock,
+    ToolUseBlock,
+)
 
-from backend.app.agent.llm_parsing import ParsedToolCall, get_response_text, parse_tool_calls
+from backend.app.agent.llm_parsing import (
+    ParsedToolCall,
+    get_response_text,
+    get_response_thinking,
+    parse_tool_calls,
+)
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
-def _make_response(blocks: list[TextBlock | ToolUseBlock]) -> MessageResponse:
+def _make_response(blocks: list[Any]) -> MessageResponse:
     """Helper to build a MessageResponse from content blocks.
 
     Uses ``model_construct`` to bypass pydantic validation so tests can
@@ -117,3 +129,51 @@ class TestGetResponseText:
         """Should return empty string when content list is empty."""
         resp = _make_response([])
         assert get_response_text(resp) == ""
+
+
+class TestGetResponseThinking:
+    def test_returns_thinking_block_text(self) -> None:
+        """A single thinking block should be returned verbatim."""
+        resp = _make_response(
+            [
+                ThinkingBlock(
+                    type="thinking",
+                    thinking="The user wants to know about X. I should look up Y.",
+                    signature="sig",
+                ),
+                TextBlock(type="text", text="Here is what I found."),
+            ]
+        )
+        assert get_response_thinking(resp) == "The user wants to know about X. I should look up Y."
+
+    def test_concatenates_multiple_thinking_blocks_with_blank_line(self) -> None:
+        """Multiple thinking blocks join with a blank line for readability."""
+        resp = _make_response(
+            [
+                ThinkingBlock(type="thinking", thinking="First thought.", signature=""),
+                TextBlock(type="text", text="reply"),
+                ThinkingBlock(type="thinking", thinking="Second thought.", signature=""),
+            ]
+        )
+        assert get_response_thinking(resp) == "First thought.\n\nSecond thought."
+
+    def test_returns_empty_when_no_thinking_blocks(self) -> None:
+        """A response with text and tool blocks but no thinking returns empty."""
+        resp = make_text_response("plain reply")
+        assert get_response_thinking(resp) == ""
+
+    def test_skips_empty_thinking_blocks(self) -> None:
+        """An empty thinking string should not produce a stray separator."""
+        resp = _make_response(
+            [
+                ThinkingBlock(type="thinking", thinking="", signature=""),
+                ThinkingBlock(type="thinking", thinking="real thought", signature=""),
+                ThinkingBlock(type="thinking", thinking="", signature=""),
+            ]
+        )
+        assert get_response_thinking(resp) == "real thought"
+
+    def test_returns_empty_for_empty_content(self) -> None:
+        """Empty content list returns empty thinking."""
+        resp = _make_response([])
+        assert get_response_thinking(resp) == ""

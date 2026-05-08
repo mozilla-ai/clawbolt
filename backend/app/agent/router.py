@@ -447,6 +447,7 @@ async def persist_outbound(
         direction=MessageDirection.OUTBOUND,
         body=body,
         tool_interactions_json=tool_interactions,
+        thinking_text=response.thinking_text,
     )
 
 

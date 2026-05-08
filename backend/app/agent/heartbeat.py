@@ -1043,6 +1043,7 @@ async def run_heartbeat_for_user(
             direction=MessageDirection.OUTBOUND,
             body=reply_text,
             tool_interactions_json=tool_interactions,
+            thinking_text=response.thinking_text if response else "",
         )
 
         # Record heartbeat log for persistent rate limiting

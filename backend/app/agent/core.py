@@ -35,7 +35,12 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from backend.app.agent.llm_parsing import ParsedToolCall, get_response_text, parse_tool_calls
+from backend.app.agent.llm_parsing import (
+    ParsedToolCall,
+    get_response_text,
+    get_response_thinking,
+    parse_tool_calls,
+)
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -181,6 +186,13 @@ class AgentResponse:
     # ``dispatch_reply_step`` so ``persist_outbound`` can store the user-facing
     # text instead of just ``reply_text`` (the LLM's prose, pre-receipts).
     dispatched_body: str = ""
+    # Concatenated extended-thinking text from the FINAL LLM response in the
+    # agent loop, captured from any ``ThinkingBlock`` content. Empty when the
+    # provider did not return thinking blocks (thinking disabled, or
+    # provider does not support extended thinking). ``persist_outbound``
+    # writes it onto the assistant message so admins can audit "why did
+    # the agent reply this way" without re-querying the LLM.
+    thinking_text: str = ""
 
 
 class ClawboltAgent:
@@ -1058,6 +1070,7 @@ class ClawboltAgent:
         memories_saved: list[dict[str, str]] = []
         tool_call_records: list[StoredToolInteraction] = []
         reply_text = ""
+        thinking_text = ""
         _total_input_tokens = 0
         _total_output_tokens = 0
         _total_cache_creation_tokens = 0
@@ -1141,12 +1154,26 @@ class ClawboltAgent:
                     total_cache_creation_input_tokens=_total_cache_creation_tokens,
                     total_cache_read_input_tokens=_total_cache_read_tokens,
                     system_prompt=system_prompt,
+                    # Surface any reasoning that preceded the error stop so
+                    # downstream observers (and a future persistence policy
+                    # that records error fallbacks) can see what the model
+                    # was working through before it bailed. Today
+                    # ``persist_outbound`` short-circuits on
+                    # ``is_error_fallback``, so this rides along the in-memory
+                    # response only.
+                    thinking_text=get_response_thinking(response),
                 )
 
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)
             if not parsed_raw:
                 reply_text = get_response_text(response)
+                # Capture thinking from the final response only. Earlier
+                # rounds produced tool calls and their thinking justifies
+                # a tool decision rather than the user-visible reply, so
+                # we keep the persisted record aligned with the message
+                # body the user actually saw.
+                thinking_text = get_response_thinking(response)
 
                 # Empty reply after tools is intentional silent action; do not re-prompt.
                 if not reply_text and actions_taken:
@@ -1239,6 +1266,7 @@ class ClawboltAgent:
         else:
             # Max rounds reached -- use last response content
             reply_text = get_response_text(response)
+            thinking_text = get_response_thinking(response)
             logger.debug("Max tool rounds (%d) reached, using last response", MAX_TOOL_ROUNDS)
 
         # Collect any messages dropped by reactive trimming (ContextLengthExceededError)
@@ -1290,6 +1318,7 @@ class ClawboltAgent:
             total_cache_creation_input_tokens=_total_cache_creation_tokens,
             total_cache_read_input_tokens=_total_cache_read_tokens,
             system_prompt=system_prompt,
+            thinking_text=thinking_text,
         )
 
     def _find_tool(self, name: str) -> Callable[..., Any] | None:
