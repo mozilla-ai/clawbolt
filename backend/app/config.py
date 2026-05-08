@@ -177,6 +177,15 @@ class Settings(BaseSettings):
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
 
+    # Gmail: per-user Gmail API access via OAuth. The deployment supplies the
+    # OAuth client credentials; each user grants the ``gmail.readonly`` and
+    # ``gmail.send`` scopes through
+    # ``manage_integration(action='connect', target='gmail')``. Read access
+    # lets the agent search and fetch the user's own messages; send access
+    # lets it compose new messages or thread replies on the user's behalf.
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+
     # CompanyCam OAuth 2.0
     companycam_client_id: str = ""
     companycam_client_secret: str = ""

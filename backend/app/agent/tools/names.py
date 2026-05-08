@@ -36,6 +36,12 @@ class ToolName:
     QB_UPDATE = "qb_update"
     QB_SEND = "qb_send"
 
+    # Gmail
+    GMAIL_SEARCH = "gmail_search"
+    GMAIL_GET_MESSAGE = "gmail_get_message"
+    GMAIL_LIST_RECENT = "gmail_list_recent"
+    GMAIL_SEND = "gmail_send"
+
     # Calendar
     CALENDAR_LIST_CALENDARS = "calendar_list_calendars"
     CALENDAR_LIST_EVENTS = "calendar_list_events"
