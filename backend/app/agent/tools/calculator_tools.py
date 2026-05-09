@@ -154,6 +154,8 @@ def _register() -> None:
         _calculator_factory,
         core=True,
         summary="Evaluate mathematical expressions",
+        dashboard_description="Evaluate mathematical expressions",
+        dashboard_always_enabled=True,
         sub_tools=[
             SubToolInfo(ToolName.CALCULATE, "Evaluate a math expression"),
         ],

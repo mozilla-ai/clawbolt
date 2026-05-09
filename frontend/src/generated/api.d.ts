@@ -780,8 +780,9 @@ export interface paths {
          * Update Tool Config
          * @description Update tool configuration for the user.
          *
-         *     Only domain-specific tools can be toggled. Attempts to disable
-         *     core tools are silently ignored.
+         *     Only factories that are not ``dashboard_always_enabled`` can be
+         *     toggled at the factory level. Attempts to disable always-enabled
+         *     tools are silently ignored.
          *
          *     Each entry may include ``disabled_sub_tools`` to control individual
          *     tools within a factory group.

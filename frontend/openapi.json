@@ -1202,7 +1202,7 @@
       },
       "put": {
         "summary": "Update Tool Config",
-        "description": "Update tool configuration for the user.\n\nOnly domain-specific tools can be toggled. Attempts to disable\ncore tools are silently ignored.\n\nEach entry may include ``disabled_sub_tools`` to control individual\ntools within a factory group.",
+        "description": "Update tool configuration for the user.\n\nOnly factories that are not ``dashboard_always_enabled`` can be\ntoggled at the factory level. Attempts to disable always-enabled\ntools are silently ignored.\n\nEach entry may include ``disabled_sub_tools`` to control individual\ntools within a factory group.",
         "operationId": "update_tool_config_api_user_tools_put",
         "requestBody": {
           "content": {

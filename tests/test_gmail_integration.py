@@ -714,16 +714,29 @@ async def test_gmail_auth_check_returns_none_when_user_connected() -> None:
 
 
 def test_manage_integration_includes_gmail_in_display_names() -> None:
-    from backend.app.agent.tools.integration_tools import _DISPLAY_NAMES, _TOOL_OAUTH_MAP
+    """The Gmail factory must declare its display name on the registry.
 
-    assert _DISPLAY_NAMES.get("gmail") == "Gmail"
-    assert _TOOL_OAUTH_MAP.get("gmail") == "gmail"
+    After #1260, integration_tools no longer keeps a hand-maintained name
+    dict; display metadata lives on each ToolFactory. The Gmail factory
+    name and OAuth name are both ``gmail``, so no oauth_name override is
+    needed.
+    """
+    from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
+
+    ensure_tool_modules_imported()
+
+    factory = default_registry.get_factory("gmail")
+    assert factory is not None
+    assert factory.display_name == "Gmail"
 
 
 def test_manage_integration_hint_mentions_gmail() -> None:
     """The system-prompt hint built from the integration registries should list Gmail."""
     from backend.app.agent.tools.integration_tools import _build_available_integrations_hint
+    from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
 
-    hint = _build_available_integrations_hint()
+    ensure_tool_modules_imported()
+
+    hint = _build_available_integrations_hint(default_registry)
     assert "Gmail" in hint
     assert "'gmail'" in hint

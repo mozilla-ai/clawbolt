@@ -23,31 +23,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Human-readable display names for tool groups.
-_DISPLAY_NAMES: dict[str, str] = {
-    "workspace": "Workspace",
-    "profile": "Profile",
-    "memory": "Memory",
-    "messaging": "Messaging",
-    "file": "Google Drive",
-    "heartbeat": "Heartbeat",
-    "quickbooks": "QuickBooks Online",
-    "calendar": "Google Calendar",
-    "gmail": "Gmail",
-    "companycam": "CompanyCam",
-    "supplier_pricing": "Home Depot pricing",
-    "appfolio_vendor": "AppFolio Vendor Portal",
-}
-
-# Map tool group names to their OAuth integration names.
-_TOOL_OAUTH_MAP: dict[str, str] = {
-    "calendar": "google_calendar",
-    "quickbooks": "quickbooks",
-    "companycam": "companycam",
-    "file": "google_drive",
-    "gmail": "gmail",
-}
-
 # Tool groups that use magic-link / paste-token auth instead of OAuth. These
 # do not show up in ``list_oauth_integrations()`` but should still be
 # manageable through ``manage_integration`` so the agent has a single
@@ -66,62 +41,21 @@ _HIDDEN_CORE_FACTORIES: dict[str, str] = {
 }
 
 
-_warned_missing_display_names: set[str] = set()
+def _display_name_for_oauth(registry: ToolRegistry, oauth_name: str) -> str:
+    """Look up the human-readable label for an OAuth integration via the registry.
 
-
-def _resolve_oauth_display_name(oauth_name: str, oauth_to_tool: dict[str, str]) -> str:
-    """Look up the human-readable label for an OAuth integration.
-
-    Falls back to the raw oauth name if the tool group mapping or
-    ``_DISPLAY_NAMES`` entry is missing, and logs a one-time warning so the
-    gap surfaces in dev logs instead of in the LLM's mouth.
+    Falls back to the raw oauth name when no factory has registered a
+    matching ``oauth_name`` (or the matching factory left ``display_name``
+    blank), so a freshly added OAuth tuple entry still renders something
+    readable while its factory is being wired up.
     """
-    tool_group = oauth_to_tool.get(oauth_name)
-    if tool_group is None:
-        if oauth_name not in _warned_missing_display_names:
-            logger.warning(
-                "OAuth integration %r has no entry in _TOOL_OAUTH_MAP; "
-                "usage_hint will fall back to the raw name. Add it to "
-                "_TOOL_OAUTH_MAP and _DISPLAY_NAMES in integration_tools.py.",
-                oauth_name,
-            )
-            _warned_missing_display_names.add(oauth_name)
+    factory_name = registry.find_factory_by_oauth_name(oauth_name)
+    if factory_name is None:
         return oauth_name
-    display = _DISPLAY_NAMES.get(tool_group)
-    if display is None:
-        if oauth_name not in _warned_missing_display_names:
-            logger.warning(
-                "Tool group %r (for oauth %r) has no entry in _DISPLAY_NAMES; "
-                "usage_hint will fall back to the raw name.",
-                tool_group,
-                oauth_name,
-            )
-            _warned_missing_display_names.add(oauth_name)
-        return tool_group
-    return display
+    return registry.get_display_name(factory_name)
 
 
-def _resolve_magic_link_display_name(target: str) -> str:
-    """Look up the human-readable label for a magic-link integration.
-
-    The magic-link target name is itself the tool group key in
-    ``_DISPLAY_NAMES`` (no oauth-name redirection). Fall back to the raw
-    target with a one-time warning if the entry is missing.
-    """
-    display = _DISPLAY_NAMES.get(target)
-    if display is None:
-        if target not in _warned_missing_display_names:
-            logger.warning(
-                "Magic-link integration %r has no entry in _DISPLAY_NAMES; "
-                "usage_hint will fall back to the raw name.",
-                target,
-            )
-            _warned_missing_display_names.add(target)
-        return target
-    return display
-
-
-def _build_available_integrations_hint() -> str:
+def _build_available_integrations_hint(registry: ToolRegistry) -> str:
     """Return a sentence enumerating the integrations this deployment supports.
 
     Built from ``list_oauth_integrations()`` plus ``_MAGIC_LINK_INTEGRATIONS``
@@ -137,12 +71,11 @@ def _build_available_integrations_hint() -> str:
     the model never claims a connectable capability that the status check
     would reject.
     """
-    oauth_to_tool = {oauth: tool for tool, oauth in _TOOL_OAUTH_MAP.items()}
     oauth_targets = sorted(list_oauth_integrations())
     magic_link_targets = sorted(_MAGIC_LINK_INTEGRATIONS)
 
-    display_names = [_resolve_oauth_display_name(name, oauth_to_tool) for name in oauth_targets]
-    display_names.extend(_resolve_magic_link_display_name(name) for name in magic_link_targets)
+    display_names = [_display_name_for_oauth(registry, name) for name in oauth_targets]
+    display_names.extend(registry.get_display_name(name) for name in magic_link_targets)
     display_names.sort()
 
     all_targets = sorted({*oauth_targets, *magic_link_targets})
@@ -184,7 +117,7 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
     ensure_tool_modules_imported()
 
     user_id = ctx.user.id
-    available_integrations_hint = _build_available_integrations_hint()
+    available_integrations_hint = _build_available_integrations_hint(default_registry)
 
     async def manage_integration(
         action: str,
@@ -205,9 +138,9 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
         if action == "disable":
             return await _handle_disable(user_id, target, default_registry)
         if action == "connect":
-            return await _handle_connect(user_id, target)
+            return await _handle_connect(user_id, target, default_registry)
         if action == "disconnect":
-            return await _handle_disconnect(user_id, target)
+            return await _handle_disconnect(user_id, target, default_registry)
 
         valid_actions = "status, enable, disable, connect, disconnect"
         return ToolResult(
@@ -261,11 +194,11 @@ async def _handle_status(
     for name in sorted(registry.factory_names):
         if name in _HIDDEN_CORE_FACTORIES:
             continue
-        factory = registry._factories.get(name)
+        factory = registry.get_factory(name)
         if factory is None:
             continue
 
-        display = _DISPLAY_NAMES.get(name, name)
+        display = registry.get_display_name(name)
 
         if factory.core:
             core_lines.append(f"- {name}: {display} (always enabled)")
@@ -273,8 +206,11 @@ async def _handle_status(
             enabled = name not in disabled_groups
             status_parts: list[str] = ["enabled" if enabled else "disabled"]
 
-            # Check OAuth connection status
-            oauth_name = _TOOL_OAUTH_MAP.get(name)
+            # Check OAuth connection status. Factories backed by OAuth
+            # declare ``oauth_name`` at registration time; an empty value
+            # means the factory is not OAuth-backed (e.g. magic-link or
+            # purely local tools).
+            oauth_name = factory.oauth_name
             if oauth_name:
                 config = get_oauth_config(oauth_name)
                 if config is not None and config.is_configured:
@@ -333,9 +269,9 @@ async def _handle_enable(
             error_kind=ToolErrorKind.NOT_FOUND,
         )
 
-    factory = registry._factories.get(target)
+    factory = registry.get_factory(target)
     if factory and factory.core:
-        display = _DISPLAY_NAMES.get(target, target)
+        display = registry.get_display_name(target)
         return ToolResult(
             content=f"{display} is a core tool and is always enabled.",
         )
@@ -345,7 +281,7 @@ async def _handle_enable(
     for hidden in _hidden_factories_paired_with(target):
         await store.set_enabled(hidden, enabled=True)
 
-    display = _DISPLAY_NAMES.get(target, target)
+    display = registry.get_display_name(target)
     logger.info("User %s enabled tool group '%s' via chat", user_id, target)
     return ToolResult(
         content=f"Enabled {display} tools. They will be available starting with your next message.",
@@ -372,9 +308,9 @@ async def _handle_disable(
             error_kind=ToolErrorKind.NOT_FOUND,
         )
 
-    factory = registry._factories.get(target)
+    factory = registry.get_factory(target)
     if factory and factory.core:
-        display = _DISPLAY_NAMES.get(target, target)
+        display = registry.get_display_name(target)
         return ToolResult(
             content=f"{display} is a core tool and cannot be disabled.",
             is_error=True,
@@ -386,14 +322,28 @@ async def _handle_disable(
     for hidden in _hidden_factories_paired_with(target):
         await store.set_enabled(hidden, enabled=False)
 
-    display = _DISPLAY_NAMES.get(target, target)
+    display = registry.get_display_name(target)
     logger.info("User %s disabled tool group '%s' via chat", user_id, target)
     return ToolResult(
         content=f"Disabled {display} tools. This takes effect starting with your next message.",
     )
 
 
-async def _handle_connect(user_id: str, target: str) -> ToolResult:
+def _resolve_oauth_name(target: str, registry: ToolRegistry) -> str:
+    """Resolve a connect/disconnect target to the underlying OAuth name.
+
+    The agent may pass either a factory name (``calendar``) or the OAuth
+    integration name itself (``google_calendar``). The first form goes
+    through the factory's registered ``oauth_name``; the second falls
+    through unchanged.
+    """
+    factory = registry.get_factory(target)
+    if factory is not None and factory.oauth_name:
+        return factory.oauth_name
+    return target
+
+
+async def _handle_connect(user_id: str, target: str, registry: ToolRegistry) -> ToolResult:
     """Generate an OAuth authorization URL for an integration."""
     # Hidden backing factories are never directly addressable by users; the
     # connect flow goes through the user-facing factory they back.
@@ -407,10 +357,9 @@ async def _handle_connect(user_id: str, target: str) -> ToolResult:
     # Magic-link integrations have their own connect flow (paste-a-token)
     # and don't fit the OAuth URL model.
     if target in _MAGIC_LINK_INTEGRATIONS:
-        return await _handle_magic_link_connect(user_id, target)
+        return await _handle_magic_link_connect(user_id, target, registry)
 
-    # Check if target is a tool group name that maps to an OAuth integration
-    oauth_name = _TOOL_OAUTH_MAP.get(target, target)
+    oauth_name = _resolve_oauth_name(target, registry)
 
     if oauth_name not in list_oauth_integrations():
         return ToolResult(
@@ -422,9 +371,10 @@ async def _handle_connect(user_id: str, target: str) -> ToolResult:
             error_kind=ToolErrorKind.VALIDATION,
         )
 
+    display = _display_name_for_oauth(registry, oauth_name)
+
     config = get_oauth_config(oauth_name)
     if config is None or not config.is_configured:
-        display = _DISPLAY_NAMES.get(target, target)
         return ToolResult(
             content=(
                 f"{display} is not configured. "
@@ -435,13 +385,11 @@ async def _handle_connect(user_id: str, target: str) -> ToolResult:
         )
 
     if await oauth_service.is_connected(user_id, oauth_name):
-        display = _DISPLAY_NAMES.get(target, target)
         return ToolResult(
             content=f"{display} is already connected. Use action='disconnect' first to reconnect.",
         )
 
     url = oauth_service.get_authorization_url(config, user_id, source="chat")
-    display = _DISPLAY_NAMES.get(target, target)
     logger.info("User %s requested OAuth connect link for '%s' via chat", user_id, oauth_name)
     return ToolResult(
         content=(
@@ -452,7 +400,7 @@ async def _handle_connect(user_id: str, target: str) -> ToolResult:
     )
 
 
-async def _handle_disconnect(user_id: str, target: str) -> ToolResult:
+async def _handle_disconnect(user_id: str, target: str, registry: ToolRegistry) -> ToolResult:
     """Remove OAuth tokens for an integration."""
     if target in _HIDDEN_CORE_FACTORIES:
         return ToolResult(
@@ -462,9 +410,9 @@ async def _handle_disconnect(user_id: str, target: str) -> ToolResult:
         )
 
     if target in _MAGIC_LINK_INTEGRATIONS:
-        return await _handle_magic_link_disconnect(user_id, target)
+        return await _handle_magic_link_disconnect(user_id, target, registry)
 
-    oauth_name = _TOOL_OAUTH_MAP.get(target, target)
+    oauth_name = _resolve_oauth_name(target, registry)
 
     if oauth_name not in list_oauth_integrations():
         return ToolResult(
@@ -476,8 +424,9 @@ async def _handle_disconnect(user_id: str, target: str) -> ToolResult:
             error_kind=ToolErrorKind.VALIDATION,
         )
 
+    display = _display_name_for_oauth(registry, oauth_name)
+
     if not await oauth_service.is_connected(user_id, oauth_name):
-        display = _DISPLAY_NAMES.get(target, target)
         return ToolResult(
             content=f"{display} is not currently connected.",
             is_error=True,
@@ -485,7 +434,6 @@ async def _handle_disconnect(user_id: str, target: str) -> ToolResult:
         )
 
     await oauth_service.delete_token(user_id, oauth_name)
-    display = _DISPLAY_NAMES.get(target, target)
     logger.info("User %s disconnected OAuth for '%s' via chat", user_id, oauth_name)
     return ToolResult(
         content=(
@@ -502,7 +450,9 @@ async def _is_magic_link_connected(target: str, user_id: str) -> bool:
     return False
 
 
-async def _handle_magic_link_connect(user_id: str, target: str) -> ToolResult:
+async def _handle_magic_link_connect(
+    user_id: str, target: str, registry: ToolRegistry
+) -> ToolResult:
     """Return paste-token instructions for a magic-link integration.
 
     These integrations cannot be connected with a single URL: the user
@@ -512,11 +462,11 @@ async def _handle_magic_link_connect(user_id: str, target: str) -> ToolResult:
     to finish the flow.
     """
     if target == "appfolio_vendor":
+        display = registry.get_display_name(target)
         if await appfolio_auth.is_connected(user_id):
             return ToolResult(
                 content=(
-                    "AppFolio Vendor Portal is already connected. "
-                    "Use action='disconnect' first to reconnect."
+                    f"{display} is already connected. Use action='disconnect' first to reconnect."
                 ),
             )
         logger.info(
@@ -526,7 +476,7 @@ async def _handle_magic_link_connect(user_id: str, target: str) -> ToolResult:
         )
         return ToolResult(
             content=(
-                "AppFolio Vendor Portal uses magic-link auth (no OAuth URL). "
+                f"{display} uses magic-link auth (no OAuth URL). "
                 "Walk the user through these steps: "
                 "(1) open vendor.appfolio.com on their phone or laptop, "
                 "(2) enter their email and request a sign-in link, "
@@ -542,12 +492,15 @@ async def _handle_magic_link_connect(user_id: str, target: str) -> ToolResult:
     )
 
 
-async def _handle_magic_link_disconnect(user_id: str, target: str) -> ToolResult:
+async def _handle_magic_link_disconnect(
+    user_id: str, target: str, registry: ToolRegistry
+) -> ToolResult:
     """Clear stored credentials for a magic-link integration."""
     if target == "appfolio_vendor":
+        display = registry.get_display_name(target)
         if not await appfolio_auth.is_connected(user_id):
             return ToolResult(
-                content="AppFolio Vendor Portal is not currently connected.",
+                content=f"{display} is not currently connected.",
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
@@ -559,7 +512,7 @@ async def _handle_magic_link_disconnect(user_id: str, target: str) -> ToolResult
         )
         return ToolResult(
             content=(
-                "Disconnected AppFolio Vendor Portal. "
+                f"Disconnected {display}. "
                 "The tools are still enabled but won't work until you reconnect."
             ),
         )
@@ -582,6 +535,8 @@ def _register() -> None:
         "integration",
         _integration_factory,
         core=True,
+        dashboard_description="Manage integrations, enable/disable tools, connect OAuth",
+        dashboard_always_enabled=True,
         sub_tools=[
             SubToolInfo(
                 ToolName.MANAGE_INTEGRATION,

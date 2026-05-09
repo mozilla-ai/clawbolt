@@ -96,6 +96,12 @@ def _register() -> None:
             "Manage job site documentation with CompanyCam: photos, projects, "
             "documents, comments, checklists, and tags"
         ),
+        display_name="CompanyCam",
+        dashboard_description=(
+            "Upload photos, search projects, and manage job documentation with CompanyCam"
+        ),
+        dashboard_group="Integrations",
+        dashboard_group_order=2,
         sub_tools=[
             SubToolInfo(
                 ToolName.COMPANYCAM_SEARCH_PROJECTS,

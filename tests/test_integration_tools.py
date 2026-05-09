@@ -6,7 +6,10 @@ import pytest
 
 from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import ToolResult
-from backend.app.agent.tools.integration_tools import create_integration_tools
+from backend.app.agent.tools.integration_tools import (
+    _HIDDEN_CORE_FACTORIES,
+    create_integration_tools,
+)
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import (
     ToolContext,
@@ -646,3 +649,136 @@ async def test_enable_appfolio_vendor_cascades_to_appfolio_auth(
     disabled = await store.get_disabled_tool_names()
     assert "appfolio_vendor" not in disabled
     assert "appfolio_auth" not in disabled
+
+
+# ---------------------------------------------------------------------------
+# Display metadata sourced from the registry (issue #1260)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_status_renders_registry_display_names_for_every_integration(
+    test_user: User,
+) -> None:
+    """``manage_integration status`` must render the registered display
+    name for every visible factory without ``integration_tools.py``
+    keeping a hand-maintained name dict.
+
+    Regression for #1260: display metadata used to live in a local
+    ``_DISPLAY_NAMES`` dict that had to be edited every time a new
+    integration shipped. Forgetting that step produced silent degradation
+    (raw factory keys leaked into the agent's mouth). Now the metadata
+    lives on each ``ToolFactory`` and integration_tools reads it through
+    the registry, so simply registering a new factory is enough.
+    """
+    # Patch oauth_service so the status flow doesn't try to hit the DB
+    # for every OAuth-backed factory; we only care about the display
+    # rendering here.
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.oauth_service",
+        ) as mock_oauth,
+        patch(
+            "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+            new=AsyncMock(return_value=False),
+        ),
+    ):
+        mock_oauth.is_connected = AsyncMock(return_value=False)
+        result = await _call(test_user, "status")
+
+    assert not result.is_error
+
+    # Every visible factory's registered display name must show up in the
+    # output. We assert this by walking the registry, not by listing
+    # integration names in the test, so adding a new integration with a
+    # display_name "just works" without updating this assertion.
+    for name in default_registry.factory_names:
+        if name in _HIDDEN_CORE_FACTORIES:
+            continue
+        factory = default_registry.get_factory(name)
+        assert factory is not None
+        # Skip factories that didn't declare a display_name; those still
+        # render with the raw factory name as fallback (preserving prior
+        # behavior for utility tools like ``calculator`` / ``media``).
+        if not factory.display_name:
+            continue
+        assert factory.display_name in result.content, (
+            f"factory {name!r} registered display_name "
+            f"{factory.display_name!r} but status output did not render it; "
+            f"output was:\n{result.content}"
+        )
+
+
+def test_user_facing_integrations_declare_display_names() -> None:
+    """Every user-facing OAuth or magic-link integration must declare a
+    ``display_name`` at registration so manage_integration never falls
+    back to the raw factory key in agent output.
+
+    This pins the contract from #1260: integration packages own their
+    display label, not ``integration_tools.py``. A new integration that
+    forgets to set ``display_name`` should fail this test rather than
+    silently leaking ``companycam`` / ``google_drive`` style raw keys
+    into chat.
+    """
+    from backend.app.agent.tools.integration_tools import _MAGIC_LINK_INTEGRATIONS
+    from backend.app.services.oauth import list_oauth_integrations
+
+    # Every OAuth integration must be reachable through some factory's
+    # registered ``oauth_name`` (or share its name with a factory) and
+    # that factory must declare a display_name.
+    for oauth_name in list_oauth_integrations():
+        factory_name = default_registry.find_factory_by_oauth_name(oauth_name)
+        assert factory_name is not None, (
+            f"OAuth integration {oauth_name!r} is registered in "
+            f"_OAUTH_INTEGRATIONS but no factory's oauth_name maps to it"
+        )
+        factory = default_registry.get_factory(factory_name)
+        assert factory is not None
+        assert factory.display_name, (
+            f"Factory {factory_name!r} (OAuth {oauth_name!r}) must declare "
+            f"a display_name in its registry.register() call"
+        )
+
+    # Magic-link integrations share the factory name with the target.
+    for target in _MAGIC_LINK_INTEGRATIONS:
+        factory = default_registry.get_factory(target)
+        assert factory is not None, (
+            f"Magic-link integration {target!r} must be registered as a factory"
+        )
+        assert factory.display_name, f"Magic-link factory {target!r} must declare a display_name"
+
+
+@pytest.mark.asyncio()
+async def test_connect_renders_registry_display_name(test_user: User) -> None:
+    """Connect output must use the factory's registered display_name.
+
+    Cross-check that the registry-sourced display label survives the
+    full ``_handle_connect`` path, not just status. Uses google_drive
+    because its OAuth name (``google_drive``) differs from its factory
+    name (``file``), exercising the oauth_name -> factory display_name
+    redirection.
+    """
+    mock_config = OAuthConfig(
+        integration="google_drive",
+        client_id="test-id",
+        client_secret="test-secret",
+        authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
+        token_url="https://oauth2.googleapis.com/token",
+        scopes=["https://www.googleapis.com/auth/drive.file"],
+    )
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.get_oauth_config",
+            return_value=mock_config,
+        ),
+        patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth,
+    ):
+        mock_oauth.is_connected = AsyncMock(return_value=False)
+        mock_oauth.get_authorization_url.return_value = "https://example.com/auth"
+
+        result = await _call(test_user, "connect", "google_drive")
+
+    assert not result.is_error
+    # The display name is registered on the ``file`` factory; without
+    # the registry plumbing this would fall back to ``google_drive``.
+    assert "Google Drive" in result.content

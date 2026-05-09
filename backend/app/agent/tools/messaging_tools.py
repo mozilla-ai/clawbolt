@@ -90,6 +90,9 @@ def _register() -> None:
         "messaging",
         _messaging_factory,
         requires_outbound=True,
+        display_name="Messaging",
+        dashboard_description="Send text and media replies to the user",
+        dashboard_always_enabled=True,
         sub_tools=[
             SubToolInfo(
                 ToolName.SEND_MEDIA_REPLY,
