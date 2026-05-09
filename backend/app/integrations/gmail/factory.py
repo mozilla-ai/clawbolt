@@ -447,6 +447,9 @@ def _register() -> None:
         core=False,
         summary=("Search, read, and send Gmail messages on the user's behalf"),
         display_name="Gmail",
+        dashboard_description="Search, read, and send Gmail messages on the user's behalf",
+        dashboard_group="Integrations",
+        dashboard_group_order=2,
         sub_tools=[
             SubToolInfo(
                 ToolName.GMAIL_SEARCH,

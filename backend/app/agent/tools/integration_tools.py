@@ -535,6 +535,8 @@ def _register() -> None:
         "integration",
         _integration_factory,
         core=True,
+        dashboard_description="Manage integrations, enable/disable tools, connect OAuth",
+        dashboard_always_enabled=True,
         sub_tools=[
             SubToolInfo(
                 ToolName.MANAGE_INTEGRATION,

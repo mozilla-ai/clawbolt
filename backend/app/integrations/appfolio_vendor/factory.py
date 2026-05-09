@@ -165,6 +165,9 @@ def _register() -> None:
             "and check payments"
         ),
         display_name="AppFolio Vendor Portal",
+        dashboard_description=("View work orders, payments, and profile in AppFolio Vendor Portal"),
+        dashboard_group="Integrations",
+        dashboard_group_order=2,
         sub_tools=[
             SubToolInfo(
                 ToolName.APPFOLIO_LIST_WORK_ORDERS,

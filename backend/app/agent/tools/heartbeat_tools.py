@@ -125,6 +125,8 @@ def _register() -> None:
         core=True,
         summary="View and edit heartbeat notes",
         display_name="Heartbeat",
+        dashboard_description="View and edit heartbeat notes",
+        dashboard_always_enabled=True,
         sub_tools=[
             SubToolInfo(ToolName.GET_HEARTBEAT, "Read heartbeat notes"),
             SubToolInfo(ToolName.UPDATE_HEARTBEAT, "Update heartbeat notes"),

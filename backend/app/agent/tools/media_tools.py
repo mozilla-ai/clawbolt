@@ -202,6 +202,8 @@ def _register() -> None:
         _media_factory,
         core=True,
         summary="Describe and discard staged photos (agent-native storage)",
+        dashboard_description="Describe and discard staged photos (agent-native storage)",
+        dashboard_always_enabled=True,
         sub_tools=[
             SubToolInfo(
                 ToolName.ANALYZE_PHOTO,

@@ -1054,6 +1054,9 @@ def _register() -> None:
         summary=("Read and manage Google Calendar events, check availability"),
         display_name="Google Calendar",
         oauth_name="google_calendar",
+        dashboard_description="Read and manage Google Calendar events",
+        dashboard_group="Integrations",
+        dashboard_group_order=2,
         sub_tools=[
             SubToolInfo(
                 ToolName.CALENDAR_LIST_CALENDARS,

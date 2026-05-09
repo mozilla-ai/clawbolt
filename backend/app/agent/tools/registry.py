@@ -103,6 +103,25 @@ class ToolFactory:
     # backs OAuth integration ``google_calendar``). Empty when the factory
     # is not OAuth-backed or when the names match.
     oauth_name: str = ""
+    # Settings-page description shown to the human user. Distinct from
+    # ``summary`` (which is LLM-facing prose for ``list_capabilities``):
+    # the dashboard description is written for the end user, e.g.
+    # "Upload photos, search projects, and manage job documentation with
+    # CompanyCam" whereas the summary is "Manage job site documentation
+    # with CompanyCam: photos, projects, documents, comments, ...".
+    dashboard_description: str = ""
+    # Settings-page UI grouping (e.g. "Integrations"). Empty for core
+    # tools that render in the always-enabled top section.
+    dashboard_group: str = ""
+    # Sort order within ``dashboard_group``. Lower numbers render first.
+    dashboard_group_order: int = 0
+    # When True, the Settings UI never lets the user disable this
+    # factory, even if its registry ``core`` flag is False. Decoupled
+    # from ``core`` because some factories are specialists at the LLM
+    # schema level (gated on auth_check, e.g. ``file`` for Google
+    # Drive) but should still appear as always-on in the Settings UI
+    # so the user does not see "Drive is disabled" while connecting it.
+    dashboard_always_enabled: bool = False
 
 
 class ListCapabilitiesParams(BaseModel):
@@ -263,6 +282,10 @@ class ToolRegistry:
         auth_check: Callable[[ToolContext], Awaitable[str | None]] | None = None,
         display_name: str = "",
         oauth_name: str = "",
+        dashboard_description: str = "",
+        dashboard_group: str = "",
+        dashboard_group_order: int = 0,
+        dashboard_always_enabled: bool = False,
     ) -> None:
         """Register a tool factory by name.
 
@@ -289,6 +312,16 @@ class ToolRegistry:
                 by an OAuth flow whose name differs from the factory name.
                 Empty when the factory is not OAuth-backed or when the names
                 match.
+            dashboard_description: User-facing description shown in the
+                Settings page. Distinct from ``summary``, which is LLM-facing.
+            dashboard_group: UI group label for the Settings page (e.g.
+                "Integrations"). Empty for tools that render in the
+                always-enabled core section.
+            dashboard_group_order: Sort order within ``dashboard_group``.
+            dashboard_always_enabled: When ``True``, the Settings UI never
+                offers to disable this factory. Decoupled from ``core``
+                because OAuth-gated specialists (e.g. ``file``/Google
+                Drive) should still appear as always-on in Settings.
         """
         if name in self._factories:
             logger.warning("Overwriting existing tool factory: %s", name)
@@ -302,6 +335,10 @@ class ToolRegistry:
             auth_check=auth_check,
             display_name=display_name,
             oauth_name=oauth_name,
+            dashboard_description=dashboard_description,
+            dashboard_group=dashboard_group,
+            dashboard_group_order=dashboard_group_order,
+            dashboard_always_enabled=dashboard_always_enabled,
         )
 
     async def create_tools(
