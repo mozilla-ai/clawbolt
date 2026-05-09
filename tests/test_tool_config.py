@@ -226,6 +226,73 @@ def test_put_tool_config_unknown_tool_ignored(client: TestClient) -> None:
     assert len(tools) > 0
 
 
+def test_visible_factories_declare_dashboard_description() -> None:
+    """Every dashboard-visible factory must declare ``dashboard_description``.
+
+    Regression for #1260 (dashboard half): dashboard metadata used to
+    live in a hand-maintained ``_FACTORY_META`` dict in user_tools.py
+    that had to be edited every time a new factory shipped. After moving
+    the metadata onto ``ToolFactory``, this test pins the contract:
+    a new factory that forgets to set ``dashboard_description`` will
+    show up as an empty-string row in Settings, and this test will
+    catch that at CI time rather than after deploy.
+
+    Hidden backing factories (``appfolio_auth``) are filtered out of the
+    dashboard and so are exempt.
+    """
+    from backend.app.agent.tools.integration_tools import _HIDDEN_CORE_FACTORIES
+
+    for name in default_registry.factory_names:
+        if name in _HIDDEN_CORE_FACTORIES:
+            continue
+        factory = default_registry.get_factory(name)
+        assert factory is not None
+        assert factory.dashboard_description, (
+            f"Factory {name!r} is dashboard-visible but did not declare "
+            "dashboard_description in its registry.register() call. Add "
+            "it (and dashboard_group / dashboard_group_order if it is a "
+            "specialist integration)."
+        )
+
+
+def test_specialist_dashboard_groups_are_consistent() -> None:
+    """Specialist integrations rendered in the Settings UI must declare
+    a non-empty ``dashboard_group`` and a positive ``dashboard_group_order``.
+
+    Cross-checks the contract that core (always-on) factories and
+    specialists are mutually exclusive in the Settings UI: core factories
+    have ``dashboard_always_enabled=True`` and no group; specialists are
+    grouped under e.g. "Integrations" with a sort order.
+    """
+    from backend.app.agent.tools.integration_tools import _HIDDEN_CORE_FACTORIES
+
+    for name in default_registry.factory_names:
+        if name in _HIDDEN_CORE_FACTORIES:
+            continue
+        factory = default_registry.get_factory(name)
+        assert factory is not None
+        if factory.dashboard_always_enabled:
+            assert factory.dashboard_group == "", (
+                f"Factory {name!r} is dashboard_always_enabled=True but "
+                f"declared dashboard_group={factory.dashboard_group!r}. "
+                "Always-on factories render in the core section, not a group."
+            )
+            assert factory.dashboard_group_order == 0, (
+                f"Factory {name!r} is dashboard_always_enabled=True but "
+                f"declared dashboard_group_order={factory.dashboard_group_order}. "
+                "Always-on factories should leave the order at 0."
+            )
+        else:
+            assert factory.dashboard_group, (
+                f"Factory {name!r} is a dashboard specialist but did not "
+                "declare dashboard_group. Set it (e.g. 'Integrations')."
+            )
+            assert factory.dashboard_group_order > 0, (
+                f"Factory {name!r} is a dashboard specialist but did not "
+                "declare a positive dashboard_group_order."
+            )
+
+
 # ---------------------------------------------------------------------------
 # Sub-tool tests: store layer
 # ---------------------------------------------------------------------------

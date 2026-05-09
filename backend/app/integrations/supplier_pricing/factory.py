@@ -194,6 +194,10 @@ def _register() -> None:
         _pricing_factory,
         core=False,
         summary="Search product prices at Home Depot",
+        display_name="Home Depot pricing",
+        dashboard_description="Search product prices at Home Depot",
+        dashboard_group="Integrations",
+        dashboard_group_order=3,
         sub_tools=[
             SubToolInfo(
                 ToolName.SUPPLIER_SEARCH_PRODUCTS,

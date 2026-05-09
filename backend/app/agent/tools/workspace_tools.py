@@ -659,6 +659,9 @@ def _register() -> None:
     default_registry.register(
         "workspace",
         _workspace_factory,
+        display_name="Workspace",
+        dashboard_description="Read, write, and edit markdown files in the workspace",
+        dashboard_always_enabled=True,
         sub_tools=[
             SubToolInfo(ToolName.READ_FILE, "Read markdown and JSON files from workspace"),
             SubToolInfo(ToolName.WRITE_FILE, "Write or overwrite markdown and JSON files"),

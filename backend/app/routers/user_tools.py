@@ -1,10 +1,9 @@
 """Endpoints for user tool configuration.
 
-Users can view and toggle domain-specific agent tools. Core tools
-(workspace, profile, memory, messaging) are always enabled.
+Users can view and toggle domain-specific agent tools. Factories that
+declare ``dashboard_always_enabled=True`` at registration cannot be
+toggled off from the Settings UI.
 """
-
-from typing import NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -29,73 +28,6 @@ router = APIRouter()
 # Ensure tool modules are loaded so the registry has all factories.
 ensure_tool_modules_imported()
 
-# Factories whose tools are always available and cannot be disabled.
-_CORE_FACTORIES: frozenset[str] = frozenset(
-    {
-        "calculator",
-        "workspace",
-        "profile",
-        "memory",
-        "messaging",
-        "file",
-        "media",
-        "heartbeat",
-        "integration",
-    }
-)
-
-# Consolidated metadata for each factory group: description, display group,
-# and sort order.  Adding a new tool only requires one entry here.
-
-
-class _FactoryMeta(NamedTuple):
-    description: str
-    domain_group: str = ""
-    domain_group_order: int = 0
-
-
-_FACTORY_META: dict[str, _FactoryMeta] = {
-    "calculator": _FactoryMeta("Evaluate mathematical expressions"),
-    "workspace": _FactoryMeta("Read, write, and edit markdown files in the workspace"),
-    "profile": _FactoryMeta("View and update user profile information"),
-    "memory": _FactoryMeta("Save, recall, and forget long-term facts"),
-    "messaging": _FactoryMeta("Send text and media replies to the user"),
-    "file": _FactoryMeta("Upload, retrieve, and organize files in the user's Google Drive"),
-    "media": _FactoryMeta("Describe and discard staged photos (agent-native storage)"),
-    "heartbeat": _FactoryMeta("View and edit heartbeat notes"),
-    "integration": _FactoryMeta("Manage integrations, enable/disable tools, connect OAuth"),
-    "quickbooks": _FactoryMeta(
-        "Query, create, and manage QuickBooks Online entities",
-        domain_group="Integrations",
-        domain_group_order=2,
-    ),
-    "calendar": _FactoryMeta(
-        "Read and manage Google Calendar events",
-        domain_group="Integrations",
-        domain_group_order=2,
-    ),
-    "gmail": _FactoryMeta(
-        "Search, read, and send Gmail messages on the user's behalf",
-        domain_group="Integrations",
-        domain_group_order=2,
-    ),
-    "companycam": _FactoryMeta(
-        "Upload photos, search projects, and manage job documentation with CompanyCam",
-        domain_group="Integrations",
-        domain_group_order=2,
-    ),
-    "supplier_pricing": _FactoryMeta(
-        "Search product prices at Home Depot",
-        domain_group="Integrations",
-        domain_group_order=3,
-    ),
-    "appfolio_vendor": _FactoryMeta(
-        "View work orders, payments, and profile in AppFolio Vendor Portal",
-        domain_group="Integrations",
-        domain_group_order=2,
-    ),
-}
-
 
 async def _build_tool_list(
     disabled_names: set[str],
@@ -104,9 +36,9 @@ async def _build_tool_list(
 ) -> list[ToolConfigEntry]:
     """Build the full tool config list from the registry.
 
-    Each registered factory becomes one entry. Factories in
-    ``_CORE_FACTORIES`` are always enabled; others respect the
-    user's disabled set.
+    Each registered factory becomes one entry. Factories that declare
+    ``dashboard_always_enabled=True`` are always enabled; others respect
+    the user's disabled set.
 
     When *disabled_sub_tools_map* is provided, it maps factory names to
     lists of disabled individual tool names within that factory.
@@ -126,9 +58,10 @@ async def _build_tool_list(
         # user-facing integration's plumbing, not a separate dashboard row.
         if name in _HIDDEN_CORE_FACTORIES:
             continue
-        is_core = name in _CORE_FACTORIES
-        meta = _FACTORY_META.get(name)
-
+        factory = default_registry.get_factory(name)
+        if factory is None:
+            continue
+        is_core = factory.dashboard_always_enabled
         enabled = True if is_core else name not in disabled_names
 
         # Build sub-tool entries from registry metadata
@@ -156,10 +89,10 @@ async def _build_tool_list(
         entries.append(
             ToolConfigEntry(
                 name=name,
-                description=meta.description if meta else "",
+                description=factory.dashboard_description,
                 category="core" if is_core else "domain",
-                domain_group=meta.domain_group if meta else "",
-                domain_group_order=meta.domain_group_order if meta else 0,
+                domain_group=factory.dashboard_group,
+                domain_group_order=factory.dashboard_group_order,
                 enabled=enabled,
                 sub_tools=sub_tool_entries,
                 disabled_sub_tools=list(disabled_subs),
@@ -186,7 +119,7 @@ async def _get_auth_status(user: UserData | None = None) -> dict[str, str]:
     ctx = ToolContext(user=orm_user)  # type: ignore[arg-type]
     status: dict[str, str] = {}
     for name in default_registry.specialist_factory_names:
-        factory = default_registry._factories.get(name)
+        factory = default_registry.get_factory(name)
         if factory and factory.auth_check:
             try:
                 reason = await factory.auth_check(ctx)
@@ -247,8 +180,9 @@ async def update_tool_config(
 ) -> ToolConfigResponse:
     """Update tool configuration for the user.
 
-    Only domain-specific tools can be toggled. Attempts to disable
-    core tools are silently ignored.
+    Only factories that are not ``dashboard_always_enabled`` can be
+    toggled at the factory level. Attempts to disable always-enabled
+    tools are silently ignored.
 
     Each entry may include ``disabled_sub_tools`` to control individual
     tools within a factory group.
@@ -264,14 +198,16 @@ async def update_tool_config(
         e.name: e.disabled_sub_tools for e in saved if e.disabled_sub_tools
     }
 
-    # Apply changes, ignoring core tools
+    # Apply changes, ignoring always-enabled tools
     valid_factories = set(default_registry.factory_names)
     for update_entry in body.tools:
         name = update_entry.name
         if name not in valid_factories:
             continue
-        if name in _CORE_FACTORIES:
-            # Core tools cannot be disabled at factory level
+        factory = default_registry.get_factory(name)
+        if factory is not None and factory.dashboard_always_enabled:
+            # Tools the dashboard renders as always-on cannot be disabled
+            # via this endpoint; silently ignore the toggle.
             pass
         elif update_entry.enabled:
             disabled_names.discard(name)

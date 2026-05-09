@@ -549,6 +549,13 @@ def _register() -> None:
         _file_factory,
         core=False,
         summary="Upload, retrieve, and organize files in the user's Google Drive",
+        display_name="Google Drive",
+        oauth_name="google_drive",
+        dashboard_description="Upload, retrieve, and organize files in the user's Google Drive",
+        # Specialist at the LLM-schema level (gated on Drive OAuth) but
+        # presented as always-on in Settings: the user connects rather
+        # than toggles, and a "disabled" state would be confusing.
+        dashboard_always_enabled=True,
         sub_tools=[
             SubToolInfo(
                 ToolName.UPLOAD_TO_STORAGE,

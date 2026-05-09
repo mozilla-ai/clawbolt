@@ -91,6 +91,37 @@ class ToolFactory:
     summary: str = ""
     sub_tools: list[SubToolInfo] = field(default_factory=list)
     auth_check: Callable[[ToolContext], Awaitable[str | None]] | None = None
+    # Human-readable label rendered by the manage_integration chat tool
+    # in status output and connect/disconnect prompts. Owned here so each
+    # integration package declares its own label at registration time;
+    # without it, integration_tools.py would have to keep a hand-maintained
+    # display-name dict and silently fall back to the raw factory name when
+    # a new integration ships without updating it (issue #1260).
+    display_name: str = ""
+    # OAuth integration name when this factory is backed by an OAuth flow
+    # whose name differs from the factory name (e.g. factory ``calendar``
+    # backs OAuth integration ``google_calendar``). Empty when the factory
+    # is not OAuth-backed or when the names match.
+    oauth_name: str = ""
+    # Settings-page description shown to the human user. Distinct from
+    # ``summary`` (which is LLM-facing prose for ``list_capabilities``):
+    # the dashboard description is written for the end user, e.g.
+    # "Upload photos, search projects, and manage job documentation with
+    # CompanyCam" whereas the summary is "Manage job site documentation
+    # with CompanyCam: photos, projects, documents, comments, ...".
+    dashboard_description: str = ""
+    # Settings-page UI grouping (e.g. "Integrations"). Empty for core
+    # tools that render in the always-enabled top section.
+    dashboard_group: str = ""
+    # Sort order within ``dashboard_group``. Lower numbers render first.
+    dashboard_group_order: int = 0
+    # When True, the Settings UI never lets the user disable this
+    # factory, even if its registry ``core`` flag is False. Decoupled
+    # from ``core`` because some factories are specialists at the LLM
+    # schema level (gated on auth_check, e.g. ``file`` for Google
+    # Drive) but should still appear as always-on in the Settings UI
+    # so the user does not see "Drive is disabled" while connecting it.
+    dashboard_always_enabled: bool = False
 
 
 class ListCapabilitiesParams(BaseModel):
@@ -249,6 +280,12 @@ class ToolRegistry:
         summary: str = "",
         sub_tools: list[SubToolInfo] | None = None,
         auth_check: Callable[[ToolContext], Awaitable[str | None]] | None = None,
+        display_name: str = "",
+        oauth_name: str = "",
+        dashboard_description: str = "",
+        dashboard_group: str = "",
+        dashboard_group_order: int = 0,
+        dashboard_always_enabled: bool = False,
     ) -> None:
         """Register a tool factory by name.
 
@@ -268,6 +305,23 @@ class ToolRegistry:
                 ready, or a human-readable reason string when auth is
                 missing. Used to surface unauthenticated integrations to
                 the LLM so it knows not to attempt activation.
+            display_name: Human-readable label shown by the manage_integration
+                chat tool. Defaults to the factory name when empty.
+            oauth_name: OAuth integration name (as registered in
+                ``backend.app.services.oauth``) when this factory is backed
+                by an OAuth flow whose name differs from the factory name.
+                Empty when the factory is not OAuth-backed or when the names
+                match.
+            dashboard_description: User-facing description shown in the
+                Settings page. Distinct from ``summary``, which is LLM-facing.
+            dashboard_group: UI group label for the Settings page (e.g.
+                "Integrations"). Empty for tools that render in the
+                always-enabled core section.
+            dashboard_group_order: Sort order within ``dashboard_group``.
+            dashboard_always_enabled: When ``True``, the Settings UI never
+                offers to disable this factory. Decoupled from ``core``
+                because OAuth-gated specialists (e.g. ``file``/Google
+                Drive) should still appear as always-on in Settings.
         """
         if name in self._factories:
             logger.warning("Overwriting existing tool factory: %s", name)
@@ -279,6 +333,12 @@ class ToolRegistry:
             summary=summary,
             sub_tools=sub_tools or [],
             auth_check=auth_check,
+            display_name=display_name,
+            oauth_name=oauth_name,
+            dashboard_description=dashboard_description,
+            dashboard_group=dashboard_group,
+            dashboard_group_order=dashboard_group_order,
+            dashboard_always_enabled=dashboard_always_enabled,
         )
 
     async def create_tools(
@@ -481,6 +541,32 @@ class ToolRegistry:
         """Return sub-tool metadata for a factory, or empty list if unknown."""
         factory = self._factories.get(factory_name)
         return factory.sub_tools if factory else []
+
+    def get_factory(self, factory_name: str) -> ToolFactory | None:
+        """Return the factory record for *factory_name*, or ``None``."""
+        return self._factories.get(factory_name)
+
+    def get_display_name(self, factory_name: str) -> str:
+        """Return the registered human-readable label, or the raw name as fallback."""
+        factory = self._factories.get(factory_name)
+        if factory is None or not factory.display_name:
+            return factory_name
+        return factory.display_name
+
+    def find_factory_by_oauth_name(self, oauth_name: str) -> str | None:
+        """Return the factory name whose registered ``oauth_name`` matches.
+
+        Falls back to a factory whose own name matches *oauth_name* when no
+        factory declares it explicitly: for integrations whose factory name
+        and OAuth integration name are the same (e.g. ``quickbooks``,
+        ``gmail``), this lets ``oauth_name`` stay empty at registration.
+        """
+        for name, factory in self._factories.items():
+            if factory.oauth_name == oauth_name and factory.oauth_name:
+                return name
+        if oauth_name in self._factories:
+            return oauth_name
+        return None
 
     def get_disabled_specialist_sub_tools(
         self,
