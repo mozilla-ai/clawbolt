@@ -1270,6 +1270,197 @@ async def test_create_invoice_tool_rejects_malformed_line_item() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Address auto-fetch — invoice POSTs include the SPA-shaped address block
+# ---------------------------------------------------------------------------
+
+
+def test_address_from_work_order_prefers_structured_fields() -> None:
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _address_from_work_order,
+    )
+
+    wo = {
+        "id": 1,
+        "property_or_unit_name": "Test Building Unit 1",
+        "address_1": "123 Example Street",
+        "address_2": "Suite 200",
+        "city": "Anytown",
+        "state": "CA",
+        "zip_code": "99999",
+        # Should be ignored when structured fields are present.
+        "property_address": "ignored formatted string",
+    }
+    assert _address_from_work_order(wo) == {
+        "property_or_unit_name": "Test Building Unit 1",
+        "address_1": "123 Example Street",
+        "address_2": "Suite 200",
+        "city": "Anytown",
+        "state": "CA",
+        "zip_code": "99999",
+    }
+
+
+def test_address_from_work_order_accepts_camelcase_aliases() -> None:
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _address_from_work_order,
+    )
+
+    wo = {"address1": "123 Example Street", "postalCode": "99999"}
+    assert _address_from_work_order(wo) == {
+        "address_1": "123 Example Street",
+        "zip_code": "99999",
+    }
+
+
+def test_address_from_work_order_falls_back_to_formatted_string() -> None:
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _address_from_work_order,
+    )
+
+    wo = {"property_address": "123 Example Street, Anytown, CA 99999"}
+    assert _address_from_work_order(wo) == {
+        "address_1": "123 Example Street, Anytown, CA 99999",
+    }
+
+
+def test_address_from_work_order_returns_empty_when_no_address() -> None:
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _address_from_work_order,
+    )
+
+    assert _address_from_work_order({"id": 1, "status": "open"}) == {}
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_tool_includes_address_from_work_order() -> None:
+    """The tool fetches the WO and ships the SPA-shaped address block."""
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    get_wo = AsyncMock(
+        return_value={
+            "id": 42,
+            "address_1": "123 Example Street",
+            "city": "Anytown",
+            "state": "CA",
+            "zip_code": "99999",
+        }
+    )
+    create_invoice = AsyncMock(return_value={"id": "inv-1"})
+    service.get_work_order = get_wo  # type: ignore[method-assign]
+    service.create_invoice = create_invoice  # type: ignore[method-assign]
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+    result = await create.function(
+        customer_id="cust-1",
+        work_order_id="42",
+        line_items=[{"description": "Labor 4hr", "quantity": 4.0, "amount": 75.0}],
+    )
+    assert result.is_error is False
+    get_wo.assert_awaited_once_with("cust-1", "42")
+    create_invoice.assert_awaited_once()
+    assert create_invoice.call_args is not None
+    assert create_invoice.call_args.kwargs["address"] == {
+        "address_1": "123 Example Street",
+        "city": "Anytown",
+        "state": "CA",
+        "zip_code": "99999",
+    }
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_tool_skips_address_when_work_order_has_none() -> None:
+    """An empty address dict drops to ``None`` so the body omits the key."""
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    create_invoice = AsyncMock(return_value={"id": "inv-1"})
+    service.get_work_order = AsyncMock(return_value={"id": 42})  # type: ignore[method-assign]
+    service.create_invoice = create_invoice  # type: ignore[method-assign]
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+    await create.function(
+        customer_id="cust-1",
+        work_order_id="42",
+        line_items=[{"description": "Labor", "quantity": 1.0, "amount": 100.0}],
+    )
+    create_invoice.assert_awaited_once()
+    assert create_invoice.call_args is not None
+    assert create_invoice.call_args.kwargs["address"] is None
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_tool_surfaces_work_order_lookup_failure() -> None:
+    """A failed WO lookup short-circuits before the invoice POST."""
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    create_invoice = AsyncMock()
+    service.get_work_order = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AppFolioError("not found")
+    )
+    service.create_invoice = create_invoice  # type: ignore[method-assign]
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+    result = await create.function(
+        customer_id="cust-1",
+        work_order_id="42",
+        line_items=[{"description": "Labor", "quantity": 1.0, "amount": 100.0}],
+    )
+    assert result.is_error is True
+    create_invoice.assert_not_awaited()
+
+
+@pytest.mark.asyncio()
+async def test_upload_invoice_pdf_tool_includes_address_from_work_order() -> None:
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+    from backend.app.integrations.appfolio_vendor.service import FileUpload
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    upload_pdf = AsyncMock(return_value={"id": "inv-2"})
+    service.get_work_order = AsyncMock(  # type: ignore[method-assign]
+        return_value={"address_1": "123 Example Street"}
+    )
+    service.upload_invoice_pdf = upload_pdf  # type: ignore[method-assign]
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    staged = FileUpload(name="invoice.pdf", data=b"%PDF-fake")
+    with patch(
+        "backend.app.integrations.appfolio_vendor.invoices.resolve_staged_files",
+        new=AsyncMock(return_value=[staged]),
+    ):
+        tools = build_invoice_tools(service, ctx)
+        upload = next(t for t in tools if t.name == "appfolio_upload_invoice_pdf")
+        result = await upload.function(
+            customer_id="cust-1",
+            work_order_id="42",
+            media_refs=["media_abc"],
+        )
+    assert result.is_error is False
+    upload_pdf.assert_awaited_once()
+    assert upload_pdf.call_args is not None
+    assert upload_pdf.call_args.kwargs["address"] == {"address_1": "123 Example Street"}
+
+
+# ---------------------------------------------------------------------------
 # Logging diagnostics — failure paths surface enough info to debug
 # ---------------------------------------------------------------------------
 

@@ -50,6 +50,67 @@ def _line_items_to_payload(items: list[AppFolioInvoiceLineItem]) -> list[dict[st
     ]
 
 
+# Canonical SPA address keys (in print order) mapped to the field names we
+# look for on a work-order response. AppFolio's read endpoints have shipped
+# both snake_case and camelCase variants over time; we accept any of them.
+_WO_ADDRESS_FIELD_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("property_or_unit_name", ("property_or_unit_name", "unit_name", "property_name")),
+    ("address_1", ("address_1", "address1", "street_address", "street")),
+    ("address_2", ("address_2", "address2", "street_2")),
+    ("city", ("city",)),
+    ("state", ("state", "region")),
+    ("zip_code", ("zip_code", "zip", "postal_code", "postalCode")),
+)
+
+
+def _address_from_work_order(wo: dict[str, Any]) -> dict[str, Any]:
+    """Build the SPA-shaped invoice address block from a work-order dict.
+
+    AppFolio's ``POST /maintenance/api/invoices`` returns HTTP 500 with an
+    empty body when ``address`` is missing, even though the SPA payload
+    documents it as optional. We sidestep that by fetching the work order
+    and mapping its location fields into the SPA's expected shape.
+
+    Falls back to populating ``address_1`` with the formatted
+    ``property_address`` string if no structured fields are present, so a
+    minimally-shaped read response still produces a non-empty block.
+    """
+    address: dict[str, Any] = {}
+    for canonical, candidates in _WO_ADDRESS_FIELD_ALIASES:
+        for name in candidates:
+            value = wo.get(name)
+            if value:
+                address[canonical] = str(value)
+                break
+    if not address:
+        formatted = wo.get("property_address") or wo.get("address") or wo.get("propertyAddress")
+        if formatted:
+            address["address_1"] = str(formatted)
+    return address
+
+
+async def _fetch_invoice_address(
+    service: AppFolioVendorService, customer_id: str, work_order_id: str
+) -> dict[str, Any] | ToolResult:
+    """Fetch the work-order address block, or return a ToolResult on failure.
+
+    Errors here are surfaced to the agent rather than swallowed; the prior
+    behaviour was to POST without ``address`` and let AppFolio respond 500
+    with no body, which is impossible to act on from the chat surface.
+    """
+    try:
+        wo = await service.get_work_order(customer_id, work_order_id)
+    except Exception as exc:
+        return service_error_to_tool_result("fetching work order address for invoice", exc)
+    if not isinstance(wo, dict) or not wo:
+        return ToolResult(
+            content=f"Work order {work_order_id} not found.",
+            is_error=True,
+            error_kind=ToolErrorKind.NOT_FOUND,
+        )
+    return _address_from_work_order(wo)
+
+
 def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[Tool]:
     """Return the AppFolio invoice tools."""
 
@@ -83,11 +144,16 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         if isinstance(files_or_err, ToolResult):
             return files_or_err
         files = files_or_err
+        address_or_err = await _fetch_invoice_address(service, customer_id, work_order_id)
+        if isinstance(address_or_err, ToolResult):
+            return address_or_err
+        address = address_or_err
         try:
             result = await service.create_invoice(
                 customer_id=customer_id,
                 work_order_id=work_order_id,
                 line_items=_line_items_to_payload(typed_items),
+                address=address or None,
                 reference_number=reference_number,
                 files=files or None,
             )
@@ -133,11 +199,16 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
+        address_or_err = await _fetch_invoice_address(service, customer_id, work_order_id)
+        if isinstance(address_or_err, ToolResult):
+            return address_or_err
+        address = address_or_err
         try:
             result = await service.upload_invoice_pdf(
                 customer_id=customer_id,
                 work_order_id=work_order_id,
                 files=files,
+                address=address or None,
                 reference_number=reference_number,
             )
         except Exception as exc:
