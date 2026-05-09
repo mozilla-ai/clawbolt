@@ -90,6 +90,7 @@ def _register() -> None:
         "messaging",
         _messaging_factory,
         requires_outbound=True,
+        display_name="Messaging",
         sub_tools=[
             SubToolInfo(
                 ToolName.SEND_MEDIA_REPLY,

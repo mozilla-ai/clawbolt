@@ -549,6 +549,8 @@ def _register() -> None:
         _file_factory,
         core=False,
         summary="Upload, retrieve, and organize files in the user's Google Drive",
+        display_name="Google Drive",
+        oauth_name="google_drive",
         sub_tools=[
             SubToolInfo(
                 ToolName.UPLOAD_TO_STORAGE,

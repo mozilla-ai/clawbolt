@@ -1052,6 +1052,8 @@ def _register() -> None:
         _calendar_factory,
         core=False,
         summary=("Read and manage Google Calendar events, check availability"),
+        display_name="Google Calendar",
+        oauth_name="google_calendar",
         sub_tools=[
             SubToolInfo(
                 ToolName.CALENDAR_LIST_CALENDARS,

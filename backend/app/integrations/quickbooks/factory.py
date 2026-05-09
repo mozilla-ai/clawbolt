@@ -702,6 +702,7 @@ def _register() -> None:
             "Query, create, and manage QuickBooks Online entities: "
             "invoices, estimates, customers, and more"
         ),
+        display_name="QuickBooks Online",
         sub_tools=[
             SubToolInfo(
                 ToolName.QB_QUERY,

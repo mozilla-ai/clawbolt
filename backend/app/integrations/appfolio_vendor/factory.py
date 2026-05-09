@@ -164,6 +164,7 @@ def _register() -> None:
             "documents (W-9, COI, license), update estimates and profile, "
             "and check payments"
         ),
+        display_name="AppFolio Vendor Portal",
         sub_tools=[
             SubToolInfo(
                 ToolName.APPFOLIO_LIST_WORK_ORDERS,

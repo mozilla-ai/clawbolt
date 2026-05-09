@@ -446,6 +446,7 @@ def _register() -> None:
         _gmail_factory,
         core=False,
         summary=("Search, read, and send Gmail messages on the user's behalf"),
+        display_name="Gmail",
         sub_tools=[
             SubToolInfo(
                 ToolName.GMAIL_SEARCH,

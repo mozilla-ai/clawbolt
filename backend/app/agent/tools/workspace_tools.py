@@ -659,6 +659,7 @@ def _register() -> None:
     default_registry.register(
         "workspace",
         _workspace_factory,
+        display_name="Workspace",
         sub_tools=[
             SubToolInfo(ToolName.READ_FILE, "Read markdown and JSON files from workspace"),
             SubToolInfo(ToolName.WRITE_FILE, "Write or overwrite markdown and JSON files"),

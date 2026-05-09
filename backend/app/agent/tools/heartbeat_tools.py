@@ -124,6 +124,7 @@ def _register() -> None:
         _heartbeat_factory,
         core=True,
         summary="View and edit heartbeat notes",
+        display_name="Heartbeat",
         sub_tools=[
             SubToolInfo(ToolName.GET_HEARTBEAT, "Read heartbeat notes"),
             SubToolInfo(ToolName.UPDATE_HEARTBEAT, "Update heartbeat notes"),
