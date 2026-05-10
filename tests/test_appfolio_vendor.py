@@ -1418,8 +1418,8 @@ def test_address_from_work_order_handles_nested_camelcase_dict() -> None:
     }
 
 
-def test_address_from_work_order_unwraps_envelope() -> None:
-    """A WO wrapped in ``{"work_order": {...}}`` still extracts cleanly."""
+def test_address_from_work_order_unwraps_snake_case_envelope() -> None:
+    """A WO wrapped in ``{"work_order": {...}}`` (snake_case) extracts cleanly."""
     from backend.app.integrations.appfolio_vendor.invoices import (
         _address_from_work_order,
     )
@@ -1433,6 +1433,38 @@ def test_address_from_work_order_unwraps_envelope() -> None:
     assert _address_from_work_order(wo) == {
         "address_1": "123 Example Street",
         "city": "Anytown",
+    }
+
+
+def test_address_from_work_order_unwraps_camelcase_envelope() -> None:
+    """Regression: production WO GET returns ``{"workOrder": {...}}``.
+
+    The diagnostic warning from the previous deploy logged
+    ``top_keys=['workOrder']`` for jesse's failing invoice. Pin a
+    regression test to that exact envelope key so we don't lose it.
+    """
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _address_from_work_order,
+    )
+
+    wo = {
+        "workOrder": {
+            "id": 1,
+            "address": {
+                "propertyOrUnitName": "Test Building Unit 2L",
+                "address1": "123 Example Street",
+                "city": "Anytown",
+                "state": "CA",
+                "zipCode": "99999",
+            },
+        }
+    }
+    assert _address_from_work_order(wo) == {
+        "property_or_unit_name": "Test Building Unit 2L",
+        "address_1": "123 Example Street",
+        "city": "Anytown",
+        "state": "CA",
+        "zip_code": "99999",
     }
 
 
