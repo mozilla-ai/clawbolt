@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
-from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
+from backend.app.integrations.appfolio_vendor.errors import (
+    log_unexpected_response_shape,
+    service_error_to_tool_result,
+)
 from backend.app.integrations.appfolio_vendor.media_resolver import resolve_staged_files
 from backend.app.integrations.appfolio_vendor.params import (
     AppFolioAddNoteParams,
@@ -30,11 +33,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_KNOWN_NOTE_LIST_ENVELOPES = ("notes", "data", "results")
+
+
 def _normalize_notes(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [n for n in payload if isinstance(n, dict)]
     if isinstance(payload, dict):
-        for key in ("notes", "data", "results"):
+        for key in _KNOWN_NOTE_LIST_ENVELOPES:
             value = payload.get(key)
             if isinstance(value, list):
                 return [n for n in value if isinstance(n, dict)]
@@ -51,6 +57,15 @@ def build_note_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[T
             return service_error_to_tool_result("listing notes", exc)
         notes = _normalize_notes(payload)
         if not notes:
+            if isinstance(payload, dict) and payload:
+                log_unexpected_response_shape(
+                    f"appfolio_list_notes(work_order_id={work_order_id})",
+                    payload,
+                    expected=(
+                        "list of note dicts, or a dict with one of "
+                        f"{list(_KNOWN_NOTE_LIST_ENVELOPES)} containing the list"
+                    ),
+                )
             return ToolResult(content=f"No notes on work order {work_order_id}.")
         lines = [f"{len(notes)} note(s) on work order {work_order_id}:"]
         for n in notes[:30]:

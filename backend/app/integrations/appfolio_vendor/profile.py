@@ -13,7 +13,10 @@ from typing import Any
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
-from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
+from backend.app.integrations.appfolio_vendor.errors import (
+    log_unexpected_response_shape,
+    service_error_to_tool_result,
+)
 from backend.app.integrations.appfolio_vendor.params import AppFolioGetProfileParams
 from backend.app.integrations.appfolio_vendor.service import AppFolioVendorService
 
@@ -70,6 +73,34 @@ def build_profile_tools(service: AppFolioVendorService) -> list[Tool]:
                 content="AppFolio returned no profile.",
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        # If none of the recognized fields are populated (either at the
+        # top level or under a ``user``/``company`` block), the response
+        # shape has likely drifted; log so the next mismatch is
+        # debuggable rather than just rendering an empty profile card.
+        recognized_present = any(
+            (payload.get(k) or (isinstance(payload.get("user"), dict) and payload["user"].get(k)))
+            for k in (
+                "firstName",
+                "first_name",
+                "lastName",
+                "last_name",
+                "companyName",
+                "company_name",
+                "email",
+                "phoneNumber",
+                "phone_number",
+            )
+        ) or isinstance(payload.get("company"), dict)
+        if not recognized_present:
+            log_unexpected_response_shape(
+                "appfolio_get_profile",
+                payload,
+                expected=(
+                    "dict with at least one of firstName/lastName/email/"
+                    "phoneNumber/companyName at the top level or under a "
+                    "'user' / 'company' sub-object"
+                ),
             )
         return ToolResult(content=_fmt_profile(payload))
 

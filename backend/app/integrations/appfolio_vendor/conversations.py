@@ -15,7 +15,10 @@ from typing import Any
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
-from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
+from backend.app.integrations.appfolio_vendor.errors import (
+    log_unexpected_response_shape,
+    service_error_to_tool_result,
+)
 from backend.app.integrations.appfolio_vendor.params import AppFolioMessageTenantParams
 from backend.app.integrations.appfolio_vendor.service import AppFolioVendorService
 
@@ -52,14 +55,17 @@ def build_conversation_tools(service: AppFolioVendorService) -> list[Tool]:
 
         phone_number = _extract_proxy_number(proxy)
         if not phone_number:
-            # Surface the actual response shape so we can adjust
-            # ``_extract_proxy_number`` if AppFolio ever returns a key
-            # we don't currently recognize.
-            logger.warning(
-                "AppFolio proxy_number response had no usable phone field"
-                " | work_order_id=%s response=%r",
-                work_order_id,
+            # The "tenant opted out" path is a legitimate empty
+            # response, but it shares its shape with "AppFolio renamed
+            # the field again." Surface the actual response so we can
+            # adjust ``_extract_proxy_number`` if a new key shows up.
+            log_unexpected_response_shape(
+                f"appfolio_message_tenant proxy lookup (work_order_id={work_order_id})",
                 proxy,
+                expected=(
+                    "dict with one of phone_number / proxy_number / "
+                    "phoneNumber / proxyNumber set to a non-empty string"
+                ),
             )
             return ToolResult(
                 content=(
