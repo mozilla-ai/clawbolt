@@ -1,18 +1,20 @@
-"""Profile read and update tools for AppFolio Vendor Portal."""
+"""Profile read tool for AppFolio Vendor Portal.
+
+The profile-update tool was dropped: its body shape was inferred from
+a fragmentary SPA call site and never Playwright-verified, so we kept
+it from accidentally sending malformed PATCHes against a vendor's real
+account. Vendors update their profile in the AppFolio web UI.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
-from backend.app.integrations.appfolio_vendor.params import (
-    AppFolioGetProfileParams,
-    AppFolioUpdateProfileParams,
-)
+from backend.app.integrations.appfolio_vendor.params import AppFolioGetProfileParams
 from backend.app.integrations.appfolio_vendor.service import AppFolioVendorService
 
 logger = logging.getLogger(__name__)
@@ -71,45 +73,6 @@ def build_profile_tools(service: AppFolioVendorService) -> list[Tool]:
             )
         return ToolResult(content=_fmt_profile(payload))
 
-    async def appfolio_update_profile(
-        first_name: str = "",
-        last_name: str = "",
-        phone_number: str = "",
-        company_name: str = "",
-    ) -> ToolResult:
-        if not (first_name or last_name or phone_number or company_name):
-            return ToolResult(
-                content="At least one profile field must be provided.",
-                is_error=True,
-                error_kind=ToolErrorKind.VALIDATION,
-            )
-        try:
-            await service.update_profile(
-                first_name=first_name or None,
-                last_name=last_name or None,
-                phone_number=phone_number or None,
-                company_name=company_name or None,
-            )
-        except Exception as exc:
-            return service_error_to_tool_result("updating profile", exc)
-        changed = [
-            f
-            for f, v in [
-                ("first_name", first_name),
-                ("last_name", last_name),
-                ("phone_number", phone_number),
-                ("company_name", company_name),
-            ]
-            if v
-        ]
-        return ToolResult(
-            content=f"Updated AppFolio profile: {', '.join(changed)}.",
-            receipt=ToolReceipt(
-                action="Updated AppFolio profile",
-                target=", ".join(changed),
-            ),
-        )
-
     return [
         Tool(
             name=ToolName.APPFOLIO_GET_PROFILE,
@@ -121,25 +84,6 @@ def build_profile_tools(service: AppFolioVendorService) -> list[Tool]:
             usage_hint=(
                 "Use to confirm which AppFolio account is connected, or to"
                 " answer 'who am I logged in as'."
-            ),
-        ),
-        Tool(
-            name=ToolName.APPFOLIO_UPDATE_PROFILE,
-            description="Update fields on the AppFolio vendor profile: name, phone, company.",
-            function=appfolio_update_profile,
-            params_model=AppFolioUpdateProfileParams,
-            usage_hint=(
-                "Pass only the fields the user wants changed; empty strings"
-                " leave that field as-is. Confirm changes with the user first."
-            ),
-            approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ASK,
-                description_builder=lambda args: (
-                    "Update AppFolio profile: "
-                    + ", ".join(
-                        f"{k}={v!r}" for k, v in (args or {}).items() if isinstance(v, str) and v
-                    )
-                ),
             ),
         ),
     ]

@@ -26,13 +26,9 @@ logger = logging.getLogger(__name__)
 def build_work_order_write_tools(service: AppFolioVendorService) -> list[Tool]:
     """Return the work-order write Tool instances."""
 
-    async def appfolio_accept_work_order(work_order_id: str, notes: str = "") -> ToolResult:
-        # When the user supplies no notes, send no body at all rather than
-        # an empty dict; mirrors the SPA which only POSTs a body when the
-        # user filled in the optional notes field.
-        body = {"notes": notes} if notes else None
+    async def appfolio_accept_work_order(work_order_id: str) -> ToolResult:
         try:
-            await service.accept_work_order(work_order_id, body=body)
+            await service.accept_work_order(work_order_id)
         except Exception as exc:
             return service_error_to_tool_result("accepting work order", exc)
         return ToolResult(
@@ -97,8 +93,9 @@ def build_work_order_write_tools(service: AppFolioVendorService) -> list[Tool]:
             function=appfolio_accept_work_order,
             params_model=AppFolioAcceptWorkOrderParams,
             usage_hint=(
-                "Use when the user agrees to take a job. Optional notes are"
-                " visible to the property manager."
+                "Use when the user agrees to take a job. To send a note"
+                " alongside the acceptance, call appfolio_add_note in a"
+                " separate step."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
