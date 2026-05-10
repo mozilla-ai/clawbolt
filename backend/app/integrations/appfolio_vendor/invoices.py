@@ -42,15 +42,75 @@ def _line_items_total(items: list[AppFolioInvoiceLineItem]) -> float:
 
 
 def _line_items_to_payload(items: list[AppFolioInvoiceLineItem]) -> list[dict[str, Any]]:
-    """Match the SPA's invoice line-item shape exactly.
+    """Match the SPA's invoice line-item shape.
 
-    SPA sends ``{amount, description, quantity}`` with ``quantity`` as a
-    string. AppFolio's API rejects payloads with the older ``rate`` key.
+    AppFolio's API treats the wire ``amount`` as the **line total**, not
+    the unit price; ``quantity`` is informational on their side. A real
+    submission with ``{quantity: 5, amount: 55}`` posted a line total of
+    ``$55``, not the ``$275`` the user intended, while our tool happily
+    reported ``$275`` to the agent because ``_line_items_total`` did the
+    multiplication locally. To match the user's mental model (and the
+    SPA, which multiplies client-side before sending) we expose
+    ``amount`` as the per-unit price and multiply by quantity here so
+    the wire payload carries the line total AppFolio actually stores.
+
+    ``quantity`` stays on the wire as a string because the SPA capture
+    showed it that way, but it does not affect the stored amount.
     """
     return [
-        {"amount": i.amount, "description": i.description, "quantity": str(i.quantity)}
+        {
+            "amount": i.amount * i.quantity,
+            "description": i.description,
+            "quantity": str(i.quantity),
+        }
         for i in items
     ]
+
+
+def _format_invoice_approval_description(args: dict[str, Any]) -> str:
+    """Render a multi-line approval prompt that names every line item.
+
+    The default builder used to print only ``"Create invoice on AppFolio
+    work order #X (N line item(s))"``, which let an invoice slip
+    through with the wrong per-line math because the user could not see
+    quantity, unit price, or total before approving. Surfacing each
+    line as ``qty x $unit = $line_total`` (and the grand total) makes
+    the approval prompt the last place a billing mistake can be caught
+    before it hits AppFolio.
+
+    Falls back to the original short form if any line item is malformed
+    so the prompt never crashes; the agent's own typed validation will
+    reject the bad call after approval anyway.
+    """
+    wo_id = args.get("work_order_id", "?")
+    items = args.get("line_items") or []
+
+    parsed: list[tuple[str, float, float, float]] = []
+    grand_total = 0.0
+    for item in items:
+        if not isinstance(item, dict):
+            return f"Create invoice on AppFolio work order #{wo_id} ({len(items)} line item(s))"
+        try:
+            description = str(item.get("description") or "(no description)")
+            quantity = float(item.get("quantity", 1) or 1)
+            amount = float(item.get("amount", 0) or 0)
+        except (TypeError, ValueError):
+            return f"Create invoice on AppFolio work order #{wo_id} ({len(items)} line item(s))"
+        line_total = quantity * amount
+        grand_total += line_total
+        parsed.append((description, quantity, amount, line_total))
+
+    if not parsed:
+        return f"Create invoice on AppFolio work order #{wo_id} (no line items)"
+
+    header = f"Create invoice on AppFolio work order #{wo_id} for ${grand_total:.2f}"
+    lines = [header]
+    for idx, (description, quantity, amount, line_total) in enumerate(parsed, start=1):
+        short = description if len(description) <= 80 else description[:77] + "..."
+        # ``:g`` drops trailing ``.0`` so ``5.0`` reads as ``5`` while
+        # leaving genuine fractional quantities (e.g. ``1.5``) intact.
+        lines.append(f"  {idx}. {short} | qty {quantity:g} x ${amount:.2f} = ${line_total:.2f}")
+    return "\n".join(lines)
 
 
 # Canonical SPA address keys (in print order) mapped to the field names
@@ -347,11 +407,7 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
-                description_builder=lambda args: (
-                    f"Create invoice on AppFolio work order"
-                    f" #{args.get('work_order_id', '?')}"
-                    f" ({len(args.get('line_items') or [])} line item(s))"
-                ),
+                description_builder=_format_invoice_approval_description,
             ),
         ),
         Tool(

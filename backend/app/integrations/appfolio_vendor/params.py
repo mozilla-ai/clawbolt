@@ -163,7 +163,12 @@ class AppFolioInvoiceLineItem(BaseModel):
     description: str = Field(description="Line-item description (e.g. 'Labor: 4hr').")
     quantity: float = Field(default=1.0, description="Quantity (decimal supported).")
     amount: float = Field(
-        description="Per-unit amount in dollars (the SPA calls this 'amount', not 'rate').",
+        description=(
+            "Per-unit price in dollars. The line total (quantity x amount)"
+            " is what AppFolio actually stores, so a labor line of 5 hours"
+            " at $55/hr should be sent as quantity=5, amount=55, not"
+            " quantity=1, amount=275."
+        ),
     )
 
 

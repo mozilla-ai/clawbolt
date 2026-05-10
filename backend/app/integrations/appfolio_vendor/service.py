@@ -708,11 +708,15 @@ class AppFolioVendorService:
         city, state, zip_code}, reference_number}``
 
         ``line_items`` entries use ``amount`` (not ``rate``) and the SPA sends
-        ``quantity`` as a string. ``address`` is sourced from the work-order
-        location and is part of the SPA's payload; we pass it through so the
-        invoice prints the correct property block. ``reference_number`` is
-        the vendor-side invoice number (the SPA auto-suggests one based on
-        the WO).
+        ``quantity`` as a string. The wire ``amount`` is the **line total**
+        (unit price * quantity); AppFolio stores it as-is and does not
+        re-multiply by ``quantity``. The line-itemized tool wrapper does
+        the multiplication before calling this method, so callers passing
+        their own ``line_items`` dicts must do the same. ``address`` is
+        sourced from the work-order location and is part of the SPA's
+        payload; we pass it through so the invoice prints the correct
+        property block. ``reference_number`` is the vendor-side invoice
+        number (the SPA auto-suggests one based on the WO).
 
         ``customer_id`` is optional. Pass ``None`` to resolve the canonical
         property-manager ID from ``/profiles/me``; this is the safe default
