@@ -73,10 +73,13 @@ _WO_ADDRESS_FIELD_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 # Container fields that may hold a nested address dict instead of the
 # flat top-level fields. ``list_work_orders`` puts the address inside
-# ``wo["address"]`` (a dict). Some envelope shapes might also wrap the
-# whole work order at ``wo["work_order"]`` or ``wo["data"]``.
+# ``wo["address"]`` (a dict). Some envelope shapes also wrap the whole
+# work order; production traffic confirmed ``GET /work_order/{cust}/{id}.json``
+# returns ``{"workOrder": {...}}`` (camelCase singular), and the JSON:API
+# convention is ``{"data": {...}}``. The snake_case ``work_order`` form
+# is kept defensively in case AppFolio changes its mind again.
 _WO_ADDRESS_CONTAINERS: tuple[str, ...] = ("address", "location", "propertyAddress")
-_WO_TOP_CONTAINERS: tuple[str, ...] = ("work_order", "data")
+_WO_TOP_CONTAINERS: tuple[str, ...] = ("workOrder", "work_order", "data")
 
 
 def _address_from_work_order(wo: dict[str, Any]) -> dict[str, Any]:
