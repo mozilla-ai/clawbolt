@@ -1868,6 +1868,8 @@ async def test_admin_compact_visible_messages_no_visible_returns_zero(
     assert result.new_watermark == 5
     assert result.memory_updated is False
     assert result.event_id is None
+    # User has never been compacted, so the no-op carries no previous_event_id.
+    assert result.previous_event_id is None
 
     async with db_session_async() as db:
         events = (
@@ -1876,6 +1878,43 @@ async def test_admin_compact_visible_messages_no_visible_returns_zero(
             .all()
         )
         assert events == []
+
+
+@pytest.mark.asyncio()
+async def test_admin_compact_visible_messages_no_op_surfaces_previous_event_id(
+    test_user: User,
+) -> None:
+    """A no-op retry must surface the most recent prior CompactionEvent.id.
+
+    Regression for issue #1291: an admin firing compact-now twice in
+    quick succession used to see the second call return all-null fields,
+    which was indistinguishable from a fresh "nothing to do" call. The
+    second call now sets ``previous_event_id`` to the prior event's id
+    so admin tooling can tell apart "you already did this" from
+    "there was never anything to do".
+    """
+    await _seed_session_with_messages(test_user, message_count=5)
+
+    # First call: real work; produces a CompactionEvent row.
+    with patch(
+        "backend.app.agent.context.compact_session",
+        new=AsyncMock(return_value=("## Notes\n- compacted", 5)),
+    ):
+        first = await admin_compact_visible_messages(test_user.id)
+    assert first.event_id is not None
+    assert first.previous_event_id is None
+
+    # Second call: same conversation, watermark already advanced — no-op.
+    with patch(
+        "backend.app.agent.context.compact_session",
+        new=AsyncMock(return_value=("", None)),
+    ) as mock_compact:
+        second = await admin_compact_visible_messages(test_user.id)
+
+    mock_compact.assert_not_awaited()
+    assert second.compacted_message_count == 0
+    assert second.event_id is None
+    assert second.previous_event_id == first.event_id
 
 
 @pytest.mark.asyncio()

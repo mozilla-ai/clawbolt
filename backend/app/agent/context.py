@@ -411,12 +411,45 @@ async def get_or_create_conversation(user_id: str) -> tuple[SessionState, bool]:
 
 
 class AdminCompactionResult(BaseModel):
-    """Outcome of an admin-triggered context compaction."""
+    """Outcome of an admin-triggered context compaction.
+
+    ``event_id`` is the row this call wrote and is non-null only when this
+    call did real work. ``previous_event_id`` is populated only on no-op
+    returns and points at the most recent prior ``CompactionEvent`` for
+    the user (if any). The two together let an admin tell apart three
+    states that previously all rendered as the same all-null no-op:
+
+    * ``event_id != None``: this call did the work; ignore previous_event_id.
+    * ``event_id is None`` and ``previous_event_id != None``: this call
+      was a no-op because that prior event already advanced the
+      watermark. Common when the admin retries within seconds of a
+      successful first call.
+    * Both ``None``: the user has never been compacted; nothing to do.
+    """
 
     compacted_message_count: int
     new_watermark: int | None
     memory_updated: bool
     event_id: int | None
+    previous_event_id: int | None = None
+
+
+async def _most_recent_compaction_event_id(user_id: str) -> int | None:
+    """Return the most recent ``CompactionEvent.id`` for ``user_id``, or None.
+
+    Used by :func:`admin_compact_visible_messages` to disambiguate no-op
+    returns; see ``AdminCompactionResult`` for the call-site rationale.
+    Read-only, no side effects.
+    """
+    async with db_session_async() as db:
+        return (
+            await db.execute(
+                select(CompactionEvent.id)
+                .filter_by(user_id=user_id)
+                .order_by(CompactionEvent.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
 
 
 async def admin_compact_visible_messages(
@@ -475,6 +508,7 @@ async def admin_compact_visible_messages(
             new_watermark=state.last_trim_seq,
             memory_updated=False,
             event_id=None,
+            previous_event_id=await _most_recent_compaction_event_id(user_id),
         )
 
     agent_messages = _stored_messages_to_agent_messages(to_compact_stored)
@@ -489,6 +523,7 @@ async def admin_compact_visible_messages(
             new_watermark=max_seq,
             memory_updated=False,
             event_id=None,
+            previous_event_id=await _most_recent_compaction_event_id(user_id),
         )
 
     # Mirror ``_seqs_from_dropped``: only ``UserMessage`` /
@@ -502,6 +537,7 @@ async def admin_compact_visible_messages(
             new_watermark=state.last_trim_seq,
             memory_updated=False,
             event_id=None,
+            previous_event_id=await _most_recent_compaction_event_id(user_id),
         )
     min_seq = min(seqs)
     max_seq = max(seqs)
