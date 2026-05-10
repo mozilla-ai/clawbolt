@@ -26,7 +26,10 @@ from backend.app.integrations.appfolio_vendor.params import (
     AppFolioInvoiceLineItem,
     AppFolioUploadInvoicePdfParams,
 )
-from backend.app.integrations.appfolio_vendor.service import AppFolioVendorService
+from backend.app.integrations.appfolio_vendor.service import (
+    AppFolioVendorService,
+    AuthScopeError,
+)
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -91,15 +94,40 @@ def _address_from_work_order(wo: dict[str, Any]) -> dict[str, Any]:
 
 async def _fetch_invoice_address(
     service: AppFolioVendorService, customer_id: str, work_order_id: str
-) -> dict[str, Any] | ToolResult:
-    """Fetch the work-order address block, or return a ToolResult on failure.
+) -> tuple[str, dict[str, Any]] | ToolResult:
+    """Fetch the work-order address block plus the canonical customer_id.
 
-    Errors here are surfaced to the agent rather than swallowed; the prior
-    behaviour was to POST without ``address`` and let AppFolio respond 500
-    with no body, which is impossible to act on from the chat surface.
+    Returns ``(canonical_customer_id, address_dict)`` on success, or a
+    populated :class:`ToolResult` on failure.
+
+    AppFolio's invoice POST returns HTTP 500 with an empty body when
+    ``address`` is missing, even though the SPA payload documents it as
+    optional. We sidestep that by fetching the work order and mapping
+    its location fields into the SPA's expected shape.
+
+    The agent often arrives with the wrong ``customer_id`` because
+    ``appfolio_search_work_orders`` returns a different ``customer_id``
+    field than the write endpoints expect. ``GET /work_order/<cust>/<id>``
+    answers HTTP 401 with no ``login_url`` for that case (raised as
+    :class:`AuthScopeError`). We catch it, fall back to the canonical
+    primary customer_id from ``/profiles/me``, and retry once. The
+    canonical id is returned to the caller so the subsequent invoice
+    POST can use the same value.
     """
+    canonical_customer_id = customer_id
     try:
-        wo = await service.get_work_order(customer_id, work_order_id)
+        wo = await service.get_work_order(canonical_customer_id, work_order_id)
+    except AuthScopeError:
+        # Wrong customer_id in the path; resolve the canonical one and
+        # retry once. If resolution itself fails, surface that error.
+        try:
+            canonical_customer_id = await service._resolve_primary_customer_id()
+        except Exception as exc:
+            return service_error_to_tool_result("resolving the AppFolio customer for invoice", exc)
+        try:
+            wo = await service.get_work_order(canonical_customer_id, work_order_id)
+        except Exception as exc:
+            return service_error_to_tool_result("fetching work order address for invoice", exc)
     except Exception as exc:
         return service_error_to_tool_result("fetching work order address for invoice", exc)
     if not isinstance(wo, dict) or not wo:
@@ -108,7 +136,7 @@ async def _fetch_invoice_address(
             is_error=True,
             error_kind=ToolErrorKind.NOT_FOUND,
         )
-    return _address_from_work_order(wo)
+    return canonical_customer_id, _address_from_work_order(wo)
 
 
 def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[Tool]:
@@ -147,10 +175,10 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         address_or_err = await _fetch_invoice_address(service, customer_id, work_order_id)
         if isinstance(address_or_err, ToolResult):
             return address_or_err
-        address = address_or_err
+        canonical_customer_id, address = address_or_err
         try:
             result = await service.create_invoice(
-                customer_id=customer_id,
+                customer_id=canonical_customer_id,
                 work_order_id=work_order_id,
                 line_items=_line_items_to_payload(typed_items),
                 address=address or None,
@@ -202,10 +230,10 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         address_or_err = await _fetch_invoice_address(service, customer_id, work_order_id)
         if isinstance(address_or_err, ToolResult):
             return address_or_err
-        address = address_or_err
+        canonical_customer_id, address = address_or_err
         try:
             result = await service.upload_invoice_pdf(
-                customer_id=customer_id,
+                customer_id=canonical_customer_id,
                 work_order_id=work_order_id,
                 files=files,
                 address=address or None,

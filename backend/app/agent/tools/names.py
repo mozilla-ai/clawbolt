@@ -86,10 +86,8 @@ class ToolName:
     APPFOLIO_MESSAGE_TENANT = "appfolio_message_tenant"
     APPFOLIO_CREATE_INVOICE = "appfolio_create_invoice"
     APPFOLIO_UPLOAD_INVOICE_PDF = "appfolio_upload_invoice_pdf"
-    APPFOLIO_UPLOAD_COMPLIANCE_DOC = "appfolio_upload_compliance_doc"
     APPFOLIO_GET_ESTIMATE = "appfolio_get_estimate"
     APPFOLIO_UPDATE_ESTIMATE = "appfolio_update_estimate"
-    APPFOLIO_UPDATE_PROFILE = "appfolio_update_profile"
 
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"

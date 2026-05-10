@@ -29,7 +29,6 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.integrations.appfolio_vendor.auth import load_credential, save_credential
 from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
-from backend.app.integrations.appfolio_vendor.compliance import build_compliance_tools
 from backend.app.integrations.appfolio_vendor.conversations import build_conversation_tools
 from backend.app.integrations.appfolio_vendor.estimates import build_estimate_tools
 from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
@@ -109,7 +108,6 @@ async def _appfolio_vendor_factory(ctx: ToolContext) -> list[Tool]:
     tools.extend(build_payment_tools(service))
     tools.extend(build_profile_tools(service))
     tools.extend(build_invoice_tools(service, ctx))
-    tools.extend(build_compliance_tools(service, ctx))
     tools.extend(build_estimate_tools(service))
     return tools
 
@@ -160,8 +158,7 @@ def _register() -> None:
         summary=(
             "AppFolio Vendor Portal: view, search, and act on work orders "
             "(accept, schedule, update status, add notes with photos), "
-            "message tenants, create or upload invoices, upload compliance "
-            "documents (W-9, COI, license), update estimates and profile, "
+            "message tenants, create or upload invoices, update estimates, "
             "and check payments"
         ),
         display_name="AppFolio Vendor Portal",
@@ -245,11 +242,6 @@ def _register() -> None:
                 default_permission="ask",
             ),
             SubToolInfo(
-                ToolName.APPFOLIO_UPLOAD_COMPLIANCE_DOC,
-                "Upload a compliance document (W-9, COI, license)",
-                default_permission="ask",
-            ),
-            SubToolInfo(
                 ToolName.APPFOLIO_GET_ESTIMATE,
                 "Get an AppFolio estimate's details",
                 default_permission="always",
@@ -257,11 +249,6 @@ def _register() -> None:
             SubToolInfo(
                 ToolName.APPFOLIO_UPDATE_ESTIMATE,
                 "Update an AppFolio estimate amount or description",
-                default_permission="ask",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_UPDATE_PROFILE,
-                "Update AppFolio profile fields (name, phone, company)",
                 default_permission="ask",
             ),
         ],

@@ -80,10 +80,6 @@ class AppFolioGetProfileParams(BaseModel):
 
 class AppFolioAcceptWorkOrderParams(BaseModel):
     work_order_id: str = Field(description="AppFolio work order ID to accept.")
-    notes: str = Field(
-        default="",
-        description="Optional acceptance notes the property manager will see.",
-    )
 
 
 class AppFolioScheduleWorkOrderParams(BaseModel):
@@ -216,25 +212,6 @@ class AppFolioUploadInvoicePdfParams(BaseModel):
     )
 
 
-class AppFolioUploadComplianceDocParams(BaseModel):
-    customer_id: str = Field(
-        description="AppFolio customer (property manager) ID requesting the doc.",
-    )
-    compliance_type: str = Field(
-        description=(
-            "AppFolio compliance category. Common values: 'w9',"
-            " 'general_liability', 'workers_compensation', 'license'."
-            " Confirm with the user when uncertain."
-        ),
-    )
-    media_ref: str = Field(
-        description=(
-            "Single document reference from the conversation: an original_url"
-            " or a media handle. AppFolio expects exactly one file per upload."
-        ),
-    )
-
-
 class AppFolioGetEstimateParams(BaseModel):
     estimate_id: str = Field(description="AppFolio estimate ID.")
 
@@ -252,17 +229,4 @@ class AppFolioUpdateEstimateParams(BaseModel):
     notes: str = Field(
         default="",
         description="Optional vendor notes for the property manager.",
-    )
-
-
-class AppFolioUpdateProfileParams(BaseModel):
-    first_name: str = Field(default="", description="New first name (empty to leave unchanged).")
-    last_name: str = Field(default="", description="New last name (empty to leave unchanged).")
-    phone_number: str = Field(
-        default="",
-        description="New phone number, E.164 preferred (empty to leave unchanged).",
-    )
-    company_name: str = Field(
-        default="",
-        description="New company name (empty to leave unchanged).",
     )

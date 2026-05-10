@@ -27,6 +27,7 @@ from backend.app.integrations.appfolio_vendor.service import (
     AppFolioError,
     AppFolioVendorService,
     AuthExpiredError,
+    AuthScopeError,
     build_service,
     exchange_magic_link,
 )
@@ -364,7 +365,13 @@ async def test_service_get_returns_json() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_service_401_raises_auth_expired_with_login_url() -> None:
+async def test_service_401_with_login_url_raises_auth_expired() -> None:
+    """401 + ``login_url`` body means the JWT actually expired.
+
+    AppFolio's contract: the SPA sees this and redirects the user to
+    re-auth. We mirror that signal as :class:`AuthExpiredError` so
+    tools can prompt the user for a fresh magic link.
+    """
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={"login_url": "https://login/here"}, status_code=401)
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -372,6 +379,50 @@ async def test_service_401_raises_auth_expired_with_login_url() -> None:
         with pytest.raises(AuthExpiredError) as exc_info:
             await service.get("/anything")
     assert exc_info.value.login_url == "https://login/here"
+
+
+@pytest.mark.asyncio()
+async def test_service_401_without_login_url_raises_auth_scope() -> None:
+    """401 without a ``login_url`` body means the request scope is wrong.
+
+    The JWT itself is fine; the request's ``customer_id`` (in the path
+    or the body) is not in this credential's authorized set.
+    Reconnecting will not help, so we must NOT raise
+    :class:`AuthExpiredError` and tell the user to log in again.
+    """
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={}, status_code=401)
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cls.return_value = _patch_async_client("request", response)
+        with pytest.raises(AuthScopeError) as exc_info:
+            await service.get("/anything")
+    # AuthScopeError must NOT be a misclassified AuthExpiredError; the
+    # tool layer checks isinstance() and would tell the user to
+    # reconnect (the trust-eroding bug we're fixing).
+    assert not isinstance(exc_info.value, AuthExpiredError)
+
+
+@pytest.mark.asyncio()
+async def test_service_error_to_tool_result_distinguishes_scope_from_expired() -> None:
+    """The errors→ToolResult mapper must give scope and expired
+    different user-facing messages and hints.
+    """
+    from backend.app.integrations.appfolio_vendor.errors import (
+        service_error_to_tool_result,
+    )
+
+    expired = service_error_to_tool_result(
+        "creating invoice", AuthExpiredError(login_url="https://login/x")
+    )
+    scope = service_error_to_tool_result("creating invoice", AuthScopeError("scope mismatch"))
+
+    assert expired.is_error and scope.is_error
+    # Expired should mention the magic-link reconnect hint.
+    assert "magic link" in (expired.hint or "")
+    # Scope must NOT tell the user to reconnect; that erodes trust
+    # when the next reconnect produces the same 401.
+    assert "magic link" not in (scope.hint or "")
+    assert "reconnect" not in (scope.content or "").lower()
 
 
 @pytest.mark.asyncio()
@@ -868,7 +919,14 @@ def test_list_work_orders_params_defaults() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_accept_work_order_passes_ref_param() -> None:
+async def test_accept_work_order_sends_customer_id_only() -> None:
+    """Best-guess shape (not Playwright-verified): minimal ``{customer_id}`` body.
+
+    The legacy ``?ref=vendor_portal`` query param and the inferred
+    ``notes`` body field were both unverified guesses from the SPA
+    bundle and have been dropped; vendors who want to add a note
+    use ``add_work_order_note`` separately.
+    """
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={})
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -878,12 +936,12 @@ async def test_accept_work_order_passes_ref_param() -> None:
         cm.__aenter__ = AsyncMock(return_value=client)
         cm.__aexit__ = AsyncMock(return_value=False)
         cls.return_value = cm
-        await service.accept_work_order("42", body={"notes": "got it"})
+        await service.accept_work_order("42")
     args, kwargs = client.request.call_args
     assert args[0] == "POST"
     assert "/maintenance/api/work_orders/42/accept" in args[1]
-    assert kwargs["params"] == {"ref": "vendor_portal"}
-    assert kwargs["json"] == {"notes": "got it"}
+    assert kwargs["params"] is None
+    assert kwargs["json"] == {"customer_id": "c1"}
 
 
 @pytest.mark.asyncio()
@@ -998,8 +1056,12 @@ async def test_message_tenant_two_step_flow() -> None:
     second_args, second_kwargs = client.request.call_args_list[1]
     assert second_args[0] == "POST"
     assert second_args[1].endswith("/tenant_vendor_conversations")
+    # Best-guess shape (not Playwright-verified): customer_id at top
+    # level matching the verified write endpoints, work_order_id as
+    # int matching the invoice POST shape.
     assert second_kwargs["json"] == {
-        "work_order_id": "42",
+        "customer_id": "c1",
+        "work_order_id": 42,
         "phone_number": "+15551234567",
         "message": "on my way",
     }
@@ -1093,7 +1155,7 @@ async def test_resolve_staged_files_empty_list_returns_empty_list() -> None:
 
 
 # ---------------------------------------------------------------------------
-# PR3: invoices, compliance, estimates, profile update
+# Invoices and estimates
 # ---------------------------------------------------------------------------
 
 
@@ -1166,29 +1228,6 @@ async def test_upload_invoice_pdf_omits_line_items() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_upload_compliance_document_uses_singular_file() -> None:
-    from backend.app.integrations.appfolio_vendor.service import FileUpload
-
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data={})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        cm, client = _patch_request(response)
-        cls.return_value = cm
-        await service.upload_compliance_document(
-            customer_id="cust-1",
-            compliance_type="w9",
-            file=FileUpload(name="w9.pdf", data=b"%PDF-fake"),
-        )
-    _, kwargs = client.request.call_args
-    payload = kwargs["json"]
-    assert payload["customer_id"] == "cust-1"
-    assert payload["compliance_type"] == "w9"
-    assert isinstance(payload["file"], dict)
-    assert payload["file"]["name"] == "w9.pdf"
-    assert "files" not in payload
-
-
-@pytest.mark.asyncio()
 async def test_update_estimate_wraps_jsonapi_envelope() -> None:
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={})
@@ -1202,25 +1241,6 @@ async def test_update_estimate_wraps_jsonapi_envelope() -> None:
     assert kwargs["json"] == {
         "data": {"id": "est-7", "type": "estimates", "attributes": {"amount": 250.0}}
     }
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_includes_only_set_fields() -> None:
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data={})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        cm, client = _patch_request(response)
-        cls.return_value = cm
-        await service.update_profile(phone_number="+15551234567")
-    _, kwargs = client.request.call_args
-    assert kwargs["json"] == {"user": {"phoneNumber": "+15551234567"}}
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_rejects_empty_payload() -> None:
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    with pytest.raises(ValueError, match="at least one field"):
-        await service.update_profile()
 
 
 # ---------------------------------------------------------------------------
@@ -1460,6 +1480,69 @@ async def test_upload_invoice_pdf_tool_includes_address_from_work_order() -> Non
     assert upload_pdf.call_args.kwargs["address"] == {"address_1": "123 Example Street"}
 
 
+@pytest.mark.asyncio()
+async def test_create_invoice_tool_falls_back_when_customer_id_scope_rejected() -> None:
+    """When the agent's customer_id is wrong, the tool retries with the canonical one.
+
+    Reproduces the production failure mode: the agent extracted a
+    ``customer_id`` from a search response (which carries a different
+    field than the write endpoints expect), passed it in, and the
+    work-order GET answered HTTP 401 with no ``login_url``. The fix
+    catches :class:`AuthScopeError`, resolves the canonical customer
+    via ``/profiles/me``, retries the GET, and uses the canonical
+    value for the subsequent ``create_invoice`` POST.
+    """
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    cred = AppFolioCredential(
+        user_id="u1",
+        jwt="jwt-1",
+        fingerprint="fp-1",
+        # No cached customer_ids: forces the resolver down the
+        # ``/profiles/me`` path so we exercise it end-to-end.
+        customer_ids=[],
+        extra={"fingerprint": "fp-1"},
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+
+    # First get_work_order (with the agent's wrong id) raises scope;
+    # the second (with the canonical id) returns the WO dict.
+    get_wo = AsyncMock(
+        side_effect=[
+            AuthScopeError("wrong customer in path"),
+            {"address_1": "123 Example Street", "city": "Anytown"},
+        ]
+    )
+    create_invoice = AsyncMock(return_value={"id": "inv-1"})
+    get_profile = AsyncMock(return_value={"customers": [{"customer_id": "canonical-cust"}]})
+    service.get_work_order = get_wo  # type: ignore[method-assign]
+    service.create_invoice = create_invoice  # type: ignore[method-assign]
+    service.get_profile = get_profile  # type: ignore[method-assign]
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+    result = await create.function(
+        customer_id="agent-guess",  # wrong, gets corrected internally
+        work_order_id="42",
+        line_items=[{"description": "Labor", "quantity": 1.0, "amount": 100.0}],
+    )
+
+    assert result.is_error is False
+    # Two get_work_order calls: first with the agent's guess, second
+    # with the resolved canonical id.
+    assert get_wo.await_count == 2
+    assert get_wo.await_args_list[0].args == ("agent-guess", "42")
+    assert get_wo.await_args_list[1].args == ("canonical-cust", "42")
+    # The invoice POST uses the canonical id, NOT the agent's guess.
+    create_invoice.assert_awaited_once()
+    assert create_invoice.call_args is not None
+    assert create_invoice.call_args.kwargs["customer_id"] == "canonical-cust"
+
+
 # ---------------------------------------------------------------------------
 # Logging diagnostics — failure paths surface enough info to debug
 # ---------------------------------------------------------------------------
@@ -1529,40 +1612,6 @@ async def test_4xx_log_summarizes_base64_files(caplog: Any) -> None:
     # But the file name and a length marker should.
     assert "big.jpg" in caplog.text
     assert "chars base64" in caplog.text  # marker token
-
-
-@pytest.mark.asyncio()
-async def test_4xx_log_summarizes_singular_file_compliance_upload(caplog: Any) -> None:
-    """Compliance uploads use singular ``file: {...}``; the marker still applies."""
-    import logging
-
-    from backend.app.integrations.appfolio_vendor.service import FileUpload
-
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    big_blob = b"\x00" * 250_000
-    response = _mock_response(
-        json_data={"errors": ["bad"]},
-        status_code=400,
-        text='{"errors":["bad"]}',
-    )
-
-    with (
-        caplog.at_level(logging.WARNING, logger="backend.app.integrations.appfolio_vendor.service"),
-        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
-    ):
-        cm, _ = _patch_request(response)
-        cls.return_value = cm
-        with pytest.raises(AppFolioError):
-            await service.upload_compliance_document(
-                customer_id="cust-1",
-                compliance_type="w9",
-                file=FileUpload(name="w9.pdf", data=big_blob),
-            )
-
-    encoded = __import__("base64").b64encode(big_blob).decode()
-    assert encoded not in caplog.text
-    assert "w9.pdf" in caplog.text
-    assert "chars base64" in caplog.text
 
 
 @pytest.mark.asyncio()
