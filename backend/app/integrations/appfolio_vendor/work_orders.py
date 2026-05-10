@@ -11,6 +11,7 @@ from typing import Any
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.appfolio_vendor.errors import log_unexpected_response_shape
 from backend.app.integrations.appfolio_vendor.params import (
     AppFolioGetWorkOrderParams,
     AppFolioListWorkOrdersParams,
@@ -85,12 +86,21 @@ def _fmt_work_order_line(wo: dict[str, Any]) -> str:
     return f"- ID: {wo_id} | " + " | ".join(pieces)
 
 
+_KNOWN_WO_LIST_ENVELOPES = ("work_orders", "workOrders", "results", "data")
+
+
 def _normalize_list(payload: Any) -> list[dict[str, Any]]:
-    """Return a list of work-order dicts from whichever envelope AppFolio used."""
+    """Return a list of work-order dicts from whichever envelope AppFolio used.
+
+    Returns ``[]`` when the response shape is not one we recognize; the
+    *caller* is responsible for logging that case via
+    :func:`log_unexpected_response_shape` so the empty-list semantics
+    stay simple and the diagnostic carries the calling tool's label.
+    """
     if isinstance(payload, list):
         return [w for w in payload if isinstance(w, dict)]
     if isinstance(payload, dict):
-        for key in ("work_orders", "workOrders", "results", "data"):
+        for key in _KNOWN_WO_LIST_ENVELOPES:
             value = payload.get(key)
             if isinstance(value, list):
                 return [w for w in value if isinstance(w, dict)]
@@ -118,6 +128,19 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
 
         items = _normalize_list(payload)
         if not items:
+            # An empty list is a legitimate result, but if the response
+            # was a non-empty dict the shape is probably the issue (we
+            # didn't recognize the envelope). Log so the next mismatch
+            # is debuggable rather than just looking like "no results".
+            if isinstance(payload, dict) and payload:
+                log_unexpected_response_shape(
+                    "appfolio_list_work_orders",
+                    payload,
+                    expected=(
+                        "list of work-order dicts, or a dict with one of "
+                        f"{list(_KNOWN_WO_LIST_ENVELOPES)} containing the list"
+                    ),
+                )
             return ToolResult(content="No matching work orders.")
         lines = [f"Found {len(items)} work order(s):"]
         lines.extend(_fmt_work_order_line(w) for w in items[:30])
@@ -133,6 +156,15 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
 
         items = _normalize_list(payload)
         if not items:
+            if isinstance(payload, dict) and payload:
+                log_unexpected_response_shape(
+                    f"appfolio_search_work_orders(search_term={search_term!r})",
+                    payload,
+                    expected=(
+                        "list of work-order dicts, or a dict with one of "
+                        f"{list(_KNOWN_WO_LIST_ENVELOPES)} containing the list"
+                    ),
+                )
             return ToolResult(content=f"No work orders matched '{search_term}'.")
         lines = [f"{len(items)} match(es) for '{search_term}':"]
         lines.extend(_fmt_work_order_line(w) for w in items[:20])
@@ -162,6 +194,27 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
         except AppFolioError as exc:
             logger.info("work_order_details unavailable for %s: %s", work_order_id, exc)
 
+        # If none of the expected fields are present, the response shape
+        # has likely drifted; surface a diagnostic so we don't silently
+        # render a "Work order #X | Status: ? | Address: ?" stub.
+        recognised_fields = (
+            "work_order_number",
+            "status",
+            "status_label",
+            "property_address",
+            "address",
+            "description",
+            "summary",
+        )
+        if not any(wo.get(k) for k in recognised_fields):
+            log_unexpected_response_shape(
+                f"appfolio_get_work_order(customer_id={customer_id}, "
+                f"work_order_id={work_order_id})",
+                wo,
+                expected=(
+                    f"work-order dict with at least one of {list(recognised_fields)} populated"
+                ),
+            )
         lines = [
             f"Work order #{wo.get('work_order_number') or work_order_id}",
             f"  Status: {wo.get('status') or wo.get('status_label') or '?'}",

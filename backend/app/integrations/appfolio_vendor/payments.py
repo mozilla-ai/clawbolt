@@ -7,6 +7,7 @@ from typing import Any
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.appfolio_vendor.errors import log_unexpected_response_shape
 from backend.app.integrations.appfolio_vendor.params import AppFolioListPaymentsParams
 from backend.app.integrations.appfolio_vendor.service import (
     AppFolioError,
@@ -17,11 +18,14 @@ from backend.app.integrations.appfolio_vendor.service import (
 logger = logging.getLogger(__name__)
 
 
+_KNOWN_PAYMENT_LIST_ENVELOPES = ("payments", "data", "results", "vendor_portal_payable_payments")
+
+
 def _normalize_list(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [p for p in payload if isinstance(p, dict)]
     if isinstance(payload, dict):
-        for key in ("payments", "data", "results", "vendor_portal_payable_payments"):
+        for key in _KNOWN_PAYMENT_LIST_ENVELOPES:
             value = payload.get(key)
             if isinstance(value, list):
                 return [p for p in value if isinstance(p, dict)]
@@ -81,6 +85,15 @@ def build_payment_tools(service: AppFolioVendorService) -> list[Tool]:
 
         items = _normalize_list(payload)
         if not items:
+            if isinstance(payload, dict) and payload:
+                log_unexpected_response_shape(
+                    "appfolio_list_payments",
+                    payload,
+                    expected=(
+                        "list of payment dicts, or a dict with one of "
+                        f"{list(_KNOWN_PAYMENT_LIST_ENVELOPES)} containing the list"
+                    ),
+                )
             return ToolResult(content="No payments found for those filters.")
         lines = [f"Found {len(items)} payment(s):"]
         lines.extend(_fmt_payment_line(p) for p in items[:30])

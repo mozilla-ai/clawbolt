@@ -8,7 +8,10 @@ from typing import Any
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
-from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
+from backend.app.integrations.appfolio_vendor.errors import (
+    log_unexpected_response_shape,
+    service_error_to_tool_result,
+)
 from backend.app.integrations.appfolio_vendor.params import (
     AppFolioGetEstimateParams,
     AppFolioUpdateEstimateParams,
@@ -59,6 +62,25 @@ def build_estimate_tools(service: AppFolioVendorService) -> list[Tool]:
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
+        # If the JSON:API envelope is missing both ``data`` and the
+        # core attributes (amount/description/status), log so we can
+        # see the actual shape rather than rendering an empty card.
+        if isinstance(payload, dict):
+            data = payload.get("data") if "data" in payload else payload
+            attrs: dict[str, Any] = (
+                data.get("attributes")
+                if isinstance(data, dict) and isinstance(data.get("attributes"), dict)
+                else (data if isinstance(data, dict) else {})
+            )
+            if not any(attrs.get(k) for k in ("amount", "total", "description", "status")):
+                log_unexpected_response_shape(
+                    f"appfolio_get_estimate(estimate_id={estimate_id})",
+                    payload,
+                    expected=(
+                        "JSON:API envelope with `data.attributes` containing "
+                        "at least one of amount/total/description/status"
+                    ),
+                )
         return ToolResult(content=_fmt_estimate(payload))
 
     async def appfolio_update_estimate(
