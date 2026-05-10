@@ -1679,6 +1679,169 @@ async def test_create_invoice_tool_falls_back_when_customer_id_scope_rejected() 
 
 
 # ---------------------------------------------------------------------------
+# Wire-shape: amount * quantity collapsed before POST
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_tool_sends_line_total_not_unit_price() -> None:
+    """The tool wrapper multiplies quantity by amount before POST.
+
+    Regression for a real billing miscount: a user submitted an invoice
+    with ``{quantity: 5, amount: 55}`` expecting a $275 line total. Our
+    tool reported $275 to the user but sent ``amount=55`` on the wire,
+    and AppFolio stored that as the line total ($55). The tool now
+    pre-multiplies on our side so AppFolio's stored line total matches
+    what the user (and the tool's own success message) believes.
+    """
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    service.get_work_order = AsyncMock(  # type: ignore[method-assign]
+        return_value={"id": 42, "address_1": "123 Example Street"}
+    )
+    create_invoice = AsyncMock(return_value={"id": "inv-1"})
+    service.create_invoice = create_invoice  # type: ignore[method-assign]
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+    result = await create.function(
+        customer_id="cust-1",
+        work_order_id="42",
+        line_items=[
+            {"description": "Materials reimbursement", "quantity": 1.0, "amount": 39.07},
+            {"description": "Labor", "quantity": 5.0, "amount": 55.0},
+        ],
+    )
+    assert result.is_error is False
+    create_invoice.assert_awaited_once()
+    assert create_invoice.call_args is not None
+    wire_items = create_invoice.call_args.kwargs["line_items"]
+    assert wire_items[0]["amount"] == pytest.approx(39.07)
+    assert wire_items[0]["quantity"] == "1.0"
+    # The fix: line 2 wire amount is qty * unit_price, not just unit_price.
+    assert wire_items[1]["amount"] == pytest.approx(275.0)
+    assert wire_items[1]["quantity"] == "5.0"
+    # User-facing total still matches what AppFolio will store.
+    assert "$314.07" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_tool_fractional_quantity_collapses_correctly() -> None:
+    """Decimal quantities multiply too (e.g. 1.5 hours at $80/hr = $120)."""
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    service.get_work_order = AsyncMock(  # type: ignore[method-assign]
+        return_value={"id": 42, "address_1": "123 Example Street"}
+    )
+    create_invoice = AsyncMock(return_value={"id": "inv-1"})
+    service.create_invoice = create_invoice  # type: ignore[method-assign]
+
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+    await create.function(
+        customer_id="cust-1",
+        work_order_id="42",
+        line_items=[{"description": "Labor", "quantity": 1.5, "amount": 80.0}],
+    )
+    create_invoice.assert_awaited_once()
+    assert create_invoice.call_args is not None
+    wire_items = create_invoice.call_args.kwargs["line_items"]
+    assert wire_items[0]["amount"] == pytest.approx(120.0)
+    assert wire_items[0]["quantity"] == "1.5"
+
+
+# ---------------------------------------------------------------------------
+# Approval prompt: line-item breakdown so users catch billing mistakes
+# ---------------------------------------------------------------------------
+
+
+def test_create_invoice_approval_description_lists_each_line_with_total() -> None:
+    """The approval prompt must show qty x unit = line total per item.
+
+    Before this change the prompt read "Create invoice on AppFolio work
+    order #X (N line item(s))", which let an invoice with the wrong
+    per-line math slip through unchallenged. The new prompt names every
+    line and prints the grand total so users can sanity-check before
+    typing yes.
+    """
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _format_invoice_approval_description,
+    )
+
+    description = _format_invoice_approval_description(
+        {
+            "work_order_id": "114433",
+            "line_items": [
+                {"description": "Materials reimbursement", "quantity": 1, "amount": 39.07},
+                {
+                    "description": "Adjusted door for tighter closing",
+                    "quantity": 5,
+                    "amount": 55.0,
+                },
+            ],
+        }
+    )
+    # Header carries WO and grand total.
+    assert "#114433" in description
+    assert "$314.07" in description
+    # Each line is enumerated with qty / unit / line total.
+    assert "Materials reimbursement" in description
+    assert "qty 1 x $39.07 = $39.07" in description
+    assert "Adjusted door for tighter closing" in description
+    assert "qty 5 x $55.00 = $275.00" in description
+
+
+def test_create_invoice_approval_description_truncates_long_descriptions() -> None:
+    """Very long line descriptions are truncated so the prompt stays scannable."""
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _format_invoice_approval_description,
+    )
+
+    long = "Adjusted door, weather stripping, new lock, transition strip, " * 5
+    description = _format_invoice_approval_description(
+        {
+            "work_order_id": "1",
+            "line_items": [{"description": long, "quantity": 1, "amount": 100.0}],
+        }
+    )
+    # Truncated form ends with an ellipsis and is shorter than the input.
+    assert "..." in description
+    assert long not in description
+
+
+def test_create_invoice_approval_description_falls_back_on_malformed_items() -> None:
+    """A malformed line item must not raise from the description builder.
+
+    The agent's typed validation will reject the call after approval; the
+    prompt just needs to render *something* readable so the approval flow
+    does not crash.
+    """
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _format_invoice_approval_description,
+    )
+
+    description = _format_invoice_approval_description(
+        {
+            "work_order_id": "1",
+            "line_items": [{"description": "ok", "quantity": "not-a-number", "amount": 1}],
+        }
+    )
+    # Falls back to the short legacy form rather than raising.
+    assert "#1" in description
+    assert "1 line item" in description
+
+
+# ---------------------------------------------------------------------------
 # Logging diagnostics — failure paths surface enough info to debug
 # ---------------------------------------------------------------------------
 
