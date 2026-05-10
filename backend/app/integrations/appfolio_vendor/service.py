@@ -73,15 +73,35 @@ class AppFolioError(RuntimeError):
 
 
 class AuthExpiredError(AppFolioError):
-    """JWT was rejected. The caller must prompt the user for a new magic link.
+    """JWT was rejected because the credential genuinely expired.
 
-    ``login_url`` is the URL AppFolio's API returned on 401, intended for
-    the SPA to redirect the user to. Tools relay this to the user.
+    The caller must prompt the user for a new magic link. AppFolio
+    signals this by returning HTTP 401 with a ``login_url`` field in
+    the body that the SPA would redirect the user to.
+
+    ``login_url`` is that URL; tools relay it to the user.
     """
 
     def __init__(self, login_url: str = "") -> None:
         super().__init__("AppFolio session expired; a new magic link is required")
         self.login_url = login_url
+
+
+class AuthScopeError(AppFolioError):
+    """JWT is valid but not authorized for the customer in the request.
+
+    AppFolio reuses HTTP 401 for two distinct cases: the JWT itself
+    expired (``AuthExpiredError`` above, with a ``login_url`` payload),
+    and the JWT is fine but the path's customer scope (or the body's
+    ``customer_id``) does not match what the JWT was minted for. The
+    second case is signalled by a 401 with no ``login_url`` in the
+    body, and reconnecting will not help: the caller must retry with
+    the correct customer instead.
+
+    Tools that synthesize a customer_id (e.g. by guessing from a
+    search response) catch this to fall back to the canonical
+    ``/profiles/me`` value before surfacing the failure to the user.
+    """
 
 
 @dataclass
@@ -192,7 +212,7 @@ def _summarize_files_field(body: Any) -> Any:
 
     Handles both the plural form (``files: [{file_in_base64, name}, ...]``,
     used by notes and invoices) and the singular form (``file: {file_in_base64,
-    name}``, used by compliance uploads).
+    name}``, kept generic so any future single-file endpoint logs cleanly).
     """
     if not isinstance(body, dict):
         return _summarize_body_for_log(body)
@@ -333,7 +353,22 @@ class AppFolioVendorService:
                     body_for_log,
                     resp.text[:_LOG_BODY_PREVIEW_LIMIT],
                 )
-                raise AuthExpiredError(login_url=login_url)
+                # AppFolio returns 401 for two distinct cases. When the
+                # JWT itself expired the body carries a ``login_url`` for
+                # the SPA to redirect the user to. When the JWT is valid
+                # but the path's customer scope or body ``customer_id``
+                # does not match the JWT's bound customer, the body has
+                # no ``login_url`` and reconnecting will not help. Tell
+                # the caller which one happened so they can react
+                # accordingly: write tools that guess customer_id (e.g.
+                # from a search response) catch the scope variant and
+                # retry with the canonical ``/profiles/me`` value.
+                if login_url:
+                    raise AuthExpiredError(login_url=login_url)
+                raise AuthScopeError(
+                    f"AppFolio {method} {path} rejected the request scope (401);"
+                    " the JWT is valid but not authorized for this customer."
+                )
         if resp.status_code >= 400:
             response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
             logger.warning(
@@ -479,12 +514,24 @@ class AppFolioVendorService:
         self,
         work_order_id: str,
         *,
-        body: dict[str, Any] | None = None,
+        customer_id: str | None = None,
     ) -> Any:
+        """POST an acceptance onto a work order.
+
+        Body shape is **not** Playwright-verified. We send the same
+        ``{"customer_id": ...}`` minimum that every other write
+        endpoint in PR #1277 confirmed is required (status update,
+        schedule, note add); we omit the prior ``notes`` field and
+        the ``?ref=vendor_portal`` query param because both were
+        guesses from the SPA bundle and not part of the verified
+        contract. Vendors who want to add a note alongside the
+        acceptance can use :meth:`add_work_order_note` in a separate
+        call.
+        """
+        cid = customer_id or await self._resolve_primary_customer_id()
         return await self.post(
             f"/maintenance/api/work_orders/{work_order_id}/accept",
-            params={"ref": "vendor_portal"},
-            json_body=body,
+            json_body={"customer_id": cid},
         )
 
     async def schedule_work_order(
@@ -579,6 +626,16 @@ class AppFolioVendorService:
         files: list[FileUpload] | None = None,
         customer_id: str | None = None,
     ) -> Any:
+        """PATCH an existing note on a work order.
+
+        Body shape mirrors :meth:`add_work_order_note` (which was
+        Playwright-verified in PR #1277). The PATCH verb itself and
+        its full-body-replacement semantics are extrapolated from
+        REST convention and the matching POST shape, **not**
+        Playwright-verified. AppFolio may instead expect a partial
+        body (e.g. only the changed fields) or a different verb;
+        revisit if it rejects.
+        """
         cid = customer_id or await self._resolve_primary_customer_id()
         body: dict[str, Any] = {
             "note": {"body": body_text},
@@ -605,24 +662,37 @@ class AppFolioVendorService:
         work_order_id: str,
         phone_number: str,
         message: str,
+        customer_id: str | None = None,
     ) -> Any:
+        """POST a tenant SMS through AppFolio's anonymized proxy.
+
+        Body shape is **not** Playwright-verified. We send the same
+        ``customer_id`` top-level field every other write endpoint
+        from PR #1277 confirmed is required, and pass ``work_order_id``
+        as an int (matching the invoice POST shape). The other fields
+        are kept as-is from the inferred SPA shape.
+        """
+        cid = customer_id or await self._resolve_primary_customer_id()
         return await self.post(
             "/maintenance/api/tenant_vendor_conversations",
             json_body={
-                "work_order_id": work_order_id,
+                "customer_id": cid,
+                "work_order_id": (
+                    int(work_order_id) if str(work_order_id).isdigit() else work_order_id
+                ),
                 "phone_number": phone_number,
                 "message": message,
             },
         )
 
     # ------------------------------------------------------------------
-    # Domain helpers (PR3: invoices, compliance, estimates, profile)
+    # Domain helpers: invoices, estimates
     # ------------------------------------------------------------------
 
     async def create_invoice(
         self,
         *,
-        customer_id: str,
+        customer_id: str | None = None,
         work_order_id: str,
         line_items: list[dict[str, Any]],
         address: dict[str, Any] | None = None,
@@ -643,9 +713,16 @@ class AppFolioVendorService:
         invoice prints the correct property block. ``reference_number`` is
         the vendor-side invoice number (the SPA auto-suggests one based on
         the WO).
+
+        ``customer_id`` is optional. Pass ``None`` to resolve the canonical
+        property-manager ID from ``/profiles/me``; this is the safe default
+        when the agent's only signal is a search response (which can carry
+        a different ``customer_id`` field than the write endpoints expect).
+        Mirrors :meth:`add_work_order_note` and the other write helpers.
         """
+        cid = customer_id or await self._resolve_primary_customer_id()
         body: dict[str, Any] = {
-            "customer_id": str(customer_id),
+            "customer_id": str(cid),
             "work_order_id": int(work_order_id) if str(work_order_id).isdigit() else work_order_id,
             "line_items": line_items,
         }
@@ -660,7 +737,7 @@ class AppFolioVendorService:
     async def upload_invoice_pdf(
         self,
         *,
-        customer_id: str,
+        customer_id: str | None = None,
         work_order_id: str,
         files: list[FileUpload],
         address: dict[str, Any] | None = None,
@@ -670,12 +747,14 @@ class AppFolioVendorService:
 
         Uses the same ``/maintenance/api/invoices`` endpoint as line-itemized
         invoices; the SPA distinguishes by sending ``files`` without
-        ``line_items``.
+        ``line_items``. ``customer_id`` follows the same optional-with-fallback
+        pattern as :meth:`create_invoice`.
         """
         if not files:
             raise ValueError("upload_invoice_pdf requires at least one file")
+        cid = customer_id or await self._resolve_primary_customer_id()
         body: dict[str, Any] = {
-            "customer_id": str(customer_id),
+            "customer_id": str(cid),
             "work_order_id": int(work_order_id) if str(work_order_id).isdigit() else work_order_id,
             "files": _encode_files(files),
         }
@@ -684,34 +763,6 @@ class AppFolioVendorService:
         if reference_number:
             body["reference_number"] = reference_number
         return await self.post("/maintenance/api/invoices", json_body=body)
-
-    async def upload_compliance_document(
-        self,
-        *,
-        customer_id: str,
-        compliance_type: str,
-        file: FileUpload,
-    ) -> Any:
-        """Upload a compliance doc (W-9, COI, license) for one customer.
-
-        Note the singular ``file`` field; AppFolio's compliance endpoint
-        does not take an array.
-        """
-        # Body shape extrapolated from the snake_case pattern used by every
-        # other write endpoint we've SPA-verified (notes, status, schedule,
-        # invoice). Not yet directly Playwright-confirmed for compliance
-        # docs; revisit if AppFolio rejects.
-        return await self.post(
-            "/maintenance/api/compliance_documents",
-            json_body={
-                "customer_id": customer_id,
-                "compliance_type": compliance_type,
-                "file": {
-                    "name": file.name,
-                    "file_in_base64": base64.b64encode(file.data).decode("ascii"),
-                },
-            },
-        )
 
     async def get_estimate(self, estimate_id: str) -> Any:
         return await self.get(
@@ -727,9 +778,13 @@ class AppFolioVendorService:
     ) -> Any:
         """PATCH an estimate's attributes via JSON:API envelope.
 
-        The frontend wraps the payload as ``{data: {id, type: "estimates",
-        attributes: ...}}``. We mirror that shape; the agent supplies just
-        the attributes dict.
+        Body shape is **not** Playwright-verified. The estimates
+        endpoint lives under ``/api/estimates`` (a different surface
+        from ``/maintenance/api/...`` where the verified writes
+        live), and the JSON:API envelope ``{data: {id, type:
+        "estimates", attributes: ...}}`` is inferred from a SPA call
+        site. JSON:API is a standard convention so this is a high-
+        confidence guess, but revisit if AppFolio rejects.
         """
         return await self.patch(
             f"/api/estimates/{estimate_id}",
@@ -741,40 +796,6 @@ class AppFolioVendorService:
                 }
             },
         )
-
-    async def update_profile(
-        self,
-        *,
-        first_name: str | None = None,
-        last_name: str | None = None,
-        phone_number: str | None = None,
-        company_name: str | None = None,
-    ) -> Any:
-        """PATCH /profiles with whatever subset of fields the user wants changed.
-
-        Mirror the SPA shape (``user: {...}, company: {...}``) but only
-        include each sub-object when at least one of its fields is set,
-        so we don't send empty objects that AppFolio could read as
-        "clear these values".
-        """
-        user: dict[str, Any] = {}
-        if first_name is not None:
-            user["firstName"] = first_name
-        if last_name is not None:
-            user["lastName"] = last_name
-        if phone_number is not None:
-            user["phoneNumber"] = phone_number
-        company: dict[str, Any] = {}
-        if company_name is not None:
-            company["name"] = company_name
-        body: dict[str, Any] = {}
-        if user:
-            body["user"] = user
-        if company:
-            body["company"] = company
-        if not body:
-            raise ValueError("update_profile requires at least one field to change")
-        return await self.patch("/profiles", json_body=body)
 
 
 def build_service(

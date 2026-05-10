@@ -2,8 +2,7 @@
 
 Full read/write access to the user's AppFolio Vendor Portal: work
 orders, notes with photos, scheduling, status updates, tenant
-messaging, invoices (line items or PDF), compliance docs, estimates,
-payments, and profile.
+messaging, invoices (line items or PDF), estimates, and payments.
 
 ## Tools
 
@@ -23,21 +22,18 @@ payments, and profile.
 | appfolio_message_tenant | SMS the tenant via AppFolio's proxy | Ask |
 | appfolio_list_payments | Payments AppFolio has issued | Auto |
 | appfolio_get_profile | Connected vendor profile | Auto |
-| appfolio_update_profile | Update profile fields | Ask |
 | appfolio_create_invoice | Build a line-itemized invoice with photos | Ask |
 | appfolio_upload_invoice_pdf | Upload a pre-built invoice PDF | Ask |
-| appfolio_upload_compliance_doc | Upload W-9, COI, license, etc. | Ask |
 | appfolio_get_estimate | Get an estimate's details | Auto |
 | appfolio_update_estimate | Update an estimate's amount or description | Ask |
 
 ## Photos and documents
 
 `appfolio_add_note`, `appfolio_update_note`, `appfolio_create_invoice`,
-`appfolio_upload_invoice_pdf`, and `appfolio_upload_compliance_doc`
-all accept media references. Each entry is either an `original_url`
-from a sent image or a media handle (e.g. `media_xxxx`) returned by
-`analyze_photo`. AppFolio receives them inline as base64 in the JSON
-body.
+and `appfolio_upload_invoice_pdf` all accept media references. Each
+entry is either an `original_url` from a sent image or a media handle
+(e.g. `media_xxxx`) returned by `analyze_photo`. AppFolio receives
+them inline as base64 in the JSON body.
 
 ## Connecting
 
