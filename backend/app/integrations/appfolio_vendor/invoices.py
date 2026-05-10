@@ -53,42 +53,86 @@ def _line_items_to_payload(items: list[AppFolioInvoiceLineItem]) -> list[dict[st
     ]
 
 
-# Canonical SPA address keys (in print order) mapped to the field names we
-# look for on a work-order response. AppFolio's read endpoints have shipped
-# both snake_case and camelCase variants over time; we accept any of them.
+# Canonical SPA address keys (in print order) mapped to the field names
+# we look for on a work-order response. AppFolio's read endpoints ship
+# both snake_case and camelCase variants and the production
+# ``list_work_orders`` response nests the location under
+# ``address: {propertyOrUnitName, address1, address2, city, state,
+# zipCode}``, so we accept all of those forms.
 _WO_ADDRESS_FIELD_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("property_or_unit_name", ("property_or_unit_name", "unit_name", "property_name")),
+    (
+        "property_or_unit_name",
+        ("property_or_unit_name", "propertyOrUnitName", "unit_name", "property_name"),
+    ),
     ("address_1", ("address_1", "address1", "street_address", "street")),
     ("address_2", ("address_2", "address2", "street_2")),
     ("city", ("city",)),
     ("state", ("state", "region")),
-    ("zip_code", ("zip_code", "zip", "postal_code", "postalCode")),
+    ("zip_code", ("zip_code", "zipCode", "zip", "postal_code", "postalCode")),
 )
+
+# Container fields that may hold a nested address dict instead of the
+# flat top-level fields. ``list_work_orders`` puts the address inside
+# ``wo["address"]`` (a dict). Some envelope shapes might also wrap the
+# whole work order at ``wo["work_order"]`` or ``wo["data"]``.
+_WO_ADDRESS_CONTAINERS: tuple[str, ...] = ("address", "location", "propertyAddress")
+_WO_TOP_CONTAINERS: tuple[str, ...] = ("work_order", "data")
 
 
 def _address_from_work_order(wo: dict[str, Any]) -> dict[str, Any]:
     """Build the SPA-shaped invoice address block from a work-order dict.
 
-    AppFolio's ``POST /maintenance/api/invoices`` returns HTTP 500 with an
-    empty body when ``address`` is missing, even though the SPA payload
-    documents it as optional. We sidestep that by fetching the work order
-    and mapping its location fields into the SPA's expected shape.
+    AppFolio's ``POST /maintenance/api/invoices`` returns HTTP 500 with
+    an empty body when ``address`` is missing, even though the SPA
+    payload documents it as optional. We sidestep that by fetching the
+    work order and mapping its location fields into the SPA's expected
+    shape.
 
-    Falls back to populating ``address_1`` with the formatted
-    ``property_address`` string if no structured fields are present, so a
-    minimally-shaped read response still produces a non-empty block.
+    Resilient to three observed response shapes:
+
+    * Address fields at the top level: ``wo.get("address_1")`` etc.
+    * Nested under an ``address`` (or ``location`` / ``propertyAddress``)
+      dict, the shape ``list_work_orders`` returns in production.
+    * The whole work order wrapped in a ``work_order`` / ``data`` envelope.
+
+    Returns an empty dict when nothing matches; the caller logs a
+    diagnostic in that case (see :func:`_fetch_invoice_address`).
     """
+    # If the WO is wrapped in a single-key envelope, unwrap it.
+    for envelope_key in _WO_TOP_CONTAINERS:
+        inner = wo.get(envelope_key)
+        if isinstance(inner, dict) and inner:
+            wo = inner
+            break
+
+    # Search both the top-level dict and any nested address container.
+    sources: list[dict[str, Any]] = [wo]
+    for container_key in _WO_ADDRESS_CONTAINERS:
+        nested = wo.get(container_key)
+        if isinstance(nested, dict) and nested:
+            sources.append(nested)
+
     address: dict[str, Any] = {}
     for canonical, candidates in _WO_ADDRESS_FIELD_ALIASES:
-        for name in candidates:
-            value = wo.get(name)
-            if value:
-                address[canonical] = str(value)
+        for source in sources:
+            for name in candidates:
+                value = source.get(name)
+                if value:
+                    address[canonical] = str(value)
+                    break
+            if canonical in address:
                 break
+
     if not address:
-        formatted = wo.get("property_address") or wo.get("address") or wo.get("propertyAddress")
-        if formatted:
-            address["address_1"] = str(formatted)
+        # Last-ditch: a flat string in one of the address container keys
+        # (some endpoints return the formatted address as a single
+        # string, not a dict). Send it as ``address_1`` so AppFolio at
+        # least has something to print on the invoice.
+        for container_key in (*_WO_ADDRESS_CONTAINERS, "property_address"):
+            formatted = wo.get(container_key)
+            if isinstance(formatted, str) and formatted:
+                address["address_1"] = formatted
+                break
     return address
 
 
@@ -136,7 +180,36 @@ async def _fetch_invoice_address(
             is_error=True,
             error_kind=ToolErrorKind.NOT_FOUND,
         )
-    return canonical_customer_id, _address_from_work_order(wo)
+    address = _address_from_work_order(wo)
+    if not address:
+        # AppFolio rejects invoice POSTs without an address block (HTTP
+        # 500 with an empty body), so an empty extraction here is going
+        # to fail the invoice anyway. Log the WO key shape so the next
+        # response variant we hit is debuggable, and surface a clear
+        # error to the agent instead of letting the POST go out
+        # half-formed.
+        logger.warning(
+            "AppFolio _address_from_work_order returned empty"
+            " | work_order_id=%s top_keys=%r address_field_type=%s",
+            work_order_id,
+            sorted(wo.keys()),
+            type(wo.get("address")).__name__,
+        )
+        return ToolResult(
+            content=(
+                f"AppFolio returned work order {work_order_id} but no"
+                " address fields could be extracted; cannot build the"
+                " invoice payload."
+            ),
+            is_error=True,
+            error_kind=ToolErrorKind.SERVICE,
+            hint=(
+                "The work-order response shape may have changed. Check"
+                " the warning log entry from the appfolio_vendor.invoices"
+                " module for the field names AppFolio returned."
+            ),
+        )
+    return canonical_customer_id, address
 
 
 def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[Tool]:

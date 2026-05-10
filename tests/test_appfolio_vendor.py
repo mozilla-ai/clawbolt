@@ -1351,6 +1351,70 @@ def test_address_from_work_order_returns_empty_when_no_address() -> None:
     assert _address_from_work_order({"id": 1, "status": "open"}) == {}
 
 
+def test_address_from_work_order_handles_nested_camelcase_dict() -> None:
+    """Production WO responses nest the address as a camelCase dict.
+
+    Reproduces the shape observed in ``list_work_orders`` output:
+    ``wo["address"]`` is a dict with ``propertyOrUnitName``,
+    ``address1``, ``address2``, ``city``, ``state``, ``zipCode``.
+    The parser must descend into that container and translate the
+    camelCase keys to the SPA's snake_case shape.
+    """
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _address_from_work_order,
+    )
+
+    wo = {
+        "id": 113468,
+        "address": {
+            "propertyOrUnitName": "Test Building Unit 2L",
+            "address1": "123 Example Street - 2L",
+            "address2": "",
+            "city": "Anytown",
+            "state": "CA",
+            "zipCode": "99999",
+        },
+    }
+    assert _address_from_work_order(wo) == {
+        "property_or_unit_name": "Test Building Unit 2L",
+        "address_1": "123 Example Street - 2L",
+        "city": "Anytown",
+        "state": "CA",
+        "zip_code": "99999",
+    }
+
+
+def test_address_from_work_order_unwraps_envelope() -> None:
+    """A WO wrapped in ``{"work_order": {...}}`` still extracts cleanly."""
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _address_from_work_order,
+    )
+
+    wo = {
+        "work_order": {
+            "id": 1,
+            "address": {"address1": "123 Example Street", "city": "Anytown"},
+        }
+    }
+    assert _address_from_work_order(wo) == {
+        "address_1": "123 Example Street",
+        "city": "Anytown",
+    }
+
+
+def test_address_from_work_order_top_level_overrides_nested() -> None:
+    """Top-level structured fields win over nested ones when both present."""
+    from backend.app.integrations.appfolio_vendor.invoices import (
+        _address_from_work_order,
+    )
+
+    wo = {
+        "address_1": "Top Level Street",
+        "address": {"address1": "Nested Street"},
+    }
+    assert _address_from_work_order(wo)["address_1"] == "Top Level Street"
+
+
 @pytest.mark.asyncio()
 async def test_create_invoice_tool_includes_address_from_work_order() -> None:
     """The tool fetches the WO and ships the SPA-shaped address block."""
@@ -1394,8 +1458,14 @@ async def test_create_invoice_tool_includes_address_from_work_order() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_create_invoice_tool_skips_address_when_work_order_has_none() -> None:
-    """An empty address dict drops to ``None`` so the body omits the key."""
+async def test_create_invoice_tool_short_circuits_when_address_extraction_empty() -> None:
+    """Empty address extraction surfaces a clear error and skips the POST.
+
+    AppFolio rejects invoice POSTs without an ``address`` block (HTTP
+    500 with empty body), so shipping a no-address payload would just
+    fail noisily anyway. Surface a clear ToolResult instead and emit a
+    warning log so we can debug the response-shape mismatch.
+    """
     from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
 
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
@@ -1409,14 +1479,13 @@ async def test_create_invoice_tool_skips_address_when_work_order_has_none() -> N
 
     tools = build_invoice_tools(service, ctx)
     create = next(t for t in tools if t.name == "appfolio_create_invoice")
-    await create.function(
+    result = await create.function(
         customer_id="cust-1",
         work_order_id="42",
         line_items=[{"description": "Labor", "quantity": 1.0, "amount": 100.0}],
     )
-    create_invoice.assert_awaited_once()
-    assert create_invoice.call_args is not None
-    assert create_invoice.call_args.kwargs["address"] is None
+    assert result.is_error is True
+    create_invoice.assert_not_awaited()
 
 
 @pytest.mark.asyncio()
