@@ -425,6 +425,40 @@ async def test_service_error_to_tool_result_distinguishes_scope_from_expired() -
     assert "reconnect" not in (scope.content or "").lower()
 
 
+def test_log_unexpected_response_shape_dict(caplog: Any) -> None:
+    """The helper logs a structured WARNING with sorted keys and a body preview."""
+    import logging
+
+    from backend.app.integrations.appfolio_vendor.errors import (
+        log_unexpected_response_shape,
+    )
+
+    payload = {"unexpected_field": "value", "other": [1, 2]}
+    with caplog.at_level(logging.WARNING, logger="backend.app.integrations.appfolio_vendor.errors"):
+        log_unexpected_response_shape("test_tool", payload, expected="dict with `data` key")
+    assert any(
+        "test_tool" in r.message
+        and "dict with `data` key" in r.message
+        and "['other', 'unexpected_field']" in r.message
+        and "unexpected_field" in r.message
+        for r in caplog.records
+    )
+
+
+def test_log_unexpected_response_shape_list(caplog: Any) -> None:
+    """List payloads log length plus the first item's keys when that item is a dict."""
+    import logging
+
+    from backend.app.integrations.appfolio_vendor.errors import (
+        log_unexpected_response_shape,
+    )
+
+    payload = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+    with caplog.at_level(logging.WARNING, logger="backend.app.integrations.appfolio_vendor.errors"):
+        log_unexpected_response_shape("test_tool", payload, expected="dict envelope")
+    assert any("list len=2" in r.message and "['id', 'name']" in r.message for r in caplog.records)
+
+
 @pytest.mark.asyncio()
 async def test_service_5xx_raises_appfolio_error() -> None:
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
