@@ -79,6 +79,21 @@ When `LINQ_API_TOKEN` is set, the iMessage channel is powered by Linq and users 
 
 When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage channel is powered by BlueBubbles. [BlueBubbles](https://github.com/BlueBubblesApp/bluebubbles-server) is a free, open-source iMessage bridge that runs on any Mac with iMessage signed in.
 
+## Twilio (SMS/MMS)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TWILIO_ACCOUNT_SID` | | Twilio account SID (`AC...`) |
+| `TWILIO_AUTH_TOKEN` | | Twilio auth token. Used for webhook signature validation and authenticating media URL downloads. |
+| `TWILIO_PHONE_NUMBER` | | E.164 outbound sender, e.g. `+15551234567`. Pinned as `from_` on every send. |
+| `TWILIO_MESSAGING_SERVICE_SID` | | Messaging Service SID (`MG...`). Use for US A2P 10DLC: the service holds a pool of campaign-registered numbers. When set, takes precedence over `TWILIO_PHONE_NUMBER`. |
+| `TWILIO_ALLOWED_NUMBERS` | (empty) | E.164 phone number, `*` for all, or empty to deny all. |
+| `TWILIO_VALIDATE_SIGNATURES` | `true` | Validate `X-Twilio-Signature` on inbound webhooks. Leave on in production; turning off is only safe behind a private tunnel during local dev. |
+
+Twilio SMS has no typing-indicator concept, so the channel's `send_typing_indicator` is a no-op. If typing indicators on iMessage / RCS are required, use Linq or BlueBubbles instead.
+
+For US deployments, configure a Twilio Messaging Service with A2P 10DLC registration and set `TWILIO_MESSAGING_SERVICE_SID`. Toll-free numbers can skip 10DLC entirely; pin one via `TWILIO_PHONE_NUMBER` and complete Twilio's toll-free verification flow.
+
 ## Google Drive integration
 
 Google Drive is the integration Clawbolt uses for file storage. Each user grants `drive.file` scope through `manage_integration` in chat; files land in the user's own Drive under a top-level "Clawbolt" folder. Without these credentials set, the integration stays unavailable and the file tools (upload, retrieve, analyze) never load for any user.
