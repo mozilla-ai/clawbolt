@@ -49,8 +49,8 @@ function setupMocks(overrides?: {
   mockGetToolConfig.mockResolvedValue(
     overrides?.tools ?? {
       tools: [
-        { name: 'workspace', description: 'Workspace tools', category: 'core', enabled: true, domain_group: '', domain_group_order: 0 },
-        { name: 'calendar', description: 'Google Calendar integration', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0 },
+        { name: 'workspace', description: 'Workspace tools', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: '', always_enabled: true },
+        { name: 'calendar', description: 'Google Calendar integration', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_calendar', always_enabled: false },
       ],
     },
   );
@@ -134,5 +134,53 @@ describe('ToolsPage', () => {
     // Card should NOT have opacity-50
     const cardElement = screen.getByText('Google Calendar').closest('.opacity-50');
     expect(cardElement).toBeNull();
+  });
+
+  it('renders OAuth-backed always-on tools (Google Drive) with Connect button and no toggle', async () => {
+    // Regression: Google Drive uses ``dashboard_always_enabled=True`` so
+    // the backend reports ``category="core"``. The Settings UI must still
+    // render it (with Connect / Disconnect) but skip the enable / disable
+    // toggle because the backend silently ignores toggle attempts.
+    setupMocks({
+      tools: {
+        tools: [
+          { name: 'file', description: 'Google Drive storage', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_drive', always_enabled: true },
+        ],
+      },
+      oauth: {
+        integrations: [{ integration: 'google_drive', connected: false, configured: true }],
+      },
+    });
+    renderWithRouter(<ToolsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Google Drive')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Connect')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Toggle Google Drive')).not.toBeInTheDocument();
+  });
+
+  it('renders Disconnect button for connected OAuth-backed tools using oauth_name from response', async () => {
+    // Regression: previously the Settings UI looked up OAuth integration
+    // names via a hand-maintained TOOL_OAUTH_MAP in the frontend. New
+    // integrations (e.g. Gmail) that were never added to the map lost
+    // their Connect / Disconnect buttons silently. The fix carries
+    // ``oauth_name`` on the API response so the UI stays in sync.
+    setupMocks({
+      tools: {
+        tools: [
+          { name: 'gmail', description: 'Gmail integration', category: 'domain', enabled: true, domain_group: 'Integrations', domain_group_order: 2, oauth_name: 'gmail', always_enabled: false },
+        ],
+      },
+      oauth: {
+        integrations: [{ integration: 'gmail', connected: true, configured: true }],
+      },
+    });
+    renderWithRouter(<ToolsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Disconnect')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Connected')).toBeInTheDocument();
   });
 });

@@ -104,9 +104,9 @@ function setupMocks(overrides?: {
   mockGetToolConfig.mockResolvedValue(
     overrides?.tools ?? {
       tools: [
-        { name: 'workspace', description: '', category: 'core', enabled: true, domain_group: '', domain_group_order: 0 },
+        { name: 'workspace', description: '', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: '', always_enabled: true },
         {
-          name: 'calendar', description: '', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0,
+          name: 'calendar', description: '', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_calendar', always_enabled: false,
           sub_tools: [
             { name: 'calendar_list_events', description: '', enabled: true, permission_level: 'auto' },
             { name: 'calendar_create_event', description: '', enabled: true, permission_level: 'ask' },
@@ -290,9 +290,9 @@ describe('DashboardPage', () => {
     setupMocks({
       tools: {
         tools: [
-          { name: 'workspace', description: '', category: 'core', enabled: true, domain_group: '', domain_group_order: 0 },
-          { name: 'calendar', description: '', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0 },
-          { name: 'quickbooks', description: '', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0 },
+          { name: 'workspace', description: '', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: '', always_enabled: true },
+          { name: 'calendar', description: '', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_calendar', always_enabled: false },
+          { name: 'quickbooks', description: '', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'quickbooks', always_enabled: false },
         ],
       },
       oauth: {

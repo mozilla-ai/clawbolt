@@ -161,6 +161,68 @@ def test_get_tool_config_domain_group(client: TestClient) -> None:
         assert t["domain_group_order"] == 0, f"{t['name']} should have zero order"
 
 
+def test_get_tool_config_includes_oauth_name(client: TestClient) -> None:
+    """GET /api/user/tools surfaces the OAuth integration backing each tool.
+
+    The frontend Settings UI uses ``oauth_name`` to render Connect /
+    Disconnect buttons. Without this field, integrations whose factory
+    name differs from the OAuth integration name (``file`` ->
+    ``google_drive``, ``calendar`` -> ``google_calendar``) drop their
+    Connect button silently, and integrations whose factory was never
+    added to the frontend's hand-maintained map (e.g. ``gmail`` after the
+    refactor in #1285) lose theirs too.
+    """
+    response = client.get("/api/user/tools")
+    assert response.status_code == 200
+    tools_by_name = {t["name"]: t for t in response.json()["tools"]}
+
+    # All response entries declare the field (default empty string).
+    for tool in tools_by_name.values():
+        assert "oauth_name" in tool, f"{tool['name']} missing oauth_name field"
+
+    # OAuth-backed factories report the integration name registered in
+    # backend.app.services.oauth, including both the matching-name case
+    # (``gmail``, ``quickbooks``, ``companycam``) and the renamed case
+    # (``file`` -> ``google_drive``, ``calendar`` -> ``google_calendar``).
+    assert tools_by_name["file"]["oauth_name"] == "google_drive"
+    assert tools_by_name["calendar"]["oauth_name"] == "google_calendar"
+    assert tools_by_name["quickbooks"]["oauth_name"] == "quickbooks"
+    assert tools_by_name["companycam"]["oauth_name"] == "companycam"
+    assert tools_by_name["gmail"]["oauth_name"] == "gmail"
+
+    # Non-OAuth factories report empty string so the UI knows there is
+    # nothing to connect.
+    assert tools_by_name["workspace"]["oauth_name"] == ""
+    assert tools_by_name["supplier_pricing"]["oauth_name"] == ""
+
+
+def test_get_tool_config_includes_always_enabled(client: TestClient) -> None:
+    """GET /api/user/tools surfaces ``always_enabled`` so the UI can hide the
+    disable toggle for tools the backend refuses to disable.
+
+    Mirrors ``ToolFactory.dashboard_always_enabled``. Decoupled from
+    ``category`` so future internal-only categories cannot accidentally
+    hide the toggle for always-on OAuth tools (Google Drive).
+    """
+    response = client.get("/api/user/tools")
+    assert response.status_code == 200
+    tools_by_name = {t["name"]: t for t in response.json()["tools"]}
+
+    # All response entries declare the field (default False).
+    for tool in tools_by_name.values():
+        assert "always_enabled" in tool, f"{tool['name']} missing always_enabled"
+
+    # Always-on factories report True. ``file`` (Google Drive) is the
+    # canonical always-on OAuth factory; ``workspace`` is the canonical
+    # always-on non-OAuth factory.
+    assert tools_by_name["file"]["always_enabled"] is True
+    assert tools_by_name["workspace"]["always_enabled"] is True
+
+    # Specialist factories with toggles report False.
+    assert tools_by_name["gmail"]["always_enabled"] is False
+    assert tools_by_name["quickbooks"]["always_enabled"] is False
+
+
 def test_put_tool_config_disable_domain_tool(client: TestClient) -> None:
     """PUT /api/user/tools can disable a domain tool."""
     response = client.put(

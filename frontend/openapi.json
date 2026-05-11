@@ -2577,6 +2577,16 @@
             "title": "Auth Message",
             "default": ""
           },
+          "oauth_name": {
+            "type": "string",
+            "title": "Oauth Name",
+            "default": ""
+          },
+          "always_enabled": {
+            "type": "boolean",
+            "title": "Always Enabled",
+            "default": false
+          },
           "sub_tools": {
             "items": {
               "$ref": "#/components/schemas/SubToolEntryResponse"

@@ -1,24 +1,16 @@
 /**
- * Shared tool display names and OAuth mappings.
+ * Shared tool display names and OAuth helpers.
  *
  * Centralised here so that DashboardPage, ToolsPage, and any future page
  * that renders tool status stay in sync. When adding a new tool:
  *
  * 1. Add an entry to DISPLAY_NAMES.
  * 2. Add sub-tool entries to SUB_TOOL_NAMES.
- * 3. If the tool requires OAuth, add it to TOOL_OAUTH_MAP.
- *    If it does NOT require auth (like supplier_pricing), leave it out
- *    and it will be treated as "always available."
+ *
+ * The OAuth integration backing each tool is carried on the API response
+ * itself (``ToolConfigEntryResponse.oauth_name``), so new OAuth-backed
+ * integrations do not need to touch this file at all.
  */
-
-/** Map tool factory names to integration identifiers. Tools NOT in this
- *  map are treated as non-connectable (always configured, always connected). */
-export const TOOL_OAUTH_MAP: Record<string, string> = {
-  quickbooks: 'quickbooks',
-  calendar: 'google_calendar',
-  companycam: 'companycam',
-  file: 'google_drive',
-};
 
 /** Human-readable display names for tool factories. */
 const DISPLAY_NAMES: Record<string, string> = {
@@ -76,23 +68,24 @@ export function subToolDisplayName(name: string): string {
 /**
  * Determine whether a tool needs auth and its connection/config status.
  *
- * For connectable tools: checks TOOL_OAUTH_MAP + oauthMap for configured/connected.
- * For non-connectable tools: uses the `configured` field from the backend API response
- * (populated from the tool's auth_check). If the backend says configured=false,
- * the tool shows as "Not configured" (e.g. missing SERPAPI_API_KEY).
+ * For OAuth-backed tools (``oauthName`` non-empty): looks up the connection
+ * state in *oauthMap*, which mirrors the /oauth/status response.
+ * For non-OAuth tools: uses the ``configured`` field from /user/tools
+ * (populated from the tool's ``auth_check``). If the backend says
+ * configured=false, the tool shows as "Not configured" (e.g. missing
+ * SERPAPI_API_KEY for supplier_pricing).
  */
 export function getToolOAuthStatus(
-  toolName: string,
+  oauthName: string,
   oauthMap: Record<string, { configured?: boolean; connected?: boolean }>,
   backendConfigured?: boolean,
 ): { needsOAuth: boolean; isConfigured: boolean; isConnected: boolean } {
-  const oauthIntegration = TOOL_OAUTH_MAP[toolName];
-  const needsOAuth = !!oauthIntegration;
+  const needsOAuth = !!oauthName;
   if (!needsOAuth) {
     const configured = backendConfigured ?? true;
     return { needsOAuth: false, isConfigured: configured, isConnected: configured };
   }
-  const entry = oauthMap[oauthIntegration];
+  const entry = oauthMap[oauthName];
   return {
     needsOAuth: true,
     isConfigured: entry?.configured ?? false,
