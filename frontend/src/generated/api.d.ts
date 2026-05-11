@@ -311,6 +311,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/webhooks/twilio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Twilio Inbound
+         * @description Receive inbound SMS/MMS from Twilio.
+         *
+         *     Returns an empty TwiML response immediately; the agent loop
+         *     replies through the outbound dispatcher via the REST API so
+         *     this endpoint stays under Twilio's 15s ack window even when
+         *     the LLM call takes longer.
+         */
+        post: operations["twilio_inbound_api_webhooks_twilio_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/profile": {
         parameters: {
             query?: never;
@@ -1813,6 +1838,26 @@ export interface operations {
         };
     };
     bluebubbles_inbound_api_webhooks_bluebubbles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    twilio_inbound_api_webhooks_twilio_post: {
         parameters: {
             query?: never;
             header?: never;

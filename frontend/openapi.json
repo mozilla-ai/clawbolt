@@ -436,6 +436,23 @@
         }
       }
     },
+    "/api/webhooks/twilio": {
+      "post": {
+        "summary": "Twilio Inbound",
+        "description": "Receive inbound SMS/MMS from Twilio.\n\nReturns an empty TwiML response immediately; the agent loop\nreplies through the outbound dispatcher via the REST API so\nthis endpoint stays under Twilio's 15s ack window even when\nthe LLM call takes longer.",
+        "operationId": "twilio_inbound_api_webhooks_twilio_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/profile": {
       "get": {
         "summary": "Get Profile",
