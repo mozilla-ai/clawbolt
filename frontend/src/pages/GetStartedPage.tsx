@@ -16,7 +16,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { getVisibleChannels, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
-import { ChannelConfigForm, type TelegramLinkData, type TwilioLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
+import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
 import { normalizeUsPhone, isValidE164, PHONE_FORMAT_ERROR } from '@/lib/phone';
 import api from '@/api';
 
@@ -35,7 +35,6 @@ export default function GetStartedPage() {
 
   // Premium link data (fetched once, same pattern as ChannelsPage)
   const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
-  const [twilioLinkData, setTwilioLinkData] = useState<TwilioLinkData | null>(null);
   const [linkDataMap, setLinkDataMap] = useState<Partial<Record<ChannelKey, PremiumLinkData | null>>>({});
 
   useEffect(() => {
@@ -44,21 +43,13 @@ export default function GetStartedPage() {
       const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
         linq: () => api.getLinqLink(),
         bluebubbles: () => api.getBlueBubblesLink(),
+        twilio: () => api.getTwilioLink(),
       };
       for (const [key, fetcher] of Object.entries(fetchers)) {
         fetcher().then((data) => {
           setLinkDataMap((prev) => ({ ...prev, [key]: { identifier: data.phone_number, connected: data.connected } }));
         }).catch(() => {});
       }
-      // Twilio uses a separate shape (personal_phone + twilio_phone_number);
-      // store the raw response and project into linkDataMap for state derivation.
-      api.getTwilioLink().then((data) => {
-        setTwilioLinkData(data);
-        setLinkDataMap((prev) => ({
-          ...prev,
-          twilio: { identifier: data.personal_phone, connected: data.connected },
-        }));
-      }).catch(() => {});
     }
   }, [isPremium]);
 
@@ -69,10 +60,10 @@ export default function GetStartedPage() {
   const bbAddress = channelConfig?.bluebubbles_imessage_address ?? '';
   const bbConfigured = channelConfig ? isServerAvailable('bluebubbles', channelConfig) : false;
   const telegramConfigured = channelConfig ? isServerAvailable('telegram', channelConfig) : false;
-  // For OSS Twilio the bot's number is operator-configured; for premium it
-  // comes from the per-user provisioned number on the link.
-  const twilioAddress =
-    twilioLinkData?.twilio_phone_number || channelConfig?.twilio_phone_number || '';
+  // Bot's outbound sender for display. Operator-configured in both OSS
+  // and premium modes (premium uses a single shared RCS/SMS sender via
+  // Messaging Service).
+  const twilioAddress = channelConfig?.twilio_phone_number || '';
   const [telegramBotInfo, setTelegramBotInfo] = useState<{ bot_username: string; bot_link: string } | null>(null);
   useEffect(() => {
     if (telegramConfigured) {
@@ -139,18 +130,10 @@ export default function GetStartedPage() {
   const handleConfigSaved = (key: ChannelKey) => {
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      if (key === 'twilio') {
-        api.getTwilioLink().then((data) => {
-          setTwilioLinkData(data);
-          setLinkDataMap((prev) => ({
-            ...prev,
-            twilio: { identifier: data.personal_phone, connected: data.connected },
-          }));
-        }).catch(() => {});
-      }
       const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
         linq: () => api.getLinqLink(),
         bluebubbles: () => api.getBlueBubblesLink(),
+        twilio: () => api.getTwilioLink(),
       };
       const fetcher = fetchers[key];
       if (fetcher) {
@@ -277,7 +260,6 @@ export default function GetStartedPage() {
                     isPremium={isPremium}
                     channelConfig={channelConfig}
                     telegramLinkData={telegramLinkData}
-                    twilioLinkData={twilioLinkData}
                     premiumLinkData={linkDataMap[selectedChannel] ?? null}
                     onSaved={() => handleConfigSaved(selectedChannel)}
                   />

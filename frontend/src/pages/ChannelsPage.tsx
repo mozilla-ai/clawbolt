@@ -15,7 +15,6 @@ import {
 import {
   ChannelConfigForm,
   type TelegramLinkData,
-  type TwilioLinkData,
   type PremiumLinkData,
 } from '@/components/ChannelConfigForm';
 import type { ChannelStatesResult } from '@/hooks/useChannelStates';
@@ -25,7 +24,7 @@ type TelegramBotInfo = ChannelStatesResult['botInfo'];
 export default function ChannelsPage() {
   const { isPremium } = useAuth();
   const toggleMutation = useToggleChannelRoute();
-  const { states: channelStates, channelConfig, telegramLinkData, twilioLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
+  const { states: channelStates, channelConfig, telegramLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
   const visibleChannels = getVisibleChannels(channelConfig);
   const routesQuery = useChannelRoutes();
   const imessageAddress = getImessageAddress(channelConfig);
@@ -165,7 +164,6 @@ export default function ChannelsPage() {
                     channelConfig={channelConfig}
                     botInfo={key === 'telegram' ? botInfo : null}
                     telegramLinkData={key === 'telegram' ? telegramLinkData : null}
-                    twilioLinkData={key === 'twilio' ? twilioLinkData : null}
                     premiumLinkData={linkDataMap[key] ?? null}
                     imessageAddress={imessageAddress}
                     verified={verifiedByChannel[key] ?? false}
@@ -193,7 +191,6 @@ export default function ChannelsPage() {
               channelConfig={channelConfig}
               botInfo={key === 'telegram' ? botInfo : null}
               telegramLinkData={key === 'telegram' ? telegramLinkData : null}
-              twilioLinkData={key === 'twilio' ? twilioLinkData : null}
               premiumLinkData={linkDataMap[key] ?? null}
               imessageAddress={imessageAddress}
               verified={verifiedByChannel[key] ?? false}
@@ -226,7 +223,6 @@ interface ChannelCardProps {
   channelConfig: ChannelStatesResult['channelConfig'];
   botInfo: TelegramBotInfo | null;
   telegramLinkData: TelegramLinkData | null;
-  twilioLinkData: TwilioLinkData | null;
   premiumLinkData: PremiumLinkData | null;
   imessageAddress: string | null;
   verified: boolean;
@@ -247,7 +243,6 @@ function ChannelCard({
   channelConfig,
   botInfo,
   telegramLinkData,
-  twilioLinkData,
   premiumLinkData,
   imessageAddress,
   verified,
@@ -339,14 +334,13 @@ function ChannelCard({
         </div>
       )}
 
-      {/* Twilio address banner. OSS uses the global twilio_phone_number;
-          premium uses the per-user provisioned number from the link. */}
+      {/* Twilio address banner. The operator-configured outbound sender
+          is the bot's address in both OSS and premium modes (premium
+          shares one Messaging Service across all users). */}
       {channelKey === 'twilio'
         && (state === 'configured' || state === 'active') && (
         (() => {
-          const address = isPremium
-            ? twilioLinkData?.twilio_phone_number
-            : channelConfig?.twilio_phone_number;
+          const address = channelConfig?.twilio_phone_number;
           if (!address) return null;
           return (
             <div className="mt-3 ml-7 text-sm">
@@ -415,7 +409,6 @@ function ChannelCard({
             isPremium={isPremium}
             channelConfig={channelConfig}
             telegramLinkData={telegramLinkData}
-            twilioLinkData={twilioLinkData}
             premiumLinkData={premiumLinkData}
             onSaved={onConfigSaved}
           />
@@ -441,7 +434,6 @@ function ChannelCard({
                 isPremium={isPremium}
                 channelConfig={channelConfig}
                 telegramLinkData={telegramLinkData}
-                twilioLinkData={twilioLinkData}
                 premiumLinkData={premiumLinkData}
                 onSaved={onConfigSaved}
               />

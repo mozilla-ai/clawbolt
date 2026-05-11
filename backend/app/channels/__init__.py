@@ -82,7 +82,15 @@ def reset_channel_clients(updates: Mapping[str, object]) -> None:
         except KeyError:
             pass
 
-    if "twilio_account_sid" in updates or "twilio_auth_token" in updates:
+    if any(
+        k in updates
+        for k in (
+            "twilio_account_sid",
+            "twilio_auth_token",
+            "twilio_api_key_sid",
+            "twilio_api_key_secret",
+        )
+    ):
         try:
             from backend.app.channels.twilio import TwilioChannel
 
@@ -90,6 +98,8 @@ def reset_channel_clients(updates: Mapping[str, object]) -> None:
             if isinstance(channel, TwilioChannel):
                 channel._account_sid = settings.twilio_account_sid
                 channel._auth_token = settings.twilio_auth_token
+                channel._api_key_sid = settings.twilio_api_key_sid
+                channel._api_key_secret = settings.twilio_api_key_secret
                 channel._client = None
         except KeyError:
             pass

@@ -79,20 +79,33 @@ When `LINQ_API_TOKEN` is set, the iMessage channel is powered by Linq and users 
 
 When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage channel is powered by BlueBubbles. [BlueBubbles](https://github.com/BlueBubblesApp/bluebubbles-server) is a free, open-source iMessage bridge that runs on any Mac with iMessage signed in.
 
-## Twilio (SMS/MMS)
+## Twilio (RCS with SMS/MMS fallback)
+
+The Twilio channel sends through a Messaging Service which can carry an RCS Agent for capable recipients and a phone-number pool for SMS fallback. RCS-capable recipients get rich messaging (branded sender, no character limits, optional read receipts and suggested-reply chips); everyone else receives SMS or MMS, decided by Twilio per recipient.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TWILIO_ACCOUNT_SID` | | Twilio account SID (`AC...`) |
-| `TWILIO_AUTH_TOKEN` | | Twilio auth token. Used for webhook signature validation and authenticating media URL downloads. |
-| `TWILIO_PHONE_NUMBER` | | E.164 outbound sender, e.g. `+15551234567`. Pinned as `from_` on every send. |
-| `TWILIO_MESSAGING_SERVICE_SID` | | Messaging Service SID (`MG...`). Use for US A2P 10DLC: the service holds a pool of campaign-registered numbers. When set, takes precedence over `TWILIO_PHONE_NUMBER`. |
+| `TWILIO_AUTH_TOKEN` | | Twilio account auth token. Loaded for one purpose only: validating `X-Twilio-Signature` on inbound webhooks. Twilio signs webhooks with HMAC-SHA1 keyed on this token and offers no alternative signing mechanism, so API keys cannot replace it for inbound. |
+| `TWILIO_API_KEY_SID` | | Standard API key SID (`SK...`). **Required** for every outbound REST call (send messages, media downloads). The channel refuses outbound work if missing rather than falling back to auth-token Basic Auth, so a leaked auth token cannot be replayed against the REST API. Create via Twilio Console > Account > API Keys & Tokens (Standard key). |
+| `TWILIO_API_KEY_SECRET` | | The API key's secret value. Shown once at key creation; record it then. |
+| `TWILIO_PHONE_NUMBER` | | E.164 fallback sender for SMS-only deployments, e.g. `+15551234567`. Ignored when `TWILIO_MESSAGING_SERVICE_SID` is set. |
+| `TWILIO_MESSAGING_SERVICE_SID` | | Messaging Service SID (`MG...`). Required for RCS; the RCS Agent attaches to the service. When set, takes precedence over `TWILIO_PHONE_NUMBER`. |
 | `TWILIO_ALLOWED_NUMBERS` | (empty) | E.164 phone number, `*` for all, or empty to deny all. |
 | `TWILIO_VALIDATE_SIGNATURES` | `true` | Validate `X-Twilio-Signature` on inbound webhooks. Leave on in production; turning off is only safe behind a private tunnel during local dev. |
 
-Twilio SMS has no typing-indicator concept, so the channel's `send_typing_indicator` is a no-op. If typing indicators on iMessage / RCS are required, use Linq or BlueBubbles instead.
+### RCS setup
 
-For US deployments, configure a Twilio Messaging Service with A2P 10DLC registration and set `TWILIO_MESSAGING_SERVICE_SID`. Toll-free numbers can skip 10DLC entirely; pin one via `TWILIO_PHONE_NUMBER` and complete Twilio's toll-free verification flow.
+1. Register your brand and an RCS Agent in the Twilio console. See [Twilio's RCS onboarding guide](https://www.twilio.com/docs/rcs/onboarding) for the brand/agent/carrier-approval workflow (allow 4-6 weeks for the first agent on an account; subsequent agents on an approved brand are faster).
+2. Create a Messaging Service and attach the RCS Agent to it. Add any backup SMS sender numbers (toll-free, long-code, or short-code) to the same service so RCS-incapable recipients get SMS without operator intervention.
+3. Configure the Messaging Service's inbound webhook (`A MESSAGE COMES IN`) to `https://<your host>/api/webhooks/twilio`, HTTP POST.
+4. Set `TWILIO_MESSAGING_SERVICE_SID` to the service SID. Do not set `TWILIO_PHONE_NUMBER`; the service decides the sender per recipient.
+
+Typing indicators are handled by the recipient's messaging app while a reply is in flight; there is no separate API to trigger them, and the channel's `send_typing_indicator` is a no-op.
+
+### SMS-only setup (no RCS)
+
+Skip the agent and Messaging Service. Set `TWILIO_PHONE_NUMBER` to a single E.164 sender and complete the relevant US verification flow (toll-free verification for `+18xx`, A2P 10DLC registration for long-code).
 
 ## Google Drive integration
 

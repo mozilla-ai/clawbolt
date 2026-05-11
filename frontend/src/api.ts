@@ -333,55 +333,19 @@ const api = {
   getTwilioLink: async () => {
     const res = await fetch('/api/channels/twilio', { headers: _getAuthHeaders() });
     if (!res.ok) throw new Error('Failed to fetch Twilio link');
-    return res.json() as Promise<{
-      personal_phone: string | null;
-      twilio_phone_number: string | null;
-      status: string;
-      error_message: string;
-      connected: boolean;
-    }>;
+    return res.json() as Promise<{ phone_number: string | null; connected: boolean }>;
   },
-  // Provision a Twilio number for the current user. The server runs
-  // search + purchase synchronously, so this resolves with the final
-  // status ("active" on success, "failed" on inventory / Twilio errors).
-  connectTwilio: async (body: {
-    personal_phone: string;
-    number_type?: string;
-    area_code?: string;
-  }) => {
-    const res = await fetch('/api/channels/twilio/connect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ..._getAuthHeaders() },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({})) as { detail?: string };
-      throw new Error(detail.detail || `Failed to connect: ${res.status}`);
-    }
-    return res.json() as Promise<{
-      personal_phone: string | null;
-      twilio_phone_number: string | null;
-      status: string;
-      error_message: string;
-      connected: boolean;
-    }>;
-  },
-  disconnectTwilio: async () => {
+  setTwilioLink: async (phoneNumber: string) => {
     const res = await fetch('/api/channels/twilio', {
-      method: 'DELETE',
-      headers: _getAuthHeaders(),
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._getAuthHeaders() },
+      body: JSON.stringify({ phone_number: phoneNumber }),
     });
     if (!res.ok) {
-      const detail = await res.json().catch(() => ({})) as { detail?: string };
-      throw new Error(detail.detail || `Failed to disconnect: ${res.status}`);
+      const body = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(body.detail || `Failed to save: ${res.status}`);
     }
-    return res.json() as Promise<{
-      personal_phone: string | null;
-      twilio_phone_number: string | null;
-      status: string;
-      error_message: string;
-      connected: boolean;
-    }>;
+    return res.json() as Promise<{ phone_number: string | null; connected: boolean }>;
   },
 
   // Activity stream: real-time agent status from any channel.
