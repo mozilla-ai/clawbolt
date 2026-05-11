@@ -531,8 +531,16 @@ def _tool_config_disabled_names_select(user_id: str) -> Select[tuple[str]]:
 
 
 def _tool_config_by_name_select(user_id: str, name: str) -> Select[tuple[ToolConfig]]:
-    """Builder shared by the ``set_enabled`` / ``set_enabled_async`` paths."""
-    return select(ToolConfig).filter_by(user_id=user_id, name=name)
+    """Builder shared by the ``set_enabled`` / ``set_enabled_async`` paths.
+
+    Locks the ``(user_id, name)`` row with ``FOR UPDATE`` so two concurrent
+    toggles serialize through the row lock instead of racing a stale
+    read-modify-write (issue #1222). When no row exists yet, the lock is
+    a no-op and the unique constraint on ``(user_id, name)`` arbitrates
+    the insert race: the loser catches ``IntegrityError``, rolls back,
+    and re-runs this same locked read which now finds the winner's row.
+    """
+    return select(ToolConfig).filter_by(user_id=user_id, name=name).with_for_update()
 
 
 def _tool_config_disabled_sub_tools_select(user_id: str) -> Select[tuple[str]]:
@@ -633,15 +641,36 @@ class ToolConfigStore:
         Creates or updates a ToolConfig row for the given factory name.
         Only stores the name and enabled flag; the router fills in display
         metadata from the registry when building the full tool list.
+
+        The ``(user_id, name)`` row is read under ``SELECT ... FOR UPDATE``
+        so two concurrent toggles serialize on the row lock and the last
+        writer wins (issue #1222). When no row exists yet, the loser of
+        the insert race catches the unique-constraint ``IntegrityError``,
+        rolls back, and re-runs the locked read against the winner's row.
         """
         async with db_session_async() as db:
             existing = (
                 await db.execute(_tool_config_by_name_select(self.user_id, name))
             ).scalar_one_or_none()
-            if existing:
+            if existing is not None:
                 existing.enabled = enabled
-            else:
-                db.add(_new_disabled_tool_config(self.user_id, name, enabled))
+                await db.commit()
+                return
+            db.add(_new_disabled_tool_config(self.user_id, name, enabled))
+            try:
+                await db.commit()
+                return
+            except IntegrityError:
+                await db.rollback()
+            existing = (
+                await db.execute(_tool_config_by_name_select(self.user_id, name))
+            ).scalar_one_or_none()
+            if existing is None:
+                raise RuntimeError(
+                    f"set_enabled: ToolConfig row for user_id={self.user_id} "
+                    f"name={name!r} vanished after IntegrityError on insert"
+                )
+            existing.enabled = enabled
             await db.commit()
 
     async def set_enabled_async(self, name: str, enabled: bool) -> None:
