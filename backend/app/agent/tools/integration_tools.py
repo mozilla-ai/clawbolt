@@ -485,9 +485,8 @@ async def _handle_magic_link_connect(
                 "(3) when the email arrives, copy only the token from "
                 "the link's URL (everything after 'magic_link_token='), "
                 "not the full URL. iMessage and other SMS clients strip "
-                "query params from pasted links, so the full URL would "
-                "arrive without the token. Then call appfolio_connect "
-                "with the pasted token."
+                "query params from pasted links. Then call "
+                "appfolio_connect with the pasted token."
             ),
         )
     return ToolResult(

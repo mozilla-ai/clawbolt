@@ -45,8 +45,7 @@ def build_auth_tools(user_id: str) -> list[Tool]:
                     " (the long string after 'magic_link_token=' in the"
                     " AppFolio email URL), not the full URL. iMessage"
                     " and other SMS clients strip query params from"
-                    " pasted links, so the full URL would arrive without"
-                    " the token."
+                    " pasted links."
                 ),
             )
 
@@ -95,8 +94,7 @@ def build_auth_tools(user_id: str) -> list[Tool]:
                 " Tell them: open vendor.appfolio.com, request a magic link,"
                 " then paste only the token from the URL (everything after"
                 " 'magic_link_token='), not the full URL. iMessage and"
-                " other SMS clients strip query params from pasted links,"
-                " so the full URL would arrive without the token."
+                " other SMS clients strip query params from pasted links."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ALWAYS,
