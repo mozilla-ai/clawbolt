@@ -882,3 +882,49 @@ def test_qb_update_approval_description_customer_short_form_includes_id() -> Non
         }
     )
     assert description == "Update Customer #100 in QuickBooks"
+
+
+def test_qb_create_approval_description_survives_format_approval_message() -> None:
+    """The multi-line breakdown must pass through ``format_approval_message``
+    intact (line items still visible, header still in place) so the
+    user sees the breakdown in their actual channel, not just in a
+    unit-test assertion. Belt-and-suspenders for the approval pipeline.
+    """
+    from backend.app.agent.approval import format_approval_message
+
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {
+                "CustomerRef": {"value": "16", "name": "Acme Plumbing"},
+                "Line": [
+                    {
+                        "Amount": 39.07,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Materials reimbursement",
+                        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 39.07},
+                    },
+                    {
+                        "Amount": 275.00,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Labor",
+                        "SalesItemLineDetail": {"Qty": 5, "UnitPrice": 55.00},
+                    },
+                ],
+            },
+        }
+    )
+    prompt = format_approval_message("qb_create", description)
+
+    # The header and every line item must survive the wrapping.
+    assert "Create Invoice in QuickBooks for $314.07" in prompt
+    assert "qty 1 x $39.07 = $39.07" in prompt
+    assert "qty 5 x $55.00 = $275.00" in prompt
+    # And the prompt still ends with the four-option menu so the
+    # multi-line description has not stomped the reply instructions.
+    assert "yes: allow this once" in prompt
+    assert "never: deny and remember" in prompt

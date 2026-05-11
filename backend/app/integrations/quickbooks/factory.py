@@ -327,6 +327,23 @@ def _extract_entity_type(args: dict[str, Any]) -> str | None:
 _LINE_ITEMIZED_ENTITIES: frozenset[str] = frozenset({"Invoice", "Estimate"})
 
 
+def _qb_approval_header(verb: str, entity_type: str, entity_id: Any, total: float | None) -> str:
+    """Build the first line of a qb_create / qb_update approval prompt.
+
+    Update headers include ``#{Id}`` (when available) so audit-log review
+    can trace which row was edited; Create headers do not because the
+    id only exists after QBO assigns one on the POST response. When
+    ``total`` is set, the header appends ``for ${total:.2f}``.
+    """
+    pieces = [f"{verb} {entity_type}"]
+    if verb == "Update" and entity_id:
+        pieces[0] = f"{pieces[0]} #{entity_id}"
+    pieces.append("in QuickBooks")
+    if total is not None:
+        pieces.append(f"for ${total:.2f}")
+    return " ".join(pieces)
+
+
 def _format_qb_write_approval_description(verb: str, args: dict[str, Any]) -> str:
     """Render a multi-line approval prompt that names every line item.
 
@@ -346,34 +363,34 @@ def _format_qb_write_approval_description(verb: str, args: dict[str, Any]) -> st
     ``verb`` is "Create" or "Update". For Update the header includes
     the entity Id so an admin reviewing audit logs can trace which row
     was edited.
+
+    Trusts that ``args`` came from ``QBCreateParams`` / ``QBUpdateParams``
+    (Pydantic-validated upstream), so ``args["data"]`` is a dict;
+    line-shape tolerance below is for the LLM's freeform payload
+    *inside* ``data``, not for the param envelope itself.
     """
     entity_type = str(args.get("entity_type") or "entity")
-    data = args.get("data") or {}
-    if not isinstance(data, dict):
-        return f"{verb} {entity_type} in QuickBooks"
+    data: dict[str, Any] = args.get("data") or {}
+    entity_id = data.get("Id")
 
-    short_form = f"{verb} {entity_type} in QuickBooks"
-    if verb == "Update":
-        entity_id = data.get("Id")
-        if entity_id:
-            short_form = f"{verb} {entity_type} #{entity_id} in QuickBooks"
+    short_header = _qb_approval_header(verb, entity_type, entity_id, total=None)
 
     if entity_type not in _LINE_ITEMIZED_ENTITIES:
-        return short_form
+        return short_header
 
     lines_raw = data.get("Line")
     if not isinstance(lines_raw, list) or not lines_raw:
-        return short_form
+        return short_header
 
     parsed: list[tuple[str, float | None, float | None, float]] = []
     grand_total = 0.0
     for line in lines_raw:
         if not isinstance(line, dict):
-            return short_form
+            return short_header
         try:
             amount = float(line.get("Amount", 0) or 0)
         except (TypeError, ValueError):
-            return short_form
+            return short_header
         description = str(line.get("Description") or "(no description)")
         detail = line.get("SalesItemLineDetail")
         qty: float | None = None
@@ -391,18 +408,9 @@ def _format_qb_write_approval_description(verb: str, args: dict[str, Any]) -> st
         parsed.append((description, qty, unit_price, amount))
 
     if not parsed:
-        return short_form
+        return short_header
 
-    if verb == "Update":
-        entity_id = data.get("Id")
-        if entity_id:
-            header = f"{verb} {entity_type} #{entity_id} in QuickBooks for ${grand_total:.2f}"
-        else:
-            header = f"{verb} {entity_type} in QuickBooks for ${grand_total:.2f}"
-    else:
-        header = f"{verb} {entity_type} in QuickBooks for ${grand_total:.2f}"
-
-    rendered = [header]
+    rendered = [_qb_approval_header(verb, entity_type, entity_id, total=grand_total)]
     for idx, (description, qty, unit_price, amount) in enumerate(parsed, start=1):
         short_desc = description if len(description) <= 80 else description[:77] + "..."
         if qty is not None and unit_price is not None:
