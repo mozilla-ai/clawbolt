@@ -25,6 +25,9 @@ const DISPLAY_NAMES: Record<string, string> = {
   file: 'Google Drive',
   heartbeat: 'Heartbeat',
   permissions: 'Permissions',
+  gmail: 'Gmail',
+  appfolio_vendor: 'AppFolio Vendor Portal',
+  servicetitan: 'ServiceTitan',
 };
 
 /** Human-readable sub-tool display names. */
