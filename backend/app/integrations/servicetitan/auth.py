@@ -268,6 +268,25 @@ async def save_credentials(
 async def load_credentials(user_id: str) -> ServiceTitanCredential | None:
     """Load the user's persisted ServiceTitan credential, if any."""
     token = await oauth_service.load_token(user_id, INTEGRATION_NAME)
+    return _build_credential_from_token(token)
+
+
+async def load_credentials_uncached(user_id: str) -> ServiceTitanCredential | None:
+    """Load the user's credential, bypassing the OAuth service's read cache.
+
+    Use inside an advisory-lock critical section where the goal is to
+    detect a peer worker's just-persisted refresh. The standard
+    :func:`load_credentials` honors a 30-second TTL cache and would
+    mask a cross-worker write within that window.
+    """
+    token = await oauth_service.load_token_uncached(user_id, INTEGRATION_NAME)
+    return _build_credential_from_token(token)
+
+
+def _build_credential_from_token(
+    token: OAuthTokenData | None,
+) -> ServiceTitanCredential | None:
+    """Shared reconstruction + partial-row guard for both load_credentials paths."""
     if token is None:
         return None
     cred = _credential_from_token(token)
@@ -336,7 +355,10 @@ async def get_valid_token(
             )
             return None
         # Re-check inside the lock: a peer worker may have just refreshed.
-        cred = await load_credentials(user_id)
+        # Bypass the in-memory load cache here; a stale entry from before
+        # the lock would mask the peer's just-persisted token and trigger
+        # a redundant mint.
+        cred = await load_credentials_uncached(user_id)
         if cred is None:
             return None
         if not force_refresh and not cred.is_token_expired():

@@ -23,6 +23,7 @@ from backend.app.integrations.servicetitan.auth import (
     get_valid_token,
     is_connected,
     load_credentials,
+    load_credentials_uncached,
     mint_access_token,
     save_credentials,
 )
@@ -302,6 +303,49 @@ async def test_get_valid_token_reuses_fresh_bearer(async_test_user: Any) -> None
         cred = await get_valid_token(user_id)
     assert cred is not None
     assert cred.access_token == "still-fresh"
+
+
+@pytest.mark.asyncio()
+async def test_load_credentials_uncached_observes_peer_writes(
+    async_test_user: Any,
+) -> None:
+    """The cache-bypass loader sees a row a peer wrote after our last cached read.
+
+    Models the cross-worker case the refresh lock guards: this worker
+    cached a "no credential" or stale-bearer read before acquiring the
+    lock, a peer wrote a fresh credential while we were waiting, and the
+    re-check inside the lock must reload from the DB rather than reuse
+    the stale cache entry.
+    """
+    user_id = async_test_user.id
+    # Prime the cache with a "no credential" read.
+    assert await load_credentials(user_id) is None
+    # Simulate a peer worker persisting a fresh credential while this
+    # worker held the (now-stale) negative cache entry.
+    await save_credentials(
+        user_id,
+        tenant_id="t1",
+        client_id="cid",
+        client_secret="csec",
+        app_key="fake-st-app-key",
+        access_token="bearer-from-peer",
+        expires_at=time.time() + 600,
+    )
+    # save_token invalidates the local cache, so the regular loader sees
+    # it. Re-prime the cache here to model the cross-worker situation,
+    # where the OTHER worker's cache is the one we are bypassing.
+    from backend.app.services.oauth import oauth_service as _oauth_service
+
+    _oauth_service._token_cache[(user_id, INTEGRATION_NAME)] = (
+        None,
+        time.monotonic() + 30,
+    )
+    # Cached loader returns the stale negative entry.
+    assert await load_credentials(user_id) is None
+    # Uncached loader bypasses the stale entry and sees the peer's write.
+    fresh = await load_credentials_uncached(user_id)
+    assert fresh is not None
+    assert fresh.access_token == "bearer-from-peer"
 
 
 @pytest.mark.asyncio()

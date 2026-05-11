@@ -282,7 +282,7 @@ class OAuthService:
       post-OAuth-completion blackout small).
     - ``save_token`` and ``delete_token`` invalidate the local cache.
     - Inside an advisory-lock critical section, callers MUST use
-      ``_load_token_uncached`` to defeat the cache: the whole point of
+      ``load_token_uncached`` to defeat the cache: the whole point of
       the post-lock reload is to observe a peer worker's just-persisted
       refresh, and a stale cache would mask it.
     - Cross-worker staleness is bounded by the TTL. Within that window a
@@ -479,7 +479,7 @@ class OAuthService:
         OAuth flow on a peer worker becomes visible quickly. The cache
         is invalidated on ``save_token`` and ``delete_token`` within this
         process. Callers inside an advisory-lock critical section must
-        use ``_load_token_uncached`` instead.
+        use ``load_token_uncached`` instead.
         """
         cache_key = (user_id, integration)
         now = time.monotonic()
@@ -533,19 +533,21 @@ class OAuthService:
             self._token_cache[cache_key] = (token, now + _TOKEN_CACHE_TTL_SECONDS)
             return token
 
-    async def _load_token_uncached(
+    async def load_token_uncached(
         self,
         user_id: str,
         integration: str,
     ) -> OAuthTokenData | None:
         """Force a DB read by dropping any cached entry first.
 
-        Use only inside an advisory-lock critical section where the
-        whole point of the read is to observe a peer worker's just-
-        persisted token. A stale cache would mask the peer's write and
-        cause this worker to repeat work (e.g. duplicate HTTP refresh
-        that overwrites the rotated refresh_token). All other callers
-        should use ``load_token``.
+        Use inside an advisory-lock critical section where the whole
+        point of the read is to observe a peer worker's just-persisted
+        token. A stale cache would mask the peer's write and cause this
+        worker to repeat work (e.g. duplicate HTTP refresh that
+        overwrites the rotated refresh_token, or a redundant
+        client-credentials mint for integrations that bypass
+        ``refresh_token`` entirely). All other callers should use
+        ``load_token``.
         """
         self._token_cache.pop((user_id, integration), None)
         return await self.load_token(user_id, integration)
@@ -685,7 +687,7 @@ class OAuthService:
                     # Bypass the cache: this load is the peer-write detection
                     # point for the on_refresh callback path. Same race as
                     # in refresh_token's post-lock reload.
-                    current = await self._load_token_uncached(user_id, integration)
+                    current = await self.load_token_uncached(user_id, integration)
                     if current is None:
                         logger.warning(
                             "on_refresh callback fired for missing token: user=%s integration=%s",
@@ -805,7 +807,7 @@ class OAuthService:
                 # Bypass the cache: the post-lock reload exists to detect
                 # a peer worker's just-persisted refresh, which an in-memory
                 # cache from before the lock would mask.
-                token = await self._load_token_uncached(user_id, integration)
+                token = await self.load_token_uncached(user_id, integration)
                 if not token or not token.refresh_token:
                     logger.debug(
                         "Cannot refresh token (missing): user=%s integration=%s "
