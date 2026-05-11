@@ -34,10 +34,12 @@ _MAGIC_LINK_INTEGRATIONS: set[str] = {"appfolio_vendor"}
 # These are visibility-paired with another factory: when the user-facing
 # integration is disabled, the backing factory follows. ``appfolio_auth``
 # holds the magic-link connect tools that must stay on the schema even when
-# ``appfolio_vendor`` reports "not connected"; from the user's perspective
-# both are one integration.
+# ``appfolio_vendor`` reports "not connected"; ``servicetitan_auth`` plays
+# the same role for the paste-credentials ``connect_servicetitan`` tool.
+# From the user's perspective each pair is one integration.
 _HIDDEN_CORE_FACTORIES: dict[str, str] = {
     "appfolio_auth": "appfolio_vendor",
+    "servicetitan_auth": "servicetitan",
 }
 
 

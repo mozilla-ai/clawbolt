@@ -200,6 +200,16 @@ class Settings(BaseSettings):
     # Web app base for receipt deep links and the URL users paste from.
     appfolio_vendor_web_base: str = "https://vendor.appfolio.com"
 
+    # ServiceTitan (OAuth 2.0 client-credentials per tenant + app-level App Key).
+    # Each tenant pastes their tenant ID, client ID, and client secret via
+    # ``connect_servicetitan``; the operator wires the app-level App Key here.
+    # ``servicetitan_use_fake`` swaps the real API for the in-process fake
+    # backend (see ``backend/app/integrations/servicetitan/_fake.py``); used
+    # by tests and by the local dev loop until a real sandbox tenant is wired.
+    servicetitan_app_key: str = ""
+    servicetitan_api_base_url: str = "https://api.servicetitan.io"
+    servicetitan_use_fake: bool = True
+
     # Supplier pricing (SerpApi Home Depot engine)
     serpapi_api_key: str = ""  # https://serpapi.com — free tier: 250 searches/month
 
