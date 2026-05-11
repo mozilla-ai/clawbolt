@@ -61,6 +61,51 @@ function PricingIcon() {
   );
 }
 
+function GmailIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5 shrink-0" fill="none">
+      <rect width="24" height="24" rx="4" fill="white" stroke="#E5E7EB" />
+      <path
+        d="M5 8v8.5a.5.5 0 0 0 .5.5H8v-6.2l4 3 4-3V17h2.5a.5.5 0 0 0 .5-.5V8l-7 5z"
+        fill="#EA4335"
+      />
+      <path d="M5 7.5 12 12.5 19 7.5v.5l-7 5-7-5z" fill="#C5221F" />
+    </svg>
+  );
+}
+
+function GoogleDriveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5 shrink-0" fill="none">
+      <rect width="24" height="24" rx="4" fill="white" />
+      <path d="M8 5h8l4.5 8h-8z" fill="#FBBC04" />
+      <path d="M8 5 3.5 13l3 5 4.5-8z" fill="#4285F4" />
+      <path d="M6.5 18h10l4-5h-10z" fill="#0F9D58" />
+    </svg>
+  );
+}
+
+function AppFolioIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5 shrink-0" fill="none">
+      <rect width="24" height="24" rx="4" fill="#00ADEF" />
+      <path
+        d="M12 6 6 18h2.4l1-2.1h5.2l1 2.1H18L12 6zm-1.6 7.9L12 10.6l1.6 3.3h-3.2z"
+        fill="white"
+      />
+    </svg>
+  );
+}
+
+function ServiceTitanIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5 shrink-0" fill="none">
+      <rect width="24" height="24" rx="4" fill="#152C5B" />
+      <path d="M6 7.5h12V10h-5v8h-2v-8H6V7.5z" fill="white" />
+    </svg>
+  );
+}
+
 function DefaultIntegrationIcon() {
   return (
     <svg viewBox="0 0 24 24" className="size-5 shrink-0" fill="none">
@@ -82,6 +127,10 @@ const ICON_MAP: Record<string, () => ReactNode> = {
   calendar: GoogleCalendarIcon,
   companycam: CompanyCamIcon,
   supplier_pricing: PricingIcon,
+  gmail: GmailIcon,
+  file: GoogleDriveIcon,
+  appfolio_vendor: AppFolioIcon,
+  servicetitan: ServiceTitanIcon,
 };
 
 export function IntegrationIcon({ name }: { name: string }) {
