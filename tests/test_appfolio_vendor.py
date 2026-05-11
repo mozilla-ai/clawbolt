@@ -1949,6 +1949,32 @@ async def test_appfolio_connect_message_omits_customer_count(async_test_user: An
 
 
 @pytest.mark.asyncio()
+async def test_appfolio_connect_parse_failure_hint_steers_to_token_paste(
+    async_test_user: Any,
+) -> None:
+    """Regression for #1297: parse-failure hint must mention the iMessage gotcha.
+
+    When the user pastes a full magic-link URL over iMessage, the SMS
+    client strips the query params and the token never reaches us. The
+    validation hint has to tell the agent to ask for the token alone, not
+    the full URL, so the next attempt actually succeeds.
+    """
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
+
+    tools = build_auth_tools(async_test_user.id)
+    connect = next(t for t in tools if t.name == ToolName.APPFOLIO_CONNECT)
+
+    # Empty input triggers MagicLinkError -> the validation hint we care about.
+    result = await connect.function(magic_link="")
+
+    assert result.is_error is True
+    assert result.hint is not None
+    assert "magic_link_token=" in result.hint
+    assert "iMessage" in result.hint
+
+
+@pytest.mark.asyncio()
 async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
     import logging
 
