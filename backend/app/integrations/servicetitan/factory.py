@@ -8,9 +8,10 @@ time, mirroring the AppFolio Vendor split:
   ``connect_servicetitan`` tool. Must stay reachable before any credential
   exists since pasting credentials *is* the connect path.
 * ``servicetitan`` (specialist, gated on connection state): the data
-  tools. The read tools landed in #1300; write tools land in #1301. The
-  ``auth_check`` keeps the factory surfaced under "Not connected" in
-  ``list_capabilities`` until the user runs the connect tool.
+  tools. The read tools landed in #1306; the first write tool
+  (``st_add_job_note``) landed in #1302. The ``auth_check`` keeps the
+  factory surfaced under "Not connected" in ``list_capabilities`` until
+  the user runs the connect tool.
 
 The split mirrors AppFolio's prod-bug fix: a single combined factory
 would have to keep ``auth_check`` returning ``None`` unconditionally to
@@ -56,10 +57,11 @@ async def _servicetitan_auth_factory(ctx: ToolContext) -> list[Tool]:
 async def _servicetitan_factory(ctx: ToolContext) -> list[Tool]:
     """Assemble the ServiceTitan data tools for an authenticated user.
 
-    Returns the read tools (#1300) when the user has a usable credential
-    on file. The defensive ``return []`` after ``build_service_for_user``
-    covers the rare race where the credential disappears between the
-    auth check and tool creation (user disconnected mid-turn).
+    Returns the read and write tools when the user has a usable
+    credential on file. The defensive ``return []`` after
+    ``build_service_for_user`` covers the rare race where the credential
+    disappears between the auth check and tool creation (user
+    disconnected mid-turn).
     """
     if not await is_connected(ctx.user.id):
         return []
@@ -112,11 +114,13 @@ def _register() -> None:
         _servicetitan_factory,
         core=False,
         summary=(
-            "ServiceTitan: view and act on customers, jobs, and appointments"
-            " (read-only for now; write tools land in a subsequent issue)."
+            "ServiceTitan: view customers, jobs, and appointments; add"
+            " notes to jobs. Note writes require user approval."
         ),
         display_name="ServiceTitan",
-        dashboard_description=("View ServiceTitan customers, jobs, and appointments"),
+        dashboard_description=(
+            "View ServiceTitan customers, jobs, and appointments; add notes to jobs"
+        ),
         dashboard_group="Integrations",
         dashboard_group_order=3,
         sub_tools=[
@@ -134,6 +138,11 @@ def _register() -> None:
                 ToolName.SERVICETITAN_LIST_APPOINTMENTS,
                 "List ServiceTitan appointments in a date range",
                 default_permission="always",
+            ),
+            SubToolInfo(
+                ToolName.SERVICETITAN_ADD_JOB_NOTE,
+                "Add a note to a ServiceTitan job",
+                default_permission="ask",
             ),
         ],
         auth_check=_servicetitan_auth_check,

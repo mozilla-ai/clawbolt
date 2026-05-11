@@ -6,7 +6,7 @@ agent's schema stays consistent across the integration.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ServiceTitanConnectParams(BaseModel):
@@ -105,3 +105,42 @@ class StListAppointmentsParams(BaseModel):
             " to return all statuses."
         ),
     )
+
+
+class StAddJobNoteParams(BaseModel):
+    """Inputs for ``st_add_job_note``.
+
+    Posts a free-form note to a ServiceTitan job. The note is visible
+    to anyone in the tenant with access to the job, so the tool gates
+    on approval before sending. ``pin_to_top`` mirrors the API's
+    ``pinToTop`` flag and surfaces the note above other notes in the
+    job's note feed.
+    """
+
+    job_id: int = Field(
+        description=(
+            "The numeric ServiceTitan job ID to attach the note to."
+            " Obtain from a prior appointment lookup or list call."
+        ),
+    )
+    text: str = Field(
+        min_length=1,
+        description=(
+            "The note body to post on the job. Plain text. Empty or"
+            " whitespace-only values are rejected."
+        ),
+    )
+    pin_to_top: bool = Field(
+        default=False,
+        description=(
+            "When true, ServiceTitan pins the note above other notes"
+            " in the job's note feed. Defaults to false."
+        ),
+    )
+
+    @field_validator("text")
+    @classmethod
+    def _text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must contain non-whitespace characters")
+        return value
