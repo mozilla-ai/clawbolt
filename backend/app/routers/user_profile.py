@@ -209,7 +209,11 @@ def _build_channel_config_response() -> ChannelConfigResponse:
         bluebubbles_configured=is_bluebubbles_configured(),
         bluebubbles_allowed_numbers=settings.bluebubbles_allowed_numbers,
         bluebubbles_imessage_address=settings.bluebubbles_imessage_address,
-        twilio_configured=bool(settings.twilio_account_sid and settings.twilio_auth_token),
+        twilio_configured=bool(
+            settings.twilio_account_sid
+            and settings.twilio_api_key_sid
+            and settings.twilio_api_key_secret
+        ),
         twilio_phone_number=settings.twilio_phone_number,
         twilio_messaging_service_sid=settings.twilio_messaging_service_sid,
         twilio_allowed_numbers=settings.twilio_allowed_numbers,

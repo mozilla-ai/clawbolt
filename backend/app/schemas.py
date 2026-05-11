@@ -166,9 +166,13 @@ class ChannelConfigResponse(BaseModel):
     # The UI uses this to render a single iMessage card without exposing which
     # backend powers it; None means iMessage is not configured on this server.
     imessage_backend: str | None = None
-    # Twilio (SMS/MMS). ``twilio_configured`` is true when both account SID
-    # and auth token are set (the minimum to talk to Twilio's API);
-    # outbound also needs either a phone number or a Messaging Service.
+    # Twilio (RCS via Messaging Service, with SMS/MMS fallback).
+    # ``twilio_configured`` requires the account SID plus the Standard API
+    # key pair used for REST calls; the auth token alone is not enough
+    # because outbound message creation now runs through API-key Basic
+    # auth. The auth token is still required separately for inbound
+    # webhook signature validation, but it is not part of the
+    # "ready to send" check.
     twilio_configured: bool = False
     twilio_phone_number: str = ""
     twilio_messaging_service_sid: str = ""
@@ -189,6 +193,8 @@ class ChannelConfigUpdate(BaseModel):
     bluebubbles_imessage_address: str | None = None
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
+    twilio_api_key_sid: str | None = None
+    twilio_api_key_secret: str | None = None
     twilio_phone_number: str | None = None
     twilio_messaging_service_sid: str | None = None
     twilio_allowed_numbers: str | None = None

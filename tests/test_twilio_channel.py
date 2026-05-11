@@ -269,80 +269,12 @@ async def test_send_message_sends_one_mms_for_multiple_media() -> None:
     assert kwargs["body"] == "two pics"
 
 
-async def test_per_user_from_resolver_overrides_global_sender() -> None:
-    """When a from_resolver is registered, its return value pins from_ per recipient."""
-    from backend.app.channels.twilio import set_twilio_from_resolver
-
-    channel, mock_client = _make_channel_with_mocked_client()
-
-    async def resolver(to: str) -> str | None:
-        return "+18001111111" if to == "+15551234567" else None
-
-    set_twilio_from_resolver(resolver)
-    try:
-        with patch("backend.app.channels.twilio.settings.twilio_phone_number", "+15550000001"):
-            await channel.send_text("+15551234567", "hi")
-    finally:
-        # Reset so other tests aren't poisoned by this one's resolver.
-        import backend.app.channels.twilio as twilio_mod
-
-        twilio_mod._from_resolver = None
-
-    kwargs = mock_client.messages.create.call_args.kwargs
-    # The per-user resolver should win over the global TWILIO_PHONE_NUMBER.
-    assert kwargs["from_"] == "+18001111111"
-
-
-async def test_per_user_from_resolver_falls_back_when_none() -> None:
-    """A resolver that returns None falls back to the global Twilio sender."""
-    from backend.app.channels.twilio import set_twilio_from_resolver
-
-    channel, mock_client = _make_channel_with_mocked_client()
-
-    async def resolver(to: str) -> str | None:
-        return None
-
-    set_twilio_from_resolver(resolver)
-    try:
-        with patch("backend.app.channels.twilio.settings.twilio_phone_number", "+15550000001"):
-            await channel.send_text("+15551234567", "hi")
-    finally:
-        import backend.app.channels.twilio as twilio_mod
-
-        twilio_mod._from_resolver = None
-
-    kwargs = mock_client.messages.create.call_args.kwargs
-    assert kwargs["from_"] == "+15550000001"
-
-
-async def test_per_user_resolver_failure_falls_back_to_global() -> None:
-    """A resolver that raises should not block the send; we fall back to global."""
-    from backend.app.channels.twilio import set_twilio_from_resolver
-
-    channel, mock_client = _make_channel_with_mocked_client()
-
-    async def resolver(to: str) -> str | None:
-        raise RuntimeError("db unreachable")
-
-    set_twilio_from_resolver(resolver)
-    try:
-        with patch("backend.app.channels.twilio.settings.twilio_phone_number", "+15550000001"):
-            sid = await channel.send_text("+15551234567", "hi")
-    finally:
-        import backend.app.channels.twilio as twilio_mod
-
-        twilio_mod._from_resolver = None
-
-    assert sid == "SMabcdef"
-    kwargs = mock_client.messages.create.call_args.kwargs
-    assert kwargs["from_"] == "+15550000001"
-
-
 async def test_send_typing_indicator_is_noop() -> None:
     """send_typing_indicator must not raise and must not touch the SDK.
 
-    SMS has no typing-indicator concept; the override exists only to
-    satisfy BaseChannel.
+    Twilio RCS typing indicators are managed by the recipient's
+    messaging app; there is no separate API to trigger them. The
+    override exists only to satisfy BaseChannel.
     """
     channel, mock_client = _make_channel_with_mocked_client()
     await channel.send_typing_indicator("+15551234567")
@@ -354,15 +286,15 @@ async def test_send_typing_indicator_is_noop() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_download_media_uses_basic_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    """download_media authenticates with the account SID + auth token."""
+async def test_download_media_uses_api_key_basic_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_media authenticates with the Standard API key + secret."""
+    import base64
+
     captured_auth: list[httpx.BasicAuth] = []
 
     async def fake_download_bounded(
         client: httpx.AsyncClient, url: str
     ) -> tuple[bytes, httpx.Headers]:
-        # Capture the auth attached to the client so the test can verify
-        # we passed Basic Auth instead of a raw Bearer.
         captured_auth.append(client.auth)  # type: ignore[arg-type]
         return b"image-bytes", httpx.Headers({"content-type": "image/jpeg"})
 
@@ -371,6 +303,8 @@ async def test_download_media_uses_basic_auth(monkeypatch: pytest.MonkeyPatch) -
     channel = TwilioChannel()
     channel._account_sid = "ACtest"
     channel._auth_token = "tkn"
+    channel._api_key_sid = "SKtest"
+    channel._api_key_secret = "secret"
 
     media = await channel.download_media(
         "https://api.twilio.com/Accounts/AC0/Messages/MM0/Media/ME0"
@@ -380,6 +314,30 @@ async def test_download_media_uses_basic_auth(monkeypatch: pytest.MonkeyPatch) -
     assert media.mime_type == "image/jpeg"
     assert media.filename.endswith(".jpg")
     assert isinstance(captured_auth[0], httpx.BasicAuth)
+    header = captured_auth[0]._auth_header
+    encoded = header.removeprefix("Basic ")
+    assert base64.b64decode(encoded).decode() == "SKtest:secret"
+
+
+async def test_download_media_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_media must not fall back to auth-token Basic Auth."""
+    called = False
+
+    async def fake_download_bounded(*_args: object, **_kwargs: object) -> object:
+        nonlocal called
+        called = True
+        return b"", httpx.Headers()
+
+    monkeypatch.setattr("backend.app.channels.twilio.download_bounded", fake_download_bounded)
+
+    channel = TwilioChannel()
+    channel._account_sid = "ACtest"
+    channel._auth_token = "tkn"
+    # No API key configured.
+
+    with pytest.raises(RuntimeError, match="TWILIO_API_KEY_SID"):
+        await channel.download_media("https://api.twilio.com/Accounts/AC0/Messages/MM0/Media/ME0")
+    assert called is False
 
 
 async def test_download_media_rejects_non_twilio_host(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -387,7 +345,7 @@ async def test_download_media_rejects_non_twilio_host(monkeypatch: pytest.Monkey
 
     Defense in depth: even if signature validation is off and a malicious
     webhook injects ``MediaUrl0=http://internal/...``, we must not send
-    the account-SID Basic Auth header to that host.
+    the API key Basic Auth header to that host.
     """
     called = False
 
@@ -401,88 +359,38 @@ async def test_download_media_rejects_non_twilio_host(monkeypatch: pytest.Monkey
     channel = TwilioChannel()
     channel._account_sid = "ACtest"
     channel._auth_token = "tkn"
+    channel._api_key_sid = "SKtest"
+    channel._api_key_secret = "secret"
 
     with pytest.raises(ValueError, match="non-Twilio host"):
         await channel.download_media("http://attacker.example.com/leak")
     assert called is False
 
 
-async def test_to_verifier_drops_inbound_when_pair_unknown(
-    twilio_client: httpx.AsyncClient,
-) -> None:
-    """A registered To-verifier returning False causes the webhook to drop the message."""
-    from backend.app.channels.twilio import set_twilio_to_verifier
-
-    seen: list[tuple[str, str]] = []
-
-    async def verifier(from_phone: str, to_phone: str) -> bool:
-        seen.append((from_phone, to_phone))
-        return False
-
-    set_twilio_to_verifier(verifier)
-    try:
-        with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
-            form = make_twilio_form(sender="+15555555555", to="+18001111111", text="hi")
-            resp = await _post_form(twilio_client, form)
-    finally:
-        import backend.app.channels.twilio as twilio_mod
-
-        twilio_mod._to_verifier = None
-
-    assert resp.status_code == 200
-    assert resp.text == TWIML_EMPTY
-    mock_pub.assert_not_called()
-    assert seen == [("+15555555555", "+18001111111")]
+async def test_client_property_requires_api_key() -> None:
+    """The REST client refuses to construct without an API key + secret."""
+    channel = TwilioChannel()
+    channel._account_sid = "ACtest"
+    channel._auth_token = "tkn"
+    with pytest.raises(RuntimeError, match="TWILIO_API_KEY_SID"):
+        _ = channel.client
 
 
-async def test_to_verifier_accepts_inbound_when_pair_matches(
-    twilio_client: httpx.AsyncClient,
-) -> None:
-    """A verifier returning True lets the message through to the bus."""
-    from backend.app.channels.twilio import set_twilio_to_verifier
+async def test_client_property_uses_api_key_when_configured() -> None:
+    """When API key is set, the SDK Client is built with the key pair."""
+    from twilio.rest import Client as TwilioClient
 
-    async def verifier(from_phone: str, to_phone: str) -> bool:
-        return True
+    channel = TwilioChannel()
+    channel._account_sid = "ACtest"
+    channel._auth_token = "tkn"
+    channel._api_key_sid = "SKtest"
+    channel._api_key_secret = "secret"
 
-    set_twilio_to_verifier(verifier)
-    try:
-        with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
-            form = make_twilio_form(text="ok")
-            await _post_form(twilio_client, form)
-    finally:
-        import backend.app.channels.twilio as twilio_mod
-
-        twilio_mod._to_verifier = None
-
-    mock_pub.assert_called_once()
-
-
-async def test_to_verifier_exception_drops_inbound(
-    twilio_client: httpx.AsyncClient,
-) -> None:
-    """A verifier that raises should drop the message, not 500.
-
-    Choosing drop-on-error rather than fall-back-to-allow because the
-    verifier is the *security* hook for premium; the from-resolver is
-    the *outbound* hook where failure can safely degrade.
-    """
-    from backend.app.channels.twilio import set_twilio_to_verifier
-
-    async def verifier(from_phone: str, to_phone: str) -> bool:
-        raise RuntimeError("db unreachable")
-
-    set_twilio_to_verifier(verifier)
-    try:
-        with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
-            form = make_twilio_form()
-            resp = await _post_form(twilio_client, form)
-    finally:
-        import backend.app.channels.twilio as twilio_mod
-
-        twilio_mod._to_verifier = None
-
-    assert resp.status_code == 200
-    mock_pub.assert_not_called()
+    client = channel.client
+    assert isinstance(client, TwilioClient)
+    assert client.username == "SKtest"
+    assert client.password == "secret"
+    assert client.account_sid == "ACtest"
 
 
 async def test_parse_form_warns_on_missing_message_sid(

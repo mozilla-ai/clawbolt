@@ -1029,6 +1029,10 @@ export interface components {
             twilio_account_sid?: string | null;
             /** Twilio Auth Token */
             twilio_auth_token?: string | null;
+            /** Twilio Api Key Sid */
+            twilio_api_key_sid?: string | null;
+            /** Twilio Api Key Secret */
+            twilio_api_key_secret?: string | null;
             /** Twilio Phone Number */
             twilio_phone_number?: string | null;
             /** Twilio Messaging Service Sid */

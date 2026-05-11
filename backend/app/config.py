@@ -173,16 +173,26 @@ class Settings(BaseSettings):
     # outages, down for stricter "no replies to stale messages" behavior.
     bluebubbles_backfill_lookback_minutes: int = Field(default=30, ge=0)
 
-    # Twilio (SMS/MMS). Twilio does not expose typing indicators over SMS;
-    # the channel implements ``send_typing_indicator`` as a no-op. For
-    # iMessage/RCS with typing indicators see Linq or BlueBubbles.
+    # Twilio (RCS via Messaging Service, with SMS/MMS fallback). Register
+    # an RCS Agent in the Twilio console and attach it to a Messaging
+    # Service; Twilio routes RCS-capable recipients over RCS and falls
+    # back to SMS/MMS automatically for everyone else.
     twilio_account_sid: str = ""
+    # Auth token: required for inbound webhook signature validation.
+    # Twilio signs ``X-Twilio-Signature`` with HMAC-SHA1 keyed on this
+    # token and offers no alternative signing mechanism. The codebase
+    # loads it for nothing else; outbound REST uses the API key pair
+    # below.
     twilio_auth_token: str = ""
+    # Standard API key + secret. Required for every outbound REST call
+    # (send messages, media downloads). Create via Twilio Console >
+    # Account > API Keys & Tokens (Standard key).
+    twilio_api_key_sid: str = ""  # "SKxxxxxxxx..."
+    twilio_api_key_secret: str = ""
     # Outbound sender. Pin a specific phone number (E.164) OR a Messaging
-    # Service SID. Messaging Service is recommended for US A2P 10DLC
-    # deployments: numbers join the service's pool and the registered
-    # campaign covers all of them. When both are set, the Messaging Service
-    # SID wins.
+    # Service SID. Messaging Service is the right choice for RCS (the
+    # agent attaches to the service) and for US A2P 10DLC pools. When
+    # both are set, the Messaging Service SID wins.
     twilio_phone_number: str = ""  # E.164 format, e.g. "+15551234567"
     twilio_messaging_service_sid: str = ""  # "MGxxxxxxxx..."
     twilio_allowed_numbers: str = ""  # E.164 phone, "*", or empty (deny all)
@@ -313,6 +323,8 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "bluebubbles_imessage_address",
         "twilio_account_sid",
         "twilio_auth_token",
+        "twilio_api_key_sid",
+        "twilio_api_key_secret",
         "twilio_phone_number",
         "twilio_messaging_service_sid",
         "twilio_allowed_numbers",
