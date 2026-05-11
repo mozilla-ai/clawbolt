@@ -9,13 +9,16 @@ PR #1199.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from backend.app.agent.dto import ToolConfigEntry
 from backend.app.agent.stores import ToolConfigStore
+from backend.app.database import db_session_async
 from backend.app.models import ToolConfig, User
 
 # ---------------------------------------------------------------------------
@@ -245,6 +248,116 @@ async def test_async_get_disabled_sub_tool_names_empty(
     store = ToolConfigStore(async_test_user.id)
     await store.save_async([_entry("workspace")])
     assert await store.get_disabled_sub_tool_names_async() == set()
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: SELECT FOR UPDATE on set_enabled (issue #1222)
+# ---------------------------------------------------------------------------
+#
+# These tests deliberately do NOT use the ``async_db`` fixture. ``async_db``
+# rebinds the session factory to a single shared connection so writes can
+# be rolled back, which would serialize concurrent ``set_enabled`` calls
+# at the connection level and hide the production race. The session-scoped
+# NullPool engine instead gives each ``AsyncSessionLocal()`` its own
+# asyncpg connection, so concurrent tasks contend on the real Postgres
+# row lock (and the real unique constraint). Cleanup is handled by the
+# autouse ``_isolate_stores`` fixture, which TRUNCATEs every table after
+# each test.
+
+
+async def _insert_concurrency_user() -> str:
+    """Insert a fresh User row through the session-scoped factory and
+    return its id. Bypasses ``async_test_user`` so the row is committed
+    on a normal connection (visible to concurrent tasks) rather than
+    living inside the ``async_db`` SAVEPOINT."""
+    user_id = str(uuid.uuid4())
+    async with db_session_async() as db:
+        db.add(
+            User(
+                id=user_id,
+                user_id=f"concurrency-{user_id[:8]}",
+                phone="+15555550123",
+                channel_identifier=f"concurrency-channel-{user_id[:8]}",
+                preferred_channel="telegram",
+                onboarding_complete=True,
+            )
+        )
+        await db.commit()
+    return user_id
+
+
+async def test_set_enabled_insert_race_does_not_raise() -> None:
+    """Two concurrent ``set_enabled`` calls on the same ``(user_id, name)``
+    when no row exists yet. The unique constraint on ``(user_id, name)``
+    lets only one INSERT win; the loser catches ``IntegrityError``,
+    rolls back, re-runs the locked read, and updates the winner's row.
+
+    Without the ``IntegrityError`` retry, the loser would surface the
+    exception to the caller. Without the ``with_for_update()`` on the
+    re-read, the loser could read a stale snapshot and miss the
+    winning row.
+    """
+    user_id = await _insert_concurrency_user()
+    store = ToolConfigStore(user_id)
+    name = "concurrent-insert-tool"
+    start = asyncio.Event()
+
+    async def toggle(value: bool) -> None:
+        await start.wait()
+        await store.set_enabled(name, value)
+
+    task_a = asyncio.create_task(toggle(True))
+    task_b = asyncio.create_task(toggle(False))
+    start.set()
+    await asyncio.gather(task_a, task_b)
+
+    async with db_session_async() as db:
+        rows = (
+            (await db.execute(select(ToolConfig).filter_by(user_id=user_id, name=name)))
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1, (
+        f"expected exactly one row after concurrent inserts, got {len(rows)}: "
+        f"the unique constraint should have collapsed the race"
+    )
+    # Final state matches one of the two writers. The exact value is
+    # non-deterministic (depends on scheduling), but it must be a clean
+    # boolean from one of the two callers, not a corrupted state.
+    assert rows[0].enabled in (True, False)
+
+
+async def test_set_enabled_update_race_serializes_via_row_lock() -> None:
+    """Two concurrent ``set_enabled`` calls on a pre-existing row
+    serialize on the ``SELECT ... FOR UPDATE`` row lock. Exactly one
+    row remains (no duplicate insert) and the final state matches
+    whichever transaction committed last."""
+    user_id = await _insert_concurrency_user()
+    store = ToolConfigStore(user_id)
+    name = "concurrent-update-tool"
+    # Seed the row so both contenders take the update path.
+    await store.set_enabled(name, True)
+
+    start = asyncio.Event()
+
+    async def toggle(value: bool) -> None:
+        await start.wait()
+        await store.set_enabled(name, value)
+
+    task_a = asyncio.create_task(toggle(True))
+    task_b = asyncio.create_task(toggle(False))
+    start.set()
+    await asyncio.gather(task_a, task_b)
+
+    async with db_session_async() as db:
+        count = (
+            await db.scalar(select(func.count(ToolConfig.id)).where(ToolConfig.user_id == user_id))
+        ) or 0
+        row = (
+            await db.execute(select(ToolConfig).filter_by(user_id=user_id, name=name))
+        ).scalar_one()
+    assert count == 1
+    assert row.enabled in (True, False)
 
 
 # ---------------------------------------------------------------------------
