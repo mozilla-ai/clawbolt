@@ -18,6 +18,7 @@ from backend.app.channels import get_manager, register_channel
 from backend.app.channels.bluebubbles import BlueBubblesChannel
 from backend.app.channels.linq import LinqChannel
 from backend.app.channels.telegram import TelegramChannel
+from backend.app.channels.twilio import TwilioChannel
 from backend.app.channels.webchat import WebChatChannel
 from backend.app.config import (
     log_config_warnings,
@@ -62,6 +63,7 @@ register_channel(TelegramChannel(bot_token=settings.telegram_bot_token))
 register_channel(WebChatChannel())
 register_channel(LinqChannel())
 register_channel(BlueBubblesChannel())
+register_channel(TwilioChannel())
 
 
 async def _enforce_single_channel() -> None:
@@ -266,6 +268,26 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         if not settings.bluebubbles_allowed_numbers:
             logger.warning(
                 "No BlueBubbles allowed numbers configured (BLUEBUBBLES_ALLOWED_NUMBERS). "
+                "All messages will be rejected. "
+                'Set to "*" to allow all, or provide an E.164 phone number.'
+            )
+
+    if settings.twilio_account_sid and settings.twilio_auth_token:
+        sender = (
+            f"Messaging Service {settings.twilio_messaging_service_sid}"
+            if settings.twilio_messaging_service_sid
+            else f"phone {mask_pii(settings.twilio_phone_number) or '<unset>'}"
+        )
+        logger.info("Twilio channel enabled (sender: %s)", sender)
+        if not settings.twilio_phone_number and not settings.twilio_messaging_service_sid:
+            logger.warning(
+                "Twilio credentials are set but neither TWILIO_PHONE_NUMBER "
+                "nor TWILIO_MESSAGING_SERVICE_SID is configured. Outbound sends "
+                "will fail until one is set."
+            )
+        if not settings.twilio_allowed_numbers:
+            logger.warning(
+                "No Twilio allowed numbers configured (TWILIO_ALLOWED_NUMBERS). "
                 "All messages will be rejected. "
                 'Set to "*" to allow all, or provide an E.164 phone number.'
             )

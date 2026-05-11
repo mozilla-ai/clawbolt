@@ -531,6 +531,39 @@ async def linq_client(test_user: User) -> AsyncGenerator[httpx.AsyncClient]:
 
 
 @pytest_asyncio.fixture()
+async def twilio_client(test_user: User) -> AsyncGenerator[httpx.AsyncClient]:
+    """FastAPI test client with the Twilio channel ready for webhook tests.
+
+    The Twilio channel is always registered at module level in main.py.
+    This fixture patches settings to allow all numbers and disable signature
+    validation; tests that exercise signature validation patch it back on
+    locally.
+    """
+
+    def _override_get_current_user() -> User:
+        return test_user
+
+    webhook_rate_limiter.reset()
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
+        patch("backend.app.main._enforce_single_channel", new_callable=AsyncMock),
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
+        patch("backend.app.channels.twilio.settings.twilio_allowed_numbers", "*"),
+        patch("backend.app.channels.twilio.settings.twilio_validate_signatures", False),
+        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_id", "*"),
+        patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
+    ):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as c:
+            yield c
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture()
 async def bluebubbles_client(test_user: User) -> AsyncGenerator[httpx.AsyncClient]:
     """FastAPI test client with BlueBubbles channel available.
 

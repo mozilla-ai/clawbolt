@@ -173,6 +173,25 @@ class Settings(BaseSettings):
     # outages, down for stricter "no replies to stale messages" behavior.
     bluebubbles_backfill_lookback_minutes: int = Field(default=30, ge=0)
 
+    # Twilio (SMS/MMS). Twilio does not expose typing indicators over SMS;
+    # the channel implements ``send_typing_indicator`` as a no-op. For
+    # iMessage/RCS with typing indicators see Linq or BlueBubbles.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    # Outbound sender. Pin a specific phone number (E.164) OR a Messaging
+    # Service SID. Messaging Service is recommended for US A2P 10DLC
+    # deployments: numbers join the service's pool and the registered
+    # campaign covers all of them. When both are set, the Messaging Service
+    # SID wins.
+    twilio_phone_number: str = ""  # E.164 format, e.g. "+15551234567"
+    twilio_messaging_service_sid: str = ""  # "MGxxxxxxxx..."
+    twilio_allowed_numbers: str = ""  # E.164 phone, "*", or empty (deny all)
+    # Validate inbound webhook signatures via ``X-Twilio-Signature``. Off
+    # in development is fine; ON in production. The validator needs the
+    # exact public URL of the webhook, so behind a proxy / tunnel the
+    # ``app_base_url`` setting must reflect what Twilio actually sees.
+    twilio_validate_signatures: bool = True
+
     # Google Calendar
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
@@ -276,6 +295,12 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "bluebubbles_allowed_numbers",
         "bluebubbles_send_method",
         "bluebubbles_imessage_address",
+        "twilio_account_sid",
+        "twilio_auth_token",
+        "twilio_phone_number",
+        "twilio_messaging_service_sid",
+        "twilio_allowed_numbers",
+        "twilio_validate_signatures",
         "llm_provider",
         "llm_model",
         "llm_api_base",

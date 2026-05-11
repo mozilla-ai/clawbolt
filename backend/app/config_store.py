@@ -60,6 +60,7 @@ _SECRET_SETTINGS: frozenset[str] = frozenset(
         "linq_api_token",
         "linq_webhook_signing_secret",
         "bluebubbles_password",
+        "twilio_auth_token",
     }
 )
 

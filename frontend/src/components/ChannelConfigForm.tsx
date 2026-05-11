@@ -13,6 +13,7 @@ import api from '@/api';
 
 // Types derived from API return types, exported for consumers
 export type TelegramLinkData = Awaited<ReturnType<typeof api.getTelegramLink>>;
+export type TwilioLinkData = Awaited<ReturnType<typeof api.getTwilioLink>>;
 
 // Generic premium link data shape (all premium link endpoints share this structure)
 export type PremiumLinkData = { identifier: string | null; connected: boolean };
@@ -22,6 +23,7 @@ interface ChannelConfigFormProps {
   isPremium: boolean;
   channelConfig: ChannelConfigResponse | undefined;
   telegramLinkData: TelegramLinkData | null;
+  twilioLinkData: TwilioLinkData | null;
   premiumLinkData: PremiumLinkData | null;
   onSaved: () => void;
 }
@@ -29,6 +31,9 @@ interface ChannelConfigFormProps {
 export function ChannelConfigForm({ channelKey, isPremium, ...rest }: ChannelConfigFormProps) {
   if (channelKey === 'telegram') {
     return isPremium ? <PremiumTelegramForm {...rest} /> : <OssTelegramForm {...rest} />;
+  }
+  if (channelKey === 'twilio') {
+    return isPremium ? <PremiumTwilioForm {...rest} /> : <OssTwilioForm {...rest} />;
   }
   if (isPremium) {
     const config = PREMIUM_LINK_CONFIGS[channelKey];
@@ -371,6 +376,248 @@ function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={updateMutation.isPending || channelConfig === undefined} isLoading={updateMutation.isPending}>
           Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- OSS Twilio form (operator allowlist config) ---
+
+function OssTwilioForm({ channelConfig, onSaved }: SubFormProps) {
+  const updateMutation = useUpdateChannelConfig();
+  const [allowedNumbers, setAllowedNumbers] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const displayedNumbers = allowedNumbers ?? channelConfig?.twilio_allowed_numbers ?? '';
+
+  const handleSave = () => {
+    setError(null);
+    const trimmed = (allowedNumbers ?? '').trim();
+    const normalized = trimmed && trimmed !== '*' ? normalizeUsPhone(trimmed) : trimmed;
+    if (normalized && normalized !== '*' && !isValidE164(normalized)) {
+      setError(PHONE_FORMAT_ERROR);
+      return;
+    }
+    if (allowedNumbers === null || normalized === (channelConfig?.twilio_allowed_numbers ?? '')) {
+      toast.error('No changes to save');
+      return;
+    }
+    updateMutation.mutate({ twilio_allowed_numbers: normalized }, {
+      onSuccess: () => {
+        setAllowedNumbers(null);
+        toast.success('Twilio settings updated');
+        onSaved();
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  return (
+    <div className="grid gap-4">
+      <Field label="Allowed Phone Number">
+        <Input
+          value={displayedNumbers}
+          onChange={(e) => {
+            setAllowedNumbers(e.target.value);
+            if (error) setError(null);
+          }}
+          placeholder="e.g. +15551234567"
+          inputMode="tel"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'oss-twilio-error' : undefined}
+        />
+        {error ? (
+          <p id="oss-twilio-error" className="text-xs text-danger mt-1">{error}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-1">
+            E.164 phone number, or * to allow all. Empty = deny all.
+            Twilio account credentials are managed in server settings.
+          </p>
+        )}
+      </Field>
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={updateMutation.isPending || channelConfig === undefined} isLoading={updateMutation.isPending}>
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- Premium Twilio form (per-user number provisioning) ---
+
+const TWILIO_NUMBER_TYPES = [
+  { value: 'toll-free', label: 'Toll-free (+1 8xx)' },
+  { value: 'local', label: 'Local (US area code)' },
+] as const;
+
+function PremiumTwilioForm({ twilioLinkData, onSaved }: SubFormProps) {
+  // The connect form is shown when the user hasn't provisioned a number
+  // yet (status: not_provisioned / released / failed). Once active, we
+  // show the connected number plus a disconnect button.
+  const [personalPhone, setPersonalPhone] = useState('');
+  const [numberType, setNumberType] = useState<string>('toll-free');
+  const [areaCode, setAreaCode] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const status = twilioLinkData?.status ?? 'not_provisioned';
+  const isActive = status === 'active' && twilioLinkData?.twilio_phone_number;
+
+  // ``provisioning`` is a transient state, normally only seen for a few
+  // seconds during connect. If we land here on page load it usually
+  // means the previous connect request crashed mid-flow; the server
+  // recovers stale rows after a timeout but the user needs an escape
+  // hatch in the meantime. The Refresh button re-fetches the link
+  // state so the user can poll for resolution without a full reload.
+  if (status === 'provisioning') {
+    return (
+      <div className="grid gap-2">
+        <p className="text-sm">Provisioning your number...</p>
+        <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
+        <div className="flex justify-end">
+          <Button onClick={onSaved} variant="secondary">
+            Refresh
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isActive) {
+    return <PremiumTwilioConnected twilioLinkData={twilioLinkData!} onSaved={onSaved} />;
+  }
+
+  const handleConnect = async () => {
+    setError(null);
+    const normalized = normalizeUsPhone(personalPhone);
+    if (!isValidE164(normalized)) {
+      setError(PHONE_FORMAT_ERROR);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.connectTwilio({
+        personal_phone: normalized,
+        number_type: numberType,
+        area_code: areaCode.trim(),
+      });
+      toast.success('Twilio number provisioned');
+      onSaved();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to connect Twilio';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Previously-failed attempts surface the reason inline so the user
+  // can adjust (e.g. different area code) before retrying.
+  const previousError = status === 'failed' ? twilioLinkData?.error_message : '';
+
+  return (
+    <div className="grid gap-4">
+      {previousError && (
+        <p className="text-xs text-danger" role="alert">
+          Last attempt failed: {previousError}
+        </p>
+      )}
+      <Field label="Your Phone Number">
+        <Input
+          value={personalPhone}
+          onChange={(e) => {
+            setPersonalPhone(e.target.value);
+            if (error) setError(null);
+          }}
+          placeholder="e.g. +15551234567"
+          inputMode="tel"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'twilio-personal-error' : undefined}
+        />
+        {error ? (
+          <p id="twilio-personal-error" className="text-xs text-danger mt-1">{error}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-1">
+            E.164 format. Only this number will be able to message your assistant via SMS.
+          </p>
+        )}
+      </Field>
+      <Field label="Number Type">
+        <Select
+          value={numberType}
+          onChange={(e) => setNumberType(e.target.value)}
+          aria-label="Twilio number type"
+        >
+          {TWILIO_NUMBER_TYPES.map((t) => (
+            <option key={t.value} value={t.value}>{t.label}</option>
+          ))}
+        </Select>
+        <p className="text-xs text-muted-foreground mt-1">
+          Toll-free skips US A2P 10DLC registration. Local is cheaper per message but the operator
+          must have a registered messaging service.
+        </p>
+      </Field>
+      <Field label="Area Code (optional)">
+        <Input
+          value={areaCode}
+          onChange={(e) => setAreaCode(e.target.value)}
+          placeholder={numberType === 'toll-free' ? 'e.g. 800' : 'e.g. 415'}
+          inputMode="numeric"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          Leave blank to let Twilio pick from available inventory.
+        </p>
+      </Field>
+      <div className="flex justify-end">
+        <Button onClick={handleConnect} disabled={submitting || !personalPhone} isLoading={submitting}>
+          Connect Twilio
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PremiumTwilioConnected({
+  twilioLinkData,
+  onSaved,
+}: { twilioLinkData: TwilioLinkData; onSaved: () => void }) {
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await api.disconnectTwilio();
+      toast.success('Twilio disconnected');
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to disconnect');
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-3">
+      <div className="text-sm">
+        Text{' '}
+        <span className="font-mono font-medium text-primary">
+          {twilioLinkData.twilio_phone_number}
+        </span>{' '}
+        from{' '}
+        <span className="font-mono font-medium">{twilioLinkData.personal_phone}</span>{' '}
+        to chat with your assistant.
+      </div>
+      <div className="flex justify-end">
+        <Button
+          onClick={handleDisconnect}
+          isLoading={disconnecting}
+          disabled={disconnecting}
+          variant="secondary"
+        >
+          Disconnect
         </Button>
       </div>
     </div>

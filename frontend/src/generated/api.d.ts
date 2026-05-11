@@ -311,6 +311,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/webhooks/twilio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Twilio Inbound
+         * @description Receive inbound SMS/MMS from Twilio.
+         *
+         *     Returns an empty TwiML response immediately; the agent loop
+         *     replies through the outbound dispatcher via the REST API so
+         *     this endpoint stays under Twilio's 15s ack window even when
+         *     the LLM call takes longer.
+         */
+        post: operations["twilio_inbound_api_webhooks_twilio_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/profile": {
         parameters: {
             query?: never;
@@ -955,6 +980,26 @@ export interface components {
             bluebubbles_imessage_address: string;
             /** Imessage Backend */
             imessage_backend?: string | null;
+            /**
+             * Twilio Configured
+             * @default false
+             */
+            twilio_configured: boolean;
+            /**
+             * Twilio Phone Number
+             * @default
+             */
+            twilio_phone_number: string;
+            /**
+             * Twilio Messaging Service Sid
+             * @default
+             */
+            twilio_messaging_service_sid: string;
+            /**
+             * Twilio Allowed Numbers
+             * @default
+             */
+            twilio_allowed_numbers: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -980,6 +1025,16 @@ export interface components {
             bluebubbles_allowed_numbers?: string | null;
             /** Bluebubbles Imessage Address */
             bluebubbles_imessage_address?: string | null;
+            /** Twilio Account Sid */
+            twilio_account_sid?: string | null;
+            /** Twilio Auth Token */
+            twilio_auth_token?: string | null;
+            /** Twilio Phone Number */
+            twilio_phone_number?: string | null;
+            /** Twilio Messaging Service Sid */
+            twilio_messaging_service_sid?: string | null;
+            /** Twilio Allowed Numbers */
+            twilio_allowed_numbers?: string | null;
         };
         /** ChannelRouteListResponse */
         ChannelRouteListResponse: {
@@ -1813,6 +1868,26 @@ export interface operations {
         };
     };
     bluebubbles_inbound_api_webhooks_bluebubbles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    twilio_inbound_api_webhooks_twilio_post: {
         parameters: {
             query?: never;
             header?: never;
