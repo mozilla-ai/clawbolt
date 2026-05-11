@@ -281,6 +281,11 @@ class ToolConfigEntryResponse(BaseModel):
     enabled: bool
     configured: bool = True
     auth_message: str = ""
+    # Name of the OAuth integration backing this tool (as registered in
+    # ``backend.app.services.oauth``), or empty when the tool is not
+    # OAuth-backed. Lets the Settings UI render Connect/Disconnect buttons
+    # without hand-maintaining a factory-to-OAuth map per integration.
+    oauth_name: str = ""
     sub_tools: list[SubToolEntryResponse] = Field(default_factory=list)
 
 

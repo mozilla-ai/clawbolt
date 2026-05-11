@@ -4,7 +4,7 @@ import Button from '@/components/ui/button';
 import { Switch } from '@heroui/switch';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
-import { displayName, subToolDisplayName, TOOL_OAUTH_MAP, getToolOAuthStatus } from '@/lib/tool-utils';
+import { displayName, subToolDisplayName, getToolOAuthStatus } from '@/lib/tool-utils';
 import { IntegrationIcon } from '@/components/integration-icons';
 import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
 import api from '@/api';
@@ -125,18 +125,26 @@ export default function ToolsPage() {
     );
   }
 
-  const domainTools = tools.filter((t: ToolConfigEntryResponse) => t.category === 'domain');
+  // Render any tool the backend marks as part of an integrations group
+  // (``category === 'domain'``) plus any OAuth-backed tool that is rendered
+  // as always-on in Settings (``category === 'core'`` with ``oauth_name``,
+  // e.g. Google Drive). The latter has no toggle but still needs Connect /
+  // Disconnect.
+  const integrationTools = tools.filter(
+    (t: ToolConfigEntryResponse) => t.category === 'domain' || !!t.oauth_name,
+  );
 
   return (
     <div>
       <h2 className="text-xl font-semibold font-display mb-6">Tools</h2>
 
-      {domainTools.length > 0 && (
+      {integrationTools.length > 0 && (
         <section>
           <div className="grid gap-3">
-            {domainTools.map((tool) => {
-              const oauthIntegration = TOOL_OAUTH_MAP[tool.name];
-              const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap, tool.configured);
+            {integrationTools.map((tool) => {
+              const oauthIntegration = tool.oauth_name;
+              const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(oauthIntegration, oauthMap, tool.configured);
+              const isAlwaysEnabled = tool.category === 'core';
 
               return (
                 <Card key={tool.name}>
@@ -170,7 +178,7 @@ export default function ToolsPage() {
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => handleDisconnect(oauthIntegration!)}
+                          onClick={() => handleDisconnect(oauthIntegration)}
                           disabled={disconnectMutation.isPending}
                         >
                           Disconnect
@@ -179,7 +187,7 @@ export default function ToolsPage() {
                       {needsOAuth && !isConnected && (
                         <Button
                           size="sm"
-                          onClick={() => void handleConnect(oauthIntegration!)}
+                          onClick={() => void handleConnect(oauthIntegration)}
                           disabled={connectingIntegration === oauthIntegration}
                           isLoading={connectingIntegration === oauthIntegration}
                         >
@@ -189,8 +197,10 @@ export default function ToolsPage() {
                     </div>
                   </div>
 
-                  {/* Enable/disable toggle: show when connected (OAuth) or always (non-OAuth) */}
-                  {isConnected && (
+                  {/* Enable/disable toggle. Always-enabled integrations
+                      (e.g. Google Drive) skip the toggle because the backend
+                      silently ignores attempts to disable them. */}
+                  {isConnected && !isAlwaysEnabled && (
                     <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
                       <span className="text-xs text-muted-foreground">
                         {tool.enabled ? 'Available to assistant' : 'Disabled'}

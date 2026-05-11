@@ -22,6 +22,7 @@ from backend.app.schemas import (
     ToolConfigResponse,
     ToolConfigUpdate,
 )
+from backend.app.services.oauth import list_oauth_integrations
 
 router = APIRouter()
 
@@ -130,6 +131,22 @@ async def _get_auth_status(user: UserData | None = None) -> dict[str, str]:
     return status
 
 
+def _effective_oauth_name(factory_name: str) -> str:
+    """Return the OAuth integration backing *factory_name*, or empty.
+
+    Resolves the factory's registered ``oauth_name`` when set, falling back
+    to the factory name itself when that name is a registered OAuth
+    integration. Lets the Settings UI render Connect/Disconnect for OAuth-
+    backed tools without hand-maintaining a factory-to-OAuth map per
+    integration in the frontend.
+    """
+    factory = default_registry.get_factory(factory_name)
+    if factory is None:
+        return ""
+    candidate = factory.oauth_name or factory_name
+    return candidate if candidate in list_oauth_integrations() else ""
+
+
 def _entry_to_response(
     e: ToolConfigEntry,
     auth_issues: dict[str, str] | None = None,
@@ -146,6 +163,7 @@ def _entry_to_response(
         enabled=e.enabled,
         configured=not bool(auth_reason),
         auth_message=auth_reason,
+        oauth_name=_effective_oauth_name(e.name),
         sub_tools=[
             SubToolEntryResponse(
                 name=st.name,

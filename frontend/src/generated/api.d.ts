@@ -1399,6 +1399,11 @@ export interface components {
              * @default
              */
             auth_message: string;
+            /**
+             * Oauth Name
+             * @default
+             */
+            oauth_name: string;
             /** Sub Tools */
             sub_tools?: components["schemas"]["SubToolEntryResponse"][];
         };
