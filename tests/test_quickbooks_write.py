@@ -657,3 +657,309 @@ async def test_invariant_no_url_duplication_across_qb_tools() -> None:
                 "tool result inlined receipt URL into content "
                 f"(content={result.content!r}, url={result.receipt.url!r})"
             )
+
+
+# ---------------------------------------------------------------------------
+# Approval prompt: line-item breakdown so users catch billing mistakes
+# ---------------------------------------------------------------------------
+
+
+def _get_description_builder(tools: list, name: str) -> Any:
+    for t in tools:
+        if t.name == name:
+            assert t.approval_policy is not None
+            assert t.approval_policy.description_builder is not None
+            return t.approval_policy.description_builder
+    raise KeyError(f"Tool {name} not found")
+
+
+def test_qb_create_approval_description_renders_invoice_line_items() -> None:
+    """The qb_create approval prompt for an Invoice must show qty x unit
+    = line total per item plus a grand total, mirroring the AppFolio fix
+    in #1292.
+    """
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {
+                "CustomerRef": {"value": "16", "name": "Acme Plumbing"},
+                "Line": [
+                    {
+                        "Amount": 39.07,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Materials reimbursement",
+                        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 39.07},
+                    },
+                    {
+                        "Amount": 275.00,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Labor",
+                        "SalesItemLineDetail": {"Qty": 5, "UnitPrice": 55.00},
+                    },
+                ],
+            },
+        }
+    )
+    assert "Create Invoice in QuickBooks" in description
+    assert "$314.07" in description
+    assert "Materials reimbursement" in description
+    assert "qty 1 x $39.07 = $39.07" in description
+    assert "Labor" in description
+    assert "qty 5 x $55.00 = $275.00" in description
+
+
+def test_qb_create_approval_description_estimate_uses_same_breakdown() -> None:
+    """Estimate payloads share Invoice's line shape and must render
+    the same breakdown."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Estimate",
+            "data": {
+                "Line": [
+                    {
+                        "Amount": 600.00,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Labor",
+                        "SalesItemLineDetail": {"Qty": 12, "UnitPrice": 50.00},
+                    },
+                ],
+            },
+        }
+    )
+    assert "Create Estimate in QuickBooks for $600.00" in description
+    assert "qty 12 x $50.00 = $600.00" in description
+
+
+def test_qb_create_approval_description_customer_keeps_short_form() -> None:
+    """Customer payloads have no Line array; the prompt must stay the
+    legacy short form rather than render an empty breakdown."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Customer",
+            "data": {"DisplayName": "Acme Plumbing", "PrimaryEmailAddr": {"Address": "x@y.z"}},
+        }
+    )
+    assert description == "Create Customer in QuickBooks"
+
+
+def test_qb_create_approval_description_falls_back_without_sales_item_detail() -> None:
+    """A line missing SalesItemLineDetail still renders, using Amount alone."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {
+                "Line": [
+                    {
+                        "Amount": 100.00,
+                        "DetailType": "DescriptionOnly",
+                        "Description": "Free-form note",
+                    },
+                ],
+            },
+        }
+    )
+    assert "Create Invoice in QuickBooks for $100.00" in description
+    assert "$100.00" in description
+    # No qty/unit breakdown when the detail block is absent.
+    assert "qty" not in description.lower()
+
+
+def test_qb_create_approval_description_truncates_long_descriptions() -> None:
+    """Very long line descriptions are truncated so the prompt stays
+    scannable in a chat channel."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    long = "Lorem ipsum dolor sit amet consectetur adipiscing elit, " * 5
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {
+                "Line": [
+                    {
+                        "Amount": 100.0,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": long,
+                        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 100.0},
+                    },
+                ],
+            },
+        }
+    )
+    assert "..." in description
+    assert long not in description
+
+
+def test_qb_create_approval_description_falls_back_on_malformed_payload() -> None:
+    """A malformed payload must not raise from the description builder.
+
+    QBCreateParams validation runs after the approval prompt is rendered,
+    so the prompt has to tolerate bad input rather than crash the
+    approval flow.
+    """
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    # Non-dict line entry should fall back to the short form rather than
+    # raise an AttributeError.
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {"Line": ["not-a-dict"]},
+        }
+    )
+    assert description == "Create Invoice in QuickBooks"
+
+    # Non-numeric Amount should also fall back rather than blow up
+    # ``float()`` and crash the approval prompt.
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {"Line": [{"Amount": "not-a-number", "Description": "ok"}]},
+        }
+    )
+    assert description == "Create Invoice in QuickBooks"
+
+
+def test_qb_update_approval_description_includes_entity_id() -> None:
+    """The qb_update prompt must call out which Id is being changed so
+    an admin reviewing audit logs can trace it. Line item breakdown
+    follows the same rules as qb_create."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_update")
+
+    description = builder(
+        {
+            "entity_type": "Estimate",
+            "data": {
+                "Id": "2001",
+                "SyncToken": "0",
+                "Line": [
+                    {
+                        "Amount": 600.00,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Labor (revised)",
+                        "SalesItemLineDetail": {"Qty": 12, "UnitPrice": 50.00},
+                    },
+                ],
+            },
+        }
+    )
+    assert "Update Estimate #2001 in QuickBooks for $600.00" in description
+    assert "qty 12 x $50.00 = $600.00" in description
+
+
+def test_qb_update_approval_description_customer_short_form_includes_id() -> None:
+    """For non-itemized entity types (Customer), the qb_update short
+    form should still reference the Id being updated."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_update")
+
+    description = builder(
+        {
+            "entity_type": "Customer",
+            "data": {"Id": "100", "SyncToken": "1", "DisplayName": "Acme"},
+        }
+    )
+    assert description == "Update Customer #100 in QuickBooks"
+
+
+def test_qb_create_approval_description_uses_thousands_separator() -> None:
+    """Currency formatting matches ``_receipt_target``: thousands
+    separator on every dollar amount so the same invoice reads the
+    same in the approval prompt and the post-write ToolReceipt.
+    """
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {
+                "Line": [
+                    {
+                        "Amount": 12345.67,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Kitchen remodel",
+                        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 12345.67},
+                    },
+                    {
+                        "Amount": 2500.00,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Materials",
+                        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 2500.00},
+                    },
+                ],
+            },
+        }
+    )
+    assert "Create Invoice in QuickBooks for $14,845.67" in description
+    assert "qty 1 x $12,345.67 = $12,345.67" in description
+    assert "qty 1 x $2,500.00 = $2,500.00" in description
+
+
+def test_qb_create_approval_description_survives_format_approval_message() -> None:
+    """The multi-line breakdown must pass through ``format_approval_message``
+    intact (line items still visible, header still in place) so the
+    user sees the breakdown in their actual channel, not just in a
+    unit-test assertion. Belt-and-suspenders for the approval pipeline.
+    """
+    from backend.app.agent.approval import format_approval_message
+
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {
+                "CustomerRef": {"value": "16", "name": "Acme Plumbing"},
+                "Line": [
+                    {
+                        "Amount": 39.07,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Materials reimbursement",
+                        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 39.07},
+                    },
+                    {
+                        "Amount": 275.00,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Labor",
+                        "SalesItemLineDetail": {"Qty": 5, "UnitPrice": 55.00},
+                    },
+                ],
+            },
+        }
+    )
+    prompt = format_approval_message("qb_create", description)
+
+    # The header and every line item must survive the wrapping.
+    assert "Create Invoice in QuickBooks for $314.07" in prompt
+    assert "qty 1 x $39.07 = $39.07" in prompt
+    assert "qty 5 x $55.00 = $275.00" in prompt
+    # And the prompt still ends with the four-option menu so the
+    # multi-line description has not stomped the reply instructions.
+    assert "yes: allow this once" in prompt
+    assert "never: deny and remember" in prompt
