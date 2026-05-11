@@ -91,6 +91,9 @@ class ToolName:
 
     # ServiceTitan
     SERVICETITAN_CONNECT = "connect_servicetitan"
+    SERVICETITAN_SEARCH_CUSTOMERS = "st_search_customers"
+    SERVICETITAN_GET_CUSTOMER = "st_get_customer"
+    SERVICETITAN_LIST_APPOINTMENTS = "st_list_appointments"
 
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
