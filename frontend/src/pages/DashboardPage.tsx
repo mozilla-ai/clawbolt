@@ -124,11 +124,14 @@ export default function DashboardPage() {
 
   // --- Tools ---
   const allTools = tools.data?.tools ?? [];
-  const domainTools = allTools.filter((t) => t.category === 'domain');
+  // Mirror the ToolsPage filter: integrations group plus OAuth-backed
+  // always-on tools (Google Drive). Keeps the dashboard card in sync with
+  // what the Settings page actually renders.
+  const integrationTools = allTools.filter((t) => t.category === 'domain' || !!t.oauth_name);
   const integrations = oauth.data?.integrations ?? [];
   const oauthMap = Object.fromEntries(integrations.map((i) => [i.integration, i]));
   const enabledCalendars = calendarConfig.data?.calendars ?? [];
-  const toolsConfigured = domainTools.some((t) => t.enabled);
+  const toolsConfigured = integrationTools.some((t) => t.enabled);
 
   // --- Memory ---
   const memoryContent = memory.data?.content ?? '';
@@ -230,10 +233,10 @@ export default function DashboardPage() {
           isLoading={(tools.isPending && !tools.data) || (oauth.isPending && !oauth.data)}
           isError={tools.isError && !tools.data}
         >
-          {domainTools.length > 0 ? (
+          {integrationTools.length > 0 ? (
             <div className="space-y-2.5">
-              {domainTools.map((tool) => {
-                const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap, tool.configured);
+              {integrationTools.map((tool) => {
+                const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.oauth_name, oauthMap, tool.configured);
                 const enabledSubTools = (tool.sub_tools ?? []).filter((st) => st.enabled).length;
                 const totalSubTools = (tool.sub_tools ?? []).length;
                 return (
@@ -253,7 +256,7 @@ export default function DashboardPage() {
                           </span>
                         )}
                       </div>
-                      {isConnected && (
+                      {isConnected && !tool.always_enabled && (
                         /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
                         <div onClick={stopCardPress}>
                           <Switch
