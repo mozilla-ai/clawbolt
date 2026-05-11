@@ -41,8 +41,11 @@ def build_auth_tools(user_id: str) -> list[Tool]:
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
                 hint=(
-                    "Paste the full URL from the AppFolio email,"
-                    " including everything after '?magic_link_token='."
+                    "Ask the user to paste only the magic-link token"
+                    " (the long string after 'magic_link_token=' in the"
+                    " AppFolio email URL), not the full URL. iMessage"
+                    " and other SMS clients strip query params from"
+                    " pasted links."
                 ),
             )
 
@@ -81,7 +84,7 @@ def build_auth_tools(user_id: str) -> list[Tool]:
         Tool(
             name=ToolName.APPFOLIO_CONNECT,
             description=(
-                "Connect AppFolio Vendor Portal by pasting the magic-link URL"
+                "Connect AppFolio Vendor Portal with the magic-link token"
                 " from the user's AppFolio email."
             ),
             function=appfolio_connect,
@@ -89,7 +92,9 @@ def build_auth_tools(user_id: str) -> list[Tool]:
             usage_hint=(
                 "Use when the user wants to start using AppFolio tools."
                 " Tell them: open vendor.appfolio.com, request a magic link,"
-                " then paste the full URL from the email."
+                " then paste only the token from the URL (everything after"
+                " 'magic_link_token='), not the full URL. iMessage and"
+                " other SMS clients strip query params from pasted links."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ALWAYS,

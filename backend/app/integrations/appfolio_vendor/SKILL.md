@@ -41,8 +41,10 @@ AppFolio uses passwordless magic-link login (single-use, expires in
 minutes):
 
 1. User opens vendor.appfolio.com and requests a magic link.
-2. They paste the full URL from the email back to you.
-3. Call `appfolio_connect(magic_link=...)`.
+2. From the email, they copy only the token from the magic-link URL
+   (everything after `magic_link_token=`), not the full URL. iMessage
+   and other SMS clients strip query params from pasted links.
+3. Call `appfolio_connect(magic_link=...)` with the pasted token.
 
 The OAuth2 exchange returns a refresh token alongside the bearer JWT,
 so live sessions extend automatically on 401. On `auth` errors with no

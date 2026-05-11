@@ -505,7 +505,10 @@ async def test_connect_appfolio_returns_magic_link_instructions(test_user: User)
 
     The agent-facing message must mention vendor.appfolio.com (so the
     agent can guide the user to the right site) and appfolio_connect (so
-    the agent knows which tool finishes the flow).
+    the agent knows which tool finishes the flow). It must also tell the
+    agent to ask the user for the token only (not the full URL), because
+    iMessage strips query params from pasted links and the token gets
+    lost. Regression for issue #1297.
     """
     with patch(
         "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
@@ -517,6 +520,9 @@ async def test_connect_appfolio_returns_magic_link_instructions(test_user: User)
     assert "appfolio_connect" in result.content
     # Should NOT claim AppFolio "does not use OAuth" or look like a rejection.
     assert "does not use OAuth" not in result.content
+    # Must steer the agent toward the token-only paste flow.
+    assert "magic_link_token=" in result.content
+    assert "iMessage" in result.content
 
 
 @pytest.mark.asyncio()

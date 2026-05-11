@@ -72,7 +72,7 @@ def extract_magic_link_token(text: str) -> str:
     """
     candidate = text.strip()
     if not candidate:
-        raise MagicLinkError("empty input; paste the full magic-link URL")
+        raise MagicLinkError("empty input")
 
     if "magic_link_token=" in candidate:
         if "://" in candidate:

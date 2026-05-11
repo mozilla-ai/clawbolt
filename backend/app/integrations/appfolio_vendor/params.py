@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 class AppFolioConnectParams(BaseModel):
     magic_link: str = Field(
         description=(
-            "The full magic-link URL the user pasted from their AppFolio email,"
-            " e.g. 'https://vendor.appfolio.com/?magic_link_token=eyJ...'."
-            " The bare token is also accepted."
+            "The magic-link token from the user's AppFolio email (the value"
+            " after 'magic_link_token=' in the URL, e.g. 'eyJ...')."
+            " A full URL is also accepted as a fallback."
         ),
     )
 
