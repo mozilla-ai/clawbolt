@@ -401,6 +401,16 @@ def _seed_jobs() -> list[dict[str, Any]]:
                 "appointmentCount": 0,  # patched below once appointments are seeded
                 "firstAppointmentId": None,
                 "lastAppointmentId": None,
+                # These six fields are nullable in the live ``CrmV2JobResponse``
+                # but are always serialized. Surfacing them as ``None`` keeps
+                # the wire shape complete so tools that probe for their presence
+                # behave the same against the fake and the real API.
+                "recallForId": None,
+                "warrantyId": None,
+                "jobGeneratedLeadSource": None,
+                "leadCallId": None,
+                "bookingId": None,
+                "soldById": None,
                 "noCharge": False,
                 "notificationsEnabled": True,
                 "createdOn": created_iso,
@@ -443,6 +453,12 @@ def _seed_appointments(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         (jobs[26], 3, 10),  # scheduled electrical later this week
     ]
 
+    # Synthetic technician IDs assigned in round-robin so dispatch-style
+    # tools can group appointments by tech. Three techs are enough to
+    # exercise the "who's on this job" surface area without bloating the
+    # seed.
+    tech_pool = [101, 102, 103]
+
     appts: list[dict[str, Any]] = []
     for appt_seq, (job, day_offset, hour) in enumerate(targets, start=1):
         appt_id = 3000 + appt_seq
@@ -462,6 +478,14 @@ def _seed_appointments(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             JOB_STATUS_CANCELED: APPT_STATUS_HOLD,
         }[job["jobStatus"]]
 
+        # Real ``JpmV2AppointmentResponse`` ships ``technicianIds`` as a
+        # plural list because one appointment can be co-dispatched. Most
+        # appointments here get one tech; appointments on in-progress
+        # multi-day work get two so the second-tech case is exercised.
+        assigned: list[int] = [tech_pool[appt_seq % len(tech_pool)]]
+        if job["jobStatus"] == JOB_STATUS_IN_PROGRESS and appt_seq % 2 == 0:
+            assigned.append(tech_pool[(appt_seq + 1) % len(tech_pool)])
+
         appts.append(
             {
                 "id": appt_id,
@@ -473,6 +497,7 @@ def _seed_appointments(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "arrivalWindowEnd": _iso(arr_end),
                 "status": appt_status,
                 "specialInstructions": None,
+                "technicianIds": assigned,
                 "createdOn": _iso(start - timedelta(days=7)),
                 "modifiedOn": _iso(start - timedelta(days=1)),
             }

@@ -285,7 +285,10 @@ async def test_jobs_list_shape(client: httpx.AsyncClient) -> None:
     body = resp.json()
     assert body["totalCount"] == 30
     first = body["data"][0]
-    # Documented JpmV2 / CrmV2 JobResponse fields.
+    # Documented JpmV2 / CrmV2 JobResponse fields. The nullable cluster
+    # (recallForId / warrantyId / leadCallId / bookingId / soldById /
+    # jobGeneratedLeadSource) is also serialized by the real API and is
+    # asserted here so a seed regression that drops them is loud.
     for field_name in [
         "id",
         "jobNumber",
@@ -296,6 +299,12 @@ async def test_jobs_list_shape(client: httpx.AsyncClient) -> None:
         "jobTypeId",
         "summary",
         "appointmentCount",
+        "recallForId",
+        "warrantyId",
+        "jobGeneratedLeadSource",
+        "leadCallId",
+        "bookingId",
+        "soldById",
     ]:
         assert field_name in first, f"missing {field_name}"
 
@@ -429,10 +438,15 @@ async def test_appointments_list_shape(client: httpx.AsyncClient) -> None:
         "start",
         "end",
         "status",
+        "technicianIds",
         "createdOn",
         "modifiedOn",
     ]:
         assert field_name in appt
+    # ``technicianIds`` is a plural list of int IDs in the real schema.
+    assert isinstance(appt["technicianIds"], list)
+    assert all(isinstance(t, int) for t in appt["technicianIds"])
+    assert appt["technicianIds"], "every appointment should have at least one tech"
 
 
 @pytest.mark.asyncio()
