@@ -2708,3 +2708,111 @@ async def test_agent_override_falls_back_to_settings_when_field_empty(
     finally:
         settings.llm_provider = original_provider
         settings.llm_model = original_model
+
+
+@pytest.mark.asyncio()
+async def test_duplicate_tool_call_within_turn_emits_telemetry(
+    test_user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The model occasionally re-fires the same (tool, args) twice within
+    one turn (the CompanyCam upload-storm in issue analysis). We surface
+    a structured warning so the pattern is measurable across users; the
+    call is not blocked because legitimate transient retries also happen.
+    """
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.llm_parsing import ParsedToolCall
+
+    async def _noop(query: str = "") -> ToolResult:
+        return ToolResult(content="ok")
+
+    tool = Tool(
+        name="search_thing",
+        description="search",
+        function=_noop,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+
+    # Record an earlier-round call with the same args so the new call
+    # registers as a duplicate. ``_execute_tool_round`` reads from this
+    # list directly.
+    prior_records = [
+        StoredToolInteraction(
+            tool_call_id="prior",
+            name="search_thing",
+            args={"query": "acme"},
+            result="ok",
+            is_error=False,
+        )
+    ]
+
+    args = {"query": "acme"}
+    parsed_calls = [ToolCallRequest(id="call_dup", name="search_thing", arguments=args)]
+    parsed_raw = [ParsedToolCall(id="call_dup", name="search_thing", arguments=args)]
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
+        await agent._execute_tool_round(
+            parsed_calls=parsed_calls,
+            parsed_raw=parsed_raw,
+            actions_taken=[],
+            memories_saved=[],
+            tool_call_records=prior_records,
+        )
+
+    duplicate_logs = [
+        rec for rec in caplog.records if "duplicate_tool_call_within_turn" in rec.getMessage()
+    ]
+    assert duplicate_logs, "expected a duplicate_tool_call_within_turn warning"
+    assert any("search_thing" in rec.getMessage() for rec in duplicate_logs)
+
+
+@pytest.mark.asyncio()
+async def test_duplicate_tool_call_within_round_emits_telemetry(
+    test_user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Same telemetry fires for a duplicate inside one round, not just across
+    rounds (matches the CompanyCam pattern where the model batches the same
+    upload twice in a single parallel fan-out).
+    """
+    from backend.app.agent.llm_parsing import ParsedToolCall
+
+    async def _noop(query: str = "") -> ToolResult:
+        return ToolResult(content="ok")
+
+    tool = Tool(
+        name="search_thing",
+        description="search",
+        function=_noop,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+
+    args = {"query": "acme"}
+    # Two identical calls in one round.
+    parsed_calls = [
+        ToolCallRequest(id="call_a", name="search_thing", arguments=args),
+        ToolCallRequest(id="call_b", name="search_thing", arguments=args),
+    ]
+    parsed_raw = [
+        ParsedToolCall(id="call_a", name="search_thing", arguments=args),
+        ParsedToolCall(id="call_b", name="search_thing", arguments=args),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
+        await agent._execute_tool_round(
+            parsed_calls=parsed_calls,
+            parsed_raw=parsed_raw,
+            actions_taken=[],
+            memories_saved=[],
+            tool_call_records=[],
+        )
+
+    duplicate_logs = [
+        rec for rec in caplog.records if "duplicate_tool_call_within_turn" in rec.getMessage()
+    ]
+    assert duplicate_logs, "expected a duplicate_tool_call_within_turn warning"
+    assert any("search_thing" in rec.getMessage() for rec in duplicate_logs)
