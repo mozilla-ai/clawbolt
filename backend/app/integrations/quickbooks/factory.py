@@ -333,14 +333,18 @@ def _qb_approval_header(verb: str, entity_type: str, entity_id: Any, total: floa
     Update headers include ``#{Id}`` (when available) so audit-log review
     can trace which row was edited; Create headers do not because the
     id only exists after QBO assigns one on the POST response. When
-    ``total`` is set, the header appends ``for ${total:.2f}``.
+    ``total`` is set, the header appends ``for ${total:,.2f}``.
+
+    Thousands separator matches ``_receipt_target`` so the same invoice
+    formats consistently across the approval prompt and the post-write
+    ToolReceipt.
     """
     pieces = [f"{verb} {entity_type}"]
     if verb == "Update" and entity_id:
         pieces[0] = f"{pieces[0]} #{entity_id}"
     pieces.append("in QuickBooks")
     if total is not None:
-        pieces.append(f"for ${total:.2f}")
+        pieces.append(f"for ${total:,.2f}")
     return " ".join(pieces)
 
 
@@ -417,10 +421,10 @@ def _format_qb_write_approval_description(verb: str, args: dict[str, Any]) -> st
             # ``:g`` drops trailing ``.0`` so ``5.0`` reads as ``5`` while
             # leaving genuine fractional quantities (e.g. ``1.5``) intact.
             rendered.append(
-                f"  {idx}. {short_desc} | qty {qty:g} x ${unit_price:.2f} = ${amount:.2f}"
+                f"  {idx}. {short_desc} | qty {qty:g} x ${unit_price:,.2f} = ${amount:,.2f}"
             )
         else:
-            rendered.append(f"  {idx}. {short_desc} | ${amount:.2f}")
+            rendered.append(f"  {idx}. {short_desc} | ${amount:,.2f}")
     return "\n".join(rendered)
 
 

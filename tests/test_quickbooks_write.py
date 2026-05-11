@@ -884,6 +884,41 @@ def test_qb_update_approval_description_customer_short_form_includes_id() -> Non
     assert description == "Update Customer #100 in QuickBooks"
 
 
+def test_qb_create_approval_description_uses_thousands_separator() -> None:
+    """Currency formatting matches ``_receipt_target``: thousands
+    separator on every dollar amount so the same invoice reads the
+    same in the approval prompt and the post-write ToolReceipt.
+    """
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Invoice",
+            "data": {
+                "Line": [
+                    {
+                        "Amount": 12345.67,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Kitchen remodel",
+                        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 12345.67},
+                    },
+                    {
+                        "Amount": 2500.00,
+                        "DetailType": "SalesItemLineDetail",
+                        "Description": "Materials",
+                        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 2500.00},
+                    },
+                ],
+            },
+        }
+    )
+    assert "Create Invoice in QuickBooks for $14,845.67" in description
+    assert "qty 1 x $12,345.67 = $12,345.67" in description
+    assert "qty 1 x $2,500.00 = $2,500.00" in description
+
+
 def test_qb_create_approval_description_survives_format_approval_message() -> None:
     """The multi-line breakdown must pass through ``format_approval_message``
     intact (line items still visible, header still in place) so the
