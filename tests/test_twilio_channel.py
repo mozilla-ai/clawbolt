@@ -268,6 +268,75 @@ async def test_send_message_sends_one_mms_for_multiple_media() -> None:
     assert kwargs["body"] == "two pics"
 
 
+async def test_per_user_from_resolver_overrides_global_sender() -> None:
+    """When a from_resolver is registered, its return value pins from_ per recipient."""
+    from backend.app.channels.twilio import set_twilio_from_resolver
+
+    channel, mock_client = _make_channel_with_mocked_client()
+
+    async def resolver(to: str) -> str | None:
+        return "+18001111111" if to == "+15551234567" else None
+
+    set_twilio_from_resolver(resolver)
+    try:
+        with patch("backend.app.channels.twilio.settings.twilio_phone_number", "+15550000001"):
+            await channel.send_text("+15551234567", "hi")
+    finally:
+        # Reset so other tests aren't poisoned by this one's resolver.
+        import backend.app.channels.twilio as twilio_mod
+
+        twilio_mod._from_resolver = None
+
+    kwargs = mock_client.messages.create.call_args.kwargs
+    # The per-user resolver should win over the global TWILIO_PHONE_NUMBER.
+    assert kwargs["from_"] == "+18001111111"
+
+
+async def test_per_user_from_resolver_falls_back_when_none() -> None:
+    """A resolver that returns None falls back to the global Twilio sender."""
+    from backend.app.channels.twilio import set_twilio_from_resolver
+
+    channel, mock_client = _make_channel_with_mocked_client()
+
+    async def resolver(to: str) -> str | None:
+        return None
+
+    set_twilio_from_resolver(resolver)
+    try:
+        with patch("backend.app.channels.twilio.settings.twilio_phone_number", "+15550000001"):
+            await channel.send_text("+15551234567", "hi")
+    finally:
+        import backend.app.channels.twilio as twilio_mod
+
+        twilio_mod._from_resolver = None
+
+    kwargs = mock_client.messages.create.call_args.kwargs
+    assert kwargs["from_"] == "+15550000001"
+
+
+async def test_per_user_resolver_failure_falls_back_to_global() -> None:
+    """A resolver that raises should not block the send; we fall back to global."""
+    from backend.app.channels.twilio import set_twilio_from_resolver
+
+    channel, mock_client = _make_channel_with_mocked_client()
+
+    async def resolver(to: str) -> str | None:
+        raise RuntimeError("db unreachable")
+
+    set_twilio_from_resolver(resolver)
+    try:
+        with patch("backend.app.channels.twilio.settings.twilio_phone_number", "+15550000001"):
+            sid = await channel.send_text("+15551234567", "hi")
+    finally:
+        import backend.app.channels.twilio as twilio_mod
+
+        twilio_mod._from_resolver = None
+
+    assert sid == "SMabcdef"
+    kwargs = mock_client.messages.create.call_args.kwargs
+    assert kwargs["from_"] == "+15550000001"
+
+
 async def test_send_typing_indicator_is_noop() -> None:
     """send_typing_indicator must not raise and must not touch the SDK.
 

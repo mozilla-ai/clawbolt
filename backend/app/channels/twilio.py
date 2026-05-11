@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -25,6 +26,36 @@ TWILIO_SIGNATURE_HEADER = "X-Twilio-Signature"
 # <Response/> tells it "do nothing" so the agent loop, which delivers
 # replies via the outbound dispatcher, isn't double-sending.
 TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response/>'
+
+
+# ---------------------------------------------------------------------------
+# Per-user outbound sender resolver (premium hook)
+# ---------------------------------------------------------------------------
+
+# Premium deployments provision one Twilio number per user; the resolver
+# maps an outbound recipient phone back to that user's own Twilio number
+# so ``send_text``/``send_media`` can pin ``from_`` correctly. OSS leaves
+# the resolver unset and falls back to the single global TWILIO_PHONE_NUMBER
+# / TWILIO_MESSAGING_SERVICE_SID.
+FromResolver = Callable[[str], Awaitable[str | None]]
+
+_from_resolver: FromResolver | None = None
+
+
+def set_twilio_from_resolver(fn: FromResolver) -> None:
+    """Register a callable that returns the per-user ``from_`` for an outbound recipient.
+
+    Called by the premium plugin during startup. ``fn`` receives the
+    recipient phone and returns the user's provisioned Twilio number, or
+    ``None`` to fall back to the global settings.
+    """
+    global _from_resolver
+    _from_resolver = fn
+
+
+def get_twilio_from_resolver() -> FromResolver | None:
+    """Return the current per-user resolver, or ``None`` when unset."""
+    return _from_resolver
 
 
 class TwilioChannel(BaseChannel):
@@ -164,35 +195,54 @@ class TwilioChannel(BaseChannel):
 
     # -- Outbound --------------------------------------------------------------
 
-    def _send_kwargs(self, to: str, body: str) -> dict[str, Any]:
+    @staticmethod
+    async def _resolve_per_user_from(to: str) -> str | None:
+        """Ask the premium resolver for the user's own Twilio number, if any."""
+        resolver = _from_resolver
+        if resolver is None:
+            return None
+        try:
+            return await resolver(to)
+        except Exception:
+            # A resolver failure shouldn't block outbound delivery; fall
+            # back to the global sender. The resolver itself is expected
+            # to log its own failures.
+            logger.exception("Twilio from_resolver raised; falling back to global sender")
+            return None
+
+    def _send_kwargs(self, to: str, body: str, from_override: str | None = None) -> dict[str, Any]:
         """Build kwargs for ``messages.create``.
 
-        Pins ``messaging_service_sid`` when configured (the A2P 10DLC
-        path) so Twilio picks an appropriate sender from the campaign
-        pool; otherwise pins ``from_`` to the single configured number.
+        Precedence: ``from_override`` (per-user, premium) > Messaging
+        Service SID (A2P 10DLC pool) > global ``twilio_phone_number``.
+        Raises ``RuntimeError`` when none is available.
         """
         kwargs: dict[str, Any] = {"to": to, "body": body}
-        if settings.twilio_messaging_service_sid:
+        if from_override:
+            kwargs["from_"] = from_override
+        elif settings.twilio_messaging_service_sid:
             kwargs["messaging_service_sid"] = settings.twilio_messaging_service_sid
         elif settings.twilio_phone_number:
             kwargs["from_"] = settings.twilio_phone_number
         else:
             msg = (
                 "Twilio outbound requires either TWILIO_MESSAGING_SERVICE_SID "
-                "or TWILIO_PHONE_NUMBER to be set"
+                "or TWILIO_PHONE_NUMBER to be set (or a registered per-user resolver)"
             )
             raise RuntimeError(msg)
         return kwargs
 
     async def send_text(self, to: str, body: str) -> str:
         """Send an SMS. *to* is an E.164 phone number. Returns the Twilio Message SID."""
-        kwargs = self._send_kwargs(to, body)
+        from_override = await self._resolve_per_user_from(to)
+        kwargs = self._send_kwargs(to, body, from_override)
         message = await asyncio.to_thread(self.client.messages.create, **kwargs)
         return str(message.sid)
 
     async def send_media(self, to: str, body: str, media_url: str) -> str:
         """Send an MMS with one media attachment. Returns the Twilio Message SID."""
-        kwargs = self._send_kwargs(to, body)
+        from_override = await self._resolve_per_user_from(to)
+        kwargs = self._send_kwargs(to, body, from_override)
         kwargs["media_url"] = [media_url]
         message = await asyncio.to_thread(self.client.messages.create, **kwargs)
         return str(message.sid)
@@ -206,7 +256,8 @@ class TwilioChannel(BaseChannel):
         """
         if not media_urls:
             return await self.send_text(to, body)
-        kwargs = self._send_kwargs(to, body)
+        from_override = await self._resolve_per_user_from(to)
+        kwargs = self._send_kwargs(to, body, from_override)
         kwargs["media_url"] = list(media_urls)
         message = await asyncio.to_thread(self.client.messages.create, **kwargs)
         return str(message.sid)
