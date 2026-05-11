@@ -980,6 +980,26 @@ export interface components {
             bluebubbles_imessage_address: string;
             /** Imessage Backend */
             imessage_backend?: string | null;
+            /**
+             * Twilio Configured
+             * @default false
+             */
+            twilio_configured: boolean;
+            /**
+             * Twilio Phone Number
+             * @default
+             */
+            twilio_phone_number: string;
+            /**
+             * Twilio Messaging Service Sid
+             * @default
+             */
+            twilio_messaging_service_sid: string;
+            /**
+             * Twilio Allowed Numbers
+             * @default
+             */
+            twilio_allowed_numbers: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -1005,6 +1025,16 @@ export interface components {
             bluebubbles_allowed_numbers?: string | null;
             /** Bluebubbles Imessage Address */
             bluebubbles_imessage_address?: string | null;
+            /** Twilio Account Sid */
+            twilio_account_sid?: string | null;
+            /** Twilio Auth Token */
+            twilio_auth_token?: string | null;
+            /** Twilio Phone Number */
+            twilio_phone_number?: string | null;
+            /** Twilio Messaging Service Sid */
+            twilio_messaging_service_sid?: string | null;
+            /** Twilio Allowed Numbers */
+            twilio_allowed_numbers?: string | null;
         };
         /** ChannelRouteListResponse */
         ChannelRouteListResponse: {

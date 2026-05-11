@@ -1532,6 +1532,26 @@
               }
             ],
             "title": "Imessage Backend"
+          },
+          "twilio_configured": {
+            "type": "boolean",
+            "title": "Twilio Configured",
+            "default": false
+          },
+          "twilio_phone_number": {
+            "type": "string",
+            "title": "Twilio Phone Number",
+            "default": ""
+          },
+          "twilio_messaging_service_sid": {
+            "type": "string",
+            "title": "Twilio Messaging Service Sid",
+            "default": ""
+          },
+          "twilio_allowed_numbers": {
+            "type": "string",
+            "title": "Twilio Allowed Numbers",
+            "default": ""
           }
         },
         "type": "object",
@@ -1663,6 +1683,61 @@
               }
             ],
             "title": "Bluebubbles Imessage Address"
+          },
+          "twilio_account_sid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Twilio Account Sid"
+          },
+          "twilio_auth_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Twilio Auth Token"
+          },
+          "twilio_phone_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Twilio Phone Number"
+          },
+          "twilio_messaging_service_sid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Twilio Messaging Service Sid"
+          },
+          "twilio_allowed_numbers": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Twilio Allowed Numbers"
           }
         },
         "type": "object",
