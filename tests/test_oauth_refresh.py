@@ -604,7 +604,7 @@ class TestRefreshTokenLockSerialization:
             expires_at=time.time() - 100,  # already expired
         )
         # ``persisted`` is the single source of truth that
-        # ``_load_token_uncached`` consults. The first caller's
+        # ``load_token_uncached`` consults. The first caller's
         # ``save_token`` swaps in the rotated value, so the late
         # callers see ``expires_at > now`` on their post-lock reload
         # and short-circuit without hitting the upstream.
@@ -681,7 +681,7 @@ class TestRefreshTokenLockSerialization:
             release.set()
 
         with (
-            patch.object(oauth_svc, "_load_token_uncached", side_effect=_load_uncached),
+            patch.object(oauth_svc, "load_token_uncached", side_effect=_load_uncached),
             patch.object(oauth_svc, "save_token", side_effect=_save),
             patch.object(oauth_svc, "_get_http", return_value=mock_http),
             patch("backend.app.services.oauth.get_oauth_config", return_value=config),
@@ -754,7 +754,7 @@ class TestRefreshTokenLockSerialization:
         )
         persisted: dict[str, OAuthTokenData] = {"current": base_token}
         # Each entry records the ``refresh_token`` value a thread saw
-        # when its post-lock ``_load_token_uncached`` ran. With the
+        # when its post-lock ``load_token_uncached`` ran. With the
         # lock working, only the first acquirer sees the original
         # ``base-rt``; subsequent acquirers see a peer's rotation.
         # With the bug, every thread reads the row before any save
@@ -819,7 +819,7 @@ class TestRefreshTokenLockSerialization:
         # it up at the test scope (single thread) and let each worker
         # thread observe the same patched attributes.
         with (
-            patch.object(oauth_svc, "_load_token_uncached", side_effect=_load_uncached),
+            patch.object(oauth_svc, "load_token_uncached", side_effect=_load_uncached),
             patch.object(oauth_svc, "save_token", side_effect=_save),
         ):
             threads = [

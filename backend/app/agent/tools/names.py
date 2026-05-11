@@ -89,6 +89,9 @@ class ToolName:
     APPFOLIO_GET_ESTIMATE = "appfolio_get_estimate"
     APPFOLIO_UPDATE_ESTIMATE = "appfolio_update_estimate"
 
+    # ServiceTitan
+    SERVICETITAN_CONNECT = "connect_servicetitan"
+
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
 
