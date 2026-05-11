@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -27,19 +28,38 @@ TWILIO_SIGNATURE_HEADER = "X-Twilio-Signature"
 # replies via the outbound dispatcher, isn't double-sending.
 TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response/>'
 
+# Hostnames we will issue authenticated media downloads against. Twilio's
+# media URLs all live on these two subdomains; anything else is a
+# misconfiguration or an attacker trying to exfiltrate the account-SID
+# Basic Auth header via SSRF. The check defends the off-prod path where
+# ``twilio_validate_signatures`` is disabled (otherwise signature
+# validation already ensures we only fetch what Twilio actually sent).
+_TWILIO_MEDIA_HOST_SUFFIXES = (".twilio.com", ".twiliocdn.com")
+
 
 # ---------------------------------------------------------------------------
-# Per-user outbound sender resolver (premium hook)
+# Premium hooks
 # ---------------------------------------------------------------------------
 
-# Premium deployments provision one Twilio number per user; the resolver
-# maps an outbound recipient phone back to that user's own Twilio number
-# so ``send_text``/``send_media`` can pin ``from_`` correctly. OSS leaves
-# the resolver unset and falls back to the single global TWILIO_PHONE_NUMBER
-# / TWILIO_MESSAGING_SERVICE_SID.
+# Premium deployments provision one Twilio number per user. Two hooks plug
+# into per-user behavior:
+#
+#   FromResolver:  maps an outbound recipient phone back to that user's
+#                  own Twilio number so ``send_text``/``send_media`` can
+#                  pin ``from_`` correctly.
+#   ToVerifier:    on inbound, confirms that the webhook's ``(From, To)``
+#                  pair corresponds to a user's own provisioned Twilio
+#                  number. Without this, a user texting the wrong Twilio
+#                  number (e.g. typo, stale contact) would still route to
+#                  their own bot via the ``From``-based allowlist, but the
+#                  reply would come from a different number than the one
+#                  they texted — confusing UX. OSS leaves both unset and
+#                  the channel behaves as one global bot.
 FromResolver = Callable[[str], Awaitable[str | None]]
+ToVerifier = Callable[[str, str], Awaitable[bool]]
 
 _from_resolver: FromResolver | None = None
+_to_verifier: ToVerifier | None = None
 
 
 def set_twilio_from_resolver(fn: FromResolver) -> None:
@@ -56,6 +76,24 @@ def set_twilio_from_resolver(fn: FromResolver) -> None:
 def get_twilio_from_resolver() -> FromResolver | None:
     """Return the current per-user resolver, or ``None`` when unset."""
     return _from_resolver
+
+
+def set_twilio_to_verifier(fn: ToVerifier) -> None:
+    """Register a callable that confirms an inbound ``(From, To)`` pair is valid.
+
+    Called by the premium plugin during startup. ``fn`` receives
+    ``(from_phone, to_phone)`` and returns ``True`` if those identify a
+    consistent user / provisioned-number pairing. When the verifier
+    returns ``False`` or raises, the inbound webhook is dropped with a
+    200 + empty TwiML (so probing senders can't infer state).
+    """
+    global _to_verifier
+    _to_verifier = fn
+
+
+def get_twilio_to_verifier() -> ToVerifier | None:
+    """Return the current inbound ``(From, To)`` verifier, or ``None`` when unset."""
+    return _to_verifier
 
 
 class TwilioChannel(BaseChannel):
@@ -105,8 +143,12 @@ class TwilioChannel(BaseChannel):
         # ASGI's view, which for our PaaS deployments matches the URL
         # Twilio saw because the proxy sets X-Forwarded-* headers and
         # Starlette honors them when ``proxy_headers=True`` (the uvicorn
-        # default in our deployment).
+        # default in our deployment). The debug log surfaces the exact
+        # URL we're validating against so a deployment behind a proxy
+        # that strips https can diagnose signature failures without
+        # tcpdump.
         url = str(request.url)
+        logger.debug("Twilio signature validation: url=%s", url)
         return validator.validate(url, form_data, signature)
 
     @staticmethod
@@ -147,6 +189,14 @@ class TwilioChannel(BaseChannel):
 
         body = form_data.get("Body", "")
         message_sid = form_data.get("MessageSid", "") or form_data.get("SmsMessageSid", "")
+        if not message_sid:
+            # Real Twilio always sends MessageSid; an empty value here
+            # means the payload came from a misconfigured proxy or a
+            # spoofed request that slipped past signature validation
+            # (only possible when validation is off). Without an SID we
+            # can't dedupe Twilio's 24h retry loop, so log loud enough
+            # for operators to notice and fix the upstream.
+            logger.warning("Twilio webhook missing MessageSid; idempotency skipped")
         external_id = f"twilio_{message_sid}" if message_sid else ""
         media = TwilioChannel._extract_media(form_data)
 
@@ -188,6 +238,28 @@ class TwilioChannel(BaseChannel):
                 return Response(content=TWIML_EMPTY, media_type="application/xml")
 
             inbound = TwilioChannel.parse_form(form_data)
+
+            # Per-user deployments register a verifier that confirms the
+            # webhook's ``(From, To)`` pair corresponds to one user's own
+            # provisioned Twilio number. Dropping mismatches here keeps a
+            # user from accidentally receiving a reply from a different
+            # bot number than the one they texted. OSS leaves the
+            # verifier unset and this check is a no-op.
+            if inbound is not None and _to_verifier is not None:
+                to_phone = form_data.get("To", "")
+                try:
+                    ok = await _to_verifier(inbound.sender_id, to_phone)
+                except Exception:
+                    logger.exception(
+                        "Twilio to_verifier raised; dropping inbound to avoid misrouting",
+                    )
+                    return Response(content=TWIML_EMPTY, media_type="application/xml")
+                if not ok:
+                    logger.warning(
+                        "Twilio inbound: (From, To) pair does not match a known user; dropping"
+                    )
+                    return Response(content=TWIML_EMPTY, media_type="application/xml")
+
             await handle_webhook_inbound(channel, inbound)
             return Response(content=TWIML_EMPTY, media_type="application/xml")
 
@@ -278,7 +350,16 @@ class TwilioChannel(BaseChannel):
         webhook form payload. The URL requires HTTP Basic Auth with the
         account SID + auth token. Streams with the standard hard size
         cap and wall-time deadline.
+
+        Refuses any URL that doesn't live on a Twilio-owned host. This
+        is defense in depth against an attacker who slipped a webhook
+        past signature validation (only possible when validation is off
+        for dev): without this guard, ``MediaUrl0=http://internal/...``
+        would exfiltrate the account-SID Basic Auth header.
         """
+        if not _is_twilio_host(file_id):
+            msg = f"Refusing to download media from non-Twilio host: {file_id}"
+            raise ValueError(msg)
         auth = httpx.BasicAuth(self._account_sid, self._auth_token)
         async with httpx.AsyncClient(auth=auth, timeout=settings.http_timeout_seconds) as client:
             content, headers = await download_bounded(client, file_id)
@@ -290,3 +371,21 @@ class TwilioChannel(BaseChannel):
             original_url=file_id,
             filename=filename,
         )
+
+
+def _is_twilio_host(url: str) -> bool:
+    """Return True if *url*'s host is on the Twilio media domain.
+
+    Returns False on malformed URLs and URLs with no host part (e.g. a
+    bare path); callers should treat both as "not Twilio" and refuse.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return any(host == s.lstrip(".") or host.endswith(s) for s in _TWILIO_MEDIA_HOST_SUFFIXES)

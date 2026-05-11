@@ -7,6 +7,7 @@ at its REST entry point so no live Twilio account is required.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -379,3 +380,118 @@ async def test_download_media_uses_basic_auth(monkeypatch: pytest.MonkeyPatch) -
     assert media.mime_type == "image/jpeg"
     assert media.filename.endswith(".jpg")
     assert isinstance(captured_auth[0], httpx.BasicAuth)
+
+
+async def test_download_media_rejects_non_twilio_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_media refuses URLs that aren't on a Twilio-owned host.
+
+    Defense in depth: even if signature validation is off and a malicious
+    webhook injects ``MediaUrl0=http://internal/...``, we must not send
+    the account-SID Basic Auth header to that host.
+    """
+    called = False
+
+    async def fake_download_bounded(*_args: object, **_kwargs: object) -> object:
+        nonlocal called
+        called = True
+        return b"", httpx.Headers()
+
+    monkeypatch.setattr("backend.app.channels.twilio.download_bounded", fake_download_bounded)
+
+    channel = TwilioChannel()
+    channel._account_sid = "ACtest"
+    channel._auth_token = "tkn"
+
+    with pytest.raises(ValueError, match="non-Twilio host"):
+        await channel.download_media("http://attacker.example.com/leak")
+    assert called is False
+
+
+async def test_to_verifier_drops_inbound_when_pair_unknown(
+    twilio_client: httpx.AsyncClient,
+) -> None:
+    """A registered To-verifier returning False causes the webhook to drop the message."""
+    from backend.app.channels.twilio import set_twilio_to_verifier
+
+    seen: list[tuple[str, str]] = []
+
+    async def verifier(from_phone: str, to_phone: str) -> bool:
+        seen.append((from_phone, to_phone))
+        return False
+
+    set_twilio_to_verifier(verifier)
+    try:
+        with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+            form = make_twilio_form(sender="+15555555555", to="+18001111111", text="hi")
+            resp = await _post_form(twilio_client, form)
+    finally:
+        import backend.app.channels.twilio as twilio_mod
+
+        twilio_mod._to_verifier = None
+
+    assert resp.status_code == 200
+    assert resp.text == TWIML_EMPTY
+    mock_pub.assert_not_called()
+    assert seen == [("+15555555555", "+18001111111")]
+
+
+async def test_to_verifier_accepts_inbound_when_pair_matches(
+    twilio_client: httpx.AsyncClient,
+) -> None:
+    """A verifier returning True lets the message through to the bus."""
+    from backend.app.channels.twilio import set_twilio_to_verifier
+
+    async def verifier(from_phone: str, to_phone: str) -> bool:
+        return True
+
+    set_twilio_to_verifier(verifier)
+    try:
+        with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+            form = make_twilio_form(text="ok")
+            await _post_form(twilio_client, form)
+    finally:
+        import backend.app.channels.twilio as twilio_mod
+
+        twilio_mod._to_verifier = None
+
+    mock_pub.assert_called_once()
+
+
+async def test_to_verifier_exception_drops_inbound(
+    twilio_client: httpx.AsyncClient,
+) -> None:
+    """A verifier that raises should drop the message, not 500.
+
+    Choosing drop-on-error rather than fall-back-to-allow because the
+    verifier is the *security* hook for premium; the from-resolver is
+    the *outbound* hook where failure can safely degrade.
+    """
+    from backend.app.channels.twilio import set_twilio_to_verifier
+
+    async def verifier(from_phone: str, to_phone: str) -> bool:
+        raise RuntimeError("db unreachable")
+
+    set_twilio_to_verifier(verifier)
+    try:
+        with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+            form = make_twilio_form()
+            resp = await _post_form(twilio_client, form)
+    finally:
+        import backend.app.channels.twilio as twilio_mod
+
+        twilio_mod._to_verifier = None
+
+    assert resp.status_code == 200
+    mock_pub.assert_not_called()
+
+
+async def test_parse_form_warns_on_missing_message_sid(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Missing MessageSid is real-world impossible from Twilio; log loud to surface upstream issues."""
+    form = {"From": "+15551234567", "Body": "test", "NumMedia": "0"}
+    caplog.set_level(logging.WARNING, logger="backend.app.channels.twilio")
+    inbound = TwilioChannel.parse_form(form)
+    assert inbound is not None
+    assert inbound.external_message_id == ""
+    assert any("missing MessageSid" in rec.message for rec in caplog.records)

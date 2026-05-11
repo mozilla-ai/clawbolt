@@ -465,14 +465,22 @@ function PremiumTwilioForm({ twilioLinkData, onSaved }: SubFormProps) {
   const status = twilioLinkData?.status ?? 'not_provisioned';
   const isActive = status === 'active' && twilioLinkData?.twilio_phone_number;
 
-  // ``provisioning`` is a transient state. If we ever land here in the UI
-  // (e.g. the user refreshed mid-connect) we just show a spinner; the
-  // request that started it owns the resolution.
+  // ``provisioning`` is a transient state, normally only seen for a few
+  // seconds during connect. If we land here on page load it usually
+  // means the previous connect request crashed mid-flow; the server
+  // recovers stale rows after a timeout but the user needs an escape
+  // hatch in the meantime. The Refresh button re-fetches the link
+  // state so the user can poll for resolution without a full reload.
   if (status === 'provisioning') {
     return (
       <div className="grid gap-2">
         <p className="text-sm">Provisioning your number...</p>
         <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
+        <div className="flex justify-end">
+          <Button onClick={onSaved} variant="secondary">
+            Refresh
+          </Button>
+        </div>
       </div>
     );
   }
