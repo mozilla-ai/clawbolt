@@ -66,6 +66,19 @@ def test_get_skill_instructions_returns_none_for_unknown() -> None:
     assert get_skill_instructions("nonexistent_skill") is None
 
 
+def test_load_all_skills_discovers_servicetitan() -> None:
+    """load_all_skills should find the servicetitan integration SKILL.md."""
+    load_all_skills()
+    content = get_skill_instructions("servicetitan")
+    assert content is not None
+    assert content.strip() != ""
+    # Pin a few load-bearing references so accidental deletes surface in CI.
+    assert "ServiceTitan" in content
+    assert "st_search_customers" in content
+    assert "st_list_appointments" in content
+    assert "connect_servicetitan" in content
+
+
 # ---------------------------------------------------------------------------
 # list_capabilities integration
 # ---------------------------------------------------------------------------
