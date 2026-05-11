@@ -72,8 +72,8 @@ async def _build_connected_service(user_id: str) -> ServiceTitanService:
 
 
 @pytest.mark.asyncio()
-async def test_build_servicetitan_tools_returns_three_tools(async_test_user: Any) -> None:
-    """build_servicetitan_tools must expose exactly the three read tools."""
+async def test_build_servicetitan_tools_returns_all_tools(async_test_user: Any) -> None:
+    """build_servicetitan_tools must expose the read tools plus st_add_job_note."""
     service = await _build_connected_service(async_test_user.id)
     tools = build_servicetitan_tools(service)
     names = {t.name for t in tools}
@@ -81,6 +81,7 @@ async def test_build_servicetitan_tools_returns_three_tools(async_test_user: Any
         ToolName.SERVICETITAN_SEARCH_CUSTOMERS,
         ToolName.SERVICETITAN_GET_CUSTOMER,
         ToolName.SERVICETITAN_LIST_APPOINTMENTS,
+        ToolName.SERVICETITAN_ADD_JOB_NOTE,
     }
 
 
@@ -89,8 +90,15 @@ async def test_read_tools_have_no_approval_policy_or_concurrency_group(
     async_test_user: Any,
 ) -> None:
     """Read-only tools must not declare approval policies or concurrency groups."""
+    read_only = {
+        ToolName.SERVICETITAN_SEARCH_CUSTOMERS,
+        ToolName.SERVICETITAN_GET_CUSTOMER,
+        ToolName.SERVICETITAN_LIST_APPOINTMENTS,
+    }
     service = await _build_connected_service(async_test_user.id)
     for tool in build_servicetitan_tools(service):
+        if tool.name not in read_only:
+            continue
         assert tool.approval_policy is None, f"{tool.name} should be unrestricted"
         assert tool.concurrency_group is None, f"{tool.name} should not serialize"
 

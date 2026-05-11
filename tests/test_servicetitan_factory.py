@@ -84,10 +84,11 @@ def test_auth_factory_lists_connect_subtool() -> None:
     assert ToolName.SERVICETITAN_CONNECT in names
 
 
-def test_data_factory_lists_read_subtools() -> None:
-    """The data factory must advertise the three read tools so the
-    Settings UI and ``manage_integration`` can render their permission
-    rows even before the user connects.
+def test_data_factory_lists_subtools_with_expected_defaults() -> None:
+    """The data factory must advertise the read tools (default ALWAYS) and
+    the write tool ``st_add_job_note`` (default ASK), so the Settings UI
+    and ``manage_integration`` render the right permission rows even
+    before the user connects.
     """
     data = default_registry.get_factory("servicetitan")
     assert data is not None
@@ -95,9 +96,17 @@ def test_data_factory_lists_read_subtools() -> None:
     assert ToolName.SERVICETITAN_SEARCH_CUSTOMERS in names
     assert ToolName.SERVICETITAN_GET_CUSTOMER in names
     assert ToolName.SERVICETITAN_LIST_APPOINTMENTS in names
+    assert ToolName.SERVICETITAN_ADD_JOB_NOTE in names
+
+    expected_defaults = {
+        ToolName.SERVICETITAN_SEARCH_CUSTOMERS: "always",
+        ToolName.SERVICETITAN_GET_CUSTOMER: "always",
+        ToolName.SERVICETITAN_LIST_APPOINTMENTS: "always",
+        ToolName.SERVICETITAN_ADD_JOB_NOTE: "ask",
+    }
     for sub in data.sub_tools:
-        assert sub.default_permission == "always", (
-            f"{sub.name} should default to ALWAYS (read-only)"
+        assert sub.default_permission == expected_defaults[sub.name], (
+            f"{sub.name} default_permission should be {expected_defaults[sub.name]}"
         )
 
 
@@ -147,8 +156,8 @@ async def test_data_factory_returns_empty_when_not_connected(
 
 
 @pytest.mark.asyncio()
-async def test_data_factory_returns_read_tools_when_connected(async_test_user: Any) -> None:
-    """Once #1300 landed, a connected user gets the three read tools."""
+async def test_data_factory_returns_all_tools_when_connected(async_test_user: Any) -> None:
+    """A connected user gets the read tools plus the write tool."""
     user_id = async_test_user.id
     await save_credentials(
         user_id,
@@ -166,6 +175,7 @@ async def test_data_factory_returns_read_tools_when_connected(async_test_user: A
         ToolName.SERVICETITAN_SEARCH_CUSTOMERS,
         ToolName.SERVICETITAN_GET_CUSTOMER,
         ToolName.SERVICETITAN_LIST_APPOINTMENTS,
+        ToolName.SERVICETITAN_ADD_JOB_NOTE,
     }
 
 
