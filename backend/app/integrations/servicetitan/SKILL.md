@@ -1,6 +1,6 @@
 # ServiceTitan
 
-ServiceTitan is a field-service management platform for HVAC, plumbing, and electrical trades. Customers, jobs, appointments, estimates, and invoices live in the tenant; this integration currently surfaces customers and appointments as read-only.
+ServiceTitan is a field-service management platform for HVAC, plumbing, and electrical trades. Customers, jobs, appointments, estimates, and invoices live in the tenant; this integration surfaces customers and appointments as read-only and supports adding notes to existing jobs.
 
 ## Available Tools
 
@@ -9,6 +9,7 @@ ServiceTitan is a field-service management platform for HVAC, plumbing, and elec
 | `st_search_customers` | Find customers by name or phone substring | Auto |
 | `st_get_customer` | Fetch one customer record by numeric id | Auto |
 | `st_list_appointments` | List appointments in a date window, optionally by status | Auto |
+| `st_add_job_note` | Post a plain-text note to a job, optionally pinned | Ask |
 
 ## Entity vocabulary
 
@@ -49,6 +50,10 @@ Then call `connect_servicetitan(tenant_id=..., client_id=..., client_secret=...)
 ### Status-filtered dispatch view
 
 `st_list_appointments(status="Scheduled")` for today's unstarted work, or pair with `from_date` and `to_date` to audit a past day for missed `Hold` entries.
+
+### Logging visit notes back to a job
+
+`st_add_job_note(job_id=<id>, text="<observation>")` posts a visible note to the job feed. Use `pin_to_top=True` only when the user explicitly asks for a pinned note. The tool prompts the user for approval before each call, so confirm the job id (from `st_list_appointments` or a prior tool turn) is right before invoking.
 
 ## Companion integrations
 
