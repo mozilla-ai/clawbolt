@@ -237,7 +237,6 @@ export default function DashboardPage() {
             <div className="space-y-2.5">
               {integrationTools.map((tool) => {
                 const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.oauth_name, oauthMap, tool.configured);
-                const isAlwaysEnabled = tool.category === 'core';
                 const enabledSubTools = (tool.sub_tools ?? []).filter((st) => st.enabled).length;
                 const totalSubTools = (tool.sub_tools ?? []).length;
                 return (
@@ -257,7 +256,7 @@ export default function DashboardPage() {
                           </span>
                         )}
                       </div>
-                      {isConnected && !isAlwaysEnabled && (
+                      {isConnected && !tool.always_enabled && (
                         /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
                         <div onClick={stopCardPress}>
                           <Switch

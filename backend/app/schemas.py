@@ -286,6 +286,13 @@ class ToolConfigEntryResponse(BaseModel):
     # OAuth-backed. Lets the Settings UI render Connect/Disconnect buttons
     # without hand-maintaining a factory-to-OAuth map per integration.
     oauth_name: str = ""
+    # When ``True``, the backend refuses to disable this tool (mirrors
+    # ``ToolFactory.dashboard_always_enabled``). The Settings UI uses this
+    # to hide the enable/disable toggle so the user does not see a switch
+    # that silently bounces back. Decoupled from ``category`` so future
+    # purely-internal categories cannot accidentally hide the toggle for
+    # always-on OAuth tools (Google Drive).
+    always_enabled: bool = False
     sub_tools: list[SubToolEntryResponse] = Field(default_factory=list)
 
 

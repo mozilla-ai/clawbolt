@@ -196,6 +196,33 @@ def test_get_tool_config_includes_oauth_name(client: TestClient) -> None:
     assert tools_by_name["supplier_pricing"]["oauth_name"] == ""
 
 
+def test_get_tool_config_includes_always_enabled(client: TestClient) -> None:
+    """GET /api/user/tools surfaces ``always_enabled`` so the UI can hide the
+    disable toggle for tools the backend refuses to disable.
+
+    Mirrors ``ToolFactory.dashboard_always_enabled``. Decoupled from
+    ``category`` so future internal-only categories cannot accidentally
+    hide the toggle for always-on OAuth tools (Google Drive).
+    """
+    response = client.get("/api/user/tools")
+    assert response.status_code == 200
+    tools_by_name = {t["name"]: t for t in response.json()["tools"]}
+
+    # All response entries declare the field (default False).
+    for tool in tools_by_name.values():
+        assert "always_enabled" in tool, f"{tool['name']} missing always_enabled"
+
+    # Always-on factories report True. ``file`` (Google Drive) is the
+    # canonical always-on OAuth factory; ``workspace`` is the canonical
+    # always-on non-OAuth factory.
+    assert tools_by_name["file"]["always_enabled"] is True
+    assert tools_by_name["workspace"]["always_enabled"] is True
+
+    # Specialist factories with toggles report False.
+    assert tools_by_name["gmail"]["always_enabled"] is False
+    assert tools_by_name["quickbooks"]["always_enabled"] is False
+
+
 def test_put_tool_config_disable_domain_tool(client: TestClient) -> None:
     """PUT /api/user/tools can disable a domain tool."""
     response = client.put(

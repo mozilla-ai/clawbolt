@@ -127,9 +127,8 @@ export default function ToolsPage() {
 
   // Render any tool the backend marks as part of an integrations group
   // (``category === 'domain'``) plus any OAuth-backed tool that is rendered
-  // as always-on in Settings (``category === 'core'`` with ``oauth_name``,
-  // e.g. Google Drive). The latter has no toggle but still needs Connect /
-  // Disconnect.
+  // as always-on in Settings (e.g. Google Drive). The latter has no toggle
+  // but still needs Connect / Disconnect.
   const integrationTools = tools.filter(
     (t: ToolConfigEntryResponse) => t.category === 'domain' || !!t.oauth_name,
   );
@@ -144,7 +143,6 @@ export default function ToolsPage() {
             {integrationTools.map((tool) => {
               const oauthIntegration = tool.oauth_name;
               const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(oauthIntegration, oauthMap, tool.configured);
-              const isAlwaysEnabled = tool.category === 'core';
 
               return (
                 <Card key={tool.name}>
@@ -200,7 +198,7 @@ export default function ToolsPage() {
                   {/* Enable/disable toggle. Always-enabled integrations
                       (e.g. Google Drive) skip the toggle because the backend
                       silently ignores attempts to disable them. */}
-                  {isConnected && !isAlwaysEnabled && (
+                  {isConnected && !tool.always_enabled && (
                     <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
                       <span className="text-xs text-muted-foreground">
                         {tool.enabled ? 'Available to assistant' : 'Disabled'}

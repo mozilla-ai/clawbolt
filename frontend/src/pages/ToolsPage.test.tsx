@@ -49,8 +49,8 @@ function setupMocks(overrides?: {
   mockGetToolConfig.mockResolvedValue(
     overrides?.tools ?? {
       tools: [
-        { name: 'workspace', description: 'Workspace tools', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: '' },
-        { name: 'calendar', description: 'Google Calendar integration', category: 'domain', enabled: true, domain_group: 'Integrations', domain_group_order: 2, oauth_name: 'google_calendar' },
+        { name: 'workspace', description: 'Workspace tools', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: '', always_enabled: true },
+        { name: 'calendar', description: 'Google Calendar integration', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_calendar', always_enabled: false },
       ],
     },
   );
@@ -144,7 +144,7 @@ describe('ToolsPage', () => {
     setupMocks({
       tools: {
         tools: [
-          { name: 'file', description: 'Google Drive storage', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_drive' },
+          { name: 'file', description: 'Google Drive storage', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_drive', always_enabled: true },
         ],
       },
       oauth: {
@@ -169,7 +169,7 @@ describe('ToolsPage', () => {
     setupMocks({
       tools: {
         tools: [
-          { name: 'gmail', description: 'Gmail integration', category: 'domain', enabled: true, domain_group: 'Integrations', domain_group_order: 2, oauth_name: 'gmail' },
+          { name: 'gmail', description: 'Gmail integration', category: 'domain', enabled: true, domain_group: 'Integrations', domain_group_order: 2, oauth_name: 'gmail', always_enabled: false },
         ],
       },
       oauth: {

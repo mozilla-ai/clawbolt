@@ -1404,6 +1404,11 @@ export interface components {
              * @default
              */
             oauth_name: string;
+            /**
+             * Always Enabled
+             * @default false
+             */
+            always_enabled: boolean;
             /** Sub Tools */
             sub_tools?: components["schemas"]["SubToolEntryResponse"][];
         };

@@ -139,6 +139,11 @@ def _effective_oauth_name(factory_name: str) -> str:
     integration. Lets the Settings UI render Connect/Disconnect for OAuth-
     backed tools without hand-maintaining a factory-to-OAuth map per
     integration in the frontend.
+
+    Kept in user_tools.py rather than on ``ToolRegistry`` (the inverse
+    direction, ``find_factory_by_oauth_name``, lives there) so the registry
+    module stays free of an import from ``services/oauth.py``. The router is
+    already the only consumer.
     """
     factory = default_registry.get_factory(factory_name)
     if factory is None:
@@ -154,6 +159,7 @@ def _entry_to_response(
     """Convert a ToolConfigEntry DTO to an API response model."""
     issues = auth_issues or {}
     auth_reason = issues.get(e.name, "")
+    factory = default_registry.get_factory(e.name)
     return ToolConfigEntryResponse(
         name=e.name,
         description=e.description,
@@ -164,6 +170,7 @@ def _entry_to_response(
         configured=not bool(auth_reason),
         auth_message=auth_reason,
         oauth_name=_effective_oauth_name(e.name),
+        always_enabled=factory.dashboard_always_enabled if factory else False,
         sub_tools=[
             SubToolEntryResponse(
                 name=st.name,
