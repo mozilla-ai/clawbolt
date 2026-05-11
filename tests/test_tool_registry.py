@@ -40,6 +40,10 @@ EXPECTED_CORE_TOOL_MODULES: set[str] = {
     "backend.app.agent.tools.integration_tools",
     "backend.app.agent.tools.media_tools",
     "backend.app.agent.tools.workspace_tools",
+    # Read-tools helper for the ServiceTitan integration. Importing this
+    # module is side-effect-free (no _register call); registration lives
+    # in backend/app/integrations/servicetitan/factory.py.
+    "backend.app.agent.tools.servicetitan_tools",
 }
 
 EXPECTED_INTEGRATION_MODULES: set[str] = {

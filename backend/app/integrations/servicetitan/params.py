@@ -36,3 +36,72 @@ class ServiceTitanConnectParams(BaseModel):
             " password; only shown once at creation time in ServiceTitan."
         ),
     )
+
+
+class StSearchCustomersParams(BaseModel):
+    """Inputs for ``st_search_customers``.
+
+    The agent passes a single free-form query string. The tool
+    decides whether to filter ServiceTitan by name or phone based on
+    whether the query looks numeric. The optional ``limit`` caps the
+    response so chat output stays compact; ServiceTitan's own page
+    size is independent and may return more.
+    """
+
+    query: str = Field(
+        description=(
+            "Free-form lookup string. Treated as a name substring;"
+            " if the input is mostly digits, treated as a phone-number"
+            " substring instead."
+        ),
+    )
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=25,
+        description="Maximum number of matches to return. Defaults to 5.",
+    )
+
+
+class StGetCustomerParams(BaseModel):
+    """Inputs for ``st_get_customer``."""
+
+    customer_id: int = Field(
+        description=(
+            "The numeric ServiceTitan customer ID to look up. Usually"
+            " obtained from a prior st_search_customers call."
+        ),
+    )
+
+
+class StListAppointmentsParams(BaseModel):
+    """Inputs for ``st_list_appointments``.
+
+    All fields are optional. When ``from_date`` and ``to_date`` are
+    both omitted the tool defaults to today's appointments in UTC,
+    which matches the "today's dispatch view" use case in the issue.
+    """
+
+    from_date: str | None = Field(
+        default=None,
+        description=(
+            "Inclusive lower bound on appointment start time. ISO 8601"
+            " string (e.g. 2026-05-11 or 2026-05-11T08:00:00Z). Omit"
+            " to default to the start of today (UTC)."
+        ),
+    )
+    to_date: str | None = Field(
+        default=None,
+        description=(
+            "Exclusive upper bound on appointment start time. ISO 8601"
+            " string. Omit to default to the start of tomorrow (UTC)."
+        ),
+    )
+    status: str | None = Field(
+        default=None,
+        description=(
+            "Filter to appointments with this status. ServiceTitan"
+            " values: Scheduled, Dispatched, Working, Done, Hold. Omit"
+            " to return all statuses."
+        ),
+    )
