@@ -208,6 +208,12 @@ class Settings(BaseSettings):
     # by tests and by the local dev loop until a real sandbox tenant is wired.
     servicetitan_app_key: str = ""
     servicetitan_api_base_url: str = "https://api.servicetitan.io"
+    # ServiceTitan splits auth and resource traffic across two hosts.
+    # Production: auth.servicetitan.io for tokens, api.servicetitan.io for
+    # resources. Integration sandbox: auth-integration.servicetitan.io plus
+    # api-integration.servicetitan.io. Operators flipping to the
+    # integration environment must override both this and api_base_url.
+    servicetitan_auth_base_url: str = "https://auth.servicetitan.io"
     servicetitan_use_fake: bool = True
 
     # Supplier pricing (SerpApi Home Depot engine)

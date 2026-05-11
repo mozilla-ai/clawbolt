@@ -108,22 +108,26 @@ class ServiceTitanCredential:
 
 
 def _build_token_client() -> httpx.AsyncClient:
-    """Return an httpx client wired to the configured ServiceTitan host.
+    """Return an httpx client wired to the ServiceTitan auth host.
 
-    When ``settings.servicetitan_use_fake`` is true the client routes
-    through the in-process fake (no real network). Otherwise it points
-    at ``settings.servicetitan_api_base_url`` directly. Same code path
-    in both modes; the only difference is the transport.
+    ServiceTitan serves ``/connect/token`` on a dedicated auth host
+    (``auth.servicetitan.io`` in production, ``auth-integration.servicetitan.io``
+    in the integration sandbox) that is distinct from the resource host
+    on ``settings.servicetitan_api_base_url``. The fake's MockTransport
+    accepts any host, so when ``servicetitan_use_fake`` is true the
+    base_url here is irrelevant; the auth host setting still drives the
+    production code path so the real environment works without further
+    config changes.
     """
     timeout = httpx.Timeout(_TOKEN_REQUEST_TIMEOUT_SECONDS)
     if settings.servicetitan_use_fake:
         return httpx.AsyncClient(
             transport=build_fake_transport(),
-            base_url=settings.servicetitan_api_base_url,
+            base_url=settings.servicetitan_auth_base_url,
             timeout=timeout,
         )
     return httpx.AsyncClient(
-        base_url=settings.servicetitan_api_base_url,
+        base_url=settings.servicetitan_auth_base_url,
         timeout=timeout,
     )
 

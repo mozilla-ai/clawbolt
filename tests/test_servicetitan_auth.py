@@ -75,6 +75,46 @@ async def test_mint_access_token_rejects_missing_client_secret() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_mint_access_token_hits_auth_host_not_api_host() -> None:
+    """The token client must POST to the auth host, not the resource host.
+
+    ServiceTitan serves /connect/token on a dedicated auth host
+    (auth.servicetitan.io in production, auth-integration.servicetitan.io
+    in the integration sandbox) that is distinct from the resource host.
+    The fake's MockTransport accepts any host, so a regression that
+    wired the auth client at the API base URL would pass against the
+    fake but 404 against real ServiceTitan. This test pins the auth
+    host so the regression is loud here, not in production.
+    """
+    from backend.app.config import settings as _settings
+
+    captured: dict[str, str] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(
+            status_code=200,
+            json={"access_token": "ok", "token_type": "Bearer", "expires_in": 900},
+        )
+
+    capture_transport = httpx.MockTransport(_capture)
+    with (
+        patch.object(_settings, "servicetitan_auth_base_url", "https://auth.example.test"),
+        patch.object(_settings, "servicetitan_api_base_url", "https://api.example.test"),
+        patch(
+            "backend.app.integrations.servicetitan.auth.build_fake_transport",
+            lambda backend=None: capture_transport,
+        ),
+    ):
+        await mint_access_token(client_id="cid", client_secret="csec")
+
+    assert captured["url"].startswith("https://auth.example.test/"), (
+        f"expected auth host, got {captured['url']}"
+    )
+    assert "api.example.test" not in captured["url"]
+
+
+@pytest.mark.asyncio()
 async def test_mint_access_token_wraps_network_failure() -> None:
     """A transport-level failure surfaces as ServiceTitanAuthError, not httpx."""
 

@@ -216,10 +216,11 @@ The integration uses passwordless magic-link auth: users paste the URL from thei
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SERVICETITAN_APP_KEY` | | App-level App Key issued by ServiceTitan to the integrator. Sent as the `ST-App-Key` header on every API call. |
-| `SERVICETITAN_API_BASE_URL` | `https://api.servicetitan.io` | Base URL of the ServiceTitan API. Override for staging or regional hosts. |
+| `SERVICETITAN_API_BASE_URL` | `https://api.servicetitan.io` | Base URL of the ServiceTitan resource API (customers, jobs, appointments). Override to `https://api-integration.servicetitan.io` for the integration sandbox. |
+| `SERVICETITAN_AUTH_BASE_URL` | `https://auth.servicetitan.io` | Base URL of the ServiceTitan auth host that serves `/connect/token`. Distinct from the resource host. Override to `https://auth-integration.servicetitan.io` for the integration sandbox; flip both `API_BASE_URL` and `AUTH_BASE_URL` together when switching environments. |
 | `SERVICETITAN_USE_FAKE` | `true` | When true, route every call through the in-process fake backend (deterministic seed data, no real network). Flip to false once a real tenant is available. |
 
-ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per tenant. The operator wires the integrator's app-level App Key here; each tenant pastes their own tenant ID, client ID, and client secret through the `connect_servicetitan` tool in chat. Stored credentials are envelope-encrypted at rest.
+ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per tenant. The operator wires the integrator's app-level App Key here; each tenant pastes their own tenant ID, client ID, and client secret through the `connect_servicetitan` tool in chat. Stored credentials are envelope-encrypted at rest. ServiceTitan splits auth and resource traffic across two hosts, so `AUTH_BASE_URL` and `API_BASE_URL` are independent settings.
 
 ## Supplier pricing
 
