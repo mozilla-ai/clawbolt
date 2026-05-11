@@ -1,17 +1,20 @@
-"""ServiceTitan read tools.
+"""ServiceTitan read and write tools.
 
-Three read-only tools that surface customers and appointments from a
+Tools that surface and mutate customer, appointment, and job data on a
 user's ServiceTitan tenant:
 
 * ``st_search_customers`` -- substring search by name or phone.
 * ``st_get_customer`` -- full record by numeric id.
 * ``st_list_appointments`` -- date-range filtered appointment list,
   defaulting to "today" when no range is given.
+* ``st_add_job_note`` -- post a note to a job. First mutating tool;
+  ships with an ``ApprovalPolicy`` (default ASK) and a
+  ``concurrency_group`` so concurrent writes within one turn serialize.
 
 Tools are constructed by :func:`build_servicetitan_tools`, which the
 ``servicetitan`` data factory calls once the user has connected a
-tenant. None of these tools mutate state, so they ship without an
-``ApprovalPolicy`` and without a ``concurrency_group``.
+tenant. The read tools do not declare an ``ApprovalPolicy`` or a
+``concurrency_group``; the write tools do.
 
 This module also lives in the auto-discovery path:
 ``ensure_tool_modules_imported`` imports every ``*_tools`` module in
@@ -27,9 +30,11 @@ import logging
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.servicetitan.params import (
+    StAddJobNoteParams,
     StGetCustomerParams,
     StListAppointmentsParams,
     StSearchCustomersParams,
@@ -332,6 +337,59 @@ def build_servicetitan_tools(service: ServiceTitanService) -> list[Tool]:
         lines.extend(_format_appointment_line(a) for a in records)
         return ToolResult(content="\n".join(lines))
 
+    async def st_add_job_note(
+        job_id: int,
+        text: str,
+        pin_to_top: bool = False,
+    ) -> ToolResult:
+        """Post a note to a ServiceTitan job."""
+        trimmed = text.strip()
+        if not trimmed:
+            # Belt-and-suspenders: the params model already rejects blank
+            # text, but direct callers that bypass validation should also
+            # see a clear validation error rather than a 400 from the API.
+            return ToolResult(
+                content="Note text is empty.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+                hint="Pass non-whitespace text for the note body.",
+            )
+
+        path = f"/jpm/v2/tenant/{service.tenant_id}/jobs/{job_id}/notes"
+        body = {"text": trimmed, "pinToTop": bool(pin_to_top)}
+        try:
+            payload = await service.post(path, json_body=body)
+        except ServiceTitanError as exc:
+            # Surface a 404 on the job path as NOT_FOUND so the agent can
+            # offer a follow-up lookup rather than treating it as a
+            # transient service failure. Mirrors the st_get_customer
+            # pattern; ServiceTitanService raises ServiceTitanError with
+            # the literal "HTTP 404" substring on any 4xx response.
+            text_repr = str(exc)
+            if "HTTP 404" in text_repr:
+                return ToolResult(
+                    content=f"No ServiceTitan job with id {job_id}.",
+                    is_error=True,
+                    error_kind=ToolErrorKind.NOT_FOUND,
+                    hint="Confirm the job id via st_list_appointments or st_get_customer.",
+                )
+            return _service_error("adding job note", exc)
+        except Exception as exc:
+            return _service_error("adding job note", exc)
+
+        pinned_phrase = " (pinned)" if pin_to_top else ""
+        # The fake and real APIs return the persisted note as a flat
+        # dict; the createdOn timestamp confirms the write landed.
+        created_on = payload.get("createdOn") if isinstance(payload, dict) else None
+        timestamp_phrase = f" at {created_on}" if created_on else ""
+        return ToolResult(
+            content=f"Added note to ServiceTitan job {job_id}{pinned_phrase}{timestamp_phrase}.",
+            receipt=ToolReceipt(
+                action="Added ServiceTitan job note",
+                target=f"job #{job_id}{pinned_phrase}",
+            ),
+        )
+
     return [
         Tool(
             name=ToolName.SERVICETITAN_SEARCH_CUSTOMERS,
@@ -380,5 +438,36 @@ def build_servicetitan_tools(service: ServiceTitanService) -> list[Tool]:
                 " window. Pass status to filter (Scheduled, Dispatched,"
                 " Working, Done, Hold)."
             ),
+        ),
+        Tool(
+            name=ToolName.SERVICETITAN_ADD_JOB_NOTE,
+            description=(
+                "Add a plain-text note to a ServiceTitan job. Optionally"
+                " pin the note above other notes in the job's feed."
+                " Visible to anyone in the tenant with job access."
+            ),
+            function=st_add_job_note,
+            params_model=StAddJobNoteParams,
+            usage_hint=(
+                "Confirm the job id with the user before calling. Use"
+                " pin_to_top=True only when the user explicitly asks for"
+                " a pinned note. The tool requests user approval at"
+                " runtime via its ApprovalPolicy."
+            ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                resource_extractor=lambda args: (
+                    f"job:{args.get('job_id')}" if args.get("job_id") is not None else None
+                ),
+                description_builder=lambda args: (
+                    f"Add note to ServiceTitan job {args.get('job_id', '?')}"
+                    + (" (pinned)" if args.get("pin_to_top") else "")
+                ),
+            ),
+            # Serialize ServiceTitan writes within a single agent turn so
+            # two concurrent note posts (or a note racing a future status
+            # update) cannot interleave against the same tenant. Matches
+            # the ``user_outbound`` / ``user_integrations`` naming.
+            concurrency_group="user_st_writes",
         ),
     ]

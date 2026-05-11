@@ -94,6 +94,7 @@ class ToolName:
     SERVICETITAN_SEARCH_CUSTOMERS = "st_search_customers"
     SERVICETITAN_GET_CUSTOMER = "st_get_customer"
     SERVICETITAN_LIST_APPOINTMENTS = "st_list_appointments"
+    SERVICETITAN_ADD_JOB_NOTE = "st_add_job_note"
 
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
