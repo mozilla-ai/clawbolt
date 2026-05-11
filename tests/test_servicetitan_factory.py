@@ -84,6 +84,23 @@ def test_auth_factory_lists_connect_subtool() -> None:
     assert ToolName.SERVICETITAN_CONNECT in names
 
 
+def test_data_factory_lists_read_subtools() -> None:
+    """The data factory must advertise the three read tools so the
+    Settings UI and ``manage_integration`` can render their permission
+    rows even before the user connects.
+    """
+    data = default_registry.get_factory("servicetitan")
+    assert data is not None
+    names = {s.name for s in data.sub_tools}
+    assert ToolName.SERVICETITAN_SEARCH_CUSTOMERS in names
+    assert ToolName.SERVICETITAN_GET_CUSTOMER in names
+    assert ToolName.SERVICETITAN_LIST_APPOINTMENTS in names
+    for sub in data.sub_tools:
+        assert sub.default_permission == "always", (
+            f"{sub.name} should default to ALWAYS (read-only)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # auth_check
 # ---------------------------------------------------------------------------
@@ -130,8 +147,8 @@ async def test_data_factory_returns_empty_when_not_connected(
 
 
 @pytest.mark.asyncio()
-async def test_data_factory_returns_empty_when_connected(async_test_user: Any) -> None:
-    """No data tools wired yet; the scaffold's contract is an empty list."""
+async def test_data_factory_returns_read_tools_when_connected(async_test_user: Any) -> None:
+    """Once #1300 landed, a connected user gets the three read tools."""
     user_id = async_test_user.id
     await save_credentials(
         user_id,
@@ -144,7 +161,12 @@ async def test_data_factory_returns_empty_when_connected(async_test_user: Any) -
     )
     ctx = _make_context(user_id)
     tools = await factory_module._servicetitan_factory(ctx)
-    assert tools == []
+    names = {t.name for t in tools}
+    assert names == {
+        ToolName.SERVICETITAN_SEARCH_CUSTOMERS,
+        ToolName.SERVICETITAN_GET_CUSTOMER,
+        ToolName.SERVICETITAN_LIST_APPOINTMENTS,
+    }
 
 
 # ---------------------------------------------------------------------------

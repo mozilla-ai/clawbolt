@@ -8,10 +8,9 @@ time, mirroring the AppFolio Vendor split:
   ``connect_servicetitan`` tool. Must stay reachable before any credential
   exists since pasting credentials *is* the connect path.
 * ``servicetitan`` (specialist, gated on connection state): the data
-  tools, populated in the read-tools issue (#1300). For now the factory
-  returns an empty tool list; the ``auth_check`` keeps it surfaced
-  under "Not connected" in ``list_capabilities`` until the user runs
-  the connect tool.
+  tools. The read tools landed in #1300; write tools land in #1301. The
+  ``auth_check`` keeps the factory surfaced under "Not connected" in
+  ``list_capabilities`` until the user runs the connect tool.
 
 The split mirrors AppFolio's prod-bug fix: a single combined factory
 would have to keep ``auth_check`` returning ``None`` unconditionally to
@@ -26,8 +25,10 @@ from typing import TYPE_CHECKING
 
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.names import ToolName
+from backend.app.agent.tools.servicetitan_tools import build_servicetitan_tools
 from backend.app.integrations.servicetitan.auth import is_connected
 from backend.app.integrations.servicetitan.auth_tools import build_auth_tools
+from backend.app.integrations.servicetitan.service import build_service_for_user
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -55,17 +56,17 @@ async def _servicetitan_auth_factory(ctx: ToolContext) -> list[Tool]:
 async def _servicetitan_factory(ctx: ToolContext) -> list[Tool]:
     """Assemble the ServiceTitan data tools for an authenticated user.
 
-    Empty for now: the read tools land in #1300 and the write tools in
-    #1301. The factory still exists so ``list_capabilities`` and the
-    Settings page know the integration is real; ``auth_check`` keeps
-    it surfaced as "not connected" until the user pastes credentials.
+    Returns the read tools (#1300) when the user has a usable credential
+    on file. The defensive ``return []`` after ``build_service_for_user``
+    covers the rare race where the credential disappears between the
+    auth check and tool creation (user disconnected mid-turn).
     """
     if not await is_connected(ctx.user.id):
         return []
-    # Resource-tool builders land in subsequent issues and will be wired
-    # in here once they exist. Keep the factory body shaped like
-    # AppFolio's so adding builders later is a one-line edit.
-    return []
+    service = await build_service_for_user(ctx.user.id)
+    if service is None:
+        return []
+    return list(build_servicetitan_tools(service))
 
 
 async def _servicetitan_auth_check(ctx: ToolContext) -> str | None:
@@ -118,7 +119,23 @@ def _register() -> None:
         dashboard_description=("View ServiceTitan customers, jobs, and appointments"),
         dashboard_group="Integrations",
         dashboard_group_order=3,
-        sub_tools=[],
+        sub_tools=[
+            SubToolInfo(
+                ToolName.SERVICETITAN_SEARCH_CUSTOMERS,
+                "Search ServiceTitan customers by name or phone",
+                default_permission="always",
+            ),
+            SubToolInfo(
+                ToolName.SERVICETITAN_GET_CUSTOMER,
+                "Fetch a ServiceTitan customer record by id",
+                default_permission="always",
+            ),
+            SubToolInfo(
+                ToolName.SERVICETITAN_LIST_APPOINTMENTS,
+                "List ServiceTitan appointments in a date range",
+                default_permission="always",
+            ),
+        ],
         auth_check=_servicetitan_auth_check,
     )
 
