@@ -17,6 +17,8 @@ focus on three things:
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import httpx
 import pytest
 
@@ -252,6 +254,129 @@ async def test_customer_contacts_subresource(client: httpx.AsyncClient) -> None:
     assert body["totalCount"] >= 1
     contact = body["data"][0]
     assert {"id", "type", "value"} <= set(contact.keys())
+
+
+@pytest.mark.asyncio()
+async def test_customers_search_by_city(client: httpx.AsyncClient) -> None:
+    """Address-level filters do case-insensitive substring match."""
+    bearer = await _get_bearer(client)
+    resp = await client.get(
+        f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
+        params={"city": "anytown"},
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = resp.json()
+    assert body["totalCount"] >= 1
+    assert all("anytown" in c["address"]["city"].lower() for c in body["data"])
+
+
+@pytest.mark.asyncio()
+async def test_customers_search_by_state(client: httpx.AsyncClient) -> None:
+    bearer = await _get_bearer(client)
+    resp = await client.get(
+        f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
+        params={"state": "NJ"},
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = resp.json()
+    assert body["totalCount"] >= 1
+    assert all(c["address"]["state"] == "NJ" for c in body["data"])
+
+
+@pytest.mark.asyncio()
+async def test_customers_search_by_unit(client: httpx.AsyncClient) -> None:
+    """Optional address fields (``unit``) match only against records that have them."""
+    bearer = await _get_bearer(client)
+    resp = await client.get(
+        f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
+        params={"unit": "suite"},
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = resp.json()
+    assert body["totalCount"] >= 1
+    for c in body["data"]:
+        assert "suite" in (c["address"].get("unit") or "").lower()
+
+
+@pytest.mark.asyncio()
+async def test_customers_modified_on_or_after_filter(
+    backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
+) -> None:
+    """Date-range filters trim the result set by the records' modifiedOn."""
+    # Push one seed record's modifiedOn way into the future so a tight
+    # window picks it up exclusively.
+    far_future = (SEED_TODAY + timedelta(days=365)).isoformat().replace("+00:00", "Z")
+    backend.customers[0]["modifiedOn"] = far_future
+
+    bearer = await _get_bearer(client)
+    resp = await client.get(
+        f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
+        params={"modifiedOnOrAfter": far_future},
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = resp.json()
+    assert body["totalCount"] == 1
+    assert body["data"][0]["id"] == backend.customers[0]["id"]
+
+
+@pytest.mark.asyncio()
+async def test_jobs_completed_date_range(
+    backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
+) -> None:
+    """``completedOnOrAfter`` is JPM-specific and works against ``completedOn``."""
+    bearer = await _get_bearer(client)
+    # Seed has completed jobs five days before SEED_TODAY; ask for jobs
+    # completed in the last day to confirm the filter trims them out.
+    one_day_ago = (SEED_TODAY - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    resp = await client.get(
+        f"/jpm/v2/tenant/{DEFAULT_TENANT_ID}/jobs",
+        params={"completedOnOrAfter": one_day_ago},
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = resp.json()
+    # No seed job completed within the last day.
+    assert body["totalCount"] == 0
+
+
+@pytest.mark.asyncio()
+async def test_customers_sort_descending_by_id(client: httpx.AsyncClient) -> None:
+    bearer = await _get_bearer(client)
+    resp = await client.get(
+        f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
+        params={"sort": "-Id"},
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = resp.json()
+    ids = [c["id"] for c in body["data"]]
+    assert ids == sorted(ids, reverse=True)
+
+
+@pytest.mark.asyncio()
+async def test_appointments_sort_ascending_by_start(client: httpx.AsyncClient) -> None:
+    bearer = await _get_bearer(client)
+    resp = await client.get(
+        f"/jpm/v2/tenant/{DEFAULT_TENANT_ID}/appointments",
+        params={"sort": "+Start"},
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = resp.json()
+    starts = [a["start"] for a in body["data"]]
+    assert starts == sorted(starts)
+
+
+@pytest.mark.asyncio()
+async def test_include_total_false_returns_minus_one(client: httpx.AsyncClient) -> None:
+    """When the caller suppresses the count, the envelope returns -1."""
+    bearer = await _get_bearer(client)
+    resp = await client.get(
+        f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
+        params={"includeTotal": "false"},
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = resp.json()
+    assert body["totalCount"] == -1
+    # The data slice is still served; only the count is suppressed.
+    assert body["data"]
 
 
 @pytest.mark.asyncio()

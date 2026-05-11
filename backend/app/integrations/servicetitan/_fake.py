@@ -781,9 +781,43 @@ class ServiceTitanFakeBackend:
             normalized = _digits_only(phone_q)
             results = [c for c in results if _customer_matches_phone(c, normalized)]
 
-        zip_q = params.get("zip")
-        if zip_q:
-            results = [c for c in results if c["address"]["zip"] == zip_q]
+        # Address-level filters. ``street``, ``unit``, ``city``, ``state``,
+        # ``zip``, ``country`` all match the address subobject; the real API
+        # does case-insensitive substring on the text fields and exact match
+        # on the structured fields. The fake collapses to case-insensitive
+        # substring for simplicity, which is a strict superset of exact
+        # match for normal callers.
+        for param_name, addr_key in (
+            ("street", "street"),
+            ("unit", "unit"),
+            ("city", "city"),
+            ("state", "state"),
+            ("zip", "zip"),
+            ("country", "country"),
+        ):
+            value = params.get(param_name)
+            if not value:
+                continue
+            needle = value.lower()
+            results = [
+                c for c in results if needle in str(c["address"].get(addr_key) or "").lower()
+            ]
+
+        # ``latitude`` and ``longitude`` are geographic filters in the real
+        # API and are typically paired with a radius. The fake does exact
+        # match against the address coordinates; no seed customer has
+        # coordinates set, so unmodified seed data returns an empty list
+        # for these. Callers that want to exercise geo filtering should
+        # seed their own backend with coordinate-bearing records.
+        for param_name in ("latitude", "longitude"):
+            value = params.get(param_name)
+            if not value:
+                continue
+            try:
+                target = float(value)
+            except ValueError:
+                continue
+            results = [c for c in results if c["address"].get(param_name) == target]
 
         active_q = params.get("active")
         if active_q and active_q.lower() != "any":
@@ -795,6 +829,7 @@ class ServiceTitanFakeBackend:
             wanted = {int(x) for x in ids_q.split(",") if x.strip().isdigit()}
             results = [c for c in results if c["id"] in wanted]
 
+        results = _apply_date_range_filters(results, params)
         return _json_response(200, _paginated(results, request))
 
     # -- JPM jobs + appointments ----------------------------------------
@@ -860,6 +895,25 @@ class ServiceTitanFakeBackend:
             wanted_job_ids = {int(x) for x in ids_q.split(",") if x.strip().isdigit()}
             results = [j for j in results if j["id"] in wanted_job_ids]
 
+        # ``completedOnOrAfter`` / ``completedBefore`` are JPM-specific
+        # date-range filters in addition to the standard created/modified
+        # pair that every list endpoint supports.
+        completed_after = params.get("completedOnOrAfter")
+        if completed_after:
+            cutoff = _parse_iso(completed_after)
+            results = [
+                j
+                for j in results
+                if j.get("completedOn") and _parse_iso(j["completedOn"]) >= cutoff
+            ]
+        completed_before = params.get("completedBefore")
+        if completed_before:
+            cutoff = _parse_iso(completed_before)
+            results = [
+                j for j in results if j.get("completedOn") and _parse_iso(j["completedOn"]) < cutoff
+            ]
+
+        results = _apply_date_range_filters(results, params)
         return _json_response(200, _paginated(results, request))
 
     def _add_job_note(self, job: dict[str, Any], request: httpx.Request) -> httpx.Response:
@@ -942,6 +996,7 @@ class ServiceTitanFakeBackend:
             wanted = {s.strip() for s in status_q.split(",") if s.strip()}
             results = [a for a in results if a["status"] in wanted]
 
+        results = _apply_date_range_filters(results, params)
         return _json_response(200, _paginated(results, request))
 
 
@@ -975,19 +1030,30 @@ def _not_found(path: str) -> httpx.Response:
 def _paginated(data: list[dict[str, Any]], request: httpx.Request | None = None) -> dict[str, Any]:
     """Wrap a list of records in ServiceTitan's pagination envelope.
 
-    The real API honors ``page`` and ``pageSize`` query params; the
-    fake slices accordingly so callers can exercise paging.
+    Honors ``page`` and ``pageSize`` for slicing, ``sort=+/-Field`` for
+    ordering (recognized fields: ``Id``, ``ModifiedOn``, ``CreatedOn``,
+    ``Start`` for appointments), and ``includeTotal=false`` to suppress
+    the total count (signaled by ``totalCount: -1``, which is the
+    sentinel commonly used by .NET-paginated APIs when the count is
+    intentionally not computed).
     """
     page = 1
     page_size = 50
+    include_total = True
     if request is not None:
         params = request.url.params
+        sort_q = params.get("sort")
+        if sort_q:
+            data = _apply_sort(data, sort_q)
         page_str = params.get("page")
         if page_str and page_str.isdigit():
             page = max(int(page_str), 1)
         ps_str = params.get("pageSize")
         if ps_str and ps_str.isdigit():
             page_size = max(int(ps_str), 1)
+        include_total_q = params.get("includeTotal")
+        if include_total_q is not None and include_total_q.lower() == "false":
+            include_total = False
     start = (page - 1) * page_size
     end = start + page_size
     slice_ = data[start:end]
@@ -995,9 +1061,60 @@ def _paginated(data: list[dict[str, Any]], request: httpx.Request | None = None)
         "page": page,
         "pageSize": page_size,
         "hasMore": end < len(data),
-        "totalCount": len(data),
+        "totalCount": len(data) if include_total else -1,
         "data": slice_,
     }
+
+
+# Map sort field names (PascalCase per ServiceTitan docs) to the
+# camelCase record keys in the fake. Anything else is ignored.
+_SORT_FIELD_KEYS: dict[str, str] = {
+    "Id": "id",
+    "ModifiedOn": "modifiedOn",
+    "CreatedOn": "createdOn",
+    "Start": "start",
+}
+
+
+def _apply_sort(data: list[dict[str, Any]], sort_q: str) -> list[dict[str, Any]]:
+    """Apply a ``sort=+/-Field`` query parameter to a record list."""
+    descending = sort_q.startswith("-")
+    field_name = sort_q.lstrip("+-")
+    key = _SORT_FIELD_KEYS.get(field_name)
+    if key is None:
+        return data
+    return sorted(data, key=lambda r: r.get(key) or "", reverse=descending)
+
+
+def _apply_date_range_filters(
+    data: list[dict[str, Any]],
+    params: httpx.QueryParams,
+    *,
+    created_field: str = "createdOn",
+    modified_field: str = "modifiedOn",
+) -> list[dict[str, Any]]:
+    """Apply the standard ``createdBefore`` / ``createdOnOrAfter`` /
+    ``modifiedBefore`` / ``modifiedOnOrAfter`` filters every list endpoint
+    in the real API supports.
+    """
+    spec = (
+        ("createdBefore", "<", created_field),
+        ("createdOnOrAfter", ">=", created_field),
+        ("modifiedBefore", "<", modified_field),
+        ("modifiedOnOrAfter", ">=", modified_field),
+    )
+    for param_name, comparator, record_field in spec:
+        value = params.get(param_name)
+        if not value:
+            continue
+        cutoff = _parse_iso(value)
+        if comparator == "<":
+            data = [r for r in data if r.get(record_field) and _parse_iso(r[record_field]) < cutoff]
+        else:
+            data = [
+                r for r in data if r.get(record_field) and _parse_iso(r[record_field]) >= cutoff
+            ]
+    return data
 
 
 def _job_notes(job: dict[str, Any]) -> list[dict[str, Any]]:
