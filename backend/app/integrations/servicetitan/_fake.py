@@ -26,9 +26,14 @@ appointments) but representative: a mix of Residential and Commercial
 customers, HVAC / Plumbing / Electrical work, jobs in every common
 status (Scheduled, Dispatched, InProgress, Completed, Hold, Canceled),
 and appointments scattered around a fixed reference date ("today") so
-date-range filters have something to find. Names and contact details
-are obviously synthetic per the project-wide PII rules: "Acme
-Plumbing", "Jane Doe", phone numbers in the 555 range, "123 Main St".
+date-range filters have something to find. The data is shaped like a
+Denver-metro contractor's customer book so demo screenshots look like
+real customer-management work, but every value is fully synthetic per
+the project PII rules: names are common-name combinations not tied to
+any real person, addresses combine real cities with randomized street
+numbers (no live property), phones stay in the +1-555-01xx range (NANP
+fictional reservation), and emails use ``example.com`` (RFC 2606
+documentation domain).
 
 Endpoint shapes follow the public ServiceTitan OpenAPI spec
 (developer.servicetitan.io) for the endpoints the MVP needs:
@@ -138,10 +143,23 @@ def _iso(dt: datetime) -> str:
 def _seed_customers() -> list[dict[str, Any]]:
     """Build the seed customer records.
 
-    Ten customers split 7/3 residential/commercial, each with a
-    primary address and one or two contacts (phone + optionally email
-    or mobile). IDs start at 1001 to make the integer "looks like a
-    real ServiceTitan ID" without leaking real customer numbers.
+    Ten customers split 7/3 residential/commercial, each with a primary
+    address and one or two contacts (phone + optionally email or mobile).
+    IDs start at 1001 to look like real ServiceTitan record numbers.
+
+    The dataset is shaped like a Denver-metro HVAC/plumbing/electrical
+    contractor's customer book so demo screenshots feel like real
+    customer-management work rather than placeholder fixtures. Every
+    value is fully synthetic per the project PII rules:
+
+    * Names are common-name combinations, not tied to any real person.
+    * Street numbers are randomized; the combination of street, city,
+      and zip is not intended to resolve to a real address.
+    * Phone numbers stay in the +1-555-01xx fictional range reserved
+      by the North American Numbering Plan for use in fiction and
+      demos (no live phone will ring).
+    * Email addresses use ``example.com`` (RFC 2606 reserved for
+      documentation) so nothing routes to a real inbox.
     """
     now_iso = _iso(SEED_TODAY - timedelta(days=365))
     mod_iso = _iso(SEED_TODAY - timedelta(days=7))
@@ -149,29 +167,29 @@ def _seed_customers() -> list[dict[str, Any]]:
     raw: list[dict[str, Any]] = [
         {
             "id": 1001,
-            "name": "Jane Doe",
+            "name": "Marcus Chen",
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
-                "street": "123 Main St",
-                "city": "Anytown",
-                "state": "PA",
-                "zip": "19103",
+                "street": "1247 Westwood Dr",
+                "city": "Lakewood",
+                "state": "CO",
+                "zip": "80232",
                 "country": "USA",
             },
             "contacts": [
                 {"id": 5001, "type": CONTACT_TYPE_PHONE, "value": "+15555550101"},
-                {"id": 5002, "type": CONTACT_TYPE_EMAIL, "value": "jane.doe@example.com"},
+                {"id": 5002, "type": CONTACT_TYPE_EMAIL, "value": "m.chen@example.com"},
             ],
         },
         {
             "id": 1002,
-            "name": "John Roe",
+            "name": "Diana Patel",
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
-                "street": "456 Oak Ave",
-                "city": "Anytown",
-                "state": "PA",
-                "zip": "19104",
+                "street": "832 Linden St",
+                "city": "Aurora",
+                "state": "CO",
+                "zip": "80012",
                 "country": "USA",
             },
             "contacts": [
@@ -180,46 +198,50 @@ def _seed_customers() -> list[dict[str, Any]]:
         },
         {
             "id": 1003,
-            "name": "Acme Plumbing",
+            "name": "Cascade Heights Property Group",
             "type": CUSTOMER_TYPE_COMMERCIAL,
             "address": {
-                "street": "789 Industry Park",
-                "unit": "Suite 200",
-                "city": "Commerce City",
-                "state": "PA",
-                "zip": "19105",
+                "street": "11500 E 40th Ave",
+                "unit": "Suite 240",
+                "city": "Denver",
+                "state": "CO",
+                "zip": "80239",
                 "country": "USA",
             },
             "contacts": [
                 {"id": 5004, "type": CONTACT_TYPE_PHONE, "value": "+15555550103"},
-                {"id": 5005, "type": CONTACT_TYPE_EMAIL, "value": "ops@acme-plumbing.example.com"},
+                {
+                    "id": 5005,
+                    "type": CONTACT_TYPE_EMAIL,
+                    "value": "ops@cascadeheights.example.com",
+                },
             ],
         },
         {
             "id": 1004,
-            "name": "Alice Smith",
+            "name": "James Hollis",
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
-                "street": "12 Elm St",
-                "city": "Anytown",
-                "state": "PA",
-                "zip": "19106",
+                "street": "4218 Vassar Pl",
+                "city": "Englewood",
+                "state": "CO",
+                "zip": "80113",
                 "country": "USA",
             },
             "contacts": [
                 {"id": 5006, "type": CONTACT_TYPE_PHONE, "value": "+15555550104"},
-                {"id": 5007, "type": CONTACT_TYPE_EMAIL, "value": "alice.smith@example.com"},
+                {"id": 5007, "type": CONTACT_TYPE_EMAIL, "value": "james.hollis@example.com"},
             ],
         },
         {
             "id": 1005,
-            "name": "Bob Johnson",
+            "name": "Rebecca Tran",
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
-                "street": "34 Pine St",
-                "city": "Anytown",
-                "state": "PA",
-                "zip": "19107",
+                "street": "3091 Birchwood Cir",
+                "city": "Centennial",
+                "state": "CO",
+                "zip": "80122",
                 "country": "USA",
             },
             "contacts": [
@@ -228,30 +250,30 @@ def _seed_customers() -> list[dict[str, Any]]:
         },
         {
             "id": 1006,
-            "name": "Carol Williams",
+            "name": "Daniel Brennan",
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
-                "street": "56 Cedar Ln",
-                "city": "Other Town",
-                "state": "NJ",
-                "zip": "08001",
+                "street": "671 Ridgeline Way",
+                "city": "Boulder",
+                "state": "CO",
+                "zip": "80303",
                 "country": "USA",
             },
             "contacts": [
                 {"id": 5009, "type": CONTACT_TYPE_PHONE, "value": "+15555550106"},
-                {"id": 5010, "type": CONTACT_TYPE_EMAIL, "value": "carol.williams@example.com"},
+                {"id": 5010, "type": CONTACT_TYPE_EMAIL, "value": "d.brennan@example.com"},
             ],
         },
         {
             "id": 1007,
-            "name": "Globex Property Management",
+            "name": "Larkspur Restaurant Partners",
             "type": CUSTOMER_TYPE_COMMERCIAL,
             "address": {
-                "street": "100 Corporate Blvd",
-                "unit": "Floor 5",
-                "city": "Big City",
-                "state": "NJ",
-                "zip": "08002",
+                "street": "5475 Tech Center Dr",
+                "unit": "Suite 800",
+                "city": "Greenwood Village",
+                "state": "CO",
+                "zip": "80111",
                 "country": "USA",
             },
             "contacts": [
@@ -259,19 +281,19 @@ def _seed_customers() -> list[dict[str, Any]]:
                 {
                     "id": 5012,
                     "type": CONTACT_TYPE_EMAIL,
-                    "value": "facilities@globex-pm.example.com",
+                    "value": "facilities@larkspur-rp.example.com",
                 },
             ],
         },
         {
             "id": 1008,
-            "name": "David Brown",
+            "name": "Ashley Kowalski",
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
-                "street": "78 Maple Dr",
-                "city": "Anytown",
-                "state": "PA",
-                "zip": "19108",
+                "street": "5544 Sage Hollow Rd",
+                "city": "Lakewood",
+                "state": "CO",
+                "zip": "80228",
                 "country": "USA",
             },
             "contacts": [
@@ -280,34 +302,38 @@ def _seed_customers() -> list[dict[str, Any]]:
         },
         {
             "id": 1009,
-            "name": "Eve Davis",
+            "name": "William Voss",
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
-                "street": "90 Birch Ave",
-                "city": "Anytown",
-                "state": "PA",
-                "zip": "19109",
+                "street": "1812 Cedar Bluff Ave",
+                "city": "Aurora",
+                "state": "CO",
+                "zip": "80016",
                 "country": "USA",
             },
             "contacts": [
                 {"id": 5014, "type": CONTACT_TYPE_MOBILE, "value": "+15555550109"},
-                {"id": 5015, "type": CONTACT_TYPE_EMAIL, "value": "eve.davis@example.com"},
+                {"id": 5015, "type": CONTACT_TYPE_EMAIL, "value": "w.voss@example.com"},
             ],
         },
         {
             "id": 1010,
-            "name": "Initech Holdings",
+            "name": "Highline Industrial Holdings",
             "type": CUSTOMER_TYPE_COMMERCIAL,
             "address": {
-                "street": "200 Tech Center Way",
-                "city": "Big City",
-                "state": "NJ",
-                "zip": "08003",
+                "street": "8155 E Maplewood Ave",
+                "city": "Greenwood Village",
+                "state": "CO",
+                "zip": "80111",
                 "country": "USA",
             },
             "contacts": [
                 {"id": 5016, "type": CONTACT_TYPE_PHONE, "value": "+15555550110"},
-                {"id": 5017, "type": CONTACT_TYPE_EMAIL, "value": "ap@initech.example.com"},
+                {
+                    "id": 5017,
+                    "type": CONTACT_TYPE_EMAIL,
+                    "value": "ap@highline-ih.example.com",
+                },
             ],
         },
     ]

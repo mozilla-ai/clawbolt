@@ -194,13 +194,13 @@ async def test_customers_search_by_name(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
         f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
-        params={"name": "acme"},
+        params={"name": "cascade"},
         headers={"Authorization": f"Bearer {bearer}"},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["totalCount"] == 1
-    assert body["data"][0]["name"] == "Acme Plumbing"
+    assert body["data"][0]["name"] == "Cascade Heights Property Group"
 
 
 @pytest.mark.asyncio()
@@ -214,7 +214,7 @@ async def test_customers_search_by_phone(client: httpx.AsyncClient) -> None:
     )
     body = resp.json()
     assert body["totalCount"] == 1
-    assert body["data"][0]["name"] == "Jane Doe"
+    assert body["data"][0]["name"] == "Marcus Chen"
 
 
 @pytest.mark.asyncio()
@@ -262,12 +262,12 @@ async def test_customers_search_by_city(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
         f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
-        params={"city": "anytown"},
+        params={"city": "lakewood"},
         headers={"Authorization": f"Bearer {bearer}"},
     )
     body = resp.json()
     assert body["totalCount"] >= 1
-    assert all("anytown" in c["address"]["city"].lower() for c in body["data"])
+    assert all("lakewood" in c["address"]["city"].lower() for c in body["data"])
 
 
 @pytest.mark.asyncio()
@@ -275,12 +275,13 @@ async def test_customers_search_by_state(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
         f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
-        params={"state": "NJ"},
+        params={"state": "CO"},
         headers={"Authorization": f"Bearer {bearer}"},
     )
     body = resp.json()
-    assert body["totalCount"] >= 1
-    assert all(c["address"]["state"] == "NJ" for c in body["data"])
+    # Every seed customer lives in CO, so the filter matches the whole set.
+    assert body["totalCount"] == 10
+    assert all(c["address"]["state"] == "CO" for c in body["data"])
 
 
 @pytest.mark.asyncio()
