@@ -371,6 +371,8 @@ async def test_download_media_uses_basic_auth(monkeypatch: pytest.MonkeyPatch) -
     channel = TwilioChannel()
     channel._account_sid = "ACtest"
     channel._auth_token = "tkn"
+    channel._api_key_sid = "SKtest"
+    channel._api_key_secret = "secret"
 
     media = await channel.download_media(
         "https://api.twilio.com/Accounts/AC0/Messages/MM0/Media/ME0"
@@ -405,6 +407,98 @@ async def test_download_media_rejects_non_twilio_host(monkeypatch: pytest.Monkey
     with pytest.raises(ValueError, match="non-Twilio host"):
         await channel.download_media("http://attacker.example.com/leak")
     assert called is False
+
+
+async def test_client_property_requires_api_key() -> None:
+    """The REST client refuses to construct without an API key + secret.
+
+    The auth token is reserved for inbound signature validation; using
+    it for REST would defeat the point of keeping the API key as a
+    separate, revocable credential.
+    """
+    channel = TwilioChannel()
+    channel._account_sid = "ACtest"
+    channel._auth_token = "tkn"
+    # No API key configured.
+    with pytest.raises(RuntimeError, match="TWILIO_API_KEY_SID"):
+        _ = channel.client
+
+
+async def test_client_property_uses_api_key_when_configured() -> None:
+    """When API key is set, the SDK Client is built with the key pair.
+
+    The SDK constructor for the key path is ``Client(sid, secret, account_sid)``;
+    the username is the API key SID, not the account SID.
+    """
+    from twilio.rest import Client as TwilioClient
+
+    channel = TwilioChannel()
+    channel._account_sid = "ACtest"
+    channel._auth_token = "tkn"
+    channel._api_key_sid = "SKtest"
+    channel._api_key_secret = "secret"
+
+    client = channel.client
+    assert isinstance(client, TwilioClient)
+    # The SDK exposes the auth tuple it built internally; the first
+    # element is what becomes the Basic Auth username on REST calls.
+    # We assert it is the API key SID, not the account SID.
+    assert client.username == "SKtest"
+    assert client.password == "secret"
+    assert client.account_sid == "ACtest"
+
+
+async def test_download_media_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_media must not fall back to auth-token Basic Auth."""
+    called = False
+
+    async def fake_download_bounded(*_args: object, **_kwargs: object) -> object:
+        nonlocal called
+        called = True
+        return b"", httpx.Headers()
+
+    monkeypatch.setattr("backend.app.channels.twilio.download_bounded", fake_download_bounded)
+
+    channel = TwilioChannel()
+    channel._account_sid = "ACtest"
+    channel._auth_token = "tkn"
+    # No API key configured.
+
+    with pytest.raises(RuntimeError, match="TWILIO_API_KEY_SID"):
+        await channel.download_media("https://api.twilio.com/Accounts/AC0/Messages/MM0/Media/ME0")
+    assert called is False
+
+
+async def test_download_media_uses_api_key_basic_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """download_media should authenticate with the API key pair, not the auth token."""
+    captured_auth: list[httpx.BasicAuth] = []
+
+    async def fake_download_bounded(
+        client: httpx.AsyncClient,
+        _url: str,
+    ) -> tuple[bytes, httpx.Headers]:
+        captured_auth.append(client.auth)  # type: ignore[arg-type]
+        return b"x", httpx.Headers({"content-type": "image/jpeg"})
+
+    monkeypatch.setattr("backend.app.channels.twilio.download_bounded", fake_download_bounded)
+
+    channel = TwilioChannel()
+    channel._account_sid = "ACtest"
+    channel._auth_token = "tkn"
+    channel._api_key_sid = "SKtest"
+    channel._api_key_secret = "secret"
+
+    await channel.download_media("https://api.twilio.com/Accounts/AC0/Messages/MM0/Media/ME0")
+
+    # BasicAuth doesn't expose its credentials publicly, but its
+    # ``_auth_header`` is "Basic " + b64(username:password).
+    import base64
+
+    assert isinstance(captured_auth[0], httpx.BasicAuth)
+    header = captured_auth[0]._auth_header
+    encoded = header.removeprefix("Basic ")
+    decoded = base64.b64decode(encoded).decode()
+    assert decoded == "SKtest:secret"
 
 
 async def test_to_verifier_drops_inbound_when_pair_unknown(

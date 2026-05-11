@@ -464,6 +464,11 @@ function PremiumTwilioForm({ twilioLinkData, onSaved }: SubFormProps) {
 
   const status = twilioLinkData?.status ?? 'not_provisioned';
   const isActive = status === 'active' && twilioLinkData?.twilio_phone_number;
+  // The operator may lock the number-type / area-code picker to the
+  // configured defaults (premium config: ``twilio_user_number_choice_enabled``).
+  // Older premium deployments don't ship the field; default to showing
+  // the picker so we don't quietly remove it.
+  const userNumberChoiceEnabled = twilioLinkData?.user_number_choice_enabled ?? true;
 
   // ``provisioning`` is a transient state, normally only seen for a few
   // seconds during connect. If we land here on page load it usually
@@ -545,32 +550,36 @@ function PremiumTwilioForm({ twilioLinkData, onSaved }: SubFormProps) {
           </p>
         )}
       </Field>
-      <Field label="Number Type">
-        <Select
-          value={numberType}
-          onChange={(e) => setNumberType(e.target.value)}
-          aria-label="Twilio number type"
-        >
-          {TWILIO_NUMBER_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>{t.label}</option>
-          ))}
-        </Select>
-        <p className="text-xs text-muted-foreground mt-1">
-          Toll-free skips US A2P 10DLC registration. Local is cheaper per message but the operator
-          must have a registered messaging service.
-        </p>
-      </Field>
-      <Field label="Area Code (optional)">
-        <Input
-          value={areaCode}
-          onChange={(e) => setAreaCode(e.target.value)}
-          placeholder={numberType === 'toll-free' ? 'e.g. 800' : 'e.g. 415'}
-          inputMode="numeric"
-        />
-        <p className="text-xs text-muted-foreground mt-1">
-          Leave blank to let Twilio pick from available inventory.
-        </p>
-      </Field>
+      {userNumberChoiceEnabled && (
+        <>
+          <Field label="Number Type">
+            <Select
+              value={numberType}
+              onChange={(e) => setNumberType(e.target.value)}
+              aria-label="Twilio number type"
+            >
+              {TWILIO_NUMBER_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Toll-free skips US A2P 10DLC registration. Local is cheaper per message but the operator
+              must have a registered messaging service.
+            </p>
+          </Field>
+          <Field label="Area Code (optional)">
+            <Input
+              value={areaCode}
+              onChange={(e) => setAreaCode(e.target.value)}
+              placeholder={numberType === 'toll-free' ? 'e.g. 800' : 'e.g. 415'}
+              inputMode="numeric"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Leave blank to let Twilio pick from available inventory.
+            </p>
+          </Field>
+        </>
+      )}
       <div className="flex justify-end">
         <Button onClick={handleConnect} disabled={submitting || !personalPhone} isLoading={submitting}>
           Connect Twilio

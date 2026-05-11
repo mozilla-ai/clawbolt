@@ -102,19 +102,45 @@ class TwilioChannel(BaseChannel):
     def __init__(self, svc_settings: Settings | None = None) -> None:
         s = svc_settings or settings
         self._account_sid = s.twilio_account_sid
+        # Auth token is loaded for one job only: HMAC-SHA1 signature
+        # validation of inbound webhooks (``X-Twilio-Signature``). Twilio
+        # does not support any other webhook signing mechanism for SMS,
+        # and API keys cannot sign webhooks.
         self._auth_token = s.twilio_auth_token
+        # Standard API key + secret used for every outbound REST call
+        # (purchase numbers, send SMS, configure webhooks, media
+        # download). Required for any REST operation; the channel
+        # refuses outbound work if either is missing rather than fall
+        # back to auth-token Basic Auth so the auth token's blast
+        # radius stays scoped to signature validation.
+        self._api_key_sid = s.twilio_api_key_sid
+        self._api_key_secret = s.twilio_api_key_secret
         self._client: TwilioClient | None = None
+
+    def _require_api_key(self) -> tuple[str, str]:
+        """Return ``(api_key_sid, api_key_secret)`` or raise if either is empty."""
+        if not self._api_key_sid or not self._api_key_secret:
+            msg = (
+                "Twilio API key required for REST calls. Set "
+                "TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET (Standard "
+                "key from Console > Account > API Keys & Tokens)."
+            )
+            raise RuntimeError(msg)
+        return self._api_key_sid, self._api_key_secret
 
     @property
     def client(self) -> TwilioClient:
         """Lazily create the Twilio REST client.
 
-        Construction is cheap but errors on empty credentials, so we defer
-        until the first send so an unconfigured deployment doesn't crash
-        at import time.
+        Authenticates with the Standard API key + secret (required).
+        API keys are revocable per-key and have a smaller blast radius
+        than the auth token; the auth token in this codebase is loaded
+        only for inbound webhook signature validation
+        (``_validate_signature`` / ``RequestValidator``).
         """
         if self._client is None:
-            self._client = TwilioClient(self._account_sid, self._auth_token)
+            api_key_sid, api_key_secret = self._require_api_key()
+            self._client = TwilioClient(api_key_sid, api_key_secret, self._account_sid)
         return self._client
 
     # -- BaseChannel identity --------------------------------------------------
@@ -347,20 +373,21 @@ class TwilioChannel(BaseChannel):
         """Download media from a Twilio MediaUrl.
 
         For Twilio, ``file_id`` is the full ``MediaUrl{N}`` from the
-        webhook form payload. The URL requires HTTP Basic Auth with the
-        account SID + auth token. Streams with the standard hard size
-        cap and wall-time deadline.
+        webhook form payload. The URL requires HTTP Basic Auth with
+        the Standard API key + secret. Streams with the standard hard
+        size cap and wall-time deadline.
 
         Refuses any URL that doesn't live on a Twilio-owned host. This
         is defense in depth against an attacker who slipped a webhook
         past signature validation (only possible when validation is off
         for dev): without this guard, ``MediaUrl0=http://internal/...``
-        would exfiltrate the account-SID Basic Auth header.
+        would exfiltrate the Basic Auth header.
         """
         if not _is_twilio_host(file_id):
             msg = f"Refusing to download media from non-Twilio host: {file_id}"
             raise ValueError(msg)
-        auth = httpx.BasicAuth(self._account_sid, self._auth_token)
+        api_key_sid, api_key_secret = self._require_api_key()
+        auth = httpx.BasicAuth(api_key_sid, api_key_secret)
         async with httpx.AsyncClient(auth=auth, timeout=settings.http_timeout_seconds) as client:
             content, headers = await download_bounded(client, file_id)
         content_type = headers.get("content-type", "application/octet-stream").split(";")[0]

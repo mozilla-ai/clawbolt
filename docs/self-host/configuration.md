@@ -84,7 +84,9 @@ When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage c
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TWILIO_ACCOUNT_SID` | | Twilio account SID (`AC...`) |
-| `TWILIO_AUTH_TOKEN` | | Twilio auth token. Used for webhook signature validation and authenticating media URL downloads. |
+| `TWILIO_AUTH_TOKEN` | | Twilio account auth token. Loaded for one purpose only: validating `X-Twilio-Signature` on inbound webhooks. Twilio signs SMS webhooks with HMAC-SHA1 keyed on this token and offers no alternative signing mechanism for SMS, so API keys cannot replace it for inbound. |
+| `TWILIO_API_KEY_SID` | | Standard API key SID (`SK...`). **Required** for every outbound REST call (purchase numbers, send SMS, configure webhooks, media downloads). The channel refuses outbound work if missing rather than falling back to auth-token Basic Auth, so a leaked auth token cannot be replayed against the REST API. Create via Twilio Console -> Account -> API Keys & Tokens (Standard key). |
+| `TWILIO_API_KEY_SECRET` | | The API key's secret value. Shown once at key creation; record it then. |
 | `TWILIO_PHONE_NUMBER` | | E.164 outbound sender, e.g. `+15551234567`. Pinned as `from_` on every send. |
 | `TWILIO_MESSAGING_SERVICE_SID` | | Messaging Service SID (`MG...`). Use for US A2P 10DLC: the service holds a pool of campaign-registered numbers. When set, takes precedence over `TWILIO_PHONE_NUMBER`. |
 | `TWILIO_ALLOWED_NUMBERS` | (empty) | E.164 phone number, `*` for all, or empty to deny all. |

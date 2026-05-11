@@ -177,7 +177,20 @@ class Settings(BaseSettings):
     # the channel implements ``send_typing_indicator`` as a no-op. For
     # iMessage/RCS with typing indicators see Linq or BlueBubbles.
     twilio_account_sid: str = ""
+    # Auth token: required for inbound webhook signature validation.
+    # Twilio signs ``X-Twilio-Signature`` with HMAC-SHA1 keyed on this
+    # token and offers no alternative signing mechanism for SMS
+    # webhooks. The codebase loads it for nothing else; outbound REST
+    # uses the API key pair below.
     twilio_auth_token: str = ""
+    # Standard API key + secret. Required for every outbound REST call
+    # (purchase numbers, send SMS, configure webhooks, media download).
+    # The channel refuses outbound work if either is missing rather
+    # than fall back to auth-token Basic Auth, so the auth token's
+    # blast radius stays scoped to signature validation. Create via
+    # Twilio Console -> Account -> API Keys & Tokens (Standard key).
+    twilio_api_key_sid: str = ""  # "SKxxxxxxxx..."
+    twilio_api_key_secret: str = ""
     # Outbound sender. Pin a specific phone number (E.164) OR a Messaging
     # Service SID. Messaging Service is recommended for US A2P 10DLC
     # deployments: numbers join the service's pool and the registered
@@ -297,6 +310,8 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "bluebubbles_imessage_address",
         "twilio_account_sid",
         "twilio_auth_token",
+        "twilio_api_key_sid",
+        "twilio_api_key_secret",
         "twilio_phone_number",
         "twilio_messaging_service_sid",
         "twilio_allowed_numbers",

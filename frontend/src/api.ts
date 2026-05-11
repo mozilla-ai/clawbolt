@@ -339,6 +339,12 @@ const api = {
       status: string;
       error_message: string;
       connected: boolean;
+      // Defaults to true (matches the backend default) so the picker
+      // stays visible when the field is missing on older premium
+      // deployments. When false, the user-facing form hides the
+      // number-type picker and area-code input and the backend
+      // ignores any user-supplied values for those fields.
+      user_number_choice_enabled?: boolean;
     }>;
   },
   // Provision a Twilio number for the current user. The server runs
