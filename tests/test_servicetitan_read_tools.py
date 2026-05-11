@@ -122,10 +122,10 @@ async def test_search_customers_by_name_returns_match(async_test_user: Any) -> N
         build_servicetitan_tools(service), ToolName.SERVICETITAN_SEARCH_CUSTOMERS
     )
 
-    result = await search.function(query="Acme")
+    result = await search.function(query="Cascade")
     assert result.is_error is False
-    # Seed "Acme Plumbing" has id 1003 and a phone in the 555 range.
-    assert "Acme Plumbing" in result.content
+    # Seed "Cascade Heights Property Group" has id 1003 and a phone in the 555 range.
+    assert "Cascade Heights Property Group" in result.content
     assert "#1003" in result.content
 
 
@@ -139,11 +139,11 @@ async def test_search_customers_numeric_query_routes_to_phone(
         build_servicetitan_tools(service), ToolName.SERVICETITAN_SEARCH_CUSTOMERS
     )
 
-    # Jane Doe (id 1001) has phone +15555550101; "5550101" is enough
-    # digits to trip the phone heuristic and uniquely match her record.
+    # Marcus Chen (id 1001) has phone +15555550101; "5550101" is enough
+    # digits to trip the phone heuristic and uniquely match the record.
     result = await search.function(query="5550101")
     assert result.is_error is False
-    assert "Jane Doe" in result.content
+    assert "Marcus Chen" in result.content
     assert "#1001" in result.content
 
 
@@ -183,10 +183,10 @@ async def test_search_customers_truncates_to_limit(async_test_user: Any) -> None
         build_servicetitan_tools(service), ToolName.SERVICETITAN_SEARCH_CUSTOMERS
     )
 
-    # Several seed customers (Jane Doe, John Roe, David Brown, Eve Davis,
-    # Bob Johnson, Alice Smith, Carol Williams) include lower-case "e"
-    # somewhere in their names. The fake matches case-insensitive
-    # substring on the ``name`` filter.
+    # Several seed customers (Marcus Chen, James Hollis, Rebecca Tran,
+    # Daniel Brennan, William Voss, Highline Industrial Holdings, ...)
+    # include lower-case "e" somewhere in their names. The fake matches
+    # case-insensitive substring on the ``name`` filter.
     result = await search.function(query="e", limit=2)
     assert result.is_error is False
     # Header line + truncation note + 2 records.
@@ -211,9 +211,9 @@ async def test_get_customer_returns_full_record(async_test_user: Any) -> None:
 
     result = await get_customer.function(customer_id=1003)
     assert result.is_error is False
-    assert "Acme Plumbing" in result.content
+    assert "Cascade Heights Property Group" in result.content
     assert "Commercial" in result.content
-    assert "789 Industry Park" in result.content
+    assert "11500 E 40th Ave" in result.content
     assert "+15555550103" in result.content
 
 
