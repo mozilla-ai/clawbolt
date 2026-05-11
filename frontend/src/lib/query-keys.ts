@@ -23,4 +23,5 @@ export const queryKeys = {
   telegramBotInfo: ['telegramBotInfo'] as const,
   linqLink: ['linqLink'] as const,
   blueBubblesLink: ['blueBubblesLink'] as const,
+  twilioLink: ['twilioLink'] as const,
 };

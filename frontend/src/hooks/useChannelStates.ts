@@ -6,6 +6,7 @@ import {
   useTelegramBotInfo,
   useLinqLink,
   useBlueBubblesLink,
+  useTwilioLink,
 } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -16,7 +17,11 @@ import {
   type PremiumChannelData,
 } from '@/lib/channel-utils';
 import type { ChannelConfigResponse } from '@/types';
-import type { PremiumLinkData, TelegramLinkData } from '@/components/ChannelConfigForm';
+import type {
+  PremiumLinkData,
+  TelegramLinkData,
+  TwilioLinkData,
+} from '@/components/ChannelConfigForm';
 
 type TelegramBotInfo = NonNullable<Awaited<ReturnType<typeof useTelegramBotInfo>>['data']>;
 
@@ -33,6 +38,8 @@ export interface ChannelStatesResult {
   linkDataMap: Partial<Record<ChannelKey, PremiumLinkData | null>>;
   /** Telegram-specific premium link data (for ChannelConfigForm). */
   telegramLinkData: TelegramLinkData | null;
+  /** Twilio-specific premium link data (for ChannelConfigForm). */
+  twilioLinkData: TwilioLinkData | null;
   /** Telegram bot info (premium only). */
   botInfo: TelegramBotInfo | null;
   /** Refresh premium link data for a specific channel after config save. */
@@ -68,17 +75,29 @@ export function useChannelStates(): ChannelStatesResult {
   const telegramBotInfoQuery = useTelegramBotInfo(isPremium && telegramBotTokenSet);
   const linqLinkQuery = useLinqLink(isPremium);
   const blueBubblesLinkQuery = useBlueBubblesLink(isPremium);
+  const twilioLinkQuery = useTwilioLink(isPremium);
 
   // Build premium data from React Query results
   const linkDataMap = useMemo<Partial<Record<ChannelKey, PremiumLinkData | null>>>(() => {
     const map: Partial<Record<ChannelKey, PremiumLinkData | null>> = {};
     if (linqLinkQuery.data) map.linq = normalizeLinkData(linqLinkQuery.data);
     if (blueBubblesLinkQuery.data) map.bluebubbles = normalizeLinkData(blueBubblesLinkQuery.data);
+    if (twilioLinkQuery.data) {
+      // Twilio's premium-link contract is "personal phone is linked + an
+      // active Twilio number is provisioned"; collapse to the generic
+      // PremiumLinkData shape so getChannelState's existing derivation
+      // works without a twilio-specific branch.
+      map.twilio = {
+        identifier: twilioLinkQuery.data.personal_phone,
+        connected: twilioLinkQuery.data.connected,
+      };
+    }
     return map;
-  }, [linqLinkQuery.data, blueBubblesLinkQuery.data]);
+  }, [linqLinkQuery.data, blueBubblesLinkQuery.data, twilioLinkQuery.data]);
 
   const telegramLinkData = telegramLinkQuery.data ?? null;
   const telegramUserId = telegramLinkData?.telegram_user_id;
+  const twilioLinkData = twilioLinkQuery.data ?? null;
   const botInfo = telegramBotInfoQuery.data ?? null;
 
   // Derive states (deps are all primitives or memoized objects for stable identity)
@@ -100,6 +119,7 @@ export function useChannelStates(): ChannelStatesResult {
     if (key === 'telegram') void telegramLinkQuery.refetch();
     if (key === 'linq') void linqLinkQuery.refetch();
     if (key === 'bluebubbles') void blueBubblesLinkQuery.refetch();
+    if (key === 'twilio') void twilioLinkQuery.refetch();
   };
 
   return {
@@ -113,6 +133,7 @@ export function useChannelStates(): ChannelStatesResult {
     channelConfig,
     linkDataMap,
     telegramLinkData,
+    twilioLinkData,
     botInfo,
     invalidateLink,
   };

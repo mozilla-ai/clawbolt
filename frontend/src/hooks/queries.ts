@@ -253,6 +253,14 @@ export function useBlueBubblesLink(enabled: boolean) {
   });
 }
 
+export function useTwilioLink(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.twilioLink,
+    queryFn: () => api.getTwilioLink(),
+    enabled,
+  });
+}
+
 // --- Channel routes ---
 
 export function useChannelRoutes() {

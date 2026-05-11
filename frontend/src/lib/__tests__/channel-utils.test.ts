@@ -13,6 +13,10 @@ const baseConfig: ChannelConfigResponse = {
   bluebubbles_allowed_numbers: '',
   bluebubbles_imessage_address: '',
   imessage_backend: null,
+  twilio_configured: false,
+  twilio_phone_number: '',
+  twilio_messaging_service_sid: '',
+  twilio_allowed_numbers: '',
 };
 
 describe('getVisibleChannels', () => {

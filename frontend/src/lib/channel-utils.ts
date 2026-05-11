@@ -8,10 +8,14 @@ export type ChannelKey = (typeof MESSAGING_CHANNELS)[number]['key'];
 // Real backend channel keys. `linq` and `bluebubbles` are both rendered to the
 // user as "iMessage"; which one shows up at runtime is determined by which
 // backend the admin has configured. Users never see the backend name.
+// `twilio` is plain SMS/MMS; it does not collapse into iMessage because
+// the deliverability and feature set are different (no typing indicators,
+// no rich attachments past MMS).
 export const MESSAGING_CHANNELS = [
   { key: 'telegram', label: 'Telegram' },
   { key: 'linq', label: 'iMessage' },
   { key: 'bluebubbles', label: 'iMessage' },
+  { key: 'twilio', label: 'SMS' },
 ] as const;
 
 /** Return the subset of MESSAGING_CHANNELS the user should see, filtered by
@@ -28,6 +32,7 @@ export function getVisibleChannels(
   if (!config) return [];
   return MESSAGING_CHANNELS.filter((ch) => {
     if (ch.key === 'telegram') return config.telegram_bot_token_set;
+    if (ch.key === 'twilio') return config.twilio_configured;
     return ch.key === config.imessage_backend;
   });
 }
@@ -56,6 +61,7 @@ export function isServerAvailable(key: ChannelKey, config: ChannelConfigResponse
   if (key === 'telegram') return config.telegram_bot_token_set;
   if (key === 'linq') return config.imessage_backend === 'linq';
   if (key === 'bluebubbles') return config.imessage_backend === 'bluebubbles';
+  if (key === 'twilio') return config.twilio_configured;
   return false;
 }
 
@@ -80,6 +86,9 @@ function isUserConfigured(
   }
   if (key === 'bluebubbles') {
     return config.bluebubbles_allowed_numbers !== '';
+  }
+  if (key === 'twilio') {
+    return config.twilio_allowed_numbers !== '';
   }
   return false;
 }

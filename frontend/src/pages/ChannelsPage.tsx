@@ -12,7 +12,12 @@ import {
   type ChannelKey,
   type ChannelState,
 } from '@/lib/channel-utils';
-import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
+import {
+  ChannelConfigForm,
+  type TelegramLinkData,
+  type TwilioLinkData,
+  type PremiumLinkData,
+} from '@/components/ChannelConfigForm';
 import type { ChannelStatesResult } from '@/hooks/useChannelStates';
 
 type TelegramBotInfo = ChannelStatesResult['botInfo'];
@@ -20,7 +25,7 @@ type TelegramBotInfo = ChannelStatesResult['botInfo'];
 export default function ChannelsPage() {
   const { isPremium } = useAuth();
   const toggleMutation = useToggleChannelRoute();
-  const { states: channelStates, channelConfig, telegramLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
+  const { states: channelStates, channelConfig, telegramLinkData, twilioLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
   const visibleChannels = getVisibleChannels(channelConfig);
   const routesQuery = useChannelRoutes();
   const imessageAddress = getImessageAddress(channelConfig);
@@ -160,6 +165,7 @@ export default function ChannelsPage() {
                     channelConfig={channelConfig}
                     botInfo={key === 'telegram' ? botInfo : null}
                     telegramLinkData={key === 'telegram' ? telegramLinkData : null}
+                    twilioLinkData={key === 'twilio' ? twilioLinkData : null}
                     premiumLinkData={linkDataMap[key] ?? null}
                     imessageAddress={imessageAddress}
                     verified={verifiedByChannel[key] ?? false}
@@ -187,6 +193,7 @@ export default function ChannelsPage() {
               channelConfig={channelConfig}
               botInfo={key === 'telegram' ? botInfo : null}
               telegramLinkData={key === 'telegram' ? telegramLinkData : null}
+              twilioLinkData={key === 'twilio' ? twilioLinkData : null}
               premiumLinkData={linkDataMap[key] ?? null}
               imessageAddress={imessageAddress}
               verified={verifiedByChannel[key] ?? false}
@@ -219,6 +226,7 @@ interface ChannelCardProps {
   channelConfig: ChannelStatesResult['channelConfig'];
   botInfo: TelegramBotInfo | null;
   telegramLinkData: TelegramLinkData | null;
+  twilioLinkData: TwilioLinkData | null;
   premiumLinkData: PremiumLinkData | null;
   imessageAddress: string | null;
   verified: boolean;
@@ -239,6 +247,7 @@ function ChannelCard({
   channelConfig,
   botInfo,
   telegramLinkData,
+  twilioLinkData,
   premiumLinkData,
   imessageAddress,
   verified,
@@ -330,6 +339,44 @@ function ChannelCard({
         </div>
       )}
 
+      {/* Twilio address banner. OSS uses the global twilio_phone_number;
+          premium uses the per-user provisioned number from the link. */}
+      {channelKey === 'twilio'
+        && (state === 'configured' || state === 'active') && (
+        (() => {
+          const address = isPremium
+            ? twilioLinkData?.twilio_phone_number
+            : channelConfig?.twilio_phone_number;
+          if (!address) return null;
+          return (
+            <div className="mt-3 ml-7 text-sm">
+              Text{' '}
+              <span className="font-mono font-medium text-primary">{address}</span>
+              {' '}from your phone to chat with your assistant.
+              <div className="mt-1.5">
+                {verified ? (
+                  <span
+                    className="inline-flex items-center gap-1 text-xs text-success bg-success-bg px-2 py-0.5 rounded-full font-medium"
+                    aria-label="Connection verified"
+                  >
+                    <CheckIcon />
+                    Verified
+                  </span>
+                ) : (
+                  <span
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full font-medium"
+                    aria-label="Waiting for first message to verify connection"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground/50 animate-pulse" />
+                    Waiting for your first message
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })()
+      )}
+
       {/* iMessage address banner + verification status */}
       {(channelKey === 'linq' || channelKey === 'bluebubbles')
         && imessageAddress
@@ -368,6 +415,7 @@ function ChannelCard({
             isPremium={isPremium}
             channelConfig={channelConfig}
             telegramLinkData={telegramLinkData}
+            twilioLinkData={twilioLinkData}
             premiumLinkData={premiumLinkData}
             onSaved={onConfigSaved}
           />
@@ -393,6 +441,7 @@ function ChannelCard({
                 isPremium={isPremium}
                 channelConfig={channelConfig}
                 telegramLinkData={telegramLinkData}
+                twilioLinkData={twilioLinkData}
                 premiumLinkData={premiumLinkData}
                 onSaved={onConfigSaved}
               />
@@ -461,6 +510,7 @@ function getUnavailableHint(key: ChannelKey): string {
   if (key === 'linq' || key === 'bluebubbles') {
     return 'Contact your administrator to enable iMessage.';
   }
+  if (key === 'twilio') return 'Contact your administrator to enable SMS.';
   return '';
 }
 
@@ -492,6 +542,14 @@ function ChannelIcon({ channelKey }: { channelKey: ChannelKey }) {
     return (
       <svg className="w-5 h-5 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+      </svg>
+    );
+  }
+  if (channelKey === 'twilio') {
+    // Phone handset icon for SMS.
+    return (
+      <svg className="w-5 h-5 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5a2 2 0 012-2h2.879a1 1 0 01.948.684l1.06 3.18a1 1 0 01-.502 1.21l-2.1 1.05a11.042 11.042 0 005.591 5.59l1.05-2.1a1 1 0 011.21-.501l3.18 1.06a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
       </svg>
     );
   }
