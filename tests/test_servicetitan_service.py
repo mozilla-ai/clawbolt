@@ -15,13 +15,23 @@ from unittest.mock import patch
 import pytest
 
 from backend.app.integrations.servicetitan import _fake as fake_module
-from backend.app.integrations.servicetitan.auth import save_credentials
+from backend.app.integrations.servicetitan.auth import (
+    clear_credentials,
+    load_credentials,
+    save_credentials,
+)
 from backend.app.integrations.servicetitan.service import (
     ServiceTitanError,
     ServiceTitanNotConnectedError,
     ServiceTitanService,
     build_service_for_user,
 )
+
+
+async def _load(user_id: str) -> Any:
+    cred = await load_credentials(user_id)
+    assert cred is not None
+    return cred
 
 
 @pytest.fixture(autouse=True)
@@ -132,14 +142,6 @@ async def test_request_refreshes_bearer_on_401(async_test_user: Any) -> None:
     assert service.credential.access_token == fake_module.FAKE_TOKEN_VALUE
 
 
-async def _load(user_id: str) -> Any:
-    from backend.app.integrations.servicetitan.auth import load_credentials
-
-    cred = await load_credentials(user_id)
-    assert cred is not None
-    return cred
-
-
 @pytest.mark.asyncio()
 async def test_request_raises_for_unknown_path(async_test_user: Any) -> None:
     user_id = async_test_user.id
@@ -163,8 +165,6 @@ async def test_request_without_usable_credential_raises(async_test_user: Any) ->
     # Wipe the bearer in-memory and delete the row so refresh returns None.
     cred.access_token = ""
     cred.expires_at = 0.0
-    from backend.app.integrations.servicetitan.auth import clear_credentials
-
     await clear_credentials(user_id)
 
     service = ServiceTitanService(user_id, cred)

@@ -218,21 +218,51 @@ async def test_connect_servicetitan_errors_without_app_key(
 
 
 @pytest.mark.asyncio()
-async def test_connect_servicetitan_surfaces_token_endpoint_failure(
+async def test_connect_servicetitan_strips_and_rejects_blank_client_secret(
     async_test_user: Any,
 ) -> None:
-    """If the fake rejects the credentials, the tool surfaces an AUTH error."""
+    """A whitespace-only Client Secret must surface as a validation error."""
     user_id = async_test_user.id
     tools = build_auth_tools(user_id)
     connect_tool = tools[0]
 
-    # Empty client_secret triggers the fake's 4xx response.
     result = await connect_tool.function(
         tenant_id="t",
         client_id="cid",
-        client_secret="   ",  # stripped to empty
+        client_secret="   ",  # stripped to empty before the mint call
     )
     assert result.is_error is True
-    # ``"   "`` strips to empty before the mint call, so it hits the
-    # local validation branch rather than the fake. Either way is fine
-    # for the user; we just want it surfaced as an error.
+    assert "required" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_connect_servicetitan_surfaces_token_endpoint_failure(
+    async_test_user: Any,
+) -> None:
+    """When the fake rejects the credentials, the tool surfaces an AUTH error.
+
+    Patches the mint helper to raise so this test actually exercises the
+    failure-path branch in the connect tool, not the local validation
+    branch that catches blank fields up front.
+    """
+    user_id = async_test_user.id
+    tools = build_auth_tools(user_id)
+    connect_tool = tools[0]
+
+    from backend.app.integrations.servicetitan.auth import ServiceTitanAuthError
+
+    async def _fail(**kwargs: Any) -> tuple[str, float]:
+        raise ServiceTitanAuthError("ServiceTitan rejected the client credentials (HTTP 401)")
+
+    with patch(
+        "backend.app.integrations.servicetitan.auth_tools.mint_access_token",
+        side_effect=_fail,
+    ):
+        result = await connect_tool.function(
+            tenant_id="1234567",
+            client_id="cid",
+            client_secret="csec",
+        )
+    assert result.is_error is True
+    assert "rejected" in result.content.lower()
+    assert result.error_kind is not None

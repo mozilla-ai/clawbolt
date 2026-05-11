@@ -10,22 +10,18 @@ This module persists those four values in the ``oauth_tokens`` row for
 
 * ``access_token`` (encrypted) carries the current bearer token. Empty
   before the first mint, repopulated on every refresh.
+* ``refresh_token`` (encrypted) carries the tenant's Client Secret. The
+  column is named for OAuth refresh tokens, but ServiceTitan's client-
+  credentials grant does not use one, so the encrypted slot is unused
+  by the standard refresh flow and is the natural home for the secret.
+  Storing it here keeps the Client Secret envelope-encrypted at rest.
 * ``expires_at`` carries the absolute Unix timestamp at which the bearer
   expires. The real ServiceTitan token lives 15 minutes; we honor the
   ``expires_in`` returned by the token endpoint.
-* ``extra_json`` carries the tenant-specific metadata:
-  ``{tenant_id, client_id, client_secret, app_key}``. ``client_secret``
-  is kept here rather than in a dedicated encrypted column because
-  ``oauth_tokens.refresh_token`` is reserved for OAuth refresh tokens
-  and the surrounding code paths (e.g. ``oauth_service.refresh_token``)
-  assume the standard ``grant_type=refresh_token`` shape. Storing the
-  secret in ``extra_json`` keeps the row shape compatible with the
-  existing OAuth machinery without overloading semantics. The
-  ``extra_json`` column is plaintext on the wire to the DB, but the
-  row-level access patterns (``oauth_service.load_token`` only) keep
-  the value inside the same trust boundary as the encrypted columns;
-  if that ever changes, switching to ``refresh_token`` is a one-line
-  edit.
+* ``extra_json`` (plaintext) carries the non-secret metadata:
+  ``{tenant_id, client_id, app_key}``. The App Key is operator-level,
+  not per-tenant; it is snapshotted here so a later operator-level
+  rotation does not silently break existing tenants until they reconnect.
 
 The connect tool calls :func:`save_credentials` with the user's pasted
 values plus the freshly minted access token; downstream tools call
@@ -65,6 +61,12 @@ _TOKEN_EXPIRY_BUFFER_SECONDS = 30
 # Per-request timeout for the token endpoint. The mint itself is fast; the
 # generous ceiling absorbs cold-path TLS handshakes against real ServiceTitan.
 _TOKEN_REQUEST_TIMEOUT_SECONDS = 30.0
+
+# Fallback lifetime when the token endpoint omits ``expires_in``. Sized to
+# leave a meaningful usable window after ``_TOKEN_EXPIRY_BUFFER_SECONDS`` so
+# a missing field does not turn into a tight mint loop, but still short
+# enough that the bearer ages out quickly when no expiry was advertised.
+_TOKEN_FALLBACK_TTL_SECONDS = 180.0
 
 
 class ServiceTitanAuthError(RuntimeError):
@@ -176,29 +178,38 @@ async def mint_access_token(
         expires_at = time.time() + float(expires_in)
     else:
         # The fake always populates ``expires_in``; the real API is
-        # documented to as well. Fall back to a short ceiling rather
-        # than 0 so a missing field does not produce a token that the
-        # cache treats as immortal.
-        expires_at = time.time() + 60.0
+        # documented to as well. Fall back to a ceiling that leaves a
+        # usable window after the safety buffer rather than 0 (which the
+        # cache would treat as immortal) or a value so short the next
+        # call churns the mint endpoint.
+        expires_at = time.time() + _TOKEN_FALLBACK_TTL_SECONDS
     return access_token, expires_at
 
 
 def _serialize_extra(cred: ServiceTitanCredential) -> dict[str, Any]:
-    """Build the ``extra_json`` payload from a credential."""
+    """Build the ``extra_json`` payload from a credential.
+
+    Only non-secret metadata lives here. The Client Secret is persisted
+    separately in the encrypted ``refresh_token`` column.
+    """
     return {
         "tenant_id": cred.tenant_id,
         "client_id": cred.client_id,
-        "client_secret": cred.client_secret,
         "app_key": cred.app_key,
     }
 
 
-def _credential_from_extra(extra: dict[str, Any], token: OAuthTokenData) -> ServiceTitanCredential:
-    """Reconstruct a credential from a loaded token row's extra_json."""
+def _credential_from_token(token: OAuthTokenData) -> ServiceTitanCredential:
+    """Reconstruct a credential from a loaded token row.
+
+    The Client Secret comes off the encrypted ``refresh_token`` slot;
+    everything else lives in ``extra_json``.
+    """
+    extra = token.extra or {}
     return ServiceTitanCredential(
         tenant_id=str(extra.get("tenant_id") or ""),
         client_id=str(extra.get("client_id") or ""),
-        client_secret=str(extra.get("client_secret") or ""),
+        client_secret=token.refresh_token,
         app_key=str(extra.get("app_key") or ""),
         access_token=token.access_token,
         expires_at=token.expires_at,
@@ -230,7 +241,11 @@ async def save_credentials(
     )
     token = OAuthTokenData(
         access_token=access_token,
-        refresh_token="",
+        # The Client Secret rides in the encrypted ``refresh_token`` slot.
+        # ServiceTitan's client-credentials grant has no OAuth refresh
+        # token, so this column is otherwise unused by the standard
+        # refresh flow.
+        refresh_token=client_secret,
         token_type="Bearer",
         expires_at=expires_at,
         scopes=[],
@@ -251,8 +266,7 @@ async def load_credentials(user_id: str) -> ServiceTitanCredential | None:
     token = await oauth_service.load_token(user_id, INTEGRATION_NAME)
     if token is None:
         return None
-    extra = token.extra or {}
-    cred = _credential_from_extra(extra, token)
+    cred = _credential_from_token(token)
     if not cred.tenant_id or not cred.client_id or not cred.client_secret:
         # Partial row (e.g. a failed connect that wrote nothing useful).
         # Surface as "not connected" rather than handing the caller a
@@ -293,7 +307,14 @@ async def get_valid_token(
     ``expires_in`` (e.g. on a secret rotation), and the recorded
     expires_at would otherwise mask the revocation.
 
-    Returns ``None`` when no credential exists; raises
+    Mint+save is serialized through ``oauth_service.refresh_lock`` so
+    two concurrent requests for the same user do not race the token
+    endpoint and clobber each other's persisted bearer (same primitive
+    the standard OAuth refresh flow uses).
+
+    Returns ``None`` when no credential exists, or when the advisory
+    lock could not be acquired within its bounded wait (caller treats
+    this as a transient refresh failure); raises
     :class:`ServiceTitanAuthError` when minting against the token endpoint
     fails (caller decides whether to clear the row).
     """
@@ -302,16 +323,30 @@ async def get_valid_token(
         return None
     if not force_refresh and not cred.is_token_expired():
         return cred
-    access_token, expires_at = await mint_access_token(
-        client_id=cred.client_id,
-        client_secret=cred.client_secret,
-    )
-    return await save_credentials(
-        user_id,
-        tenant_id=cred.tenant_id,
-        client_id=cred.client_id,
-        client_secret=cred.client_secret,
-        app_key=cred.app_key,
-        access_token=access_token,
-        expires_at=expires_at,
-    )
+
+    async with oauth_service.refresh_lock(user_id, INTEGRATION_NAME) as acquired:
+        if not acquired:
+            logger.warning(
+                "ServiceTitan refresh lock contended; skipping mint: user=%s",
+                user_id,
+            )
+            return None
+        # Re-check inside the lock: a peer worker may have just refreshed.
+        cred = await load_credentials(user_id)
+        if cred is None:
+            return None
+        if not force_refresh and not cred.is_token_expired():
+            return cred
+        access_token, expires_at = await mint_access_token(
+            client_id=cred.client_id,
+            client_secret=cred.client_secret,
+        )
+        return await save_credentials(
+            user_id,
+            tenant_id=cred.tenant_id,
+            client_id=cred.client_id,
+            client_secret=cred.client_secret,
+            app_key=cred.app_key,
+            access_token=access_token,
+            expires_at=expires_at,
+        )

@@ -115,5 +115,9 @@ def build_auth_tools(user_id: str) -> list[Tool]:
                 default_level=PermissionLevel.ALWAYS,
                 description_builder=lambda args: "Connect ServiceTitan",
             ),
+            # Writes to ``oauth_tokens`` for this user; serialize with
+            # other integration toggles so two concurrent connects (or a
+            # connect racing a disconnect) cannot lose updates.
+            concurrency_group="user_integrations",
         ),
     ]

@@ -15,7 +15,8 @@ import logging
 import random
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -596,6 +597,51 @@ class OAuthService:
         # Expired but has a refresh token: still considered "connected"
         # because get_valid_token() will refresh it on next use.
         return bool(token.refresh_token)
+
+    @asynccontextmanager
+    async def refresh_lock(
+        self,
+        user_id: str,
+        integration: str,
+    ) -> AsyncIterator[bool]:
+        """Hold the OAuth refresh advisory lock for the duration of the block.
+
+        Yields True when the lock is held; False when acquisition timed out
+        (the caller should treat that as a transient refresh failure and let
+        the next attempt try again). The lock releases automatically on exit.
+
+        Integrations that mint their own bearers outside the standard
+        ``refresh_token`` flow (notably client-credentials grants with no
+        OAuth refresh token) wrap their mint-and-save sequence in this
+        lock so concurrent mints serialize through the same primitive the
+        standard refresh path uses. The lock is keyed on
+        ``(user_id, integration)``, identical to ``refresh_token`` above.
+        """
+        # Same connection-pinning constraint as ``refresh_token``: the lock
+        # must live on a dedicated ``AsyncConnection`` so the release runs
+        # on the connection that acquired it.
+        lock_conn = await get_async_engine().connect()
+        lock_key = _refresh_lock_key(user_id, integration)
+        try:
+            acquired = await _try_acquire_advisory_lock_async(lock_conn, lock_key)
+            try:
+                yield acquired
+            finally:
+                if acquired:
+                    try:
+                        await lock_conn.execute(
+                            text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                            {"k": lock_key},
+                        )
+                        await lock_conn.commit()
+                    except Exception:
+                        logger.exception(
+                            "Failed to release OAuth refresh lock: user=%s integration=%s",
+                            user_id,
+                            integration,
+                        )
+        finally:
+            await lock_conn.close()
 
     def build_on_refresh_callback(
         self,
