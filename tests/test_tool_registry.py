@@ -48,6 +48,14 @@ EXPECTED_INTEGRATION_MODULES: set[str] = {
     "backend.app.integrations.companycam.factory",
     "backend.app.integrations.gmail.factory",
     "backend.app.integrations.quickbooks.factory",
+    # The ServiceTitan integration package lives at
+    # backend/app/integrations/servicetitan/ from the fake-backend issue
+    # onward. Discovery attempts to import its factory module on every
+    # boot; until the auth scaffold lands the import raises
+    # ModuleNotFoundError, which the registry catches but the tracking
+    # ``import_module`` patch records before the call returns, so the
+    # entry shows up here.
+    "backend.app.integrations.servicetitan.factory",
     "backend.app.integrations.supplier_pricing.factory",
 }
 
