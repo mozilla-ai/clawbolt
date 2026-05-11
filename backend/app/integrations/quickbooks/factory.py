@@ -321,6 +321,101 @@ def _extract_entity_type(args: dict[str, Any]) -> str | None:
     return str(args["entity_type"]) if args.get("entity_type") else None
 
 
+# Entity types whose payload carries a ``Line`` array we render in the
+# approval prompt. Customer payloads do not have line items, so they
+# stay on the short legacy form.
+_LINE_ITEMIZED_ENTITIES: frozenset[str] = frozenset({"Invoice", "Estimate"})
+
+
+def _format_qb_write_approval_description(verb: str, args: dict[str, Any]) -> str:
+    """Render a multi-line approval prompt that names every line item.
+
+    The default builder used to print only ``"Create Invoice in
+    QuickBooks"``, which let a billing action slip through with the
+    wrong per-line math because the user could not see quantity, unit
+    price, or total before approving. Surfacing each line as
+    ``qty x $unit = $line_total`` (and the grand total) makes the
+    approval prompt the last place a mistake can be caught before
+    QuickBooks stores it. Mirrors the AppFolio fix in #1292.
+
+    Falls back to the short form (``"<verb> <entity_type> in
+    QuickBooks"``) for entity types without line items (Customer) and
+    on any malformed payload, so the prompt never crashes; the agent's
+    own typed validation will reject a bad call after approval anyway.
+
+    ``verb`` is "Create" or "Update". For Update the header includes
+    the entity Id so an admin reviewing audit logs can trace which row
+    was edited.
+    """
+    entity_type = str(args.get("entity_type") or "entity")
+    data = args.get("data") or {}
+    if not isinstance(data, dict):
+        return f"{verb} {entity_type} in QuickBooks"
+
+    short_form = f"{verb} {entity_type} in QuickBooks"
+    if verb == "Update":
+        entity_id = data.get("Id")
+        if entity_id:
+            short_form = f"{verb} {entity_type} #{entity_id} in QuickBooks"
+
+    if entity_type not in _LINE_ITEMIZED_ENTITIES:
+        return short_form
+
+    lines_raw = data.get("Line")
+    if not isinstance(lines_raw, list) or not lines_raw:
+        return short_form
+
+    parsed: list[tuple[str, float | None, float | None, float]] = []
+    grand_total = 0.0
+    for line in lines_raw:
+        if not isinstance(line, dict):
+            return short_form
+        try:
+            amount = float(line.get("Amount", 0) or 0)
+        except (TypeError, ValueError):
+            return short_form
+        description = str(line.get("Description") or "(no description)")
+        detail = line.get("SalesItemLineDetail")
+        qty: float | None = None
+        unit_price: float | None = None
+        if isinstance(detail, dict):
+            try:
+                if detail.get("Qty") is not None:
+                    qty = float(detail["Qty"])
+                if detail.get("UnitPrice") is not None:
+                    unit_price = float(detail["UnitPrice"])
+            except (TypeError, ValueError):
+                qty = None
+                unit_price = None
+        grand_total += amount
+        parsed.append((description, qty, unit_price, amount))
+
+    if not parsed:
+        return short_form
+
+    if verb == "Update":
+        entity_id = data.get("Id")
+        if entity_id:
+            header = f"{verb} {entity_type} #{entity_id} in QuickBooks for ${grand_total:.2f}"
+        else:
+            header = f"{verb} {entity_type} in QuickBooks for ${grand_total:.2f}"
+    else:
+        header = f"{verb} {entity_type} in QuickBooks for ${grand_total:.2f}"
+
+    rendered = [header]
+    for idx, (description, qty, unit_price, amount) in enumerate(parsed, start=1):
+        short_desc = description if len(description) <= 80 else description[:77] + "..."
+        if qty is not None and unit_price is not None:
+            # ``:g`` drops trailing ``.0`` so ``5.0`` reads as ``5`` while
+            # leaving genuine fractional quantities (e.g. ``1.5``) intact.
+            rendered.append(
+                f"  {idx}. {short_desc} | qty {qty:g} x ${unit_price:.2f} = ${amount:.2f}"
+            )
+        else:
+            rendered.append(f"  {idx}. {short_desc} | ${amount:.2f}")
+    return "\n".join(rendered)
+
+
 # Entity types that have a public QBO web UI page we can deep-link to.
 _WEB_LINKABLE_ENTITIES: dict[str, str] = {
     "Invoice": "invoice",
@@ -593,8 +688,8 @@ def create_quickbooks_tools(
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 resource_extractor=_extract_entity_type,
-                description_builder=lambda args: (
-                    f"Create {args.get('entity_type', 'entity')} in QuickBooks"
+                description_builder=lambda args: _format_qb_write_approval_description(
+                    "Create", args
                 ),
             ),
         ),
@@ -615,8 +710,8 @@ def create_quickbooks_tools(
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 resource_extractor=_extract_entity_type,
-                description_builder=lambda args: (
-                    f"Update {args.get('entity_type', 'entity')} in QuickBooks"
+                description_builder=lambda args: _format_qb_write_approval_description(
+                    "Update", args
                 ),
             ),
         ),
