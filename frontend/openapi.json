@@ -1706,6 +1706,28 @@
             ],
             "title": "Twilio Auth Token"
           },
+          "twilio_api_key_sid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Twilio Api Key Sid"
+          },
+          "twilio_api_key_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Twilio Api Key Secret"
+          },
           "twilio_phone_number": {
             "anyOf": [
               {

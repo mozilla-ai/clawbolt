@@ -279,6 +279,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             else f"phone {mask_pii(settings.twilio_phone_number) or '<unset>'}"
         )
         logger.info("Twilio channel enabled (sender: %s)", sender)
+        if not settings.twilio_api_key_sid or not settings.twilio_api_key_secret:
+            logger.warning(
+                "Twilio account SID and auth token are set, but "
+                "TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET are not. "
+                "Inbound webhook signature validation will work, but every "
+                "outbound send will fail at runtime. Create a Standard API "
+                "key in the Twilio console (Account, API Keys & Tokens) and "
+                "set both env vars."
+            )
         if not settings.twilio_phone_number and not settings.twilio_messaging_service_sid:
             logger.warning(
                 "Twilio credentials are set but neither TWILIO_PHONE_NUMBER "
