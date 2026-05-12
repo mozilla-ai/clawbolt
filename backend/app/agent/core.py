@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import random
 import re
@@ -122,6 +123,21 @@ def _scrub_secrets(text: str) -> str:
 _ToolEntry = tuple[int, Tool, dict[str, Any]]
 """(parsed_calls index, Tool, validated args). Threaded through the per-turn
 execution pipeline by validation, approval, and the parallel scheduler."""
+
+
+def _normalize_tool_args(args: dict[str, Any]) -> str:
+    """Canonical string form of validated tool args for duplicate detection.
+
+    Stable across dict iteration order so the same logical call always
+    hashes to the same key, regardless of how the LLM emitted the keys.
+    ``default=str`` so an unexpected non-JSON value cannot crash the
+    telemetry path; the goal here is a diagnostic signal, not a perfect
+    encoder.
+    """
+    try:
+        return json.dumps(args, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(sorted(args.items()))
 
 
 def _resolve_concurrency_group(tool: Tool, validated_args: dict[str, Any]) -> str | None:
@@ -668,6 +684,16 @@ class ClawboltAgent:
         pre_validated: list[tuple[int, Tool, dict[str, Any]]] = []
         tool_results: list[ToolResultMessage] = []
 
+        # Snapshot every (tool_name, normalized_args) pair the model has
+        # already invoked in this turn (across prior rounds). Used to emit
+        # a telemetry warning when the model fires the same call again,
+        # which is how the CompanyCam upload-storm shows up in transcripts.
+        # ``seen_in_round`` catches duplicates within this round's batch.
+        seen_in_prior_rounds: set[tuple[str, str]] = {
+            (rec.name, _normalize_tool_args(rec.args)) for rec in tool_call_records
+        }
+        seen_in_round: set[tuple[str, str]] = set()
+
         for i, tc_req in enumerate(parsed_calls):
             tool_name = tc_req.name
             tool_args = tc_req.arguments
@@ -739,6 +765,20 @@ class ClawboltAgent:
                     )
                 )
                 continue
+
+            dup_key = (tool_name, _normalize_tool_args(validated_args))
+            if dup_key in seen_in_prior_rounds or dup_key in seen_in_round:
+                # Diagnostic only: do not block. The model legitimately
+                # retries on transient errors, so an aggressive short-
+                # circuit would mask real workflows. The structured
+                # warning lets us measure the pattern across users.
+                logger.warning(
+                    "duplicate_tool_call_within_turn user=%s tool=%s args=%s",
+                    self.user.id,
+                    tool_name,
+                    dup_key[1],
+                )
+            seen_in_round.add(dup_key)
 
             pre_validated.append((i, tool_obj, validated_args))
 

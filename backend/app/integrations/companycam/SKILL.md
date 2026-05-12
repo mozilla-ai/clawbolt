@@ -17,8 +17,10 @@ When the user sends a photo with job context (client name, address, work type):
 
 1. Search for the CompanyCam project: `companycam_search_projects(query="123 Main St")`
 2. If no project found, create one: `companycam_create_project(name="Smith - 123 Main St", address="123 Main St")`
-3. Upload the photo with tags: `companycam_upload_photo(project_id="...", tags=["kitchen", "demo"], description="Kitchen demolition progress")`
+3. Upload the photo, passing the handle shown in the conversation context: `companycam_upload_photo(project_id="...", original_url="media_XXXXXX", tags=["kitchen", "demo"], description="Kitchen demolition progress")`. One call per photo, one handle per call.
 4. Summarize what you assumed (project, tags) in one short line so the user can amend.
+
+`original_url` is required: pass the handle exactly as it appears in `[Photo N, handle=media_XXXXXX]`. Do not retry an upload whose receipt is already in the conversation; a retry on the same handle returns the prior receipt, not a fresh upload.
 
 ## Tags
 
