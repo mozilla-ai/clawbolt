@@ -417,7 +417,7 @@ class AppFolioVendorService:
         return await self._request("DELETE", path)
 
     # ------------------------------------------------------------------
-    # Domain helpers (PR1: read surface + sentinel)
+    # Work orders
     # ------------------------------------------------------------------
 
     async def list_work_orders(
@@ -493,7 +493,7 @@ class AppFolioVendorService:
         return ids[0]
 
     # ------------------------------------------------------------------
-    # Domain helpers (PR2: write surface)
+    # Work-order notes
     # ------------------------------------------------------------------
 
     async def list_work_order_notes(self, work_order_id: str) -> Any:
@@ -558,7 +558,7 @@ class AppFolioVendorService:
         )
 
     # ------------------------------------------------------------------
-    # Domain helpers: invoices
+    # Invoices
     # ------------------------------------------------------------------
 
     async def create_invoice(

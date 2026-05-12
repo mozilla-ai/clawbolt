@@ -30,7 +30,10 @@ class AppFolioListWorkOrdersParams(BaseModel):
     )
     include_estimates: bool = Field(
         default=True,
-        description="Include work orders waiting on an estimate.",
+        description=(
+            "Include work orders where the property manager is asking the"
+            " vendor for an estimate (AppFolio-side filter)."
+        ),
     )
     customer_id: str = Field(
         default="",
