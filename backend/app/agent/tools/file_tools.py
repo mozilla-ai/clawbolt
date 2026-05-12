@@ -523,7 +523,9 @@ def create_file_tools(
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 description_builder=lambda args: (
-                    f"Search saved files for {args.get('query') or 'recent files'}"
+                    f"Search saved files for '{args['query']}'"
+                    if args.get("query")
+                    else "List recent saved files"
                 ),
             ),
         ),
@@ -538,9 +540,7 @@ def create_file_tools(
             usage_hint="Inspect a saved receipt or photo again without asking for a resend.",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
-                description_builder=lambda args: (
-                    f"Analyze saved file {args.get('file_ref') or ''}".rstrip()
-                ),
+                description_builder=lambda args: f"Analyze saved file {args['file_ref']}",
             ),
         ),
     ]
