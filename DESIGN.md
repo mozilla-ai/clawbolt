@@ -1,7 +1,7 @@
 # Design System -- Clawbolt
 
 ## Product Context
-- **What this is:** AI assistant for the trades. Users manage their contracting business via messaging (Telegram, webchat): estimates, client records, job photos, voice memos, file organization.
+- **What this is:** AI assistant for the trades. Users manage their contracting business via messaging (iMessage, RCS, SMS, Telegram, web chat): estimates, client records, job photos, voice memos, file organization.
 - **Who it's for:** Contractors, handymen, tradespeople. Often on phones at job sites, not sitting at desks.
 - **Space/industry:** Field service management / trades SaaS. Peers: Housecall Pro, Jobber, ServiceTitan, ContractorPlus.
 - **Project type:** Web app dashboard + chat interface.
