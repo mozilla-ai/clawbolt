@@ -8,7 +8,7 @@ time:
   ``appfolio_connect`` tool. This must stay reachable even when the user
   has no credential, since pasting the token *is* the connect path.
 * ``appfolio_vendor`` (specialist, gated on connection state): the data
-  tools (work orders, notes, invoices, payments, etc.). When the user
+  tools (work-order reads, notes with photos, invoices). When the user
   is not yet connected, ``_appfolio_vendor_auth_check`` returns a reason
   string so the registry surfaces it under "Not connected" rather than
   letting the LLM believe AppFolio is ready to use.

@@ -1,7 +1,6 @@
 """Work-order read tools for AppFolio Vendor Portal.
 
-PR1 surface: list, search, get. Write tools (accept, schedule,
-status updates, notes with photos) ship in PR2.
+Surface: list, search, get. Note writes (with photos) live in ``notes``.
 """
 
 from __future__ import annotations
