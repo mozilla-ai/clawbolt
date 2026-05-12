@@ -484,7 +484,9 @@ def create_file_tools(
             description=(
                 "Find files that were already saved to durable storage. Use this "
                 "to pull up older receipts, photos, or documents by client name, "
-                "address, filename, or saved description."
+                "address, filename, or saved description. Only returns files "
+                "Clawbolt uploaded itself; files the user added to the Clawbolt "
+                "folder directly in Drive are not visible to this tool."
             ),
             function=find_saved_files,
             params_model=FindSavedFilesParams,
