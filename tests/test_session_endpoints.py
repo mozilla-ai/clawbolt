@@ -99,10 +99,20 @@ async def test_get_conversation_full_detail(client: TestClient, test_user: User)
     assert data["messages"][1]["tool_interactions"][0]["tool"] == "save_fact"
 
 
-async def test_get_conversation_appends_receipts_to_outbound(
+async def test_get_conversation_serves_outbound_body_verbatim(
     client: TestClient, test_user: User
 ) -> None:
-    """Outbound messages with tool receipts include the rendered receipt block."""
+    """Outbound bodies are returned exactly as stored.
+
+    ``persist_outbound`` stores ``AgentResponse.dispatched_body``, which is
+    the LLM prose with any receipt block already appended by
+    ``dispatch_reply_step``. The session-history endpoint must not re-append:
+    doing so duplicates every receipt line on webchat history loads
+    (regression from PR #1055 surfaced by #1328).
+    """
+    dispatched_body = (
+        "Done!\n\n- Created CompanyCam project Smith Residence\n  app.companycam.com/projects/12345"
+    )
     tool_json = json.dumps(
         [
             {
@@ -130,7 +140,7 @@ async def test_get_conversation_appends_receipts_to_outbound(
             },
             {
                 "direction": "outbound",
-                "body": "Done!",
+                "body": dispatched_body,
                 "timestamp": "2025-01-15T10:02:00",
                 "seq": 2,
                 "tool_interactions_json": tool_json,
@@ -140,15 +150,14 @@ async def test_get_conversation_appends_receipts_to_outbound(
     resp = client.get("/api/user/conversation")
     assert resp.status_code == 200
     body = resp.json()["messages"][1]["body"]
-    assert body.startswith("Done!")
-    assert "Created CompanyCam project Smith Residence" in body
-    # Compact URL rendering (issue #976) strips the https:// prefix.
-    assert "app.companycam.com/projects/12345" in body
-    assert "https://" not in body
+    assert body == dispatched_body
+    # The receipt line must appear exactly once; the bug was that the
+    # endpoint re-appended a second copy from ``tool_interactions``.
+    assert body.count("Created CompanyCam project Smith Residence") == 1
 
 
 async def test_get_conversation_inbound_body_unchanged(client: TestClient, test_user: User) -> None:
-    """Receipt append must only apply to outbound messages, never inbound."""
+    """Inbound bodies pass through unchanged regardless of tool_interactions."""
     tool_json = json.dumps(
         [
             {

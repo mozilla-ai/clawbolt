@@ -14,12 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from backend.app.agent.concurrency import user_locks
-from backend.app.agent.context import StoredToolInteraction
 from backend.app.agent.onboarding import build_onboarding_system_prompt, is_in_onboarding_flow
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.system_prompt import build_agent_system_prompt
 from backend.app.agent.tool_assembly import build_initial_turn_tools
-from backend.app.agent.tool_summary import append_receipts
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import AsyncSessionLocal
 from backend.app.models import ChatSession, User
@@ -85,25 +83,15 @@ async def get_conversation(
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 tool_interactions = json.loads(msg.tool_interactions_json)
 
-        # Mirror the channel-side transform: outbound replies render with the
-        # deterministic receipt block appended, matching what iMessage/Telegram
-        # users receive. Messages in the DB store the raw LLM reply so the
-        # agent's own history stays clean; the receipt block is recomputed
-        # here for the display surface.
-        body = msg.body
-        if msg.direction == "outbound" and tool_interactions:
-            stored: list[StoredToolInteraction] = []
-            for entry in tool_interactions:
-                with contextlib.suppress(Exception):
-                    stored.append(StoredToolInteraction.model_validate(entry))
-            if stored:
-                body = append_receipts(body, stored)
-
+        # ``msg.body`` already contains the receipt block when applicable:
+        # ``dispatch_reply_step`` appends receipts before publishing, and
+        # ``persist_outbound`` stores that dispatched body. Re-appending here
+        # would duplicate every receipt line on webchat history loads.
         messages.append(
             SessionMessage(
                 seq=msg.seq,
                 direction=msg.direction,
-                body=body,
+                body=msg.body,
                 timestamp=msg.timestamp,
                 tool_interactions=tool_interactions,
             )
