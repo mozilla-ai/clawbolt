@@ -273,7 +273,6 @@ class ModelConfigUpdate(BaseModel):
 class SubToolEntryResponse(BaseModel):
     name: str
     description: str
-    enabled: bool
     permission_level: str = "always"
     hidden_in_permissions: bool = False
 
@@ -306,10 +305,23 @@ class ToolConfigResponse(BaseModel):
     tools: list[ToolConfigEntryResponse]
 
 
+class SubToolPermissionUpdate(BaseModel):
+    """Per-sub-tool permission override sent by the Settings UI.
+
+    ``permission_level`` is the new value: ``"always"`` (auto-run),
+    ``"ask"`` (prompt before running), or ``"never"`` (hide from the
+    LLM schema). Sub-tools omitted from the update list keep their
+    current stored level.
+    """
+
+    name: str
+    permission_level: str
+
+
 class ToolConfigUpdateEntry(BaseModel):
     name: str
     enabled: bool
-    disabled_sub_tools: list[str] | None = None
+    sub_tools: list[SubToolPermissionUpdate] | None = None
 
 
 class ToolConfigUpdate(BaseModel):

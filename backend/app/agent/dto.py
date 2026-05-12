@@ -100,11 +100,17 @@ class HeartbeatLogEntry(BaseModel):
 
 
 class SubToolEntry(BaseModel):
-    """An individual tool within a tool group."""
+    """An individual tool within a tool group.
+
+    ``permission_level`` is the authoritative user preference for this
+    sub-tool. ``"always"`` runs freely, ``"ask"`` prompts before each call,
+    ``"never"`` filters the tool out of the LLM schema entirely. The
+    legacy ``disabled_sub_tools`` column on ``tool_configs`` was collapsed
+    into this single field.
+    """
 
     name: str = ""
     description: str = ""
-    enabled: bool = True
     permission_level: str = "always"
     hidden_in_permissions: bool = False
 
@@ -119,4 +125,3 @@ class ToolConfigEntry(BaseModel):
     domain_group_order: int = 0
     enabled: bool = True
     sub_tools: list[SubToolEntry] = Field(default_factory=list)
-    disabled_sub_tools: list[str] = Field(default_factory=list)

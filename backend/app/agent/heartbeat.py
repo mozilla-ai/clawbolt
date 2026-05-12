@@ -541,6 +541,7 @@ async def execute_heartbeat_tasks(
     task description as if it were a user message.  Returns the full
     ``AgentResponse``, or *None* if the agent failed or produced no output.
     """
+    from backend.app.agent.approval import get_approval_store
     from backend.app.agent.core import ClawboltAgent
     from backend.app.agent.stores import ToolConfigStore
     from backend.app.agent.tools.registry import (
@@ -573,12 +574,14 @@ async def execute_heartbeat_tasks(
         to_address=chat_id,
     )
 
-    # Load user's disabled tool groups and sub-tools (same as the normal
-    # message flow in router.py) so the heartbeat respects the user's
-    # tool configuration.
+    # Load user's disabled tool groups and the set of sub-tools the
+    # user has set to ``"never"`` in PERMISSIONS.json. The latter is the
+    # schema-level off switch that replaced the legacy
+    # ``disabled_sub_tools`` column on ``tool_configs``: a NEVER sub-tool
+    # is filtered out of the LLM schema so the agent never sees it.
     tool_config_store = ToolConfigStore(user.id)
     disabled_groups = await tool_config_store.get_disabled_tool_names()
-    disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
+    disabled_sub_tools = await get_approval_store().get_never_tool_names(user.id)
 
     excluded = disabled_groups or set()
 

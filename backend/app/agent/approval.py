@@ -5,8 +5,9 @@ autonomously vs. what requires explicit approval. Tools opt in by setting
 an ``approval_policy`` on their ``Tool`` definition.
 
 Three permission levels: ALWAYS (execute freely), ASK (prompt user first),
-DENY (never execute). Users can respond with yes/always/no/never to
-control both immediate and future behavior.
+NEVER (filter the tool out of the LLM schema entirely so it cannot be
+called). Users can respond with yes/always/no/never to control both
+immediate and future behavior.
 
 Sequential approval: when a user request triggers multiple tools, each
 tool that requires approval gets its own prompt. The user approves or
@@ -92,11 +93,19 @@ def _select_user_permissions(user_id: str) -> Any:
 
 
 class PermissionLevel(StrEnum):
-    """Permission level for a tool or resource."""
+    """Permission level for a tool or resource.
+
+    ``ALWAYS`` runs the tool freely. ``ASK`` prompts the user before each
+    invocation. ``NEVER`` filters the tool out of the LLM schema entirely
+    so the agent cannot call it. ``NEVER`` is the schema-level off switch
+    that replaced the legacy ``disabled_sub_tools`` column on
+    ``tool_configs``: a single per-user-per-tool override now lives only
+    in ``user_permissions``.
+    """
 
     ALWAYS = "always"
     ASK = "ask"
-    DENY = "deny"
+    NEVER = "never"
 
 
 class ApprovalDecision(StrEnum):
@@ -214,7 +223,7 @@ class ApprovalStore:
 
         {
             "version": 1,
-            "tools": {"web_search": "always", "bash_exec": "deny"},
+            "tools": {"web_search": "always", "bash_exec": "never"},
             "resources": {
                 "web_fetch": {"homedepot.com": "always", "*.gov": "always"}
             }
@@ -328,6 +337,25 @@ class ApprovalStore:
     async def reset_permissions(self, user_id: str) -> None:
         """Reset all permissions to defaults."""
         await self._save(user_id, self.generate_defaults(user_id))
+
+    async def get_never_tool_names(self, user_id: str) -> set[str]:
+        """Return the set of tool names whose stored permission is ``NEVER``.
+
+        Router and heartbeat code pass this to the registry's
+        ``excluded_tool_names`` so a ``NEVER`` sub-tool is never surfaced
+        in the LLM schema. Resource-level overrides do not gate schema
+        visibility (the tool may still be valid for other resources), so
+        they are not considered here.
+        """
+        data = await self._load(user_id)
+        tools = data.get("tools", {})
+        if not isinstance(tools, dict):
+            return set()
+        return {
+            name
+            for name, level in tools.items()
+            if isinstance(level, str) and level == PermissionLevel.NEVER.value
+        }
 
     async def set_permission(
         self,

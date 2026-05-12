@@ -277,15 +277,19 @@ async def run_agent(
         turn_text=message.body or "",
     )
 
-    # Load user's disabled tool groups and individual sub-tools.
+    # Load user's disabled tool groups and the set of sub-tools marked
+    # ``"never"`` in PERMISSIONS.json. Sub-tools at NEVER are filtered
+    # out of the LLM schema so the agent never sees them; this replaced
+    # the legacy ``disabled_sub_tools`` column on ``tool_configs``.
     tool_config_store = ToolConfigStore(user.id)
     disabled_groups = await tool_config_store.get_disabled_tool_names()
-    disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
 
     # Ensure PERMISSIONS.json exists with all tools backfilled so the
     # agent can read/edit it and the approval store resolves from it.
 
-    await get_approval_store().ensure_complete(user.id)
+    approval_store = get_approval_store()
+    await approval_store.ensure_complete(user.id)
+    disabled_sub_tools = await approval_store.get_never_tool_names(user.id)
 
     agent = ClawboltAgent(
         user=user,

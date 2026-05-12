@@ -49,9 +49,9 @@ async def test_set_permission_persists_and_reads_back(
     ``load_user_permissions`` so the agent loop and the dashboard
     both see the same data via the async API."""
     store = ApprovalStore()
-    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
+    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.NEVER)
     data = await store.load_user_permissions(async_test_user.id)
-    assert data["tools"]["send_media_reply"] == "deny"
+    assert data["tools"]["send_media_reply"] == "never"
 
 
 @pytest.mark.asyncio()
@@ -93,13 +93,13 @@ async def test_reset_permissions_writes_defaults(
 ) -> None:
     """``reset_permissions`` should clobber any prior overrides."""
     store = ApprovalStore()
-    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
+    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.NEVER)
     await store.reset_permissions(async_test_user.id)
     data = await store.load_user_permissions(async_test_user.id)
-    # Default for send_media_reply is not "deny" (the registry default
+    # Default for send_media_reply is not "never" (the registry default
     # depends on the tool's declaration). Asserting the override is
     # gone is enough to prove reset wrote new data.
-    assert data["tools"].get("send_media_reply") != "deny"
+    assert data["tools"].get("send_media_reply") != "never"
 
 
 # ---------------------------------------------------------------------------
@@ -261,9 +261,9 @@ async def test_async_isolation_rolls_back_between_tests_part_a(
     """Write a permission row through the async API. ``part_b`` asserts
     it disappeared after this test's transaction was rolled back."""
     store = ApprovalStore()
-    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.DENY)
+    await store.set_permission(async_test_user.id, "send_media_reply", PermissionLevel.NEVER)
     data = await store.load_user_permissions(async_test_user.id)
-    assert data["tools"]["send_media_reply"] == "deny"
+    assert data["tools"]["send_media_reply"] == "never"
 
 
 @pytest.mark.asyncio()
@@ -276,5 +276,5 @@ async def test_async_isolation_rolls_back_between_tests_part_b(
     store = ApprovalStore()
     data = await store.load_user_permissions(async_test_user.id)
     # Either no row exists or, after ensure_complete, the registry default
-    # for send_media_reply is whatever the registry says, not "deny".
-    assert data.get("tools", {}).get("send_media_reply") != "deny"
+    # for send_media_reply is whatever the registry says, not "never".
+    assert data.get("tools", {}).get("send_media_reply") != "never"

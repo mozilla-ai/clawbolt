@@ -120,7 +120,7 @@ class TestApprovalStore:
 
     async def test_resource_priority_over_tool(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        await store.set_permission("1", "web_fetch", PermissionLevel.DENY)
+        await store.set_permission("1", "web_fetch", PermissionLevel.NEVER)
         await store.set_permission("1", "web_fetch", PermissionLevel.ALWAYS, resource="safe.com")
         level = await store.check_permission(
             "1", "web_fetch", resource="safe.com", default=PermissionLevel.ASK
@@ -129,22 +129,22 @@ class TestApprovalStore:
 
     async def test_falls_through_to_tool_when_no_resource_match(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        await store.set_permission("1", "web_fetch", PermissionLevel.DENY)
+        await store.set_permission("1", "web_fetch", PermissionLevel.NEVER)
         level = await store.check_permission(
             "1", "web_fetch", resource="unknown.com", default=PermissionLevel.ASK
         )
-        assert level == PermissionLevel.DENY
+        assert level == PermissionLevel.NEVER
 
     async def test_persistence_round_trip(self, tmp_path: object) -> None:
         store1 = ApprovalStore()
         await store1.set_permission("1", "web_search", PermissionLevel.ALWAYS)
-        await store1.set_permission("1", "web_fetch", PermissionLevel.DENY, resource="evil.com")
+        await store1.set_permission("1", "web_fetch", PermissionLevel.NEVER, resource="evil.com")
 
         store2 = ApprovalStore()
         assert await store2.check_permission("1", "web_search") == PermissionLevel.ALWAYS
         assert (
             await store2.check_permission("1", "web_fetch", resource="evil.com")
-            == PermissionLevel.DENY
+            == PermissionLevel.NEVER
         )
 
 
@@ -177,11 +177,11 @@ class TestApprovalStoreComplete:
         store = ApprovalStore()
         # Start with a partial file
         await store._save(
-            "backfill-user", {"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}}
+            "backfill-user", {"version": 1, "tools": {"send_media_reply": "never"}, "resources": {}}
         )
         data = await store.ensure_complete("backfill-user")
         # send_media_reply should keep its override
-        assert data["tools"]["send_media_reply"] == "deny"
+        assert data["tools"]["send_media_reply"] == "never"
         # Other tools should have been backfilled
         assert len(data["tools"]) > 1
 
@@ -192,19 +192,19 @@ class TestApprovalStoreComplete:
             "preserve-user",
             {
                 "version": 1,
-                "tools": {"send_media_reply": "deny", "read_file": "ask"},
-                "resources": {"web_fetch": {"evil.com": "deny"}},
+                "tools": {"send_media_reply": "never", "read_file": "ask"},
+                "resources": {"web_fetch": {"evil.com": "never"}},
             },
         )
         data = await store.ensure_complete("preserve-user")
-        assert data["tools"]["send_media_reply"] == "deny"
+        assert data["tools"]["send_media_reply"] == "never"
         assert data["tools"]["read_file"] == "ask"
-        assert data["resources"]["web_fetch"]["evil.com"] == "deny"
+        assert data["resources"]["web_fetch"]["evil.com"] == "never"
 
     async def test_reset_permissions_writes_defaults(self, tmp_path: object) -> None:
         """reset_permissions replaces everything with defaults."""
         store = ApprovalStore()
-        await store.set_permission("reset-user", "send_media_reply", PermissionLevel.DENY)
+        await store.set_permission("reset-user", "send_media_reply", PermissionLevel.NEVER)
         await store.reset_permissions("reset-user")
         data = await store._load("reset-user")
         # send_media_reply should be back to its default, not deny
@@ -218,11 +218,11 @@ class TestApprovalStoreComplete:
         defaults = store.generate_defaults("set-perm-user")
         original_count = len(defaults["tools"])
 
-        await store.set_permission("set-perm-user", "send_media_reply", PermissionLevel.DENY)
+        await store.set_permission("set-perm-user", "send_media_reply", PermissionLevel.NEVER)
         data = await store._load("set-perm-user")
         # All tools should still be present
         assert len(data["tools"]) >= original_count
-        assert data["tools"]["send_media_reply"] == "deny"
+        assert data["tools"]["send_media_reply"] == "never"
 
 
 # ---------------------------------------------------------------------------
@@ -818,7 +818,7 @@ class TestAgentApproval:
             description="Dangerous tool",
             function=_echo_tool,
             params_model=_EchoParams,
-            approval_policy=ApprovalPolicy(default_level=PermissionLevel.DENY),
+            approval_policy=ApprovalPolicy(default_level=PermissionLevel.NEVER),
         )
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response([{"name": "dangerous", "arguments": {"text": "boom"}}]),
@@ -1007,7 +1007,7 @@ class TestAgentApproval:
 
         store = get_approval_store()
         level = await store.check_permission(test_user.id, "fetcher")
-        assert level == PermissionLevel.DENY
+        assert level == PermissionLevel.NEVER
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")

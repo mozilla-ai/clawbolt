@@ -26,19 +26,19 @@ def test_update_permissions(client: TestClient, test_user: User) -> None:
     parsed = json.loads(resp.json()["content"])
 
     # Modify a permission
-    parsed["tools"]["send_media_reply"] = "deny"
+    parsed["tools"]["send_media_reply"] = "never"
     resp = client.put(
         "/api/user/permissions",
         json={"content": json.dumps(parsed)},
     )
     assert resp.status_code == 200
     updated = json.loads(resp.json()["content"])
-    assert updated["tools"]["send_media_reply"] == "deny"
+    assert updated["tools"]["send_media_reply"] == "never"
 
     # Verify it persisted
     resp2 = client.get("/api/user/permissions")
     persisted = json.loads(resp2.json()["content"])
-    assert persisted["tools"]["send_media_reply"] == "deny"
+    assert persisted["tools"]["send_media_reply"] == "never"
 
 
 def test_update_permissions_invalid_json(client: TestClient, test_user: User) -> None:
@@ -91,6 +91,20 @@ def test_update_permissions_invalid_resource_level(client: TestClient, test_user
         "tools": {},
         "resources": {"web_fetch": {"evil.com": "nope"}},
     }
+    resp = client.put(
+        "/api/user/permissions",
+        json={"content": json.dumps(payload)},
+    )
+    assert resp.status_code == 400
+    assert "Invalid permission level" in resp.json()["detail"]
+
+
+def test_update_permissions_rejects_legacy_deny_value(client: TestClient, test_user: User) -> None:
+    """``"deny"`` was renamed to ``"never"`` in the disabled_sub_tools
+    collapse. The endpoint must reject the old keyword so a stale
+    client cannot silently write a value the runtime no longer
+    understands."""
+    payload = {"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}}
     resp = client.put(
         "/api/user/permissions",
         json={"content": json.dumps(payload)},

@@ -3,6 +3,11 @@
 Users can view and toggle domain-specific agent tools. Factories that
 declare ``dashboard_always_enabled=True`` at registration cannot be
 toggled off from the Settings UI.
+
+Per-sub-tool preferences live in ``user_permissions`` (the same store
+that backs ``PERMISSIONS.json``); the legacy ``disabled_sub_tools``
+column on ``tool_configs`` was collapsed into ``permission_level``
+values of ``"never"``.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -32,7 +37,6 @@ ensure_tool_modules_imported()
 
 async def _build_tool_list(
     disabled_names: set[str],
-    disabled_sub_tools_map: dict[str, list[str]] | None = None,
     user_id: str | None = None,
 ) -> list[ToolConfigEntry]:
     """Build the full tool config list from the registry.
@@ -41,14 +45,11 @@ async def _build_tool_list(
     ``dashboard_always_enabled=True`` are always enabled; others respect
     the user's disabled set.
 
-    When *disabled_sub_tools_map* is provided, it maps factory names to
-    lists of disabled individual tool names within that factory.
-
     When *user_id* is provided, per-user permission overrides from the
-    ``ApprovalStore`` are resolved for each sub-tool.
+    ``ApprovalStore`` are resolved for each sub-tool so the response
+    carries the user's preferred ``permission_level`` per sub-tool.
     """
-    sub_map = disabled_sub_tools_map or {}
-    # Load permission data once to avoid repeated file reads per sub-tool.
+    # Load permission data once to avoid repeated DB reads per sub-tool.
     approval_store = get_approval_store() if user_id else None
     perm_data = (
         await approval_store.load_user_permissions(user_id) if approval_store and user_id else None
@@ -65,14 +66,14 @@ async def _build_tool_list(
         is_core = factory.dashboard_always_enabled
         enabled = True if is_core else name not in disabled_names
 
-        # Build sub-tool entries from registry metadata
+        # Build sub-tool entries from registry metadata. The permission
+        # level resolves through the same logic the agent uses, so the
+        # Settings UI surfaces exactly what the runtime will enforce.
         factory_sub_tools = default_registry.get_factory_sub_tools(name)
-        disabled_subs = set(sub_map.get(name, []))
         sub_tool_entries = [
             SubToolEntry(
                 name=st.name,
                 description=st.description,
-                enabled=st.name not in disabled_subs,
                 permission_level=str(
                     ApprovalStore.resolve_permission(
                         perm_data,
@@ -96,7 +97,6 @@ async def _build_tool_list(
                 domain_group_order=factory.dashboard_group_order,
                 enabled=enabled,
                 sub_tools=sub_tool_entries,
-                disabled_sub_tools=list(disabled_subs),
             )
         )
     return entries
@@ -175,7 +175,6 @@ def _entry_to_response(
             SubToolEntryResponse(
                 name=st.name,
                 description=st.description,
-                enabled=st.enabled,
                 permission_level=st.permission_level,
                 hidden_in_permissions=st.hidden_in_permissions,
             )
@@ -192,10 +191,12 @@ async def get_tool_config(
     store = ToolConfigStore(current_user.id)
     saved = await store.load()
     disabled_names = {e.name for e in saved if not e.enabled}
-    disabled_sub_map = {e.name: e.disabled_sub_tools for e in saved if e.disabled_sub_tools}
-    entries = await _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
+    entries = await _build_tool_list(disabled_names, user_id=current_user.id)
     auth_issues = await _get_auth_status(current_user)
     return ToolConfigResponse(tools=[_entry_to_response(e, auth_issues) for e in entries])
+
+
+_VALID_PERMISSION_LEVELS = {level.value for level in PermissionLevel}
 
 
 @router.put("/user/tools", response_model=ToolConfigResponse)
@@ -209,21 +210,22 @@ async def update_tool_config(
     toggled at the factory level. Attempts to disable always-enabled
     tools are silently ignored.
 
-    Each entry may include ``disabled_sub_tools`` to control individual
-    tools within a factory group.
+    Each entry may include a ``sub_tools`` list with explicit
+    ``permission_level`` values to override individual sub-tools. Levels
+    are persisted to ``user_permissions``; ``"never"`` filters the
+    sub-tool out of the LLM schema on the next turn.
     """
     if not body.tools:
         raise HTTPException(status_code=400, detail="No tools to update")
 
-    # Load current config to merge with
+    # Load current factory-level config to merge with.
     store = ToolConfigStore(current_user.id)
     saved = await store.load()
     disabled_names = {e.name for e in saved if not e.enabled}
-    disabled_sub_map: dict[str, list[str]] = {
-        e.name: e.disabled_sub_tools for e in saved if e.disabled_sub_tools
-    }
 
-    # Apply changes, ignoring always-enabled tools
+    approval_store = get_approval_store()
+
+    # Apply changes, ignoring always-enabled tools.
     valid_factories = set(default_registry.factory_names)
     for update_entry in body.tools:
         name = update_entry.name
@@ -239,19 +241,28 @@ async def update_tool_config(
         else:
             disabled_names.add(name)
 
-        # Handle sub-tool toggles (applies to both core and domain factories,
-        # allowing fine-grained control like read-only workspace mode).
-        if update_entry.disabled_sub_tools is not None:
-            # Validate sub-tool names against registry metadata
+        if update_entry.sub_tools:
             valid_sub_names = {st.name for st in default_registry.get_factory_sub_tools(name)}
-            filtered = [s for s in update_entry.disabled_sub_tools if s in valid_sub_names]
-            if filtered:
-                disabled_sub_map[name] = filtered
-            else:
-                disabled_sub_map.pop(name, None)
+            for sub_update in update_entry.sub_tools:
+                if sub_update.name not in valid_sub_names:
+                    continue
+                if sub_update.permission_level not in _VALID_PERMISSION_LEVELS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Invalid permission_level {sub_update.permission_level!r} "
+                            f"for sub-tool {sub_update.name!r}. "
+                            f"Allowed values: {', '.join(sorted(_VALID_PERMISSION_LEVELS))}"
+                        ),
+                    )
+                await approval_store.set_permission(
+                    current_user.id,
+                    sub_update.name,
+                    PermissionLevel(sub_update.permission_level),
+                )
 
-    # Build and save the full config
-    entries = await _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
+    # Build and save the full factory-level config.
+    entries = await _build_tool_list(disabled_names, user_id=current_user.id)
     await store.save(entries)
 
     auth_issues = await _get_auth_status(current_user)

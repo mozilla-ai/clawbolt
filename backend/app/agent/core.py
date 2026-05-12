@@ -797,7 +797,14 @@ class ClawboltAgent:
             level, resource, description = await self._get_tool_permission(tool_obj, v_args)
             if level == PermissionLevel.ALWAYS:
                 auto_entries.append(entry)
-            elif level == PermissionLevel.DENY:
+            elif level == PermissionLevel.NEVER:
+                # NEVER is the schema-level off switch: the registry
+                # already filters NEVER tools out of the LLM schema in
+                # router.py / heartbeat.py. Reaching this branch means
+                # the resolved level differs from the schema decision
+                # (e.g. a resource-scoped override flipped after the
+                # schema was built). Surface it as a permission denial
+                # rather than executing.
                 deny_entries.append(entry)
             else:
                 ask_entries.append((entry, resource, description))
@@ -925,10 +932,10 @@ class ClawboltAgent:
                     if decision == ApprovalDecision.ALWAYS_DENY:
                         try:
                             await store.set_permission(
-                                self.user.id, tool_obj.name, PermissionLevel.DENY, resource
+                                self.user.id, tool_obj.name, PermissionLevel.NEVER, resource
                             )
                         except Exception:
-                            logger.warning("Failed to persist DENY for tool %s", tool_obj.name)
+                            logger.warning("Failed to persist NEVER for tool %s", tool_obj.name)
 
                     tool_tags = self._get_tool_tags(tc_req.name)
                     hint = _ERROR_KIND_HINTS[ToolErrorKind.PERMISSION]

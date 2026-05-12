@@ -10,7 +10,6 @@ PR #1199.
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 
 from sqlalchemy import func, select
@@ -40,7 +39,6 @@ def _entry(
     enabled: bool = True,
     domain_group: str = "core",
     domain_group_order: int = 0,
-    disabled_sub_tools: list[str] | None = None,
 ) -> ToolConfigEntry:
     """Build a ``ToolConfigEntry`` for tests with sensible defaults."""
     return ToolConfigEntry(
@@ -50,7 +48,6 @@ def _entry(
         domain_group=domain_group,
         domain_group_order=domain_group_order,
         enabled=enabled,
-        disabled_sub_tools=disabled_sub_tools or [],
     )
 
 
@@ -90,25 +87,6 @@ async def test_async_save_replaces_existing_rows(
 
     loaded = await store.load_async()
     assert [e.name for e in loaded] == ["workspace"]
-
-
-async def test_async_save_persists_disabled_sub_tools_as_json(
-    async_db: async_sessionmaker,
-    async_test_user: User,
-) -> None:
-    """``save_async`` JSON-encodes ``disabled_sub_tools`` (matches sync)."""
-    store = ToolConfigStore(async_test_user.id)
-    await store.save_async([_entry("workspace", disabled_sub_tools=["delete_file", "rename_file"])])
-
-    async with async_db() as db:
-        raw = (
-            await db.execute(
-                select(ToolConfig.disabled_sub_tools).where(
-                    ToolConfig.user_id == async_test_user.id, ToolConfig.name == "workspace"
-                )
-            )
-        ).scalar_one()
-    assert json.loads(raw) == ["delete_file", "rename_file"]
 
 
 async def test_async_save_empty_list_clears_rows(
@@ -215,39 +193,6 @@ async def test_async_set_enabled_updates_existing_row(
     assert "calendar" in await store.get_disabled_tool_names_async()
     # No duplicate row inserted.
     assert await _row_count(async_db, async_test_user.id) == 1
-
-
-# ---------------------------------------------------------------------------
-# get_disabled_sub_tool_names_async
-# ---------------------------------------------------------------------------
-
-
-async def test_async_get_disabled_sub_tool_names_unions_across_groups(
-    async_db: async_sessionmaker,
-    async_test_user: User,
-) -> None:
-    """``get_disabled_sub_tool_names_async`` unions sub-tool names across all groups."""
-    store = ToolConfigStore(async_test_user.id)
-    await store.save_async(
-        [
-            _entry("workspace", disabled_sub_tools=["delete_file", "rename_file"]),
-            _entry("calendar", disabled_sub_tools=["delete_event"]),
-            _entry("billing", disabled_sub_tools=[]),
-        ]
-    )
-
-    disabled_subs = await store.get_disabled_sub_tool_names_async()
-    assert disabled_subs == {"delete_file", "rename_file", "delete_event"}
-
-
-async def test_async_get_disabled_sub_tool_names_empty(
-    async_db: async_sessionmaker,
-    async_test_user: User,
-) -> None:
-    """Returns ``set()`` when no group declares any disabled sub-tools."""
-    store = ToolConfigStore(async_test_user.id)
-    await store.save_async([_entry("workspace")])
-    assert await store.get_disabled_sub_tool_names_async() == set()
 
 
 # ---------------------------------------------------------------------------

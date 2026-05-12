@@ -80,7 +80,7 @@ def _deny_tool(name: str = "blocked") -> Tool:
         description="Blocked tool",
         function=_echo_tool,
         params_model=_EchoParams,
-        approval_policy=ApprovalPolicy(default_level=PermissionLevel.DENY),
+        approval_policy=ApprovalPolicy(default_level=PermissionLevel.NEVER),
     )
 
 
@@ -374,8 +374,8 @@ class TestBatchApproval:
         await task
 
         store = get_approval_store()
-        assert await store.check_permission(test_user.id, "writer") == PermissionLevel.DENY
-        assert await store.check_permission(test_user.id, "sender") == PermissionLevel.DENY
+        assert await store.check_permission(test_user.id, "writer") == PermissionLevel.NEVER
+        assert await store.check_permission(test_user.id, "sender") == PermissionLevel.NEVER
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")

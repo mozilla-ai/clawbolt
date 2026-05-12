@@ -13,6 +13,7 @@ storage/publish hooks just to read tool schemas.
 
 from __future__ import annotations
 
+from backend.app.agent.approval import get_approval_store
 from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.registry import (
@@ -59,7 +60,10 @@ async def build_initial_turn_tools(
 
     tool_config_store = ToolConfigStore(user.id)
     disabled_groups = await tool_config_store.get_disabled_tool_names()
-    disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
+    # Sub-tools the user marked ``"never"`` in PERMISSIONS.json are
+    # filtered out of the LLM schema, mirroring the runtime router /
+    # heartbeat flow so previews reflect the real tool list.
+    disabled_sub_tools = await get_approval_store().get_never_tool_names(user.id)
 
     tools = await default_registry.create_core_tools(
         tool_context,

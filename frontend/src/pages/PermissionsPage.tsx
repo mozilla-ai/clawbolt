@@ -4,21 +4,12 @@ import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useToolConfig, usePermissions, useUpdatePermissions } from '@/hooks/queries';
 import { displayName, subToolDisplayName } from '@/lib/tool-utils';
+import PermissionSelector, {
+  PERM_OPTIONS,
+  PERM_ACTIVE_STYLES,
+  type PermLevel,
+} from '@/components/PermissionSelector';
 import type { ToolConfigEntryResponse, SubToolEntryResponse } from '@/types';
-
-type PermLevel = 'always' | 'ask' | 'deny';
-
-const PERM_OPTIONS: { value: PermLevel; label: string }[] = [
-  { value: 'always', label: 'Runs freely' },
-  { value: 'ask', label: 'Asks first' },
-  { value: 'deny', label: 'Blocked' },
-];
-
-const PERM_ACTIVE_STYLES: Record<PermLevel, string> = {
-  always: 'bg-muted text-success font-medium',
-  ask: 'bg-muted text-warning font-medium',
-  deny: 'bg-muted text-danger font-medium',
-};
 
 export default function PermissionsPage() {
   const { data: toolData, isPending: toolsPending, isError } = useToolConfig();
@@ -37,7 +28,7 @@ export default function PermissionsPage() {
       for (const [toolName, overrides] of Object.entries(raw)) {
         const levels: Record<string, PermLevel> = {};
         for (const [resource, level] of Object.entries(overrides)) {
-          if (level === 'always' || level === 'ask' || level === 'deny') {
+          if (level === 'always' || level === 'ask' || level === 'never') {
             levels[resource] = level;
           }
         }
@@ -329,46 +320,6 @@ function SubToolRow({
           ))}
         </ul>
       )}
-    </div>
-  );
-}
-
-function PermissionSelector({
-  toolName,
-  level,
-  onChange,
-  disabled,
-}: {
-  toolName: string;
-  level: PermLevel;
-  onChange: (level: PermLevel) => void;
-  disabled: boolean;
-}) {
-  return (
-    <div className="inline-flex rounded-md border border-border overflow-hidden shrink-0" role="radiogroup" aria-label={`Permission for ${toolName}`}>
-      {PERM_OPTIONS.map((opt, i) => {
-        const isActive = level === opt.value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            role="radio"
-            aria-checked={isActive}
-            disabled={disabled}
-            onClick={() => {
-              if (!isActive) onChange(opt.value);
-            }}
-            className={[
-              'px-1.5 py-0.5 text-[10px] transition-colors',
-              i < PERM_OPTIONS.length - 1 ? 'border-r border-border' : '',
-              isActive ? PERM_ACTIVE_STYLES[opt.value] : 'text-muted-foreground hover:bg-muted',
-              disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
-            ].join(' ')}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
     </div>
   );
 }
