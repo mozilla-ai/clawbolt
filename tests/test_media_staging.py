@@ -476,7 +476,7 @@ async def test_always_deny_does_not_emit_synthetic_tool_record(test_user: User) 
     level = await store.check_permission(
         test_user.id, "upload_to_storage", default=PermissionLevel.ASK
     )
-    assert level == PermissionLevel.DENY
+    assert level == PermissionLevel.NEVER
 
 
 @pytest.mark.asyncio()
@@ -743,14 +743,14 @@ async def test_permissions_json_write_flows_into_approval_store(test_user: User)
     edit_result = await edit_tool.function(
         path="PERMISSIONS.json",
         old_text='"Invoice": "always"',
-        new_text='"Invoice": "deny"',
+        new_text='"Invoice": "never"',
     )
     assert edit_result.is_error is False
 
     level = await store.check_permission(
         test_user.id, "qb_query", resource="Invoice", default=PermissionLevel.ASK
     )
-    assert level == PermissionLevel.DENY
+    assert level == PermissionLevel.NEVER
 
 
 @pytest.mark.asyncio()

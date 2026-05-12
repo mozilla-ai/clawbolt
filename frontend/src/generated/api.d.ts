@@ -809,8 +809,10 @@ export interface paths {
          *     toggled at the factory level. Attempts to disable always-enabled
          *     tools are silently ignored.
          *
-         *     Each entry may include ``disabled_sub_tools`` to control individual
-         *     tools within a factory group.
+         *     Each entry may include a ``sub_tools`` list with explicit
+         *     ``permission_level`` values to override individual sub-tools. Levels
+         *     are persisted to ``user_permissions``; ``"never"`` filters the
+         *     sub-tool out of the LLM schema on the next turn.
          */
         put: operations["update_tool_config_api_user_tools_put"];
         post?: never;
@@ -1353,8 +1355,6 @@ export interface components {
             name: string;
             /** Description */
             description: string;
-            /** Enabled */
-            enabled: boolean;
             /**
              * Permission Level
              * @default always
@@ -1365,6 +1365,21 @@ export interface components {
              * @default false
              */
             hidden_in_permissions: boolean;
+        };
+        /**
+         * SubToolPermissionUpdate
+         * @description Per-sub-tool permission override sent by the Settings UI.
+         *
+         *     ``permission_level`` is the new value: ``"always"`` (auto-run),
+         *     ``"ask"`` (prompt before running), or ``"never"`` (hide from the
+         *     LLM schema). Sub-tools omitted from the update list keep their
+         *     current stored level.
+         */
+        SubToolPermissionUpdate: {
+            /** Name */
+            name: string;
+            /** Permission Level */
+            permission_level: string;
         };
         /** TelegramBotInfoResponse */
         TelegramBotInfoResponse: {
@@ -1432,8 +1447,8 @@ export interface components {
             name: string;
             /** Enabled */
             enabled: boolean;
-            /** Disabled Sub Tools */
-            disabled_sub_tools?: string[] | null;
+            /** Sub Tools */
+            sub_tools?: components["schemas"]["SubToolPermissionUpdate"][] | null;
         };
         /** UserProfileResponse */
         UserProfileResponse: {

@@ -356,60 +356,6 @@ def test_specialist_dashboard_groups_are_consistent() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sub-tool tests: store layer
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-async def test_tool_config_store_disabled_sub_tools_round_trip(
-    test_user: UserData,
-) -> None:
-    """disabled_sub_tools survive a save/load cycle."""
-    store = ToolConfigStore(test_user.id)
-    entries = [
-        ToolConfigEntry(
-            name="workspace",
-            description="Files",
-            category="core",
-            enabled=True,
-            disabled_sub_tools=["write_file", "delete_file"],
-        ),
-    ]
-    await store.save(entries)
-
-    loaded = await store.load()
-    assert len(loaded) == 1
-    assert loaded[0].disabled_sub_tools == ["write_file", "delete_file"]
-
-
-@pytest.mark.asyncio()
-async def test_tool_config_store_get_disabled_sub_tool_names(
-    test_user: UserData,
-) -> None:
-    """get_disabled_sub_tool_names unions disabled sub-tools across all groups."""
-    store = ToolConfigStore(test_user.id)
-    entries = [
-        ToolConfigEntry(
-            name="workspace",
-            category="core",
-            enabled=True,
-            disabled_sub_tools=["write_file", "delete_file"],
-        ),
-        ToolConfigEntry(
-            name="heartbeat",
-            category="domain",
-            enabled=True,
-            disabled_sub_tools=["update_heartbeat"],
-        ),
-        ToolConfigEntry(name="file", category="domain", enabled=True),
-    ]
-    await store.save(entries)
-
-    disabled = await store.get_disabled_sub_tool_names()
-    assert disabled == {"write_file", "delete_file", "update_heartbeat"}
-
-
-# ---------------------------------------------------------------------------
 # Sub-tool tests: registry layer
 # ---------------------------------------------------------------------------
 
@@ -483,18 +429,18 @@ def test_get_tool_config_includes_sub_tools(client: TestClient) -> None:
     assert "read_file" in sub_names
     assert "write_file" in sub_names
 
-    # Each sub-tool should have name, description, enabled, and permission_level
+    # Each sub-tool should carry name, description, and permission_level.
+    # ``enabled`` is gone: ``permission_level`` is the single source of
+    # truth, and ``"never"`` is the off switch.
     for st in ws["sub_tools"]:
         assert "name" in st
         assert "description" in st
-        assert "enabled" in st
         assert "permission_level" in st
-        assert st["enabled"] is True  # all enabled by default
-        assert st["permission_level"] in ("always", "ask", "deny")
+        assert st["permission_level"] in ("always", "ask", "never")
 
 
-def test_put_tool_config_disable_sub_tools(client: TestClient) -> None:
-    """PUT /api/user/tools can disable individual sub-tools."""
+def test_put_tool_config_sets_sub_tool_permission_level(client: TestClient) -> None:
+    """PUT /api/user/tools writes per-sub-tool permission_level overrides."""
     response = client.put(
         "/api/user/tools",
         json={
@@ -502,30 +448,33 @@ def test_put_tool_config_disable_sub_tools(client: TestClient) -> None:
                 {
                     "name": "workspace",
                     "enabled": True,
-                    "disabled_sub_tools": ["write_file", "delete_file"],
+                    "sub_tools": [
+                        {"name": "write_file", "permission_level": "never"},
+                        {"name": "delete_file", "permission_level": "ask"},
+                    ],
                 }
             ]
         },
     )
     assert response.status_code == 200
     tools_by_name = {t["name"]: t for t in response.json()["tools"]}
-    ws = tools_by_name["workspace"]
-
-    sub_by_name = {st["name"]: st for st in ws["sub_tools"]}
-    assert sub_by_name["read_file"]["enabled"] is True
-    assert sub_by_name["write_file"]["enabled"] is False
-    assert sub_by_name["delete_file"]["enabled"] is False
-
-    # Verify persistence via GET
-    get_resp = client.get("/api/user/tools")
-    tools_by_name = {t["name"]: t for t in get_resp.json()["tools"]}
     sub_by_name = {st["name"]: st for st in tools_by_name["workspace"]["sub_tools"]}
-    assert sub_by_name["write_file"]["enabled"] is False
-    assert sub_by_name["delete_file"]["enabled"] is False
+    assert sub_by_name["write_file"]["permission_level"] == "never"
+    assert sub_by_name["delete_file"]["permission_level"] == "ask"
+    # Untouched sub-tools keep their default.
+    assert sub_by_name["read_file"]["permission_level"] == "always"
+
+    # Verify persistence via GET.
+    get_resp = client.get("/api/user/tools")
+    workspace_entries = [t for t in get_resp.json()["tools"] if t["name"] == "workspace"]
+    assert workspace_entries, "workspace factory missing from response"
+    sub_by_name = {st["name"]: st for st in workspace_entries[0]["sub_tools"]}
+    assert sub_by_name["write_file"]["permission_level"] == "never"
+    assert sub_by_name["delete_file"]["permission_level"] == "ask"
 
 
 def test_put_tool_config_invalid_sub_tool_names_ignored(client: TestClient) -> None:
-    """PUT /api/user/tools ignores invalid sub-tool names."""
+    """PUT /api/user/tools ignores unknown sub-tool names."""
     response = client.put(
         "/api/user/tools",
         json={
@@ -533,7 +482,9 @@ def test_put_tool_config_invalid_sub_tool_names_ignored(client: TestClient) -> N
                 {
                     "name": "workspace",
                     "enabled": True,
-                    "disabled_sub_tools": ["nonexistent_tool"],
+                    "sub_tools": [
+                        {"name": "nonexistent_tool", "permission_level": "never"},
+                    ],
                 }
             ]
         },
@@ -542,14 +493,34 @@ def test_put_tool_config_invalid_sub_tool_names_ignored(client: TestClient) -> N
     tools_by_name = {t["name"]: t for t in response.json()["tools"]}
     ws = tools_by_name["workspace"]
 
-    # All sub-tools should still be enabled since the invalid name was filtered out
+    # All sub-tools should remain at their default permission level
+    # because the unknown name was filtered out.
     for st in ws["sub_tools"]:
-        assert st["enabled"] is True
+        assert st["permission_level"] in ("always", "ask")
 
 
-def test_put_tool_config_clear_disabled_sub_tools(client: TestClient) -> None:
-    """Sending empty disabled_sub_tools list clears previous disablement."""
-    # First disable some sub-tools
+def test_put_tool_config_rejects_invalid_permission_level(client: TestClient) -> None:
+    """PUT /api/user/tools rejects permission_level values outside the enum."""
+    response = client.put(
+        "/api/user/tools",
+        json={
+            "tools": [
+                {
+                    "name": "workspace",
+                    "enabled": True,
+                    "sub_tools": [
+                        {"name": "write_file", "permission_level": "deny"},
+                    ],
+                }
+            ]
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_put_tool_config_can_re_enable_a_never_sub_tool(client: TestClient) -> None:
+    """Setting a sub-tool back to ``always`` after ``never`` lifts the filter."""
+    # First mark write_file as never.
     client.put(
         "/api/user/tools",
         json={
@@ -557,12 +528,14 @@ def test_put_tool_config_clear_disabled_sub_tools(client: TestClient) -> None:
                 {
                     "name": "workspace",
                     "enabled": True,
-                    "disabled_sub_tools": ["write_file"],
+                    "sub_tools": [
+                        {"name": "write_file", "permission_level": "never"},
+                    ],
                 }
             ]
         },
     )
-    # Then clear by sending empty list
+    # Then flip it back to always.
     response = client.put(
         "/api/user/tools",
         json={
@@ -570,12 +543,38 @@ def test_put_tool_config_clear_disabled_sub_tools(client: TestClient) -> None:
                 {
                     "name": "workspace",
                     "enabled": True,
-                    "disabled_sub_tools": [],
+                    "sub_tools": [
+                        {"name": "write_file", "permission_level": "always"},
+                    ],
                 }
             ]
         },
     )
     assert response.status_code == 200
     tools_by_name = {t["name"]: t for t in response.json()["tools"]}
-    for st in tools_by_name["workspace"]["sub_tools"]:
-        assert st["enabled"] is True
+    sub_by_name = {st["name"]: st for st in tools_by_name["workspace"]["sub_tools"]}
+    assert sub_by_name["write_file"]["permission_level"] == "always"
+
+
+@pytest.mark.asyncio()
+async def test_never_permission_filters_sub_tool_from_agent_schema(
+    test_user: UserData,
+) -> None:
+    """When a sub-tool's permission_level is ``never``, build_initial_turn_tools drops it.
+
+    Regression for the original bug this refactor fixed: a sub-tool
+    marked ``"never"`` in PERMISSIONS.json must not appear in the LLM
+    schema. Without this, the agent could still see and call the tool
+    even after the user said "never run this".
+    """
+    from backend.app.agent.approval import PermissionLevel, get_approval_store
+    from backend.app.agent.tool_assembly import build_initial_turn_tools
+    from backend.app.models import User
+
+    await get_approval_store().set_permission(test_user.id, "write_file", PermissionLevel.NEVER)
+    user = User(id=test_user.id, user_id=test_user.user_id)
+    tools = await build_initial_turn_tools(user)
+    names = {t.name for t in tools}
+    assert "write_file" not in names
+    # read_file (at default ALWAYS) is still present.
+    assert "read_file" in names
