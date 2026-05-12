@@ -262,6 +262,26 @@ def create_file_tools(
                 mime_type = staged_mime
 
         if not file_bytes:
+            # A prior tool call in this turn already shipped this handle to
+            # storage and ``evict``ed the bytes. Surface the prior receipt
+            # so the model doesn't read this as a failure and retry. Mirrors
+            # the CompanyCam idempotency in ``companycam_upload_photo``.
+            if original_url:
+                prior = media_staging.get_uploaded(user.id, original_url)
+                if prior is not None and prior.service == "storage":
+                    logger.warning(
+                        "media_handle_referenced_after_eviction service=storage "
+                        "user=%s handle=%s prior_path=%s",
+                        user.id,
+                        original_url,
+                        prior.external_id,
+                    )
+                    return ToolResult(
+                        content=(
+                            f"File {original_url} was already uploaded earlier in "
+                            f"this turn to {prior.external_id}. Not re-uploading."
+                        ),
+                    )
             logger.warning("upload_to_storage called but no file content available")
             return ToolResult(
                 content=(
@@ -299,6 +319,17 @@ def create_file_tools(
         )
 
         if original_url:
+            # Record the receipt before evicting so a same-turn retry on the
+            # same handle hits an idempotent result instead of NOT_FOUND.
+            media_staging.mark_uploaded(
+                user.id,
+                original_url,
+                service="storage",
+                external_id=saved.path,
+                url=saved.web_view_link or "",
+                target=filename,
+                status="uploaded",
+            )
             media_staging.evict(user.id, original_url)
 
         logger.info("File cataloged: %s", saved.path)

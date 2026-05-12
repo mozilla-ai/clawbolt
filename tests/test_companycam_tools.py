@@ -233,12 +233,15 @@ class TestTagsJsonStringCoercion:
     """
 
     def test_upload_photo_accepts_real_list(self) -> None:
-        p = CompanyCamUploadPhotoParams(project_id="p1", tags=["kitchen", "demo"])
+        p = CompanyCamUploadPhotoParams(
+            project_id="p1", original_url="media_abc", tags=["kitchen", "demo"]
+        )
         assert p.tags == ["kitchen", "demo"]
 
     def test_upload_photo_accepts_json_string_array(self) -> None:
         p = CompanyCamUploadPhotoParams(
             project_id="p1",
+            original_url="media_abc",
             tags='["kitchen", "demo"]',  # type: ignore[arg-type]
         )
         assert p.tags == ["kitchen", "demo"]
@@ -246,6 +249,7 @@ class TestTagsJsonStringCoercion:
     def test_upload_photo_accepts_empty_json_string_array(self) -> None:
         p = CompanyCamUploadPhotoParams(
             project_id="p1",
+            original_url="media_abc",
             tags="[]",  # type: ignore[arg-type]
         )
         assert p.tags == []
@@ -254,6 +258,7 @@ class TestTagsJsonStringCoercion:
         with pytest.raises(ValidationError, match="could not parse string as JSON"):
             CompanyCamUploadPhotoParams(
                 project_id="p1",
+                original_url="media_abc",
                 tags="not-json",  # type: ignore[arg-type]
             )
 
@@ -261,6 +266,7 @@ class TestTagsJsonStringCoercion:
         with pytest.raises(ValidationError, match="must be a JSON array"):
             CompanyCamUploadPhotoParams(
                 project_id="p1",
+                original_url="media_abc",
                 tags='{"a": 1}',  # type: ignore[arg-type]
             )
 
@@ -1256,7 +1262,9 @@ async def test_receipt_upload_photo_uses_app_url() -> None:
         ),
     ):
         tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
-        result = await tool.function(project_id="94772883")
+        result = await tool.function(
+            project_id="94772883", original_url="https://example.com/photo.jpg"
+        )
 
     _assert_receipt_clean(result.receipt, expect_url=True)
     assert "photos/39951388" in result.receipt.url
@@ -1307,7 +1315,9 @@ async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
         ),
     ):
         tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
-        result = await tool.function(project_id="94772883")
+        result = await tool.function(
+            project_id="94772883", original_url="https://example.com/photo.jpg"
+        )
 
     _assert_receipt_clean(result.receipt, expect_url=True)
     assert "photos/39951388" in result.receipt.url
@@ -1612,7 +1622,11 @@ async def test_upload_photo_strips_dict_description() -> None:
         ),
     ):
         tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
-        await tool.function(project_id="94772883", description=dict_description)
+        await tool.function(
+            project_id="94772883",
+            original_url="https://example.com/photo.jpg",
+            description=dict_description,
+        )
 
     # The description sent to CompanyCam must be empty, not the dict repr
     call_kwargs = service.upload_photo.call_args
@@ -1734,6 +1748,188 @@ async def test_receipt_rendered_output_has_no_raw_ids() -> None:
 
     # Block stays compact (grouping saves lines).
     assert len(block) < 500
+
+
+# ---------------------------------------------------------------------------
+# Option A + C: idempotent retry on a recently-uploaded handle, plus
+# explicit-handle enforcement.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_rejects_empty_original_url() -> None:
+    """Option C: empty ``original_url`` must hit a clear validation error.
+
+    Previously the tool silently grabbed "whatever was first" in staging,
+    which non-deterministically routed photos when the user sent two
+    media-attached messages back-to-back. The model must echo the handle
+    shown in the conversation context.
+    """
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    ctx = MagicMock()
+    ctx.user.id = "test-user-reject-empty"
+    ctx.downloaded_media = []
+
+    tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+    result = await tool.function(project_id="42", original_url="")
+
+    assert result.is_error
+    assert "original_url is required" in result.content
+    service.upload_photo.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_idempotent_retry_after_eviction(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Option A: a same-turn retry on an evicted handle returns the prior receipt.
+
+    Two parallel ``companycam_upload_photo`` calls from one LLM round on
+    the same handle previously raced: the first evicted the staged bytes
+    on success, the second fell through to NOT_FOUND ("No photo available
+    to upload"). The model read the error as a failed upload and retried,
+    causing the upload-storm pattern seen in production. This test pins
+    the new behavior: the second call must surface the prior receipt
+    instead.
+    """
+    import logging
+
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+    from backend.app.media.download import DownloadedMedia
+
+    user_id = "test-user-idempotent-retry"
+    photo_url = "https://example.com/photo-once.jpg"
+
+    media_staging.clear_user(user_id)
+    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="33333333",
+        processing_status="processed",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/x.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    ctx = MagicMock()
+    ctx.user.id = user_id
+    ctx.storage = None
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url=photo_url,
+            filename="photo.jpg",
+        )
+    ]
+
+    try:
+        with (
+            patch(
+                "backend.app.services.webhook.discover_tunnel_url",
+                new_callable=AsyncMock,
+                return_value="https://tunnel.example.com",
+            ),
+            patch(
+                "backend.app.routers.media_temp.create_temp_media_url",
+                return_value="https://tunnel.example.com/media/tmp/abc",
+            ),
+        ):
+            tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+            first = await tool.function(project_id="44444444", original_url=photo_url)
+            # Simulate the second-in-turn race: downloaded_media empty
+            # (the prior call consumed and evicted), staging evicted, but
+            # the model retries with the same handle.
+            ctx.downloaded_media = []
+
+            with caplog.at_level(logging.WARNING):
+                second = await tool.function(project_id="44444444", original_url=photo_url)
+
+        assert first.is_error is False
+        # Service was only hit once; the retry did not re-upload.
+        service.upload_photo.assert_called_once()
+
+        assert second.is_error is False, (
+            "retry on an evicted handle must return a soft idempotent receipt, "
+            "not NOT_FOUND -- otherwise the model reads it as a failure and "
+            "retries again"
+        )
+        assert second.receipt is not None
+        assert "photos/33333333" in second.receipt.url
+        assert "already uploaded" in second.content.lower()
+        # Telemetry: the retry-after-eviction signal must be emitted so we
+        # can measure the pattern across users.
+        assert any(
+            "media_handle_referenced_after_eviction" in rec.message for rec in caplog.records
+        )
+    finally:
+        media_staging.clear_user(user_id)
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_records_duplicate_status_for_retry() -> None:
+    """When CompanyCam dedupes the first upload, a retry on the same handle
+    still surfaces the duplicate receipt (no spurious ``No photo`` error).
+    """
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+    from backend.app.media.download import DownloadedMedia
+
+    user_id = "test-user-dup-retry"
+    photo_url = "https://example.com/photo-dup.jpg"
+
+    media_staging.clear_user(user_id)
+    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="55555555",
+        processing_status="duplicate",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/dup.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    ctx = MagicMock()
+    ctx.user.id = user_id
+    ctx.storage = None
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url=photo_url,
+            filename="photo.jpg",
+        )
+    ]
+
+    try:
+        with (
+            patch(
+                "backend.app.services.webhook.discover_tunnel_url",
+                new_callable=AsyncMock,
+                return_value="https://tunnel.example.com",
+            ),
+            patch(
+                "backend.app.routers.media_temp.create_temp_media_url",
+                return_value="https://tunnel.example.com/media/tmp/abc",
+            ),
+        ):
+            tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+            first = await tool.function(project_id="66666666", original_url=photo_url)
+            ctx.downloaded_media = []
+            second = await tool.function(project_id="66666666", original_url=photo_url)
+
+        assert first.is_error is False
+        assert second.is_error is False
+        # The cached receipt must carry the duplicate status so the model
+        # does not think the retry actually shipped a new copy.
+        assert "duplicate" in second.content.lower() or "already" in second.content.lower()
+    finally:
+        media_staging.clear_user(user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1916,13 +2112,20 @@ async def test_two_photo_upload_renders_each_url_exactly_once() -> None:
 
     ctx = MagicMock()
     ctx.user.id = "test-user"
+    ctx.storage = None
     ctx.downloaded_media = [
         DownloadedMedia(
-            content=b"fake-jpg",
+            content=b"fake-jpg-a",
             mime_type="image/jpeg",
-            original_url="https://example.com/photo.jpg",
-            filename="photo.jpg",
-        )
+            original_url="https://example.com/photo-a.jpg",
+            filename="photo-a.jpg",
+        ),
+        DownloadedMedia(
+            content=b"fake-jpg-b",
+            mime_type="image/jpeg",
+            original_url="https://example.com/photo-b.jpg",
+            filename="photo-b.jpg",
+        ),
     ]
 
     with (
@@ -1937,8 +2140,12 @@ async def test_two_photo_upload_renders_each_url_exactly_once() -> None:
         ),
     ):
         upload = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
-        result_one = await upload.function(project_id="98845509")
-        result_two = await upload.function(project_id="98845509")
+        result_one = await upload.function(
+            project_id="98845509", original_url="https://example.com/photo-a.jpg"
+        )
+        result_two = await upload.function(
+            project_id="98845509", original_url="https://example.com/photo-b.jpg"
+        )
 
     # The tool now keeps URLs out of content — the LLM cannot copy them.
     assert result_one.receipt is not None and result_one.receipt.url

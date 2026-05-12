@@ -55,10 +55,9 @@ class CompanyCamUpdateProjectParams(BaseModel):
 class CompanyCamUploadPhotoParams(BaseModel):
     project_id: str = Field(description="CompanyCam project ID to upload to")
     original_url: str = Field(
-        default="",
         description=(
-            "The original_url of a photo from the current conversation. "
-            "If empty, uploads the most recent photo."
+            "The handle of the photo to upload (e.g. ``media_XXXXXX`` as shown "
+            "in the conversation context). Required; do not leave blank."
         ),
     )
     description: str = Field(default="", description="Photo description")

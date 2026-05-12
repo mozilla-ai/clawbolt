@@ -71,6 +71,74 @@ def test_isolation_between_users() -> None:
     media_staging.clear_user("user-b")
 
 
+def test_upload_record_round_trip(test_user: User) -> None:
+    media_staging.mark_uploaded(
+        test_user.id,
+        "bb_photo",
+        service="companycam",
+        external_id="cc-123",
+        url="https://app.companycam.com/photos/cc-123",
+        target="123 Main St",
+        status="uploaded",
+    )
+    rec = media_staging.get_uploaded(test_user.id, "bb_photo")
+    assert rec is not None
+    assert rec.service == "companycam"
+    assert rec.external_id == "cc-123"
+    assert rec.status == "uploaded"
+
+
+def test_upload_record_survives_evict(test_user: User) -> None:
+    """A successful upload evicts staged bytes but keeps the receipt so a
+    same-turn retry on the same handle returns an idempotent result.
+    """
+    media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
+    media_staging.mark_uploaded(
+        test_user.id,
+        "bb_photo",
+        service="companycam",
+        external_id="cc-999",
+        url="https://app.companycam.com/photos/cc-999",
+        target="Some target",
+        status="uploaded",
+    )
+    media_staging.evict(test_user.id, "bb_photo")
+    assert media_staging.get_all_for_user(test_user.id) == {}
+    rec = media_staging.get_uploaded(test_user.id, "bb_photo")
+    assert rec is not None
+    assert rec.external_id == "cc-999"
+
+
+def test_upload_record_expires(test_user: User, monkeypatch: pytest.MonkeyPatch) -> None:
+    media_staging.mark_uploaded(
+        test_user.id,
+        "bb_photo",
+        service="companycam",
+        external_id="cc-1",
+        url="https://app.companycam.com/photos/cc-1",
+        target="t",
+        status="uploaded",
+    )
+    real_monotonic = time.monotonic
+    future = real_monotonic() + media_staging.UPLOAD_RECORD_TTL_SECONDS + 1
+    monkeypatch.setattr(media_staging.time, "monotonic", lambda: future)
+    assert media_staging.get_uploaded(test_user.id, "bb_photo") is None
+
+
+def test_upload_record_isolated_per_user() -> None:
+    media_staging.mark_uploaded(
+        "user-a",
+        "bb_photo",
+        service="companycam",
+        external_id="cc-a",
+        url="https://app.companycam.com/photos/cc-a",
+        target="t",
+        status="uploaded",
+    )
+    assert media_staging.get_uploaded("user-b", "bb_photo") is None
+    media_staging.clear_user("user-a")
+
+
 @pytest.mark.asyncio()
 async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
     test_user: User,
@@ -180,6 +248,51 @@ async def test_upload_evicts_staged_entry(test_user: User) -> None:
     )
     assert result.is_error is False
     assert media_staging.get_all_for_user(test_user.id) == {}
+
+
+@pytest.mark.asyncio()
+async def test_upload_to_storage_idempotent_retry_after_eviction(
+    test_user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Regression for the same upload-storm pattern that hit CompanyCam:
+    a same-turn retry on an evicted handle previously returned NOT_FOUND,
+    which the model read as failure and retried. Now the second call
+    surfaces the prior upload's path as an idempotent receipt.
+    """
+    import logging
+
+    media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
+    storage = MockStorageBackend()
+    # pending_media is the per-turn snapshot the factory closes over; we
+    # mutate it after the first call to simulate the bytes being consumed.
+    pending = {"bb_photo": b"bytes"}
+    tools = create_file_tools(test_user, storage, pending_media=pending)
+    upload = tools[0].function
+
+    first = await upload(
+        file_category="job_photo",
+        original_url="bb_photo",
+        client_name="Jane",
+    )
+    assert first.is_error is False
+
+    # Simulate the second call in the same turn: bytes are gone from
+    # pending_media (we just popped them, which mirrors what eviction
+    # does to the closure-held map) and from staging.
+    pending.pop("bb_photo", None)
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.agent.tools.file_tools"):
+        second = await upload(
+            file_category="job_photo",
+            original_url="bb_photo",
+            client_name="Jane",
+        )
+
+    assert second.is_error is False, (
+        "second upload on the same handle must return an idempotent receipt, not NOT_FOUND"
+    )
+    assert "already uploaded" in second.content.lower()
+    assert any("media_handle_referenced_after_eviction" in rec.message for rec in caplog.records)
 
 
 class _FakeUploadParams(BaseModel):

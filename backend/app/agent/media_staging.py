@@ -9,6 +9,13 @@ Each staged entry gets a short handle token (``media_XXXXXX``) so tools
 can reference the bytes without passing raw channel URLs through the
 prompt. Both lookup styles work; the handle-based API is what the agent
 sees.
+
+This module also tracks a short-lived ``recently_uploaded`` record for each
+``(user_id, original_url)``. After a tool successfully ships the bytes to
+an external service (CompanyCam, etc.) it both ``evict``s the bytes and
+``mark_uploaded``s an ``UploadRecord`` so a same-turn retry on the same
+handle can return an idempotent "already uploaded" result instead of the
+generic "No photo available" error.
 """
 
 from __future__ import annotations
@@ -16,16 +23,44 @@ from __future__ import annotations
 import logging
 import secrets
 import time
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 STAGING_TTL_SECONDS = 86400  # 24h: long agent sessions can span multiple hours
 STAGING_MAX_PER_USER = 50  # Cap memory growth: oldest-expiring entry is evicted on overflow
 
+# Recently-uploaded receipt cache. Shorter TTL than staging because its job
+# is only to absorb same-turn / same-day retries on a handle the model
+# already shipped. Anything older than this should not look like a fresh
+# success on retry; the tool can return its normal NOT_FOUND.
+UPLOAD_RECORD_TTL_SECONDS = 3600  # 1h
+UPLOAD_RECORD_MAX_PER_USER = 200
+
+
+@dataclass(frozen=True)
+class UploadRecord:
+    """A receipt of a successful external upload, scoped to a (user, handle).
+
+    Returned by :func:`get_uploaded` so a tool that finds its staged bytes
+    already evicted can re-emit the same external receipt instead of an
+    error. Tools should populate ``service`` with a short identifier
+    (e.g. ``"companycam"``) so a future cross-service handle reuse cannot
+    surface the wrong receipt.
+    """
+
+    service: str
+    external_id: str
+    url: str
+    target: str
+    status: str  # "uploaded", "duplicate", "pending", "processing_error"
+
 
 _cache: dict[str, dict[str, tuple[bytes, str, float, str]]] = {}
 # handle token -> (user_id, original_url) reverse index
 _handles: dict[str, tuple[str, str]] = {}
+# user_id -> {original_url: (UploadRecord, expires_at)} recently-uploaded receipts
+_uploaded: dict[str, dict[str, tuple[UploadRecord, float]]] = {}
 
 
 def _mint_handle() -> str:
@@ -204,7 +239,12 @@ def resolve_media_ref(user_id: str, ref: str) -> tuple[str, bytes, str] | None:
 
 
 def evict(user_id: str, original_url: str) -> None:
-    """Remove a staged entry (call after successful upload or explicit deny)."""
+    """Remove a staged entry (call after successful upload or explicit deny).
+
+    The upload-record cache is intentionally NOT cleared here; a same-turn
+    retry on the same handle still needs to find the receipt. Records age
+    out via their own TTL.
+    """
     user_items = _cache.get(user_id)
     if not user_items:
         return
@@ -213,6 +253,86 @@ def evict(user_id: str, original_url: str) -> None:
         _handles.pop(entry[3], None)
     if not user_items:
         _cache.pop(user_id, None)
+
+
+def mark_uploaded(
+    user_id: str,
+    original_url: str,
+    *,
+    service: str,
+    external_id: str,
+    url: str,
+    target: str,
+    status: str,
+) -> None:
+    """Record that ``original_url`` was successfully shipped to *service*.
+
+    Call right before :func:`evict` on the success path of an external
+    upload tool. A later tool call referencing the same handle (within
+    :data:`UPLOAD_RECORD_TTL_SECONDS`) can then look up the record via
+    :func:`get_uploaded` and return an idempotent receipt instead of
+    failing with "No photo available."
+    """
+    if not original_url:
+        return
+    _purge_expired_uploads()
+    expires_at = time.monotonic() + UPLOAD_RECORD_TTL_SECONDS
+    record = UploadRecord(
+        service=service,
+        external_id=external_id,
+        url=url,
+        target=target,
+        status=status,
+    )
+    user_records = _uploaded.setdefault(user_id, {})
+    user_records[original_url] = (record, expires_at)
+    _enforce_upload_record_cap(user_id)
+
+
+def get_uploaded(user_id: str, original_url: str) -> UploadRecord | None:
+    """Return the recently-uploaded receipt for ``(user_id, original_url)``.
+
+    Returns ``None`` if no upload was recorded or the record has expired.
+    The returned record is unscoped by service, so callers must check
+    ``record.service`` matches the tool's own service before re-emitting
+    the receipt.
+    """
+    if not original_url:
+        return None
+    user_records = _uploaded.get(user_id)
+    if not user_records:
+        return None
+    entry = user_records.get(original_url)
+    if entry is None:
+        return None
+    record, expires_at = entry
+    if expires_at <= time.monotonic():
+        # Don't bother purging here; _purge_expired_uploads runs on writes.
+        return None
+    return record
+
+
+def _enforce_upload_record_cap(user_id: str) -> None:
+    """Cap the per-user upload-record count by evicting the soonest-expiring."""
+    user_records = _uploaded.get(user_id)
+    if not user_records or len(user_records) <= UPLOAD_RECORD_MAX_PER_USER:
+        return
+    while len(user_records) > UPLOAD_RECORD_MAX_PER_USER:
+        oldest_url = min(user_records, key=lambda url: user_records[url][1])
+        user_records.pop(oldest_url, None)
+
+
+def _purge_expired_uploads() -> None:
+    now = time.monotonic()
+    empty_users: list[str] = []
+    for user_id, records in _uploaded.items():
+        expired = [url for url, (_rec, exp) in records.items() if exp <= now]
+        for url in expired:
+            del records[url]
+        if not records:
+            empty_users.append(user_id)
+    for user_id in empty_users:
+        del _uploaded[user_id]
 
 
 def evict_by_handle(handle: str) -> bool:
@@ -230,11 +350,12 @@ def evict_by_handle(handle: str) -> bool:
 
 
 def clear_user(user_id: str) -> None:
-    """Drop all staged media for a user (primarily for tests)."""
+    """Drop all staged media and upload records for a user (primarily for tests)."""
     user_items = _cache.pop(user_id, None)
     if user_items:
         for _content, _mime, _exp, handle in user_items.values():
             _handles.pop(handle, None)
+    _uploaded.pop(user_id, None)
 
 
 def _purge_expired() -> None:
