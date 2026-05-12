@@ -57,64 +57,6 @@ class AppFolioGetWorkOrderParams(BaseModel):
     work_order_id: str = Field(description="AppFolio work order ID.")
 
 
-class AppFolioListPaymentsParams(BaseModel):
-    posted_on: str = Field(
-        default="",
-        description=(
-            "Optional ISO date (YYYY-MM-DD) to filter payments posted on or after."
-            " Leave empty for all dates."
-        ),
-    )
-    settlement_method: str = Field(
-        default="",
-        description=(
-            "Optional settlement method filter: 'e_check', 'bill_pay_check', or"
-            " 'push_to_debit'. Leave empty for all methods."
-        ),
-    )
-
-
-class AppFolioGetProfileParams(BaseModel):
-    """Empty param model — ``get_profile`` takes no arguments."""
-
-
-class AppFolioAcceptWorkOrderParams(BaseModel):
-    work_order_id: str = Field(description="AppFolio work order ID to accept.")
-
-
-class AppFolioScheduleWorkOrderParams(BaseModel):
-    work_order_id: str = Field(description="AppFolio work order ID to schedule.")
-    time_slot_id: str = Field(
-        description=(
-            "Pre-defined time-slot ID published by the property manager."
-            " AppFolio's vendor portal does not accept arbitrary timestamps;"
-            " vendors pick from offered slots. Slot IDs come from the work"
-            " order's ``time_slots`` (or from ``appfolio_get_work_order``)."
-        ),
-    )
-
-
-class AppFolioUpdateWorkOrderStatusParams(BaseModel):
-    work_order_id: str = Field(description="AppFolio work order ID to update.")
-    status_code: int = Field(
-        description=(
-            "Numeric status code AppFolio expects. Common values:"
-            " 0=new, 4=in progress, 8=completed."
-            " Confirm with the user when uncertain rather than guessing."
-        ),
-    )
-
-
-class AppFolioUndoWorkOrderStatusParams(BaseModel):
-    work_order_id: str = Field(description="AppFolio work order ID.")
-    previous_status: str = Field(
-        description=(
-            "The status the work order should revert to. Pass the prior"
-            " status code or label as returned by appfolio_get_work_order."
-        ),
-    )
-
-
 class AppFolioListNotesParams(BaseModel):
     work_order_id: str = Field(description="AppFolio work order ID.")
 
@@ -143,19 +85,6 @@ class AppFolioUpdateNoteParams(BaseModel):
             "Optional list of photo references to attach, same shape as"
             " appfolio_add_note. Existing attachments are preserved."
         ),
-    )
-
-
-class AppFolioMessageTenantParams(BaseModel):
-    work_order_id: str = Field(
-        description=(
-            "AppFolio work order ID. AppFolio mints an anonymized proxy"
-            " number per work order, so the message routes to the right"
-            " tenant without exposing the vendor's real phone number."
-        ),
-    )
-    message: str = Field(
-        description="SMS body to send to the tenant via AppFolio's proxy.",
     )
 
 
@@ -214,24 +143,4 @@ class AppFolioUploadInvoicePdfParams(BaseModel):
     reference_number: str = Field(
         default="",
         description="Optional vendor-side reference number printed on the invoice.",
-    )
-
-
-class AppFolioGetEstimateParams(BaseModel):
-    estimate_id: str = Field(description="AppFolio estimate ID.")
-
-
-class AppFolioUpdateEstimateParams(BaseModel):
-    estimate_id: str = Field(description="AppFolio estimate ID to update.")
-    amount: float | None = Field(
-        default=None,
-        description="Updated total amount in dollars. Omit to leave unchanged.",
-    )
-    description: str = Field(
-        default="",
-        description="Updated estimate description. Empty leaves it unchanged.",
-    )
-    notes: str = Field(
-        default="",
-        description="Optional vendor notes for the property manager.",
     )

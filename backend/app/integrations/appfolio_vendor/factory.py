@@ -29,16 +29,9 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.integrations.appfolio_vendor.auth import load_credential, save_credential
 from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
-from backend.app.integrations.appfolio_vendor.conversations import build_conversation_tools
-from backend.app.integrations.appfolio_vendor.estimates import build_estimate_tools
 from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
 from backend.app.integrations.appfolio_vendor.notes import build_note_tools
-from backend.app.integrations.appfolio_vendor.payments import build_payment_tools
-from backend.app.integrations.appfolio_vendor.profile import build_profile_tools
 from backend.app.integrations.appfolio_vendor.service import build_service
-from backend.app.integrations.appfolio_vendor.work_order_writes import (
-    build_work_order_write_tools,
-)
 from backend.app.integrations.appfolio_vendor.work_orders import build_work_order_tools
 
 if TYPE_CHECKING:
@@ -102,13 +95,8 @@ async def _appfolio_vendor_factory(ctx: ToolContext) -> list[Tool]:
     )
     tools: list[Tool] = []
     tools.extend(build_work_order_tools(service))
-    tools.extend(build_work_order_write_tools(service))
     tools.extend(build_note_tools(service, ctx))
-    tools.extend(build_conversation_tools(service))
-    tools.extend(build_payment_tools(service))
-    tools.extend(build_profile_tools(service))
     tools.extend(build_invoice_tools(service, ctx))
-    tools.extend(build_estimate_tools(service))
     return tools
 
 
@@ -156,13 +144,11 @@ def _register() -> None:
         _appfolio_vendor_factory,
         core=False,
         summary=(
-            "AppFolio Vendor Portal: view, search, and act on work orders "
-            "(accept, schedule, update status, add notes with photos), "
-            "message tenants, create or upload invoices, update estimates, "
-            "and check payments"
+            "AppFolio Vendor Portal: view and search work orders, read and add "
+            "notes (with photos), and create or upload invoices"
         ),
         display_name="AppFolio Vendor Portal",
-        dashboard_description=("View work orders, payments, and profile in AppFolio Vendor Portal"),
+        dashboard_description="View work orders, add notes, and create invoices in AppFolio Vendor Portal",
         dashboard_group="Integrations",
         dashboard_group_order=2,
         sub_tools=[
@@ -182,36 +168,6 @@ def _register() -> None:
                 default_permission="always",
             ),
             SubToolInfo(
-                ToolName.APPFOLIO_LIST_PAYMENTS,
-                "List AppFolio payments",
-                default_permission="always",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_GET_PROFILE,
-                "Get the connected AppFolio profile",
-                default_permission="always",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_ACCEPT_WORK_ORDER,
-                "Accept an AppFolio work order assignment",
-                default_permission="ask",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_SCHEDULE_WORK_ORDER,
-                "Schedule an AppFolio work order visit",
-                default_permission="ask",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_UPDATE_WORK_ORDER_STATUS,
-                "Update the status code on an AppFolio work order",
-                default_permission="ask",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_UNDO_WORK_ORDER_STATUS,
-                "Revert a recent AppFolio work order status change",
-                default_permission="ask",
-            ),
-            SubToolInfo(
                 ToolName.APPFOLIO_LIST_NOTES,
                 "List notes on an AppFolio work order",
                 default_permission="always",
@@ -227,11 +183,6 @@ def _register() -> None:
                 default_permission="ask",
             ),
             SubToolInfo(
-                ToolName.APPFOLIO_MESSAGE_TENANT,
-                "Send an SMS to the tenant on an AppFolio work order",
-                default_permission="ask",
-            ),
-            SubToolInfo(
                 ToolName.APPFOLIO_CREATE_INVOICE,
                 "Build a line-itemized AppFolio invoice with optional photos",
                 default_permission="ask",
@@ -239,16 +190,6 @@ def _register() -> None:
             SubToolInfo(
                 ToolName.APPFOLIO_UPLOAD_INVOICE_PDF,
                 "Upload a pre-built invoice PDF to AppFolio",
-                default_permission="ask",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_GET_ESTIMATE,
-                "Get an AppFolio estimate's details",
-                default_permission="always",
-            ),
-            SubToolInfo(
-                ToolName.APPFOLIO_UPDATE_ESTIMATE,
-                "Update an AppFolio estimate amount or description",
                 default_permission="ask",
             ),
         ],
