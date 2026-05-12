@@ -746,25 +746,6 @@ async def test_list_work_orders_passes_filter_params() -> None:
     }
 
 
-@pytest.mark.asyncio()
-async def test_list_payments_emits_filter_brackets() -> None:
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data=[])
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        client = AsyncMock()
-        client.request = AsyncMock(return_value=response)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=client)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        cls.return_value = cm
-        await service.list_payments(posted_on="2026-01-01", settlement_method="e_check")
-    _, kwargs = client.request.call_args
-    assert kwargs["params"] == {
-        "filter[posted_on]": "2026-01-01",
-        "filter[settlement_method]": "e_check",
-    }
-
-
 # ---------------------------------------------------------------------------
 # /access exchange + 2FA
 # ---------------------------------------------------------------------------
@@ -953,72 +934,6 @@ def test_list_work_orders_params_defaults() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_accept_work_order_sends_customer_id_only() -> None:
-    """Best-guess shape (not Playwright-verified): minimal ``{customer_id}`` body.
-
-    The legacy ``?ref=vendor_portal`` query param and the inferred
-    ``notes`` body field were both unverified guesses from the SPA
-    bundle and have been dropped; vendors who want to add a note
-    use ``add_work_order_note`` separately.
-    """
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data={})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        client = AsyncMock()
-        client.request = AsyncMock(return_value=response)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=client)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        cls.return_value = cm
-        await service.accept_work_order("42")
-    args, kwargs = client.request.call_args
-    assert args[0] == "POST"
-    assert "/maintenance/api/work_orders/42/accept" in args[1]
-    assert kwargs["params"] is None
-    assert kwargs["json"] == {"customer_id": "c1"}
-
-
-@pytest.mark.asyncio()
-async def test_schedule_work_order_uses_time_slot_id_shape() -> None:
-    """Verified against SPA capture: AppFolio expects time_slot_id +
-    customer_id, not free-form ISO timestamps."""
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data={})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        client = AsyncMock()
-        client.request = AsyncMock(return_value=response)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=client)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        cls.return_value = cm
-        await service.schedule_work_order("42", time_slot_id="slot-99")
-    _, kwargs = client.request.call_args
-    sent = kwargs["json"]
-    assert sent["time_slot_id"] == "slot-99"
-    assert sent["customer_id"] == "c1"
-
-
-@pytest.mark.asyncio()
-async def test_update_status_uses_snake_case_with_customer_id() -> None:
-    """Verified against SPA capture: snake_case body wrapping plus
-    ``customer_id`` at the top level. Previously sent camelCase and no
-    customer_id, which AppFolio rejects with a 422 + empty body."""
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data={})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        client = AsyncMock()
-        client.request = AsyncMock(return_value=response)
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=client)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        cls.return_value = cm
-        await service.update_work_order_status("42", status_code=8)
-    args, kwargs = client.request.call_args
-    assert args[0] == "PATCH"
-    assert kwargs["json"] == {"work_order": {"status_code": 8}, "customer_id": "c1"}
-
-
-@pytest.mark.asyncio()
 async def test_add_note_inlines_base64_files() -> None:
     from backend.app.integrations.appfolio_vendor.service import FileUpload
 
@@ -1065,40 +980,6 @@ async def test_add_note_sends_empty_files_array_when_no_attachments() -> None:
     assert sent["note"] == {"body": "status"}
     assert sent["files"] == []
     assert sent["customer_id"] == "c1"
-
-
-@pytest.mark.asyncio()
-async def test_message_tenant_two_step_flow() -> None:
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    proxy_resp = _mock_response(json_data={"phone_number": "+15551234567"})
-    msg_resp = _mock_response(json_data={"ok": True})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        client = AsyncMock()
-        # service.get_proxy_number then service.message_tenant
-        client.request = AsyncMock(side_effect=[proxy_resp, msg_resp])
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=client)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        cls.return_value = cm
-        proxy = await service.get_proxy_number("42")
-        await service.message_tenant(
-            work_order_id="42",
-            phone_number=proxy["phone_number"],
-            message="on my way",
-        )
-    assert client.request.call_count == 2
-    second_args, second_kwargs = client.request.call_args_list[1]
-    assert second_args[0] == "POST"
-    assert second_args[1].endswith("/tenant_vendor_conversations")
-    # Best-guess shape (not Playwright-verified): customer_id at top
-    # level matching the verified write endpoints, work_order_id as
-    # int matching the invoice POST shape.
-    assert second_kwargs["json"] == {
-        "customer_id": "c1",
-        "work_order_id": 42,
-        "phone_number": "+15551234567",
-        "message": "on my way",
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1259,22 +1140,6 @@ async def test_upload_invoice_pdf_omits_line_items() -> None:
     assert payload["customer_id"] == "cust-1"
     assert payload["work_order_id"] == 999001
     assert len(payload["files"]) == 1
-
-
-@pytest.mark.asyncio()
-async def test_update_estimate_wraps_jsonapi_envelope() -> None:
-    service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data={})
-    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        cm, client = _patch_request(response)
-        cls.return_value = cm
-        await service.update_estimate("est-7", attributes={"amount": 250.0})
-    args, kwargs = client.request.call_args
-    assert args[0] == "PATCH"
-    assert "/api/estimates/est-7" in args[1]
-    assert kwargs["json"] == {
-        "data": {"id": "est-7", "type": "estimates", "attributes": {"amount": 250.0}}
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1852,9 +1717,9 @@ async def test_4xx_failure_logs_request_body_and_response(caplog: Any) -> None:
 
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(
-        json_data={"errors": ["time_slot_id: not available"]},
+        json_data={"errors": ["note body required"]},
         status_code=422,
-        text='{"errors":["time_slot_id: not available"]}',
+        text='{"errors":["note body required"]}',
     )
 
     with (
@@ -1864,18 +1729,18 @@ async def test_4xx_failure_logs_request_body_and_response(caplog: Any) -> None:
         cm, _ = _patch_request(response)
         cls.return_value = cm
         with pytest.raises(AppFolioError) as exc_info:
-            await service.schedule_work_order("42", time_slot_id="slot-99")
+            await service.update_work_order_note("42", "note-7", body_text="updated body text")
 
     # ToolResult-side message carries the status only; the response body
     # is intentionally redacted so it cannot leak into user-visible chat.
     assert "422" in str(exc_info.value)
-    assert "time_slot_id: not available" not in str(exc_info.value)
+    assert "note body required" not in str(exc_info.value)
 
     # Log line includes everything a dev needs to diagnose.
     record_text = "\n".join(r.message for r in caplog.records)
-    assert "POST" in record_text
-    assert "/maintenance/api/work_orders/42/schedule" in record_text
-    assert "time_slot_id" in record_text  # request body logged
+    assert "PATCH" in record_text
+    assert "/maintenance/api/work_orders/42/notes/note-7" in record_text
+    assert "updated body text" in record_text  # request body logged
     assert "422" in record_text
 
 
@@ -2145,4 +2010,4 @@ async def test_connected_user_sees_appfolio_in_specialist_summaries() -> None:
     # Read-only language alone caused the agent to refuse writes in prod
     # ("AppFolio is read-only on my end..."). The summary must surface
     # write capabilities so the LLM knows the full surface area.
-    assert "note" in summary or "invoice" in summary or "schedule" in summary
+    assert "note" in summary or "invoice" in summary
