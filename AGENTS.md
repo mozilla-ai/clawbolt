@@ -1,6 +1,6 @@
 # Clawbolt
 
-Clawbolt is an AI assistant for the trades. FastAPI backend with a Telegram messaging interface and a custom tool-calling agent loop built on any-llm. Built by Mozilla.ai using the open-core model.
+Clawbolt is an AI assistant for the trades. FastAPI backend with a messaging-first interface (iMessage, RCS, SMS, Telegram, web chat) and a custom tool-calling agent loop built on any-llm. Built by Mozilla.ai using the open-core model.
 
 ## Build & Run Commands
 
@@ -33,7 +33,7 @@ uv run ty check --python .venv backend/ tests/ alembic/
 
 - Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2
 - any-llm-sdk (LLM provider abstraction via `amessages`)
-- Telegram Bot API for messaging (via python-telegram-bot)
+- Multi-channel messaging: BlueBubbles (iMessage/RCS/SMS), Twilio (SMS), Linq, Telegram (via python-telegram-bot), web chat
 - Google Drive (per-user OAuth) for file storage
 - PostgreSQL for all data persistence, Alembic for migrations
 - uv + hatchling build system, ruff linting, ty type checking
@@ -45,7 +45,7 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | Table | Purpose |
 |---|---|
 | `users` | User profiles, personality text, preferences |
-| `channel_routes` | Channel -> user routing (Telegram, webchat, etc.) |
+| `channel_routes` | Channel -> user routing (iMessage, SMS, Telegram, web chat, etc.) |
 | `sessions` | Chat session metadata |
 | `messages` | Chat messages (FK to sessions) |
 | `memory_documents` | Structured memory and compaction history |
@@ -162,7 +162,7 @@ When you need realistic-looking data, use clearly synthetic values: `jane.doe@ex
 - PostgreSQL for all tests (requires a local `clawbolt_test` database; see conftest.py)
 - `reset_stores()` clears cached store singletons between tests
 - Override `get_current_user` via FastAPI dependency injection
-- Mock ALL external services: Telegram, LLM (any-llm), faster-whisper, Google Drive
+- Mock ALL external services: messaging channels (BlueBubbles, Twilio, Linq, Telegram), LLM (any-llm), faster-whisper, Google Drive
 - Bug fixes must include regression tests
 
 ## Architecture
@@ -171,7 +171,7 @@ When you need realistic-looking data, use clearly synthetic values: `jane.doe@ex
 - **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). OSS is single-tenant; premium adds multi-tenant auth via plugin.
 - **`user_id` scoping** on every data class and endpoint from day one
 - **Message bus**: async inbound/outbound queues in `bus.py`. Channels publish inbound messages; the agent publishes outbound replies. The ``ChannelManager`` dispatches outbound messages to the correct channel.
-- **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `amessages`) -> tool execution -> reply
+- **Agent loop**: channel webhook -> media pipeline -> tool-calling loop (any-llm `amessages`) -> tool execution -> reply
 - **Memory**: Freeform per-user MEMORY.md managed via workspace tools, backed by `memory_documents` table with automatic compaction
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
 
