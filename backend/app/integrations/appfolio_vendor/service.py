@@ -417,7 +417,7 @@ class AppFolioVendorService:
         return await self._request("DELETE", path)
 
     # ------------------------------------------------------------------
-    # Domain helpers (PR1: read surface + sentinel)
+    # Work orders
     # ------------------------------------------------------------------
 
     async def list_work_orders(
@@ -448,20 +448,6 @@ class AppFolioVendorService:
 
     async def get_work_order_details(self, work_order_id: str) -> Any:
         return await self.get(f"/maintenance/api/work_orders/{work_order_id}/work_order_details")
-
-    async def list_payments(
-        self,
-        *,
-        posted_on: str | None = None,
-        settlement_method: str | None = None,
-    ) -> Any:
-        filters: dict[str, str] = {}
-        if posted_on:
-            filters["posted_on"] = posted_on
-        if settlement_method:
-            filters["settlement_method"] = settlement_method
-        params = {f"filter[{k}]": v for k, v in filters.items()} if filters else None
-        return await self.get("/api/maintenance/vendor_portal_payable_payments", params=params)
 
     async def get_profile(self) -> Any:
         return await self.get("/profiles/me", params={"viewed": "true"})
@@ -507,84 +493,8 @@ class AppFolioVendorService:
         return ids[0]
 
     # ------------------------------------------------------------------
-    # Domain helpers (PR2: write surface)
+    # Work-order notes
     # ------------------------------------------------------------------
-
-    async def accept_work_order(
-        self,
-        work_order_id: str,
-        *,
-        customer_id: str | None = None,
-    ) -> Any:
-        """POST an acceptance onto a work order.
-
-        Body shape is **not** Playwright-verified. We send the same
-        ``{"customer_id": ...}`` minimum that every other write
-        endpoint in PR #1277 confirmed is required (status update,
-        schedule, note add); we omit the prior ``notes`` field and
-        the ``?ref=vendor_portal`` query param because both were
-        guesses from the SPA bundle and not part of the verified
-        contract. Vendors who want to add a note alongside the
-        acceptance can use :meth:`add_work_order_note` in a separate
-        call.
-        """
-        cid = customer_id or await self._resolve_primary_customer_id()
-        return await self.post(
-            f"/maintenance/api/work_orders/{work_order_id}/accept",
-            json_body={"customer_id": cid},
-        )
-
-    async def schedule_work_order(
-        self,
-        work_order_id: str,
-        *,
-        time_slot_id: str,
-        customer_id: str | None = None,
-    ) -> Any:
-        """POST a schedule onto a work order.
-
-        SPA-verified shape: ``{"time_slot_id": "<id>", "customer_id": "..."}``.
-        AppFolio's vendor portal does not accept arbitrary timestamps; the
-        property manager publishes available time slots and the vendor
-        picks one. Use :meth:`list_schedule_time_slots` to fetch the
-        available slots for a work order before calling this.
-        """
-        cid = customer_id or await self._resolve_primary_customer_id()
-        return await self.post(
-            f"/maintenance/api/work_orders/{work_order_id}/schedule",
-            json_body={"time_slot_id": str(time_slot_id), "customer_id": cid},
-        )
-
-    async def update_work_order_status(
-        self,
-        work_order_id: str,
-        *,
-        status_code: int,
-        customer_id: str | None = None,
-    ) -> Any:
-        """PATCH a work order's status code.
-
-        SPA-verified shape: ``{"work_order": {"status_code": N}, "customer_id": "..."}``.
-        snake_case throughout; ``customer_id`` is required.
-        """
-        cid = customer_id or await self._resolve_primary_customer_id()
-        return await self.patch(
-            f"/maintenance/api/work_orders/{work_order_id}",
-            json_body={"work_order": {"status_code": status_code}, "customer_id": cid},
-        )
-
-    async def undo_work_order_status(
-        self,
-        work_order_id: str,
-        *,
-        previous_status: int | str,
-        customer_id: str | None = None,
-    ) -> Any:
-        cid = customer_id or await self._resolve_primary_customer_id()
-        return await self.patch(
-            f"/maintenance/api/work_orders/{work_order_id}/undo_status",
-            json_body={"work_order": {"status": previous_status}, "customer_id": cid},
-        )
 
     async def list_work_order_notes(self, work_order_id: str) -> Any:
         return await self.get(f"/maintenance/api/work_orders/{work_order_id}/notes")
@@ -647,46 +557,8 @@ class AppFolioVendorService:
             json_body=body,
         )
 
-    async def get_proxy_number(self, work_order_id: str) -> Any:
-        """Fetch AppFolio's anonymized proxy phone number for the tenant.
-
-        Vendors message tenants via a proxy number AppFolio mints per
-        work order. Calling this endpoint creates (or returns) the
-        number; the SMS itself goes through ``message_tenant`` below.
-        """
-        return await self.get(f"/maintenance/api/work_orders/{work_order_id}/get_proxy_number")
-
-    async def message_tenant(
-        self,
-        *,
-        work_order_id: str,
-        phone_number: str,
-        message: str,
-        customer_id: str | None = None,
-    ) -> Any:
-        """POST a tenant SMS through AppFolio's anonymized proxy.
-
-        Body shape is **not** Playwright-verified. We send the same
-        ``customer_id`` top-level field every other write endpoint
-        from PR #1277 confirmed is required, and pass ``work_order_id``
-        as an int (matching the invoice POST shape). The other fields
-        are kept as-is from the inferred SPA shape.
-        """
-        cid = customer_id or await self._resolve_primary_customer_id()
-        return await self.post(
-            "/maintenance/api/tenant_vendor_conversations",
-            json_body={
-                "customer_id": cid,
-                "work_order_id": (
-                    int(work_order_id) if str(work_order_id).isdigit() else work_order_id
-                ),
-                "phone_number": phone_number,
-                "message": message,
-            },
-        )
-
     # ------------------------------------------------------------------
-    # Domain helpers: invoices, estimates
+    # Invoices
     # ------------------------------------------------------------------
 
     async def create_invoice(
@@ -767,39 +639,6 @@ class AppFolioVendorService:
         if reference_number:
             body["reference_number"] = reference_number
         return await self.post("/maintenance/api/invoices", json_body=body)
-
-    async def get_estimate(self, estimate_id: str) -> Any:
-        return await self.get(
-            f"/api/estimates/{estimate_id}",
-            params={"include": "attachments"},
-        )
-
-    async def update_estimate(
-        self,
-        estimate_id: str,
-        *,
-        attributes: dict[str, Any],
-    ) -> Any:
-        """PATCH an estimate's attributes via JSON:API envelope.
-
-        Body shape is **not** Playwright-verified. The estimates
-        endpoint lives under ``/api/estimates`` (a different surface
-        from ``/maintenance/api/...`` where the verified writes
-        live), and the JSON:API envelope ``{data: {id, type:
-        "estimates", attributes: ...}}`` is inferred from a SPA call
-        site. JSON:API is a standard convention so this is a high-
-        confidence guess, but revisit if AppFolio rejects.
-        """
-        return await self.patch(
-            f"/api/estimates/{estimate_id}",
-            json_body={
-                "data": {
-                    "id": estimate_id,
-                    "type": "estimates",
-                    "attributes": attributes,
-                }
-            },
-        )
 
 
 def build_service(

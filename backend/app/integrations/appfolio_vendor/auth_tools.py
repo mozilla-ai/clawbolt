@@ -2,8 +2,8 @@
 
 ``appfolio_connect`` is the only tool here: it accepts a magic-link URL,
 exchanges it for a Bearer JWT via the OAuth2 token endpoint, and persists
-the credential. It lives separately from work-order / payment tools
-because it runs *before* a credential exists.
+the credential. It lives separately from the data tools because it runs
+*before* a credential exists.
 """
 
 from __future__ import annotations
