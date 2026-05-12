@@ -237,7 +237,9 @@ export default function DashboardPage() {
             <div className="space-y-2.5">
               {integrationTools.map((tool) => {
                 const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.oauth_name, oauthMap, tool.configured);
-                const enabledSubTools = (tool.sub_tools ?? []).filter((st) => st.enabled).length;
+                const enabledSubTools = (tool.sub_tools ?? []).filter(
+                  (st) => st.permission_level !== 'never',
+                ).length;
                 const totalSubTools = (tool.sub_tools ?? []).length;
                 return (
                   <div key={tool.name}>

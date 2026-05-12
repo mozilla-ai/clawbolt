@@ -10,7 +10,6 @@ Follows the same AsyncSessionLocal() / try-finally pattern used in session_db.py
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -55,19 +54,6 @@ def _heartbeat_log_to_dto(log: HeartbeatLog) -> HeartbeatLogEntry:
     )
 
 
-def _parse_disabled_sub_tools(raw: str) -> list[str]:
-    """Parse JSON list of disabled sub-tool names from DB column."""
-    if not raw or not raw.strip():
-        return []
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return [str(x) for x in parsed]
-    except (ValueError, TypeError):
-        pass
-    return []
-
-
 def _tool_config_to_dto(tc: ToolConfig) -> ToolConfigEntry:
     return ToolConfigEntry(
         name=tc.name,
@@ -76,7 +62,6 @@ def _tool_config_to_dto(tc: ToolConfig) -> ToolConfigEntry:
         domain_group=tc.domain_group,
         domain_group_order=tc.domain_group_order,
         enabled=tc.enabled,
-        disabled_sub_tools=_parse_disabled_sub_tools(tc.disabled_sub_tools),
     )
 
 
@@ -543,18 +528,8 @@ def _tool_config_by_name_select(user_id: str, name: str) -> Select[tuple[ToolCon
     return select(ToolConfig).filter_by(user_id=user_id, name=name).with_for_update()
 
 
-def _tool_config_disabled_sub_tools_select(user_id: str) -> Select[tuple[str]]:
-    """Builder shared by ``get_disabled_sub_tool_names`` / ``_async``."""
-    return (
-        select(ToolConfig.disabled_sub_tools)
-        .filter_by(user_id=user_id)
-        .where(ToolConfig.disabled_sub_tools != "")
-    )
-
-
 def _build_tool_config(user_id: str, entry: ToolConfigEntry) -> ToolConfig:
     """Construct a ToolConfig ORM row from a DTO. Pure helper shared by save paths."""
-    disabled_sub = json.dumps(entry.disabled_sub_tools) if entry.disabled_sub_tools else ""
     return ToolConfig(
         user_id=user_id,
         name=entry.name,
@@ -563,7 +538,6 @@ def _build_tool_config(user_id: str, entry: ToolConfigEntry) -> ToolConfig:
         domain_group=entry.domain_group,
         domain_group_order=entry.domain_group_order,
         enabled=entry.enabled,
-        disabled_sub_tools=disabled_sub,
     )
 
 
@@ -577,7 +551,6 @@ def _new_disabled_tool_config(user_id: str, name: str, enabled: bool) -> ToolCon
         domain_group="",
         domain_group_order=0,
         enabled=enabled,
-        disabled_sub_tools="",
     )
 
 
@@ -676,22 +649,6 @@ class ToolConfigStore:
     async def set_enabled_async(self, name: str, enabled: bool) -> None:
         """Deprecated alias of :meth:`set_enabled`."""
         await self.set_enabled(name, enabled)
-
-    async def get_disabled_sub_tool_names(self) -> set[str]:
-        """Return the union of all disabled sub-tool names across all groups."""
-        db = AsyncSessionLocal()
-        try:
-            db_result = await db.execute(_tool_config_disabled_sub_tools_select(self.user_id))
-            result: set[str] = set()
-            for (raw,) in db_result.all():
-                result.update(_parse_disabled_sub_tools(raw))
-            return result
-        finally:
-            await db.close()
-
-    async def get_disabled_sub_tool_names_async(self) -> set[str]:
-        """Deprecated alias of :meth:`get_disabled_sub_tool_names`."""
-        return await self.get_disabled_sub_tool_names()
 
 
 # ---------------------------------------------------------------------------

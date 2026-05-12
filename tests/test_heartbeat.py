@@ -3673,7 +3673,12 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
 
     mock_tool_config = MagicMock()
     mock_tool_config.get_disabled_tool_names = AsyncMock(return_value={"quickbooks"})
-    mock_tool_config.get_disabled_sub_tool_names = AsyncMock(return_value={"qb_query"})
+
+    # Sub-tool gating now lives on the approval store under permission
+    # level ``never``. The heartbeat path resolves NEVER tools through
+    # ``get_never_tool_names`` and passes them as ``excluded_tool_names``.
+    mock_approval_store = MagicMock()
+    mock_approval_store.get_never_tool_names = AsyncMock(return_value={"qb_query"})
 
     with (
         patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
@@ -3681,6 +3686,10 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
         patch(
             "backend.app.agent.stores.ToolConfigStore",
             return_value=mock_tool_config,
+        ),
+        patch(
+            "backend.app.agent.approval.get_approval_store",
+            return_value=mock_approval_store,
         ),
         patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
@@ -3696,7 +3705,8 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
     assert "quickbooks" in excluded
     assert "messaging" not in excluded
 
-    # Disabled sub-tools should be passed through
+    # NEVER sub-tools should be passed through as excluded_tool_names so
+    # the LLM schema never includes them.
     excluded_tools = call_kwargs.kwargs.get("excluded_tool_names") or call_kwargs[1].get(
         "excluded_tool_names"
     )

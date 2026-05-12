@@ -81,14 +81,14 @@ def test_migrate_no_change_when_already_always(
     assert migrate_file(perm_file, "auto", "always") is False
 
 
-def test_migrate_preserves_ask_and_deny(
+def test_migrate_preserves_other_levels(
     tmp_path: Path, migrate_file: Callable[[Path, str, str], bool]
 ) -> None:
-    """Migration does not touch 'ask' or 'deny' values."""
+    """Migration does not touch values other than the one it rewrites."""
     perm_file = tmp_path / "PERMISSIONS.json"
     data = {
         "version": 1,
-        "tools": {"send_media_reply": "ask", "blocked_tool": "deny", "read_file": "auto"},
+        "tools": {"send_media_reply": "ask", "blocked_tool": "never", "read_file": "auto"},
         "resources": {},
     }
     perm_file.write_text(json.dumps(data))
@@ -97,7 +97,7 @@ def test_migrate_preserves_ask_and_deny(
 
     result = json.loads(perm_file.read_text())
     assert result["tools"]["send_media_reply"] == "ask"
-    assert result["tools"]["blocked_tool"] == "deny"
+    assert result["tools"]["blocked_tool"] == "never"
     assert result["tools"]["read_file"] == "always"
 
 

@@ -78,14 +78,14 @@ async def test_edit_permissions_json(tmp_path: object) -> None:
 
     # Flip send_media_reply from always to deny.
     result = await edit_tool.function(
-        "PERMISSIONS.json", '"send_media_reply": "always"', '"send_media_reply": "deny"'
+        "PERMISSIONS.json", '"send_media_reply": "always"', '"send_media_reply": "never"'
     )
     assert not result.is_error
     assert "Updated" in result.content
 
     result = await read_tool.function("PERMISSIONS.json")
     data = json.loads(result.content)
-    assert data["tools"]["send_media_reply"] == "deny"
+    assert data["tools"]["send_media_reply"] == "never"
 
 
 async def test_write_permissions_json(tmp_path: object) -> None:
@@ -100,13 +100,13 @@ async def test_write_permissions_json(tmp_path: object) -> None:
 
     # Minified input must be stored as indented JSON so later edit_file
     # calls have a stable shape to match against.
-    minified = '{"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}}'
+    minified = '{"version": 1, "tools": {"send_media_reply": "never"}, "resources": {}}'
     result = await write_tool.function("PERMISSIONS.json", minified)
     assert not result.is_error
 
     result = await read_tool.function("PERMISSIONS.json")
     data = json.loads(result.content)
-    assert data["tools"]["send_media_reply"] == "deny"
+    assert data["tools"]["send_media_reply"] == "never"
     # Indented: newlines plus a 2-space prefix on nested keys.
     assert "\n" in result.content
     assert '  "tools"' in result.content

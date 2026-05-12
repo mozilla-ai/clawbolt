@@ -1219,7 +1219,7 @@
       },
       "put": {
         "summary": "Update Tool Config",
-        "description": "Update tool configuration for the user.\n\nOnly factories that are not ``dashboard_always_enabled`` can be\ntoggled at the factory level. Attempts to disable always-enabled\ntools are silently ignored.\n\nEach entry may include ``disabled_sub_tools`` to control individual\ntools within a factory group.",
+        "description": "Update tool configuration for the user.\n\nOnly factories that are not ``dashboard_always_enabled`` can be\ntoggled at the factory level. Attempts to disable always-enabled\ntools are silently ignored.\n\nEach entry may include a ``sub_tools`` list with explicit\n``permission_level`` values to override individual sub-tools. Levels\nare persisted to ``user_permissions``; ``\"never\"`` filters the\nsub-tool out of the LLM schema on the next turn.",
         "operationId": "update_tool_config_api_user_tools_put",
         "requestBody": {
           "content": {
@@ -2520,10 +2520,6 @@
             "type": "string",
             "title": "Description"
           },
-          "enabled": {
-            "type": "boolean",
-            "title": "Enabled"
-          },
           "permission_level": {
             "type": "string",
             "title": "Permission Level",
@@ -2538,10 +2534,28 @@
         "type": "object",
         "required": [
           "name",
-          "description",
-          "enabled"
+          "description"
         ],
         "title": "SubToolEntryResponse"
+      },
+      "SubToolPermissionUpdate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "permission_level": {
+            "type": "string",
+            "title": "Permission Level"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "permission_level"
+        ],
+        "title": "SubToolPermissionUpdate",
+        "description": "Per-sub-tool permission override sent by the Settings UI.\n\n``permission_level`` is the new value: ``\"always\"`` (auto-run),\n``\"ask\"`` (prompt before running), or ``\"never\"`` (hide from the\nLLM schema). Sub-tools omitted from the update list keep their\ncurrent stored level."
       },
       "TelegramBotInfoResponse": {
         "properties": {
@@ -2668,11 +2682,11 @@
             "type": "boolean",
             "title": "Enabled"
           },
-          "disabled_sub_tools": {
+          "sub_tools": {
             "anyOf": [
               {
                 "items": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/SubToolPermissionUpdate"
                 },
                 "type": "array"
               },
@@ -2680,7 +2694,7 @@
                 "type": "null"
               }
             ],
-            "title": "Disabled Sub Tools"
+            "title": "Sub Tools"
           }
         },
         "type": "object",
