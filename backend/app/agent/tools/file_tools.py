@@ -520,6 +520,14 @@ def create_file_tools(
             function=find_saved_files,
             params_model=FindSavedFilesParams,
             usage_hint="Search durable saved files before asking the user to resend one.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Search saved files for '{args['query']}'"
+                    if args.get("query")
+                    else "List recent saved files"
+                ),
+            ),
         ),
         Tool(
             name=ToolName.ANALYZE_SAVED_FILE,
@@ -530,6 +538,10 @@ def create_file_tools(
             function=analyze_saved_file,
             params_model=AnalyzeSavedFileParams,
             usage_hint="Inspect a saved receipt or photo again without asking for a resend.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: f"Analyze saved file {args['file_ref']}",
+            ),
         ),
     ]
 
@@ -599,12 +611,12 @@ def _register() -> None:
             SubToolInfo(
                 ToolName.FIND_SAVED_FILES,
                 "Find previously saved files in Drive",
-                default_permission="always",
+                default_permission="ask",
             ),
             SubToolInfo(
                 ToolName.ANALYZE_SAVED_FILE,
                 "Analyze a previously saved image",
-                default_permission="always",
+                default_permission="ask",
             ),
         ],
         auth_check=_file_auth_check,
