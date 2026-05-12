@@ -654,6 +654,15 @@ class SessionStore:
 
         Returns the number of messages deleted. The session row itself is
         preserved so the conversation can continue with an empty history.
+
+        Also resets ``last_trim_seq`` to ``None``. After the delete, the
+        next message inserted gets ``seq = max(seq)+1 = 1`` (because
+        ``_select_max_seq`` returns 0 on an empty table), so any stale
+        watermark left over from a prior trim would silently filter out
+        every new message in ``load_conversation_history`` (which keeps
+        only ``seq > last_trim_seq``). Symptom: the agent receives only
+        the live inbound on every turn and behaves as if the conversation
+        has just started, forever.
         """
         async with db_session_async() as db:
             cs = (
@@ -664,6 +673,7 @@ class SessionStore:
             result = await db.execute(_delete_all_messages_for_session(cs.id))
             count: int = cast("CursorResult[object]", result).rowcount
             cs.initial_system_prompt = ""
+            cs.last_trim_seq = None
             await db.commit()
             return count
 

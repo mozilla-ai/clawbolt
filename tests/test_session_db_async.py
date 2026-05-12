@@ -339,6 +339,39 @@ async def test_delete_messages_async_clears_history_and_prompt(
     assert reloaded.initial_system_prompt == ""
 
 
+async def test_delete_messages_async_resets_trim_watermark(
+    async_db: async_sessionmaker,
+) -> None:
+    """Clearing the conversation must reset ``last_trim_seq`` to None.
+
+    Regression for the dev-environment "agent loses all context on every
+    turn" report: after a clear, the next inserted message gets ``seq=1``
+    (because ``_select_max_seq`` returns 0 on an empty table). If
+    ``last_trim_seq`` is left at its pre-clear value (say 199),
+    ``load_conversation_history`` filters every new message out with
+    ``seq > last_trim_seq`` and the LLM only ever sees the live inbound.
+    """
+    user_id = await _create_user(async_db)
+    store = SessionStore(user_id)
+    session, _ = await store.get_or_create_session_async()
+    await store.add_message_async(session, direction="inbound", body="a")
+
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).where(ChatSession.user_id == user_id))
+        ).scalar_one()
+        cs.last_trim_seq = 199
+        await db.commit()
+
+    await store.delete_messages_async(session.session_id)
+
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).where(ChatSession.user_id == user_id))
+        ).scalar_one()
+        assert cs.last_trim_seq is None
+
+
 # ---------------------------------------------------------------------------
 # last-timestamp helpers
 # ---------------------------------------------------------------------------
