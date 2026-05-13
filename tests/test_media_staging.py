@@ -196,7 +196,7 @@ async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
     upload = tools[0].function
 
     result = await upload(
-        folder_path="/David Graham/photos",
+        folder_path="/Acme Plumbing/photos",
         description="Tile job",
     )
 
@@ -228,7 +228,7 @@ async def test_file_factory_prefers_current_turn_over_stale_staging(
     upload = tools[0].function
 
     result = await upload(
-        folder_path="/David Graham/photos",
+        folder_path="/Acme Plumbing/photos",
         original_url="bb_photo",
     )
     assert result.is_error is False
@@ -378,7 +378,7 @@ async def test_approval_cache_coalesces_repeat_ask(test_user: User) -> None:
     )
     agent.register_tools([tool])
 
-    args = {"client_name": "David Graham"}
+    args = {"client_name": "Acme Plumbing"}
     parsed_calls = [
         ToolCallRequest(id=f"call_{i}", name="fake_upload", arguments=args) for i in range(3)
     ]
@@ -396,7 +396,7 @@ async def test_approval_cache_coalesces_repeat_ask(test_user: User) -> None:
 
     # Three tool calls, one user approval prompt.
     assert gate.request_approval.await_count == 1  # type: ignore[attr-defined]
-    assert calls == ["David Graham", "David Graham", "David Graham"]
+    assert calls == ["Acme Plumbing", "Acme Plumbing", "Acme Plumbing"]
 
 
 @pytest.mark.asyncio()
@@ -434,7 +434,7 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
     agent.register_tools([upload_tool])
 
     args = {
-        "folder_path": "/David Graham/photos",
+        "folder_path": "/Acme Plumbing/photos",
         "original_url": "bb_photo",
     }
     parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
@@ -448,7 +448,7 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
     )
 
     # Permission should now be ALWAYS for upload_to_storage globally, not
-    # scoped to David Graham only. A subsequent upload for a different
+    # scoped to Acme Plumbing only. A subsequent upload for a different
     # client should auto-approve without another prompt.
     level_global = await store.check_permission(
         test_user.id, "upload_to_storage", default=PermissionLevel.ASK
@@ -568,7 +568,7 @@ async def test_always_allow_does_not_emit_synthetic_tool_record(test_user: User)
     agent.register_tools([upload_tool])
 
     args = {
-        "folder_path": "/David Graham/photos",
+        "folder_path": "/Acme Plumbing/photos",
         "original_url": "bb_photo",
     }
     parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
