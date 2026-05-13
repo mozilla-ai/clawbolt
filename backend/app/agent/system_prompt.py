@@ -117,8 +117,88 @@ def build_user_section(user: User) -> str:
 
     Tail-truncates over-budget rows for prompt injection; see
     :func:`build_soul_prompt` for the rationale.
+
+    Strips any agent-authored ``## Integrations`` (or ``# Integrations``)
+    subsection before injection. Connection state lives in the live
+    "Connected Integrations" section built from ``oauth_service``; a
+    stale copy in USER.md previously caused the agent to declare
+    "Drive isn't connected" without checking, because USER.md had been
+    written before the user OAuthed. The strip is defensive: the
+    Instructions section now tells the agent not to write that block,
+    but legacy users still have it in their stored USER.md.
     """
-    return truncate_for_injection("USER.md", user.user_text or "")
+    user_text = _strip_integrations_block(user.user_text or "")
+    return truncate_for_injection("USER.md", user_text)
+
+
+def _strip_integrations_block(text: str) -> str:
+    """Remove a ``# Integrations`` or ``## Integrations`` subsection from *text*.
+
+    Matches the heading literally and everything up to the next heading at
+    the same or shallower depth (or end of file).
+    """
+    if not text or "Integrations" not in text:
+        return text
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    skipping = False
+    skip_depth = 0
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            depth = len(stripped) - len(stripped.lstrip("#"))
+            heading_text = stripped[depth:].strip()
+            if not skipping and heading_text.lower() == "integrations":
+                skipping = True
+                skip_depth = depth
+                continue
+            if skipping and depth <= skip_depth:
+                skipping = False
+        if not skipping:
+            out.append(line)
+    result = "".join(out)
+    # Drop trailing blank lines that the stripped block left behind, but
+    # preserve a single trailing newline if the original had one.
+    trailing_nl = "\n" if text.endswith("\n") else ""
+    return result.rstrip() + trailing_nl
+
+
+async def build_integration_status_section(user_id: str) -> str:
+    """Build the 'Connected Integrations' section content (live state).
+
+    Queried fresh on every system-prompt build from ``oauth_service`` so a
+    user's OAuth completion mid-conversation reflects on the very next
+    turn. The model is told (in ``instructions.md``) to treat this section
+    as authoritative over anything written into USER.md or MEMORY.md.
+
+    Integrations the operator has not configured on this deployment are
+    omitted entirely; the model only sees integrations it could plausibly
+    ask the user to connect.
+    """
+    # Local import: avoids a circular dependency at module-import time
+    # (``integration_tools`` imports several agent helpers that may
+    # eventually grow to import ``system_prompt``).
+    from backend.app.agent.tools.integration_tools import (
+        get_user_connected_integrations,
+    )
+
+    status = await get_user_connected_integrations(user_id)
+    if not status:
+        return ""
+
+    connected = sorted(name for name, ok in status.items() if ok)
+    not_connected = sorted(name for name, ok in status.items() if not ok)
+
+    lines: list[str] = [
+        "Live connection state. Authoritative over anything in USER.md or MEMORY.md.",
+    ]
+    if connected:
+        lines.append(f"Connected: {', '.join(connected)}")
+    else:
+        lines.append("Connected: (none)")
+    if not_connected:
+        lines.append(f"Not connected: {', '.join(not_connected)}")
+    return "\n".join(lines)
 
 
 async def build_memory_section(
@@ -278,6 +358,13 @@ async def build_agent_system_prompt(
     if tool_guidelines:
         builder.add_section("Tool Guidelines", tool_guidelines, dynamic=True)
 
+    # Live integration state is dynamic: a user can complete an OAuth
+    # handshake mid-conversation and we want the next turn to reflect it
+    # without depending on the agent to have written it into USER.md.
+    integration_status = await build_integration_status_section(user.id)
+    if integration_status:
+        builder.add_section("Connected Integrations", integration_status, dynamic=True)
+
     memory = await build_memory_section(user.id, query=message_context)
     builder.add_section("Your Memory", memory, dynamic=True)
 
@@ -308,6 +395,10 @@ async def build_heartbeat_system_prompt(
 
     builder.add_section("About You", build_identity_section(user))
     builder.add_section("About Your User", build_user_section(user))
+
+    integration_status = await build_integration_status_section(user.id)
+    if integration_status:
+        builder.add_section("Connected Integrations", integration_status)
 
     memory = await build_memory_section(user.id)
     builder.add_section("User's memory", memory)

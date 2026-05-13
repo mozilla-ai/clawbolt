@@ -788,3 +788,104 @@ async def test_connect_renders_registry_display_name(test_user: User) -> None:
     # The display name is registered on the ``file`` factory; without
     # the registry plumbing this would fall back to ``google_drive``.
     assert "Google Drive" in result.content
+
+
+# ---------------------------------------------------------------------------
+# get_user_connected_integrations (live status feed for the system prompt)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_user_connected_integrations_skips_unconfigured_oauth() -> None:
+    """OAuth integrations the operator has not wired must be omitted entirely.
+
+    The system prompt only shows integrations the user could plausibly
+    connect; surfacing "not_connected: foo" for something the operator
+    cannot actually offer would confuse the model into pitching a flow
+    that never works.
+    """
+    from backend.app.agent.tools.integration_tools import (
+        get_user_connected_integrations,
+    )
+
+    configured = OAuthConfig(
+        integration="google_drive",
+        client_id="id",
+        client_secret="secret",
+        authorize_url="x",
+        token_url="x",
+        scopes=["scope"],
+    )
+
+    def fake_get_oauth_config(name: str) -> OAuthConfig | None:
+        return configured if name == "google_drive" else None
+
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.list_oauth_integrations",
+            return_value=("google_drive", "gmail"),
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.get_oauth_config",
+            side_effect=fake_get_oauth_config,
+        ),
+        patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth_service,
+        patch(
+            "backend.app.agent.tools.integration_tools._is_magic_link_connected",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+    ):
+        mock_oauth_service.is_connected = AsyncMock(return_value=True)
+        result = await get_user_connected_integrations("user-1")
+
+    # gmail is unconfigured -> not in the dict at all.
+    assert "gmail" not in result
+    assert result["google_drive"] is True
+    # Magic-link integrations still appear: they have no separate
+    # "configured" check; the magic-link plumbing is always available
+    # when the integration is registered.
+    assert "appfolio_vendor" in result
+
+
+@pytest.mark.asyncio
+async def test_get_user_connected_integrations_reflects_per_user_state() -> None:
+    """Connection state is read live per user; no caching."""
+    from backend.app.agent.tools.integration_tools import (
+        get_user_connected_integrations,
+    )
+
+    configured = OAuthConfig(
+        integration="google_drive",
+        client_id="id",
+        client_secret="secret",
+        authorize_url="x",
+        token_url="x",
+        scopes=["scope"],
+    )
+
+    async def fake_is_connected(user_id: str, integration: str) -> bool:
+        return user_id == "alice" and integration == "google_drive"
+
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.list_oauth_integrations",
+            return_value=("google_drive",),
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.get_oauth_config",
+            return_value=configured,
+        ),
+        patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth_service,
+        patch(
+            "backend.app.agent.tools.integration_tools._is_magic_link_connected",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+    ):
+        mock_oauth_service.is_connected = AsyncMock(side_effect=fake_is_connected)
+        alice = await get_user_connected_integrations("alice")
+        bob = await get_user_connected_integrations("bob")
+
+    assert alice["google_drive"] is True
+    assert bob["google_drive"] is False
