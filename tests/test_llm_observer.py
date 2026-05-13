@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -504,3 +505,88 @@ async def test_response_observer_exception_does_not_crash_agent_loop(
         set_llm_response_observer(None)
 
     assert any("observer raised" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.compaction.amessages")
+async def test_response_observer_fires_from_compaction(
+    mock_amessages: MagicMock,
+    test_user: User,
+) -> None:
+    """Compaction also dispatches an LLM call; the response observer must
+    fire there too so post-incident forensics have parity with the
+    request observer."""
+    import json
+
+    from backend.app.agent.compaction import compact_session
+    from backend.app.agent.messages import UserMessage as AgentUserMessage
+
+    mock_amessages.return_value = make_text_response(
+        json.dumps({"memory_update": "ok", "summary": ""})
+    )
+
+    received: list[LLMResponsePayload] = []
+
+    async def obs(payload: LLMResponsePayload) -> None:
+        received.append(payload)
+
+    set_llm_response_observer(obs)
+    try:
+        await compact_session(
+            test_user.id,
+            [AgentUserMessage(content="hi", seq=1)],
+        )
+    finally:
+        set_llm_response_observer(None)
+
+    assert any(p.purpose == "compaction" for p in received)
+    payload = next(p for p in received if p.purpose == "compaction")
+    assert payload.user_id == test_user.id
+    assert payload.session_id is None
+    # Content is serialized as plain dicts.
+    assert payload.content_blocks
+    for block in payload.content_blocks:
+        assert isinstance(block, dict)
+        assert "type" in block
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.heartbeat.amessages")
+async def test_response_observer_fires_from_heartbeat_decision(
+    mock_amessages: MagicMock,
+    test_user: User,
+) -> None:
+    """Heartbeat decision is the third LLM dispatch site (alongside agent
+    loop and compaction). Pair the request observer's coverage with
+    response-side coverage so we never have a half-instrumented
+    purpose."""
+    from backend.app.agent.heartbeat import evaluate_heartbeat_need
+
+    # The heartbeat decider parses a plain text response into a no-send
+    # decision when no tool_use is present; the parser tolerates an
+    # empty / "skip" reply so the dispatch path completes without us
+    # standing up a fake tool_use block.
+    mock_amessages.return_value = make_text_response("skip")
+
+    received: list[LLMResponsePayload] = []
+
+    async def obs(payload: LLMResponsePayload) -> None:
+        received.append(payload)
+
+    set_llm_response_observer(obs)
+    try:
+        # We only care that the observer fired before any downstream
+        # parsing or store interaction; the rest of the heartbeat path
+        # is exercised by ``test_heartbeat.py``. Suppress any parse-time
+        # failure raised by the synthetic mock response.
+        with contextlib.suppress(Exception):
+            await evaluate_heartbeat_need(test_user)
+    finally:
+        set_llm_response_observer(None)
+
+    assert any(p.purpose == "heartbeat_decision" for p in received), (
+        "response observer must fire for heartbeat decision"
+    )
+    payload = next(p for p in received if p.purpose == "heartbeat_decision")
+    assert payload.user_id == test_user.id
+    assert payload.session_id is None
