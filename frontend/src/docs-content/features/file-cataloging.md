@@ -14,7 +14,7 @@ Files land under your Drive's `Clawbolt` folder. The agent organizes by context:
 
 ```
 Clawbolt/
-├── John Smith - 116 Virginia Ave/
+├── John Smith - 123 Main Street/
 │   ├── photos/
 │   │   ├── kitchen-before_001.jpg
 │   │   └── kitchen-after_002.jpg
@@ -37,7 +37,7 @@ When you send media, the agent uses these tools:
 3. `find_saved_files` searches your saved files by filename or description.
 4. `analyze_saved_file` runs vision analysis on a previously saved image without asking you to resend it.
 
-The agent references saved files by their storage path (e.g. `/John Smith - 116 Virginia Ave/photos/kitchen-before_001.jpg`). Drive is the source of truth: filenames, locations, and descriptions live on the file in your Drive, not in a separate Clawbolt database.
+The agent references saved files by their storage path (e.g. `/John Smith - 123 Main Street/photos/kitchen-before_001.jpg`). Drive is the source of truth: filenames, locations, and descriptions live on the file in your Drive, not in a separate Clawbolt database.
 
 ## Operator setup (self-hosted only)
 

@@ -40,9 +40,9 @@ def test_normalize_folder_path_defaults_to_inbox_when_blank() -> None:
 
 
 def test_normalize_folder_path_accepts_client_style_nested_path() -> None:
-    normalized, error = _normalize_folder_path("/Acme - 123 Main St/photos")
+    normalized, error = _normalize_folder_path("/Acme - 123 Main Street/photos")
     assert error is None
-    assert normalized == "/Acme - 123 Main St/photos"
+    assert normalized == "/Acme - 123 Main Street/photos"
 
 
 def test_normalize_folder_path_strips_trailing_slash() -> None:
@@ -140,7 +140,7 @@ async def test_upload_writes_file_to_caller_supplied_folder(
     upload = tools[0].function
 
     result = await upload(
-        folder_path="/Johnson - 116 Virginia Ave/photos",
+        folder_path="/Johnson - 123 Main Streetreet/photos",
         description="Damaged deck railing",
         original_url="https://example.com/media/photo.jpg",
     )
@@ -148,7 +148,7 @@ async def test_upload_writes_file_to_caller_supplied_folder(
     assert result.is_error is False
     assert "Uploaded" in result.content
     assert "damaged_deck_railing_001.jpg" in result.content
-    assert any("Johnson - 116 Virginia Ave/photos" in key for key in storage.files)
+    assert any("Johnson - 123 Main Streetreet/photos" in key for key in storage.files)
 
 
 @pytest.mark.asyncio()
@@ -373,12 +373,12 @@ async def test_move_file_relocates_to_named_folder(
 
     result = await move_file(
         from_path="/Inbox/file_001.jpg",
-        to_folder_path="/John Smith - 116 Virginia Ave/photos",
+        to_folder_path="/John Smith - 123 Main Streetreet/photos",
     )
 
     assert result.is_error is False
     assert "Moved" in result.content
-    assert "John Smith - 116 Virginia Ave/photos/file_001.jpg" in result.content
+    assert "John Smith - 123 Main Streetreet/photos/file_001.jpg" in result.content
     assert "Inbox/file_001.jpg" not in storage.files
     assert any("John Smith" in k for k in storage.files)
 

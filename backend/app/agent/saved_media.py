@@ -2,7 +2,7 @@
 
 After dropping the ``media_files`` manifest, the backend itself (Google
 Drive) is the source of truth. The agent quotes storage paths
-(``/Astro Home Management - 123 Penn Ave/photos/foo.jpg``) and these
+(``/Astro Home Management - 123 Main Street/photos/foo.jpg``) and these
 helpers translate that string into bytes plus the metadata other
 flows (vision, CompanyCam, AppFolio) need.
 """

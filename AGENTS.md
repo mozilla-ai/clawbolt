@@ -56,7 +56,7 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `calendar_configs` | Per-user calendar integration settings |
 | `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, Google Drive, QuickBooks, etc.) |
 
-Saved files are not tracked in Postgres. The Google Drive integration is the source of truth for filenames, locations, and descriptions. The agent quotes saved files by their storage path (e.g. `/Astro Home Management - 123 Penn Ave/photos/foo.jpg`).
+Saved files are not tracked in Postgres. The Google Drive integration is the source of truth for filenames, locations, and descriptions. The agent quotes saved files by their storage path (e.g. `/Astro Home Management - 123 Main Street/photos/foo.jpg`).
 
 Key store modules:
 - `backend/app/agent/user_db.py` -- `UserStore` (singleton via `get_user_store()`)
