@@ -27,7 +27,9 @@ from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessa
 from backend.app.agent.observer import (
     PURPOSE_COMPACTION,
     LLMRequestPayload,
+    LLMResponsePayload,
     emit_llm_request,
+    emit_llm_response,
 )
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.stores import HeartbeatStore
@@ -180,6 +182,52 @@ def _parse_compaction_response(raw: str) -> CompactionResult:
     )
 
 
+async def _emit_compaction_response(
+    response: MessageResponse,
+    *,
+    user_id: str,
+    model: str,
+    provider: str,
+    started_at: datetime.datetime,
+) -> None:
+    """Build and dispatch an ``LLMResponsePayload`` for the compaction call.
+
+    Mirrors ``ClawboltAgent._emit_response`` for the agent-loop side; the
+    same serialization rules apply (plain dicts via ``model_dump``, per-block
+    try/except so a single unexpected block shape cannot break the dispatch).
+    Compaction's session_id / request_id are ``None`` because compaction
+    runs on a synthetic prompt outside the session-aware path.
+    """
+    content_blocks: list[dict[str, Any]] = []
+    for block in response.content:
+        try:
+            content_blocks.append(block.model_dump(mode="json"))
+        except Exception:
+            logger.exception(
+                "Failed to serialize compaction response content block; skipping for observer"
+            )
+    usage = response.usage
+    await emit_llm_response(
+        LLMResponsePayload(
+            schema_version=1,
+            purpose=PURPOSE_COMPACTION,
+            user_id=user_id,
+            session_id=None,
+            request_id=None,
+            model=model,
+            provider=provider,
+            content_blocks=content_blocks,
+            stop_reason=response.stop_reason,
+            input_tokens=usage.input_tokens if usage else None,
+            output_tokens=usage.output_tokens if usage else None,
+            cache_creation_input_tokens=(usage.cache_creation_input_tokens if usage else None),
+            cache_read_input_tokens=(usage.cache_read_input_tokens if usage else None),
+            started_at=started_at,
+            completed_at=datetime.datetime.now(UTC),
+        )
+    )
+
+
 async def compact_session(
     user_id: str,
     trimmed_messages: list[AgentMessage],
@@ -278,6 +326,7 @@ async def compact_session(
     compaction_system = prepare_system_with_caching(COMPACTION_SYSTEM_PROMPT)
     compaction_thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
 
+    started_at = datetime.datetime.now(UTC)
     try:
         await emit_llm_request(
             LLMRequestPayload(
@@ -298,7 +347,7 @@ async def compact_session(
                 # text, not on a session-aware message history. The
                 # era-marker field has no meaning here.
                 min_message_seq_in_prompt=None,
-                started_at=datetime.datetime.now(UTC),
+                started_at=started_at,
             )
         )
         response = cast(
@@ -316,6 +365,13 @@ async def compact_session(
     except Exception:
         logger.exception("Compaction LLM call failed for user %s", user_id)
         return "", None
+    await _emit_compaction_response(
+        response,
+        user_id=user_id,
+        model=model,
+        provider=provider,
+        started_at=started_at,
+    )
 
     await log_llm_usage(user_id, model, response, purpose="compaction", provider=provider)
 

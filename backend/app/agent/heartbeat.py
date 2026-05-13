@@ -36,7 +36,9 @@ from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.observer import (
     PURPOSE_HEARTBEAT_DECISION,
     LLMRequestPayload,
+    LLMResponsePayload,
     emit_llm_request,
+    emit_llm_response,
 )
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.stores import HeartbeatStore
@@ -466,6 +468,7 @@ async def evaluate_heartbeat_need(
     ]
     heartbeat_tools = [HEARTBEAT_DECISION_TOOL]
     heartbeat_thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
+    started_at = datetime.datetime.now(datetime.UTC)
     await emit_llm_request(
         LLMRequestPayload(
             schema_version=1,
@@ -483,7 +486,7 @@ async def evaluate_heartbeat_need(
             # Heartbeat sends a synthetic single-message prompt -- there
             # is no session history to derive an era marker from.
             min_message_seq_in_prompt=None,
-            started_at=datetime.datetime.now(datetime.UTC),
+            started_at=started_at,
         )
     )
     for attempt in range(max_retries):
@@ -517,11 +520,64 @@ async def evaluate_heartbeat_need(
         raise RuntimeError("Heartbeat LLM retry loop exited without response")
 
     await log_llm_usage(user.id, model, response, "heartbeat_decision", provider=provider)
+    await _emit_heartbeat_response(
+        response,
+        user_id=user.id,
+        model=model,
+        provider=provider,
+        started_at=started_at,
+    )
     decision = _parse_decision_response(response)
     if response.usage:
         decision.input_tokens = response.usage.input_tokens or 0
         decision.output_tokens = response.usage.output_tokens or 0
     return decision
+
+
+async def _emit_heartbeat_response(
+    response: MessageResponse,
+    *,
+    user_id: str,
+    model: str,
+    provider: str,
+    started_at: datetime.datetime,
+) -> None:
+    """Build and dispatch an ``LLMResponsePayload`` for the heartbeat decision.
+
+    Mirrors ``ClawboltAgent._emit_response`` for the agent-loop side and
+    ``_emit_compaction_response`` for the compaction side. Heartbeat's
+    session_id / request_id are ``None`` because the heartbeat decider
+    runs on a synthetic single-message prompt outside the session-aware
+    path.
+    """
+    content_blocks: list[dict[str, Any]] = []
+    for block in response.content:
+        try:
+            content_blocks.append(block.model_dump(mode="json"))
+        except Exception:
+            logger.exception(
+                "Failed to serialize heartbeat response content block; skipping for observer"
+            )
+    usage = response.usage
+    await emit_llm_response(
+        LLMResponsePayload(
+            schema_version=1,
+            purpose=PURPOSE_HEARTBEAT_DECISION,
+            user_id=user_id,
+            session_id=None,
+            request_id=None,
+            model=model,
+            provider=provider,
+            content_blocks=content_blocks,
+            stop_reason=response.stop_reason,
+            input_tokens=usage.input_tokens if usage else None,
+            output_tokens=usage.output_tokens if usage else None,
+            cache_creation_input_tokens=(usage.cache_creation_input_tokens if usage else None),
+            cache_read_input_tokens=(usage.cache_read_input_tokens if usage else None),
+            started_at=started_at,
+            completed_at=datetime.datetime.now(datetime.UTC),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
