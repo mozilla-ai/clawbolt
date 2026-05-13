@@ -114,8 +114,9 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         # the staging TTL, return the recorded receipt rather than POSTing the
         # same bytes again. CompanyCam dedupes by MD5 server-side so a missed
         # idempotency check is only a wasted roundtrip, but skipping it keeps
-        # the flow clean.
-        prior = media_staging.get_uploaded(ctx.user.id, original_url)
+        # the flow clean. Receipt lives on the staged_media row, so the
+        # check survives a worker restart inside the staging window.
+        prior = await media_staging.get_uploaded(ctx.user.id, original_url)
         if prior is not None and prior.service == "companycam":
             return ToolResult(
                 content=(
@@ -240,7 +241,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         # CompanyCam could not fetch our temp URL, and we want a retry to
         # be a fresh attempt rather than a no-op receipt.
         if original_url and status != "processing_error":
-            media_staging.mark_uploaded(
+            await media_staging.mark_uploaded(
                 ctx.user.id,
                 original_url,
                 service="companycam",

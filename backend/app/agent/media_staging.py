@@ -13,14 +13,13 @@ can reference the bytes without passing raw channel URLs through the
 prompt. Both lookup styles work; the handle-based API is what the agent
 sees.
 
-This module also tracks a short-lived ``recently_uploaded`` record for
-each ``(user_id, original_url)``. After a tool successfully ships the
-bytes to an external service (CompanyCam, etc.) it both ``evict``s the
-bytes and ``mark_uploaded``s an ``UploadRecord`` so a same-turn retry
-on the same handle can return an idempotent "already uploaded" result
-instead of the generic "No photo available" error. The receipt cache
-stays in-process and is intentionally short-lived (1 h); its job is
-only to absorb same-turn / same-day retries within one worker.
+This module also records an upload receipt on each row. After a tool
+ships the bytes to an external service (CompanyCam, Drive, etc.) it
+calls ``mark_uploaded`` to populate ``upload_*`` columns on the
+matching ``staged_media`` row. A same-handle retry then surfaces an
+idempotent receipt via ``get_uploaded`` instead of writing a second
+copy. The receipt shares the row's TTL, so it survives worker
+restarts and ages out alongside the bytes.
 
 MULTI-REPLICA WARNING: this module assumes a single application
 instance with exclusive write access to ``media_staging_base_dir``. If
@@ -36,7 +35,6 @@ from __future__ import annotations
 
 import logging
 import secrets
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -59,30 +57,20 @@ logger = logging.getLogger(__name__)
 STAGING_TTL_SECONDS = 604800
 STAGING_MAX_PER_USER = 50  # Cap memory growth: oldest-expiring entry is evicted on overflow
 
-# Recently-uploaded receipt cache. Matches the staging TTL so a handle
-# whose bytes are still on disk always has a corresponding receipt: the
-# tools no longer evict on success (bytes coexist with the permanent
-# home for the staging window), so the receipt is the only mechanism
-# preventing a same-handle retry from writing a second Drive copy.
-# Drive does not dedupe by content the way CompanyCam does, so without
-# this guard a 2h-later retry on the same handle would land a duplicate.
-# The cache is in-process: a worker restart inside the staging window
-# can still produce a duplicate Drive file (no data loss). Persisting
-# this record onto ``staged_media`` would close that gap; tracked for
-# a follow-up.
-UPLOAD_RECORD_TTL_SECONDS = STAGING_TTL_SECONDS  # 7 days
-UPLOAD_RECORD_MAX_PER_USER = 200
-
 
 @dataclass(frozen=True)
 class UploadRecord:
-    """A receipt of a successful external upload, scoped to a (user, handle).
+    """A receipt of a successful external upload, scoped to a staged handle.
 
-    Returned by :func:`get_uploaded` so a tool that finds its staged bytes
-    already evicted can re-emit the same external receipt instead of an
-    error. Tools should populate ``service`` with a short identifier
-    (e.g. ``"companycam"``) so a future cross-service handle reuse cannot
+    Returned by :func:`get_uploaded` so a tool with a same-handle retry
+    can re-emit the same external receipt instead of writing a second
+    copy. Tools populate ``service`` with a short identifier (e.g.
+    ``"companycam"``) so a future cross-service handle reuse cannot
     surface the wrong receipt.
+
+    Persisted as columns on the ``staged_media`` row that the handle
+    points at, so the receipt shares the bytes' TTL and survives worker
+    restarts.
     """
 
     service: str
@@ -90,10 +78,6 @@ class UploadRecord:
     url: str
     target: str
     status: str  # "uploaded", "duplicate", "pending", "processing_error"
-
-
-# user_id -> {original_url: (UploadRecord, expires_at)} recently-uploaded receipts
-_uploaded: dict[str, dict[str, tuple[UploadRecord, float]]] = {}
 
 
 def _staging_root() -> Path:
@@ -540,7 +524,10 @@ async def evict_by_handle(handle: str) -> bool:
 
 
 async def clear_user(user_id: str) -> None:
-    """Drop all staged media and upload records for a user (primarily for tests)."""
+    """Drop all staged media and upload records for a user (primarily for tests).
+
+    Upload receipts live on the same rows, so a single DELETE clears both.
+    """
     async with db_session_async() as db:
         rows = list(
             (await db.execute(select(StagedMedia).where(StagedMedia.user_id == user_id)))
@@ -551,7 +538,6 @@ async def clear_user(user_id: str) -> None:
             _unlink_quiet(_resolve_disk_path(row.disk_path))
         await db.execute(delete(StagedMedia).where(StagedMedia.user_id == user_id))
         await db.commit()
-    _uploaded.pop(user_id, None)
 
 
 async def purge_expired() -> int:
@@ -578,18 +564,20 @@ async def purge_expired() -> int:
 
 
 # ---------------------------------------------------------------------------
-# In-process upload-receipt cache
+# DB-backed upload receipts
 # ---------------------------------------------------------------------------
 #
 # A handle that already shipped to an external service needs an idempotent
-# answer on retry so the tool does not write a second copy. Bytes are
-# preserved across the staging TTL (no longer evicted on success), so the
-# receipt has to age alongside them: anything still resolvable as bytes
-# must also be resolvable as a receipt. Worker-local; persisting onto the
-# ``staged_media`` row is a follow-up that would survive restarts.
+# answer on retry so the tool does not write a second copy. The receipt
+# lives on the same ``staged_media`` row as the bytes it describes, so
+# both share the same TTL and survive worker restarts. The lookup key
+# matches either form of reference (URL or handle), mirroring
+# :func:`resolve_media_ref`: the LLM is given handles in the prompt but
+# tools call ``mark_uploaded`` after resolving to the URL, so the two
+# sides of the idempotency contract must agree across both shapes.
 
 
-def mark_uploaded(
+async def mark_uploaded(
     user_id: str,
     original_url: str,
     *,
@@ -599,56 +587,99 @@ def mark_uploaded(
     target: str,
     status: str,
 ) -> None:
-    """Record that ``original_url`` was successfully shipped to *service*."""
+    """Record that ``original_url`` was successfully shipped to *service*.
+
+    ``original_url`` may be either the canonical URL the channel layer
+    staged under or the short handle the LLM sees; the lookup matches
+    either form. No-op when no ``staged_media`` row matches (e.g. the
+    tool was called with a URL that was never staged, like a direct
+    ``downloaded_media`` entry from a channel that does not stage).
+
+    The OR-keyed match can in principle hit more than one row when a
+    user happens to have one row whose ``original_url`` equals the ref
+    and a different row whose ``handle`` equals it. We scope the UPDATE
+    to a single id (most recently staged) so a stray match never writes
+    a misleading receipt onto an unrelated row.
+    """
     if not original_url:
         return
-    _purge_expired_uploads()
-    expires_at = time.monotonic() + UPLOAD_RECORD_TTL_SECONDS
-    record = UploadRecord(
-        service=service,
-        external_id=external_id,
-        url=url,
-        target=target,
-        status=status,
+    now = datetime.now(UTC)
+    async with db_session_async() as db:
+        target_row_id = (
+            await db.execute(
+                select(StagedMedia.id)
+                .where(
+                    StagedMedia.user_id == user_id,
+                    (StagedMedia.original_url == original_url)
+                    | (StagedMedia.handle == original_url),
+                    StagedMedia.expires_at > now,
+                )
+                .order_by(StagedMedia.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if target_row_id is None:
+            logger.debug(
+                "mark_uploaded: no staged_media row for user=%s ref=%s; receipt not persisted",
+                user_id,
+                original_url,
+            )
+            return
+        await db.execute(
+            update(StagedMedia)
+            .where(StagedMedia.id == target_row_id)
+            .values(
+                upload_service=service,
+                upload_external_id=external_id,
+                upload_url=url,
+                upload_target=target,
+                upload_status=status,
+                uploaded_at=now,
+            )
+        )
+        await db.commit()
+
+
+async def get_uploaded(user_id: str, original_url: str) -> UploadRecord | None:
+    """Return the recorded upload receipt for ``(user_id, ref)``, if any.
+
+    ``ref`` may be the staged handle (``media_XYZ``) or the original URL.
+    Returns ``None`` when no row matches, the row has no recorded
+    upload, or the row has expired.
+
+    The OR-clause can in principle match more than one row (row A's
+    ``original_url`` matches the ref while a different row B's
+    ``handle`` matches it). The chance is near-zero given handles are
+    48 bits of url-safe randomness behind a ``media_`` prefix, but we
+    pick the most recently staged row deterministically rather than
+    raising, so a benign retry never surfaces as a crash.
+    """
+    if not original_url:
+        return None
+    now = datetime.now(UTC)
+    db = AsyncSessionLocal()
+    try:
+        row = (
+            await db.execute(
+                select(StagedMedia)
+                .where(
+                    StagedMedia.user_id == user_id,
+                    (StagedMedia.original_url == original_url)
+                    | (StagedMedia.handle == original_url),
+                    StagedMedia.expires_at > now,
+                )
+                .order_by(StagedMedia.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    finally:
+        await db.close()
+    if row is None or row.upload_service is None:
+        return None
+    return UploadRecord(
+        service=row.upload_service,
+        external_id=row.upload_external_id or "",
+        url=row.upload_url or "",
+        target=row.upload_target or "",
+        status=row.upload_status or "",
     )
-    user_records = _uploaded.setdefault(user_id, {})
-    user_records[original_url] = (record, expires_at)
-    _enforce_upload_record_cap(user_id)
-
-
-def get_uploaded(user_id: str, original_url: str) -> UploadRecord | None:
-    """Return the recently-uploaded receipt for ``(user_id, original_url)``."""
-    if not original_url:
-        return None
-    user_records = _uploaded.get(user_id)
-    if not user_records:
-        return None
-    entry = user_records.get(original_url)
-    if entry is None:
-        return None
-    record, expires_at = entry
-    if expires_at <= time.monotonic():
-        return None
-    return record
-
-
-def _enforce_upload_record_cap(user_id: str) -> None:
-    user_records = _uploaded.get(user_id)
-    if not user_records or len(user_records) <= UPLOAD_RECORD_MAX_PER_USER:
-        return
-    while len(user_records) > UPLOAD_RECORD_MAX_PER_USER:
-        oldest_url = min(user_records, key=lambda url: user_records[url][1])
-        user_records.pop(oldest_url, None)
-
-
-def _purge_expired_uploads() -> None:
-    now = time.monotonic()
-    empty_users: list[str] = []
-    for user_id, records in _uploaded.items():
-        expired = [url for url, (_rec, exp) in records.items() if exp <= now]
-        for url in expired:
-            del records[url]
-        if not records:
-            empty_users.append(user_id)
-    for user_id in empty_users:
-        del _uploaded[user_id]

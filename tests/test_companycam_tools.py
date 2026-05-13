@@ -1383,7 +1383,7 @@ async def test_upload_photo_keeps_staging_on_success(test_user: User) -> None:
             "staged bytes must stay available after success so cross-tool "
             "reuse works within the staging TTL"
         )
-        prior = media_staging.get_uploaded(user_id, photo_url)
+        prior = await media_staging.get_uploaded(user_id, photo_url)
         assert prior is not None and prior.service == "companycam", (
             "the upload receipt must be recorded so a same-handle retry "
             "short-circuits via the top-of-tool idempotency check"
@@ -1736,7 +1736,7 @@ async def test_upload_photo_finds_staged_bytes_after_prior_storage_upload(
 
     # Simulate the prior ``upload_to_storage`` call: receipt recorded,
     # bytes NOT evicted (the new model).
-    media_staging.mark_uploaded(
+    await media_staging.mark_uploaded(
         user_id,
         handle,
         service="storage",
@@ -1792,7 +1792,7 @@ async def test_upload_photo_idempotent_on_same_handle_retry(test_user: User) -> 
     handle = "media_dup_handle"
     await media_staging.clear_user(user_id)
     await media_staging.stage(user_id, handle, b"jpg-bytes", "image/jpeg")
-    media_staging.mark_uploaded(
+    await media_staging.mark_uploaded(
         user_id,
         handle,
         service="companycam",
