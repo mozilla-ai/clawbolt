@@ -590,42 +590,54 @@ async def mark_uploaded(
     """Record that ``original_url`` was successfully shipped to *service*.
 
     ``original_url`` may be either the canonical URL the channel layer
-    staged under or the short handle the LLM sees; the UPDATE matches
+    staged under or the short handle the LLM sees; the lookup matches
     either form. No-op when no ``staged_media`` row matches (e.g. the
     tool was called with a URL that was never staged, like a direct
     ``downloaded_media`` entry from a channel that does not stage).
+
+    The OR-keyed match can in principle hit more than one row when a
+    user happens to have one row whose ``original_url`` equals the ref
+    and a different row whose ``handle`` equals it. We scope the UPDATE
+    to a single id (most recently staged) so a stray match never writes
+    a misleading receipt onto an unrelated row.
     """
     if not original_url:
         return
     now = datetime.now(UTC)
     async with db_session_async() as db:
-        result = cast(
-            "CursorResult[object]",
+        target_row_id = (
             await db.execute(
-                update(StagedMedia)
+                select(StagedMedia.id)
                 .where(
                     StagedMedia.user_id == user_id,
                     (StagedMedia.original_url == original_url)
                     | (StagedMedia.handle == original_url),
                     StagedMedia.expires_at > now,
                 )
-                .values(
-                    upload_service=service,
-                    upload_external_id=external_id,
-                    upload_url=url,
-                    upload_target=target,
-                    upload_status=status,
-                    uploaded_at=now,
-                )
-            ),
-        )
-        await db.commit()
-        if result.rowcount == 0:
+                .order_by(StagedMedia.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if target_row_id is None:
             logger.debug(
                 "mark_uploaded: no staged_media row for user=%s ref=%s; receipt not persisted",
                 user_id,
                 original_url,
             )
+            return
+        await db.execute(
+            update(StagedMedia)
+            .where(StagedMedia.id == target_row_id)
+            .values(
+                upload_service=service,
+                upload_external_id=external_id,
+                upload_url=url,
+                upload_target=target,
+                upload_status=status,
+                uploaded_at=now,
+            )
+        )
+        await db.commit()
 
 
 async def get_uploaded(user_id: str, original_url: str) -> UploadRecord | None:
@@ -634,6 +646,13 @@ async def get_uploaded(user_id: str, original_url: str) -> UploadRecord | None:
     ``ref`` may be the staged handle (``media_XYZ``) or the original URL.
     Returns ``None`` when no row matches, the row has no recorded
     upload, or the row has expired.
+
+    The OR-clause can in principle match more than one row (row A's
+    ``original_url`` matches the ref while a different row B's
+    ``handle`` matches it). The chance is near-zero given handles are
+    48 bits of url-safe randomness behind a ``media_`` prefix, but we
+    pick the most recently staged row deterministically rather than
+    raising, so a benign retry never surfaces as a crash.
     """
     if not original_url:
         return None
@@ -642,12 +661,15 @@ async def get_uploaded(user_id: str, original_url: str) -> UploadRecord | None:
     try:
         row = (
             await db.execute(
-                select(StagedMedia).where(
+                select(StagedMedia)
+                .where(
                     StagedMedia.user_id == user_id,
                     (StagedMedia.original_url == original_url)
                     | (StagedMedia.handle == original_url),
                     StagedMedia.expires_at > now,
                 )
+                .order_by(StagedMedia.created_at.desc())
+                .limit(1)
             )
         ).scalar_one_or_none()
     finally:

@@ -255,6 +255,48 @@ async def test_upload_record_survives_simulated_worker_restart(test_user: User) 
 
 
 @pytest.mark.asyncio()
+async def test_upload_record_or_keyed_lookup_does_not_crash_on_multi_match(
+    test_user: User,
+) -> None:
+    """A user with two staged rows where the lookup ref matches both columns
+    must NOT raise; ``get_uploaded`` deterministically picks the latest row.
+
+    Contrived in production (handles are 48 bits of random url-safe data
+    behind a ``media_`` prefix) but observable when a test reuses a
+    string that looks like a handle as an ``original_url``. The defense
+    is in production code; this test pins the behavior.
+    """
+    # Row A: original_url is some real URL, mint a server handle.
+    handle_a = await media_staging.stage(
+        test_user.id, "https://example.com/photo-a.jpg", b"a", "image/jpeg"
+    )
+    assert handle_a is not None
+    # Row B: original_url happens to equal Row A's handle (the OR-clause
+    # multi-match case). Distinct row because (user_id, original_url)
+    # is unique but A and B differ on that column.
+    handle_b = await media_staging.stage(test_user.id, handle_a, b"b", "image/jpeg")
+    assert handle_b is not None and handle_b != handle_a
+
+    # Receipt recorded for Row B (the one whose original_url is handle_a).
+    await media_staging.mark_uploaded(
+        test_user.id,
+        handle_a,
+        service="storage",
+        external_id="/Inbox/photo_B.jpg",
+        url="https://drive.google.com/file/d/B/view",
+        target="/Inbox/photo_B.jpg",
+        status="uploaded",
+    )
+
+    # Lookup must not raise even though two rows match the OR clause.
+    rec = await media_staging.get_uploaded(test_user.id, handle_a)
+    assert rec is not None
+    # The most recently staged row (Row B) wins; mark_uploaded keyed on
+    # the latest matching row, so the returned receipt is the one we set.
+    assert rec.external_id == "/Inbox/photo_B.jpg"
+
+
+@pytest.mark.asyncio()
 async def test_upload_record_returns_none_for_unstaged_handle(test_user: User) -> None:
     """A ``mark_uploaded`` call for a never-staged URL is a no-op."""
     await media_staging.mark_uploaded(
