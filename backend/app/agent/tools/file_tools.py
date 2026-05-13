@@ -286,6 +286,14 @@ def create_file_tools(
     # Per-turn cache: same closure lifetime as the tool list, so a saved file
     # analyzed twice in one turn only pays the vision cost once.
     saved_analysis_cache: dict[str, str] = {}
+    # Per-turn registry of filenames already minted by this tool list, keyed by
+    # destination folder. Drive's ``files.list`` is eventually consistent, so a
+    # file just written by ``upload_file`` may not appear in the next
+    # ``list_folder`` call. Without this set, two upload calls in the same turn
+    # against the same folder would both see ``existing=[photo_001]`` and both
+    # mint ``photo_002.jpg``, silently shadowing each other. The set is
+    # populated post-write so it reflects what we know has succeeded.
+    recent_uploads_by_folder: dict[str, set[str]] = {}
 
     async def upload_to_storage(
         folder_path: str | None = None,
@@ -389,11 +397,22 @@ def create_file_tools(
             len(file_bytes),
         )
 
-        # Pick the next sequence number from the destination folder.
+        # Pick the next sequence number from the destination folder. Union the
+        # backend listing with names this tool list has already minted this turn
+        # so concurrent or rapid serial uploads cannot collide on the same
+        # index when Drive's eventually-consistent ``files.list`` has not yet
+        # observed the prior write.
         extension = _extension_from_mime(mime_type)
         await storage.create_folder(normalized_folder)
         existing = await storage.list_folder(normalized_folder)
-        filename = _build_filename(description, index=len(existing) + 1, extension=extension)
+        recent_for_folder = recent_uploads_by_folder.setdefault(normalized_folder, set())
+        taken_names = {f.name for f in existing} | recent_for_folder
+        index = len(existing) + 1
+        while True:
+            filename = _build_filename(description, index=index, extension=extension)
+            if filename not in taken_names:
+                break
+            index += 1
 
         saved = await storage.upload_file(
             file_bytes,
@@ -402,6 +421,7 @@ def create_file_tools(
             mime_type=mime_type,
             description=description,
         )
+        recent_for_folder.add(filename)
 
         if original_url:
             # Record the receipt before evicting so a same-turn retry on the
@@ -464,10 +484,12 @@ def create_file_tools(
         # Pick the target filename: caller override if provided, otherwise
         # keep the original. Add a numeric suffix if there is already a
         # file of that name in the destination so the move never silently
-        # overwrites.
+        # overwrites. Union the backend listing with same-turn writes for
+        # the same reason ``upload_to_storage`` does.
         await storage.create_folder(normalized_folder)
         target_existing = await storage.list_folder(normalized_folder)
-        existing_names = {f.name for f in target_existing}
+        recent_for_dest = recent_uploads_by_folder.setdefault(normalized_folder, set())
+        existing_names = {f.name for f in target_existing} | recent_for_dest
         if new_filename and new_filename.strip():
             target_filename = new_filename.strip()
         else:
@@ -491,6 +513,7 @@ def create_file_tools(
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
+        recent_for_dest.add(target_filename)
 
         logger.info("File moved: %s -> %s", current_path, moved.path)
         return ToolResult(

@@ -1637,9 +1637,9 @@ async def test_upload_photo_strips_dict_description() -> None:
 async def test_upload_photo_can_reuse_saved_file_from_storage(test_user: User) -> None:
     """Saved photos should be reusable when the agent quotes their storage path.
 
-    Mock storage exposes a ``web_view_link`` for every saved file, so the
-    companycam tool routes through that URL and never touches the
-    presigned tunnel URL.
+    The bytes are read from storage and served through the temp media tunnel;
+    Drive ``webViewLink``s are not handed to CompanyCam because they require
+    Google auth and would 302 to a login page for an anonymous fetcher.
     """
     from backend.app.agent.tools.names import ToolName
     from backend.app.integrations.companycam.models import ImageURI, Photo
@@ -1668,11 +1668,105 @@ async def test_upload_photo_can_reuse_saved_file_from_storage(test_user: User) -
     ctx.downloaded_media = []
     ctx.storage = storage
 
-    tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
-    result = await tool.function(project_id="94772883", original_url=saved.path)
+    with (
+        patch(
+            "backend.app.services.webhook.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.routers.media_temp.create_temp_media_url",
+            return_value="https://tunnel.example.com/media/tmp/saved",
+        ) as create_temp,
+    ):
+        tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+        result = await tool.function(project_id="94772883", original_url=saved.path)
 
     assert result.is_error is False
-    assert service.upload_photo.call_args.kwargs["photo_uri"] == saved.web_view_link
+    sent_uri = service.upload_photo.call_args.kwargs["photo_uri"]
+    assert sent_uri == "https://tunnel.example.com/media/tmp/saved"
+    assert sent_uri != saved.web_view_link, (
+        "must not send Drive webViewLink to CompanyCam: "
+        "drive.file-scope files require auth and the link 302s to Google login"
+    )
+    # The bytes shipped to the tunnel must be the saved-file bytes.
+    assert create_temp.call_args.args[0] == b"saved-jpg"
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_resolves_handle_after_prior_storage_upload(
+    test_user: User,
+) -> None:
+    """A handle whose bytes were already filed to Drive must still ship to CompanyCam.
+
+    Reproduces nathan's 2026-05-13 ``/Catch All/photos/`` flow: agent
+    uploads three photos to Drive via ``upload_to_storage`` (which evicts
+    the staged bytes), then in a later turn the LLM asks to push the
+    same ``media_*`` handles to CompanyCam. Before this fix, the staging
+    miss + the idempotent receipt branch (which only triggered for prior
+    CompanyCam uploads, not prior storage uploads) surfaced NOT_FOUND.
+    """
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+    from tests.mocks.storage import MockStorageBackend
+
+    service = MagicMock(spec=CompanyCamService)
+    service.upload_photo = AsyncMock(
+        return_value=Photo(
+            id="42",
+            description="",
+            processing_status="processed",
+            uris=[ImageURI(type="original", uri="https://img.companycam.com/x.jpg")],
+        )
+    )
+
+    storage = MockStorageBackend()
+    saved = await storage.upload_file(
+        b"persisted-bytes",
+        "/Catch All/photos",
+        "photo_002.jpg",
+        mime_type="image/jpeg",
+    )
+
+    ctx = MagicMock()
+    ctx.user.id = test_user.id
+    ctx.downloaded_media = []
+    ctx.storage = storage
+
+    handle = "media_evicted_xyz"
+    media_staging.mark_uploaded(
+        ctx.user.id,
+        handle,
+        service="storage",
+        external_id=saved.path,
+        url=saved.web_view_link,
+        target="photo_002.jpg",
+        status="uploaded",
+    )
+    try:
+        with (
+            patch(
+                "backend.app.services.webhook.discover_tunnel_url",
+                new_callable=AsyncMock,
+                return_value="https://tunnel.example.com",
+            ),
+            patch(
+                "backend.app.routers.media_temp.create_temp_media_url",
+                return_value="https://tunnel.example.com/media/tmp/persisted",
+            ) as create_temp,
+        ):
+            tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+            result = await tool.function(project_id="94772883", original_url=handle)
+
+        assert result.is_error is False, result.content
+        assert create_temp.call_args.args[0] == b"persisted-bytes"
+        assert (
+            service.upload_photo.call_args.kwargs["photo_uri"]
+            == "https://tunnel.example.com/media/tmp/persisted"
+        )
+    finally:
+        await media_staging.clear_user(ctx.user.id)
 
 
 @pytest.mark.asyncio()

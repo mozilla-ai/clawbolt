@@ -110,7 +110,24 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         mime_type = "image/jpeg"
         photo_uri = ""
 
-        # 0. Resolve media handles: the LLM may pass a handle
+        # 0. Translate a handle that this conversation already wrote to Drive
+        #    into the storage path that ``upload_to_storage`` recorded. After a
+        #    successful upload_to_storage, the staged bytes are evicted (see
+        #    ``file_tools.upload_to_storage``) and the handle no longer
+        #    resolves via ``resolve_media_ref``; without this hop the staging
+        #    miss would surface as NOT_FOUND even though the file is sitting
+        #    in Drive ready to ship. Only ``service="storage"`` is translated;
+        #    a prior CompanyCam upload of the same handle still falls through
+        #    to the idempotent receipt branch below.
+        prior_upload = media_staging.get_uploaded(ctx.user.id, original_url)
+        if (
+            prior_upload is not None
+            and prior_upload.service == "storage"
+            and prior_upload.external_id
+        ):
+            original_url = prior_upload.external_id
+
+        # 1. Resolve media handles: the LLM may pass a handle
         #    (e.g. "media_abZtYWFs") from analyze_photo instead of the
         #    actual URL. Normalize to original_url + bytes before the
         #    three-tier lookup below.
@@ -135,20 +152,25 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
 
         # 3. Fall back to a saved file in Drive. The agent quotes a storage
         #    path (e.g. /Astro Home/photos/foo.jpg) when it wants to push a
-        #    previously saved file into CompanyCam.
+        #    previously saved file into CompanyCam, or step 0 translated a
+        #    same-conversation handle into a storage path.
+        #
+        #    Always download the bytes; do NOT hand CompanyCam a Drive
+        #    ``webViewLink``. Files written under ``drive.file`` scope are
+        #    private, and the link itself is an HTML preview page that
+        #    302-redirects to ``accounts.google.com`` for an unauthenticated
+        #    fetcher. CompanyCam's ingest pulls the URL anonymously and
+        #    would either store HTML or fail. Routing through the temp
+        #    media tunnel below is the same path that handle-staged
+        #    photos take and is battle-tested.
         if not file_bytes and ctx.storage is not None:
             saved = await find_saved_file(ctx.storage, original_url)
             if saved is not None:
                 mime_type = saved.mime_type or "image/jpeg"
-                # Cloud storage: prefer the shareable URL; CompanyCam can
-                # download Drive ``webViewLink``s without a presigned URL.
-                if saved.web_view_link:
-                    photo_uri = saved.web_view_link
-                else:
-                    try:
-                        file_bytes = await read_saved_file_bytes(ctx.storage, saved)
-                    except FileNotFoundError:
-                        logger.warning("Saved media missing from storage: %s", saved.path)
+                try:
+                    file_bytes = await read_saved_file_bytes(ctx.storage, saved)
+                except FileNotFoundError:
+                    logger.warning("Saved media missing from storage: %s", saved.path)
 
         if not file_bytes and not photo_uri:
             # Option A: a prior tool call in this turn already shipped
