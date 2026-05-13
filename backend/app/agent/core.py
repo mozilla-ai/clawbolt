@@ -55,8 +55,10 @@ from backend.app.agent.observer import (
     PURPOSE_AGENT_FOLLOWUP,
     PURPOSE_AGENT_MAIN,
     LLMRequestPayload,
+    LLMResponsePayload,
     compute_min_message_seq,
     emit_llm_request,
+    emit_llm_response,
 )
 from backend.app.agent.system_prompt import build_agent_system_prompt, build_time_user_context
 from backend.app.agent.tool_errors import (
@@ -404,6 +406,59 @@ class ClawboltAgent:
             current_session_id=self._session_id,
         )
 
+    async def _emit_response(
+        self,
+        response: MessageResponse,
+        *,
+        purpose: str,
+        model: str,
+        provider: str,
+        started_at: datetime,
+    ) -> None:
+        """Build and dispatch an ``LLMResponsePayload`` for a single LLM round.
+
+        Paired with the ``emit_llm_request`` call that fired just before
+        the corresponding ``amessages`` call. Observers see the request
+        first, then the response; ``request_id`` and ``started_at`` echo
+        the request so consumers can pair them without depending on call
+        ordering across concurrent agent loops.
+
+        Content blocks are serialized to plain dicts so observers can
+        store them as JSON without holding references to pydantic types
+        from the any-llm provider package.
+        """
+        content_blocks: list[dict[str, Any]] = []
+        for block in response.content:
+            try:
+                content_blocks.append(block.model_dump(mode="json"))
+            except Exception:
+                # Defensive: a provider returning an unexpected block shape
+                # must not break the agent turn. Logged once per occurrence;
+                # the observer just sees a partial content list.
+                logger.exception(
+                    "Failed to serialize response content block; skipping for observer"
+                )
+        usage = response.usage
+        await emit_llm_response(
+            LLMResponsePayload(
+                schema_version=1,
+                purpose=purpose,
+                user_id=self.user.id,
+                session_id=self._session_id or None,
+                request_id=self._request_id or None,
+                model=model,
+                provider=provider,
+                content_blocks=content_blocks,
+                stop_reason=response.stop_reason,
+                input_tokens=usage.input_tokens if usage else None,
+                output_tokens=usage.output_tokens if usage else None,
+                cache_creation_input_tokens=(usage.cache_creation_input_tokens if usage else None),
+                cache_read_input_tokens=(usage.cache_read_input_tokens if usage else None),
+                started_at=started_at,
+                completed_at=datetime.now(UTC),
+            )
+        )
+
     async def _call_llm_with_retry(
         self,
         messages: list[AgentMessage],
@@ -440,6 +495,7 @@ class ClawboltAgent:
             tool_count,
             effective_max_tokens,
         )
+        started_at = datetime.now(UTC)
         await emit_llm_request(
             LLMRequestPayload(
                 schema_version=1,
@@ -455,12 +511,12 @@ class ClawboltAgent:
                 messages=msg_dicts,
                 tools=tool_schemas,
                 min_message_seq_in_prompt=compute_min_message_seq(messages),
-                started_at=datetime.now(UTC),
+                started_at=started_at,
             )
         )
         for attempt in range(LLM_MAX_RETRIES):
             try:
-                return cast(
+                response = cast(
                     MessageResponse,
                     await amessages(
                         model=effective_model,
@@ -473,6 +529,14 @@ class ClawboltAgent:
                         thinking=thinking,
                     ),
                 )
+                await self._emit_response(
+                    response,
+                    purpose=PURPOSE_AGENT_MAIN,
+                    model=effective_model,
+                    provider=effective_provider,
+                    started_at=started_at,
+                )
+                return response
             except RateLimitError:
                 if attempt == LLM_MAX_RETRIES - 1:
                     raise
@@ -501,6 +565,7 @@ class ClawboltAgent:
                     if retry_system_str is not None
                     else None
                 )
+                followup_started_at = datetime.now(UTC)
                 await emit_llm_request(
                     LLMRequestPayload(
                         schema_version=1,
@@ -516,10 +581,10 @@ class ClawboltAgent:
                         messages=trimmed_dicts,
                         tools=tool_schemas,
                         min_message_seq_in_prompt=compute_min_message_seq(trim_result.messages),
-                        started_at=datetime.now(UTC),
+                        started_at=followup_started_at,
                     )
                 )
-                return cast(
+                followup_response = cast(
                     MessageResponse,
                     await amessages(
                         model=effective_model,
@@ -532,6 +597,14 @@ class ClawboltAgent:
                         thinking=thinking,
                     ),
                 )
+                await self._emit_response(
+                    followup_response,
+                    purpose=PURPOSE_AGENT_FOLLOWUP,
+                    model=effective_model,
+                    provider=effective_provider,
+                    started_at=followup_started_at,
+                )
+                return followup_response
             except ContentFilterError:
                 logger.warning("Content blocked by provider safety filter")
                 raise

@@ -1,15 +1,23 @@
-"""Observer hook for LLM requests dispatched by the agent layer.
+"""Observer hooks for LLM requests and responses dispatched by the agent layer.
 
 Mirrors the module-level setter pattern used by ``set_pipeline_override``
 in ``backend.app.agent.router``. Premium (or other plugins) can register
-a single async callback that receives a versioned snapshot of every LLM
-request the agent layer dispatches (main agent loop, compaction,
-heartbeat decision), for telemetry and token-efficiency analysis.
+async callbacks that receive a versioned snapshot of every LLM request
+and the matching response dispatched by the agent layer (main agent
+loop, compaction, heartbeat decision), for telemetry, token-efficiency
+analysis, and post-incident forensics.
 
-The observer runs inline with the LLM call but its exceptions are caught
-and logged, so it never crashes the caller. Observers should return
-quickly (e.g. by enqueueing work onto a background task) to avoid adding
-latency to the user-facing response.
+Both observers run inline with the LLM call but their exceptions are
+caught and logged, so they never crash the caller. Observers should
+return quickly (e.g. by enqueueing work onto a background task) to
+avoid adding latency to the user-facing response.
+
+Request / response pairing: the response payload echoes the request's
+``request_id`` and ``started_at`` so downstream consumers can correlate
+them without depending on observer call ordering. Capture the request
+first; if the response observer fires without a matching request row,
+the request was either dropped (size cap, opt-out) or arrived
+out-of-order due to retry logic.
 """
 
 import logging
@@ -139,3 +147,86 @@ async def emit_llm_request(payload: LLMRequestPayload) -> None:
         await observer(payload)
     except Exception:
         logger.exception("LLM request observer raised; payload dropped")
+
+
+# ---------------------------------------------------------------------------
+# Response side
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LLMResponsePayload:
+    """Versioned snapshot of an LLM response paired with its request.
+
+    Same forward-compatibility rules as :class:`LLMRequestPayload`:
+    observers read fields by name and tolerate unknown ones via
+    ``getattr(payload, "field", default)``.
+
+    ``content_blocks`` is the model's literal output as a list of
+    Anthropic-style content blocks (``text``, ``tool_use``, ``thinking``,
+    etc.). For agent-loop calls this is what lets us tell a single model
+    round emitting N tool_use blocks apart from N rounds emitting one
+    block each: the persisted ``tool_interactions_json`` column flattens
+    rounds, but the raw response preserves round boundaries.
+
+    ``request_id`` and ``started_at`` mirror the matching
+    :class:`LLMRequestPayload` so observers can pair the two without
+    relying on call ordering. ``completed_at`` is the wall-clock moment
+    the response payload was built (after ``amessages`` returned).
+
+    ``stop_reason`` is the provider's terminal signal ("end_turn",
+    "tool_use", "max_tokens", "stop_sequence", ...). Useful for spotting
+    truncation events without scanning every captured response.
+    """
+
+    schema_version: int
+    purpose: str
+    user_id: str
+    session_id: str | None
+    request_id: str | None
+    model: str
+    provider: str
+    content_blocks: list[dict[str, Any]]
+    stop_reason: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_creation_input_tokens: int | None
+    cache_read_input_tokens: int | None
+    started_at: datetime
+    completed_at: datetime
+
+
+LLMResponseObserver = Callable[[LLMResponsePayload], Awaitable[None]]
+
+_response_observer: LLMResponseObserver | None = None
+
+
+def set_llm_response_observer(observer: LLMResponseObserver | None) -> None:
+    """Register the (single) observer that receives each LLM response.
+
+    Pass ``None`` to clear. Same single-observer semantics as
+    :func:`set_llm_request_observer`.
+    """
+    global _response_observer
+    _response_observer = observer
+
+
+def get_llm_response_observer() -> LLMResponseObserver | None:
+    """Return the registered response observer, or ``None`` if none is set."""
+    return _response_observer
+
+
+async def emit_llm_response(payload: LLMResponsePayload) -> None:
+    """Dispatch ``payload`` to the registered response observer, swallowing errors.
+
+    No-op when no observer is registered. Same error-handling contract as
+    :func:`emit_llm_request`: exceptions are logged and swallowed so a
+    misbehaving observer cannot break a user-facing turn.
+    """
+    observer = _response_observer
+    if observer is None:
+        return
+    try:
+        await observer(payload)
+    except Exception:
+        logger.exception("LLM response observer raised; payload dropped")
