@@ -822,6 +822,46 @@ class UserPermissionSet(Base):
     )
 
 
+class StagedMedia(Base):
+    """Inbound media bytes the user sent over a messaging channel.
+
+    Bytes themselves live on the deployment's persistent volume under
+    ``settings.media_staging_base_dir`` (see ``disk_path``); this row is
+    the metadata that lets the agent find them again across process
+    restarts. Rows past ``expires_at`` are deleted by a lazy purge on the
+    next write and a startup sweep. See
+    ``backend.app.agent.media_staging`` for the public API.
+
+    The pair ``(user_id, original_url)`` is unique: re-staging the same
+    URL for a user reuses the existing handle so the agent can reference
+    a photo consistently across turns. ``handle`` is globally unique so
+    a reverse lookup is one SELECT, not a per-user scan.
+    """
+
+    __tablename__ = "staged_media"
+    __table_args__ = (
+        UniqueConstraint("handle", name="uq_staged_media_handle"),
+        UniqueConstraint("user_id", "original_url", name="uq_staged_media_user_original_url"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(_uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    handle: Mapped[str] = mapped_column(String, nullable=False)
+    original_url: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(
+        String, nullable=False, default="application/octet-stream"
+    )
+    disk_path: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+
 class AppSetting(Base):
     """Runtime-configurable settings keyed by name.
 

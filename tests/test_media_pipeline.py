@@ -9,6 +9,7 @@ from backend.app.media.pipeline import (
     process_message_media,
     run_vision_on_media,
 )
+from backend.app.models import User
 
 
 def _make_media(
@@ -24,13 +25,17 @@ def _make_media(
 
 @pytest.mark.asyncio()
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
-async def test_process_single_image_stages_without_vision(mock_vision: AsyncMock) -> None:
+async def test_process_single_image_stages_without_vision(
+    mock_vision: AsyncMock, test_user: User
+) -> None:
     """Pipeline classifies the image and leaves vision for the agent via
     analyze_photo. The combined context surfaces the staging handle."""
-    media_staging.clear_user("test-user")
-    media_staging.stage("test-user", "https://example.com/media", b"fake-bytes", "image/jpeg")
+    await media_staging.clear_user(test_user.id)
+    await media_staging.stage(
+        test_user.id, "https://example.com/media", b"fake-bytes", "image/jpeg"
+    )
     result = await process_message_media(
-        "Check this deck", [_make_media("image/jpeg")], user_id="test-user"
+        "Check this deck", [_make_media("image/jpeg")], user_id=test_user.id
     )
     assert len(result.media_results) == 1
     assert result.media_results[0].category == "image"
@@ -39,7 +44,7 @@ async def test_process_single_image_stages_without_vision(mock_vision: AsyncMock
     assert "Photo 1" in result.combined_context
     assert "Check this deck" in result.combined_context
     assert "call analyze_photo" in result.combined_context
-    media_staging.clear_user("test-user")
+    await media_staging.clear_user(test_user.id)
 
 
 @pytest.mark.asyncio()

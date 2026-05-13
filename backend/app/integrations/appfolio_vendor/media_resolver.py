@@ -57,7 +57,7 @@ async def resolve_staged_files(
     from backend.app.agent import media_staging
     from backend.app.agent.saved_media import find_saved_file, read_saved_file_bytes
 
-    staged_cache = media_staging.get_all_for_user(ctx.user.id)
+    staged_cache = await media_staging.get_all_for_user(ctx.user.id)
 
     resolved: list[FileUpload] = []
     missing: list[str] = []
@@ -71,7 +71,7 @@ async def resolve_staged_files(
         mime_type = "image/jpeg"
 
         # 1. Resolve a media handle to (original_url, bytes).
-        handle = media_staging.resolve_media_ref(ctx.user.id, ref)
+        handle = await media_staging.resolve_media_ref(ctx.user.id, ref)
         if handle is not None:
             original_url, file_bytes, mime_type = handle
 

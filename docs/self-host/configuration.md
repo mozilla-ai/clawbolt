@@ -118,6 +118,14 @@ Google Drive is the integration Clawbolt uses for file storage. Each user grants
 
 See [Google Drive Setup](./google-drive-setup.md) for the full walkthrough.
 
+## Inbound media staging
+
+Photos and files the user sends over a messaging channel are cached on disk while the agent decides what to do with them (analyze, upload to Drive or CompanyCam, discard). Bytes live on the deployment's filesystem under `MEDIA_STAGING_BASE_DIR`; metadata (handle, original URL, mime type, expiry) lives in the `staged_media` Postgres table. The cache holds each item for 7 days so the agent can still reference photos from earlier in the week.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEDIA_STAGING_BASE_DIR` | `data/staged_media` | Filesystem directory for staged media bytes. Point at a persistent volume in production so a process restart does not discard recent inbound media. The single application instance is assumed to own this path exclusively; multi-replica deployments are not currently supported. |
+
 ## LLM token limits
 
 | Variable | Default | Description |

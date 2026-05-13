@@ -184,7 +184,9 @@ async def prepare_media(
             try:
                 media = await download_media(file_id)
                 downloaded_media.append(media)
-                media_staging.stage(user.id, media.original_url, media.content, media.mime_type)
+                await media_staging.stage(
+                    user.id, media.original_url, media.content, media.mime_type
+                )
                 logger.debug("Downloaded media %s (%s)", file_id, _mime_type)
             except Exception:
                 logger.exception("Failed to download media: %s", file_id)
@@ -455,7 +457,9 @@ async def prepare_media_step(ctx: PipelineContext) -> PipelineContext:
     pre_downloaded = list(ctx.downloaded_media)
     if ctx.user is not None:
         for media in pre_downloaded:
-            media_staging.stage(ctx.user.id, media.original_url, media.content, media.mime_type)
+            await media_staging.stage(
+                ctx.user.id, media.original_url, media.content, media.mime_type
+            )
     newly_downloaded, ctx.storage = await prepare_media(
         ctx.user, ctx.message, ctx.media_urls, download_media=ctx.download_media
     )

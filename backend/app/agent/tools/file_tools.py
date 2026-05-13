@@ -237,7 +237,7 @@ def create_file_tools(
         # Resolve media handles: the LLM may pass a handle from
         # analyze_photo instead of the actual URL.
         if original_url and original_url not in media_map:
-            resolved = media_staging.resolve_media_ref(user.id, original_url)
+            resolved = await media_staging.resolve_media_ref(user.id, original_url)
             if resolved is not None:
                 resolved_url, resolved_bytes, resolved_mime = resolved
                 original_url = resolved_url
@@ -253,11 +253,26 @@ def create_file_tools(
             first_url = next(iter(media_map))
             file_bytes = media_map[first_url]
             original_url = original_url or first_url
+        elif not original_url:
+            # Cross-turn fallback: the agent called upload_to_storage on a
+            # turn with no attachments, so neither ``media_map`` nor
+            # ``resolve_media_ref`` had anything to chew on. Reach into
+            # staging directly and pick the most recently staged photo.
+            # ``_file_factory`` deliberately does NOT pre-load these into
+            # ``media_map`` because that would mean reading every staged
+            # photo off disk on every agent turn, just in case.
+            staged_urls = await media_staging.list_urls_for_user(user.id)
+            if staged_urls:
+                first_staged = staged_urls[0]
+                resolved = await media_staging.resolve_media_ref(user.id, first_staged)
+                if resolved is not None:
+                    _, file_bytes, mime_type = resolved
+                    original_url = first_staged
 
         # The download layer knows the real mime type; prefer that over the
         # LLM-supplied argument so PDFs or HEICs don't get mislabeled.
         if original_url:
-            staged_mime = media_staging.get_mime_type(user.id, original_url)
+            staged_mime = await media_staging.get_mime_type(user.id, original_url)
             if staged_mime:
                 mime_type = staged_mime
 
@@ -330,7 +345,7 @@ def create_file_tools(
                 target=filename,
                 status="uploaded",
             )
-            media_staging.evict(user.id, original_url)
+            await media_staging.evict(user.id, original_url)
 
         logger.info("File cataloged: %s", saved.path)
         return ToolResult(content=f"Uploaded {filename} to {folder_path}/ ({saved.path})")
@@ -557,10 +572,11 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
     if ctx.storage is None:
         return []
     pending_media = {m.original_url: m.content for m in ctx.downloaded_media if m.content}
-    # Fall back to recent staged bytes so upload_to_storage works even when the
-    # agent defers the call to a later turn with no attachments of its own.
-    for url, content in media_staging.get_all_for_user(ctx.user.id).items():
-        pending_media.setdefault(url, content)
+    # Don't eagerly load every staged photo here -- that would read all
+    # of the user's 7-day window off disk on every agent turn just in
+    # case ``upload_to_storage`` ends up firing. ``upload_to_storage``
+    # has its own fallback path that reaches into staging only when the
+    # LLM actually calls it without an ``original_url``.
     return create_file_tools(ctx.user, ctx.storage, pending_media, ctx.turn_text)
 
 

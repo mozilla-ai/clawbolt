@@ -73,7 +73,7 @@ def create_media_tools(
         if cached is not None:
             return ToolResult(content=cached)
 
-        entry = media_staging.get_by_handle(handle)
+        entry = await media_staging.get_by_handle(handle)
         if entry is None:
             return ToolResult(
                 content=(
@@ -105,7 +105,7 @@ def create_media_tools(
             )
 
         # Extend TTL on reference so long agent sessions don't evict mid-turn.
-        media_staging.touch(handle)
+        await media_staging.touch(handle, user_id=user_id)
 
         effective_context = context or turn_text
         description = await run_vision_on_media(content, mime, effective_context)
@@ -117,7 +117,7 @@ def create_media_tools(
         # Defense in depth: same cross-user ownership check as analyze_photo.
         # Handles are unguessable in practice but we still scope every
         # destructive operation to the current user.
-        entry = media_staging.get_by_handle(handle)
+        entry = await media_staging.get_by_handle(handle)
         if entry is not None and entry[0] != user_id:
             return ToolResult(
                 content=f"Handle {handle!r} does not belong to the current user.",
@@ -125,7 +125,7 @@ def create_media_tools(
                 error_kind=ToolErrorKind.PERMISSION,
             )
 
-        removed = media_staging.evict_by_handle(handle)
+        removed = await media_staging.evict_by_handle(handle)
         if not removed:
             # Idempotent: a second call (or a call after expiry) reports
             # success so the agent does not get stuck retrying.

@@ -1008,10 +1008,12 @@ async def test_resolve_staged_files_pulls_from_downloaded_media() -> None:
     with (
         patch(
             "backend.app.agent.media_staging.resolve_media_ref",
+            new_callable=AsyncMock,
             return_value=None,
         ),
         patch(
             "backend.app.agent.media_staging.get_all_for_user",
+            new_callable=AsyncMock,
             return_value={},
         ),
     ):
@@ -1041,10 +1043,12 @@ async def test_resolve_staged_files_returns_error_for_missing_ref() -> None:
     with (
         patch(
             "backend.app.agent.media_staging.resolve_media_ref",
+            new_callable=AsyncMock,
             return_value=None,
         ),
         patch(
             "backend.app.agent.media_staging.get_all_for_user",
+            new_callable=AsyncMock,
             return_value={},
         ),
     ):

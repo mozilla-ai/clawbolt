@@ -341,6 +341,19 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     except Exception:
         logger.exception("BlueBubbles startup backfill failed")
 
+    # Sweep expired media staging rows + on-disk bytes. Steady-state
+    # eviction happens inline on stage(), but a crash between cap-enforce
+    # and DB commit can leave dead rows past their TTL; this gives every
+    # fresh process a clean slate.
+    try:
+        from backend.app.agent import media_staging
+
+        purged = await media_staging.purge_expired()
+        if purged:
+            logger.info("Purged %d expired staged media entr(y/ies) on startup", purged)
+    except Exception:
+        logger.exception("Staged media purge failed on startup")
+
     yield
 
     # Cancel any channel start tasks still running.
