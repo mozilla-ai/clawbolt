@@ -105,7 +105,7 @@ def create_media_tools(
             )
 
         # Extend TTL on reference so long agent sessions don't evict mid-turn.
-        await media_staging.touch(handle)
+        await media_staging.touch(handle, user_id=user_id)
 
         effective_context = context or turn_text
         description = await run_vision_on_media(content, mime, effective_context)

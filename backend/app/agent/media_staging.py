@@ -104,7 +104,37 @@ def _user_dir(user_id: str) -> Path:
 
 
 def _disk_path_for(user_id: str, handle: str) -> Path:
+    """Absolute filesystem path for ``(user, handle)``'s bytes.
+
+    Used by callers that need to write or unlink the file. The DB stores
+    the relative suffix (see :func:`_store_disk_path`) so the staging
+    window survives an operator changing ``MEDIA_STAGING_BASE_DIR``.
+    """
     return _user_dir(user_id) / f"{handle}.bin"
+
+
+def _store_disk_path(user_id: str, handle: str) -> str:
+    """Suffix stored in ``staged_media.disk_path``, relative to the staging root.
+
+    Storing the suffix (e.g. ``<user_id>/media_abZtYWFs.bin``) rather than
+    an absolute path means a deployment that re-mounts its volume under a
+    different ``MEDIA_STAGING_BASE_DIR`` can still find its 7-day window of
+    bytes after a restart.
+    """
+    return f"{user_id}/{handle}.bin"
+
+
+def _resolve_disk_path(stored: str) -> Path:
+    """Reconstruct an absolute path from a stored ``disk_path`` suffix.
+
+    Defensively handles a legacy absolute path (e.g. from a pre-PR row
+    or a hand-inserted test fixture): if the stored value is already
+    absolute, return it as-is. New writes always use the relative form.
+    """
+    p = Path(stored)
+    if p.is_absolute():
+        return p
+    return _staging_root() / stored
 
 
 def _mint_handle() -> str:
@@ -140,7 +170,7 @@ async def stage(user_id: str, original_url: str, content: bytes, mime_type: str)
 
     expires_at = datetime.now(UTC) + timedelta(seconds=STAGING_TTL_SECONDS)
     fresh_handle = _mint_handle()
-    fresh_disk_path = _disk_path_for(user_id, fresh_handle)
+    fresh_disk_path = _store_disk_path(user_id, fresh_handle)
 
     async with db_session_async() as db:
         # INSERT ... ON CONFLICT DO UPDATE: an existing row for
@@ -155,7 +185,7 @@ async def stage(user_id: str, original_url: str, content: bytes, mime_type: str)
                 handle=fresh_handle,
                 original_url=original_url,
                 mime_type=mime_type,
-                disk_path=str(fresh_disk_path),
+                disk_path=fresh_disk_path,
                 expires_at=expires_at,
             )
             .on_conflict_do_update(
@@ -170,7 +200,7 @@ async def stage(user_id: str, original_url: str, content: bytes, mime_type: str)
         row = (await db.execute(stmt)).one()
         await db.commit()
         handle = cast("str", row.handle)
-        disk_path = Path(cast("str", row.disk_path))
+        disk_path = _resolve_disk_path(cast("str", row.disk_path))
 
     # Write bytes after commit so a transient DB failure doesn't leave
     # an orphan file behind. A crash between commit and write leaves
@@ -206,7 +236,7 @@ async def _enforce_per_user_cap(user_id: str) -> None:
             return
         overflow = rows[: len(rows) - STAGING_MAX_PER_USER]
         for row in overflow:
-            _unlink_quiet(Path(row.disk_path))
+            _unlink_quiet(_resolve_disk_path(row.disk_path))
             logger.warning(
                 "media_staging cap reached for user %s, evicted %s (handle=%s)",
                 user_id,
@@ -243,7 +273,7 @@ async def get_all_for_user(user_id: str) -> dict[str, bytes]:
             .all()
         )
         for row in rows:
-            content = _read_bytes(Path(row.disk_path))
+            content = _read_bytes(_resolve_disk_path(row.disk_path))
             if content is None:
                 orphan_ids.append(row.id)
                 continue
@@ -273,6 +303,42 @@ async def _delete_rows_by_id(ids: list[str]) -> None:
     async with db_session_async() as db:
         await db.execute(delete(StagedMedia).where(StagedMedia.id.in_(ids)))
         await db.commit()
+
+
+async def list_urls_for_user(user_id: str) -> list[str]:
+    """Return non-expired ``original_url`` values for a user, newest first.
+
+    Cheaper than :func:`get_all_for_user` when the caller only needs to
+    know which URLs are staged (e.g. to pick a fallback target for an
+    arg-less ``upload_to_storage`` call). The caller loads bytes on
+    demand for the chosen URL via :func:`resolve_media_ref`, avoiding
+    the per-turn disk-read storm that would come from eager-loading
+    everything just in case.
+
+    Ordering is ``expires_at desc`` so the most recently staged or
+    touched item lands first, matching "the photo the user probably
+    meant" intuition.
+    """
+    now = datetime.now(UTC)
+    db = AsyncSessionLocal()
+    try:
+        rows = (
+            (
+                await db.execute(
+                    select(StagedMedia.original_url)
+                    .where(
+                        StagedMedia.user_id == user_id,
+                        StagedMedia.expires_at > now,
+                    )
+                    .order_by(StagedMedia.expires_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+    finally:
+        await db.close()
+    return list(rows)
 
 
 async def get_mime_type(user_id: str, original_url: str) -> str | None:
@@ -338,7 +404,7 @@ async def get_by_handle(handle: str) -> tuple[str, str, bytes, str] | None:
         ).scalar_one_or_none()
         if row is None:
             return None
-        content = _read_bytes(Path(row.disk_path))
+        content = _read_bytes(_resolve_disk_path(row.disk_path))
         user_id = row.user_id
         original_url = row.original_url
         mime = row.mime_type
@@ -353,12 +419,18 @@ async def get_by_handle(handle: str) -> tuple[str, str, bytes, str] | None:
     return user_id, original_url, content, mime
 
 
-async def touch(handle: str) -> bool:
+async def touch(handle: str, user_id: str) -> bool:
     """Extend the TTL on a staged entry because a tool referenced it.
 
     Long agent sessions span multiple back-and-forth turns; touching on
     every tool reference prevents a stale-TTL eviction mid-conversation.
-    Returns True if the handle was found and its TTL was extended.
+    Returns True if the handle was found, owned by ``user_id``, and its
+    TTL was extended.
+
+    The ``user_id`` scope is defensive: today every caller does an
+    ownership check via :func:`get_by_handle` first, but a future
+    caller that forgets shouldn't be able to extend another user's TTL
+    just by guessing a handle.
     """
     new_expires_at = datetime.now(UTC) + timedelta(seconds=STAGING_TTL_SECONDS)
     async with db_session_async() as db:
@@ -366,7 +438,7 @@ async def touch(handle: str) -> bool:
             "CursorResult[object]",
             await db.execute(
                 update(StagedMedia)
-                .where(StagedMedia.handle == handle)
+                .where(StagedMedia.handle == handle, StagedMedia.user_id == user_id)
                 .values(expires_at=new_expires_at)
             ),
         )
@@ -410,7 +482,7 @@ async def resolve_media_ref(user_id: str, ref: str) -> tuple[str, bytes, str] | 
         ).scalar_one_or_none()
         if row is None:
             return None
-        content = _read_bytes(Path(row.disk_path))
+        content = _read_bytes(_resolve_disk_path(row.disk_path))
         mime = row.mime_type
         orphan_id = row.id if content is None else None
     finally:
@@ -441,7 +513,7 @@ async def evict(user_id: str, original_url: str) -> None:
         ).scalar_one_or_none()
         if row is None:
             return
-        _unlink_quiet(Path(row.disk_path))
+        _unlink_quiet(_resolve_disk_path(row.disk_path))
         await db.delete(row)
         await db.commit()
 
@@ -454,7 +526,7 @@ async def evict_by_handle(handle: str) -> bool:
         ).scalar_one_or_none()
         if row is None:
             return False
-        _unlink_quiet(Path(row.disk_path))
+        _unlink_quiet(_resolve_disk_path(row.disk_path))
         await db.delete(row)
         await db.commit()
         return True
@@ -469,7 +541,7 @@ async def clear_user(user_id: str) -> None:
             .all()
         )
         for row in rows:
-            _unlink_quiet(Path(row.disk_path))
+            _unlink_quiet(_resolve_disk_path(row.disk_path))
         await db.execute(delete(StagedMedia).where(StagedMedia.user_id == user_id))
         await db.commit()
     _uploaded.pop(user_id, None)
@@ -491,7 +563,7 @@ async def purge_expired() -> int:
             .all()
         )
         for row in rows:
-            _unlink_quiet(Path(row.disk_path))
+            _unlink_quiet(_resolve_disk_path(row.disk_path))
         if rows:
             await db.execute(delete(StagedMedia).where(StagedMedia.expires_at <= now))
             await db.commit()

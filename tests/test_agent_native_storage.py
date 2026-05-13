@@ -11,7 +11,6 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -139,6 +138,38 @@ async def test_get_by_handle_missing(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_evict_unlinks_disk_file(test_user: User) -> None:
+    """The single-URL ``evict()`` path must remove the backing ``.bin`` file.
+
+    Parallel to ``test_evict_by_handle`` -- both eviction paths share an
+    ``_unlink_quiet`` call today, but a future refactor could regress
+    one without the other.
+    """
+    await media_staging.stage(test_user.id, "url-evict", b"bytes", "image/jpeg")
+    async with db_session_async() as db:
+        row = (
+            await db.execute(select(StagedMedia).where(StagedMedia.original_url == "url-evict"))
+        ).scalar_one()
+        disk_path = media_staging._resolve_disk_path(row.disk_path)
+    assert disk_path.exists()
+    await media_staging.evict(test_user.id, "url-evict")
+    assert not disk_path.exists()
+
+
+@pytest.mark.asyncio()
+async def test_touch_rejects_cross_user_handle(test_user: User, second_user: User) -> None:
+    """A handle owned by user A must not have its TTL extended by user B.
+
+    Today every ``touch`` caller does an ownership check first, so this
+    is belt + suspenders. Encoded as a regression test so a future
+    caller that forgets the check still fails closed.
+    """
+    handle = await media_staging.stage(second_user.id, "url-x", b"bytes", "image/jpeg")
+    assert handle is not None
+    assert await media_staging.touch(handle, user_id=test_user.id) is False
+
+
+@pytest.mark.asyncio()
 async def test_evict_by_handle(test_user: User) -> None:
     handle = await media_staging.stage(test_user.id, "url-1", b"bytes", "image/jpeg")
     assert handle is not None
@@ -146,7 +177,7 @@ async def test_evict_by_handle(test_user: User) -> None:
         row = (
             await db.execute(select(StagedMedia).where(StagedMedia.handle == handle))
         ).scalar_one()
-        disk_path = Path(row.disk_path)
+        disk_path = media_staging._resolve_disk_path(row.disk_path)
     assert disk_path.exists()
     assert await media_staging.evict_by_handle(handle) is True
     assert await media_staging.get_by_handle(handle) is None
@@ -180,7 +211,7 @@ async def test_touch_extends_ttl(test_user: User) -> None:
             update(StagedMedia).where(StagedMedia.handle == handle).values(expires_at=past)
         )
         await db.commit()
-    assert await media_staging.touch(handle) is True
+    assert await media_staging.touch(handle, user_id=test_user.id) is True
     async with db_session_async() as db:
         refreshed = (
             await db.execute(select(StagedMedia).where(StagedMedia.handle == handle))
@@ -191,7 +222,7 @@ async def test_touch_extends_ttl(test_user: User) -> None:
 
 @pytest.mark.asyncio()
 async def test_touch_unknown_handle(test_user: User) -> None:
-    assert await media_staging.touch("media_missing") is False
+    assert await media_staging.touch("media_missing", user_id=test_user.id) is False
 
 
 @pytest.mark.asyncio()
@@ -230,7 +261,7 @@ async def test_purge_expired_drops_dead_rows(test_user: User) -> None:
         row = (
             await db.execute(select(StagedMedia).where(StagedMedia.handle == handle))
         ).scalar_one()
-        disk_path = Path(row.disk_path)
+        disk_path = media_staging._resolve_disk_path(row.disk_path)
     assert disk_path.exists()
     past = datetime.now(UTC) - timedelta(hours=1)
     async with db_session_async() as db:

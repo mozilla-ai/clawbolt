@@ -192,7 +192,7 @@ async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
         storage=MockStorageBackend(),
         downloaded_media=[],
     )
-    tools = await _file_factory(ctx)
+    tools = _file_factory(ctx)
     upload = tools[0].function
 
     result = await upload(
@@ -225,7 +225,7 @@ async def test_file_factory_prefers_current_turn_over_stale_staging(
         storage=MockStorageBackend(),
         downloaded_media=[current],
     )
-    tools = await _file_factory(ctx)
+    tools = _file_factory(ctx)
     upload = tools[0].function
 
     result = await upload(
@@ -257,7 +257,7 @@ async def test_upload_uses_staged_mime_over_llm_argument(test_user: User) -> Non
         storage=MockStorageBackend(),
         downloaded_media=[],
     )
-    tools = await _file_factory(ctx)
+    tools = _file_factory(ctx)
     upload = tools[0].function
 
     result = await upload(
@@ -873,7 +873,7 @@ async def test_upload_to_storage_resolves_handle(test_user: User) -> None:
         storage=MockStorageBackend(),
         downloaded_media=[],
     )
-    tools = await _file_factory(ctx)
+    tools = _file_factory(ctx)
     upload = tools[0].function
 
     result = await upload(

@@ -253,6 +253,21 @@ def create_file_tools(
             first_url = next(iter(media_map))
             file_bytes = media_map[first_url]
             original_url = original_url or first_url
+        elif not original_url:
+            # Cross-turn fallback: the agent called upload_to_storage on a
+            # turn with no attachments, so neither ``media_map`` nor
+            # ``resolve_media_ref`` had anything to chew on. Reach into
+            # staging directly and pick the most recently staged photo.
+            # ``_file_factory`` deliberately does NOT pre-load these into
+            # ``media_map`` because that would mean reading every staged
+            # photo off disk on every agent turn, just in case.
+            staged_urls = await media_staging.list_urls_for_user(user.id)
+            if staged_urls:
+                first_staged = staged_urls[0]
+                resolved = await media_staging.resolve_media_ref(user.id, first_staged)
+                if resolved is not None:
+                    _, file_bytes, mime_type = resolved
+                    original_url = first_staged
 
         # The download layer knows the real mime type; prefer that over the
         # LLM-supplied argument so PDFs or HEICs don't get mislabeled.
@@ -548,7 +563,7 @@ def create_file_tools(
     ]
 
 
-async def _file_factory(ctx: ToolContext) -> list[Tool]:
+def _file_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for file tools, used by the registry."""
     # auth_check is the user-visible gate, but defend against direct
     # invocation paths that bypass it (e.g. ``activate_specialist`` before
@@ -557,10 +572,11 @@ async def _file_factory(ctx: ToolContext) -> list[Tool]:
     if ctx.storage is None:
         return []
     pending_media = {m.original_url: m.content for m in ctx.downloaded_media if m.content}
-    # Fall back to recent staged bytes so upload_to_storage works even when the
-    # agent defers the call to a later turn with no attachments of its own.
-    for url, content in (await media_staging.get_all_for_user(ctx.user.id)).items():
-        pending_media.setdefault(url, content)
+    # Don't eagerly load every staged photo here -- that would read all
+    # of the user's 7-day window off disk on every agent turn just in
+    # case ``upload_to_storage`` ends up firing. ``upload_to_storage``
+    # has its own fallback path that reaches into staging only when the
+    # LLM actually calls it without an ``original_url``.
     return create_file_tools(ctx.user, ctx.storage, pending_media, ctx.turn_text)
 
 
