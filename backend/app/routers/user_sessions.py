@@ -129,7 +129,7 @@ async def get_conversation_system_prompt(
       the agent itself starts each turn fresh.
     * Tools whose factories require a storage backend or an outbound
       publish hook (currently ``send_media_reply``,
-      ``upload_to_storage``, and ``organize_file``) are filtered out
+      ``upload_to_storage``, and ``move_file``) are filtered out
       by the registry's dependency gates because the preview can't
       safely construct those runtime hooks. Their usage hints will
       not appear in the Tool Guidelines section.

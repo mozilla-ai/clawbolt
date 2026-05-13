@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.tool_errors import summarize_tool_params
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
-from backend.app.agent.tools.file_tools import OrganizeFileParams, UploadToStorageParams
+from backend.app.agent.tools.file_tools import MoveFileParams, UploadToStorageParams
 from backend.app.agent.tools.heartbeat_tools import (
     GetHeartbeatParams,
     UpdateHeartbeatParams,
@@ -80,7 +80,7 @@ def test_delete_file_param_model_exists() -> None:
 def test_file_tool_param_models_exist() -> None:
     """File tool param models should be importable and valid BaseModels."""
     assert issubclass(UploadToStorageParams, BaseModel)
-    assert issubclass(OrganizeFileParams, BaseModel)
+    assert issubclass(MoveFileParams, BaseModel)
 
 
 # ---------------------------------------------------------------------------
@@ -100,10 +100,10 @@ def test_get_heartbeat_params_has_no_fields() -> None:
     assert isinstance(p, BaseModel)
 
 
-def test_upload_to_storage_rejects_invalid_category() -> None:
-    """UploadToStorageParams should reject invalid file_category."""
+def test_move_file_requires_from_path_and_to_folder_path() -> None:
+    """MoveFileParams should reject calls missing the required path fields."""
     with pytest.raises(Exception):  # noqa: B017
-        UploadToStorageParams(file_category="invalid_category")  # type: ignore[arg-type]
+        MoveFileParams(from_path="/Inbox/file.jpg")  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------

@@ -106,7 +106,7 @@ async def test_eval_no_context_photo(mock_vision: AsyncMock, test_user: User) ->
     _bytes, _mime, passed_context = await_args.args
     assert passed_context == turn_text
     # After analysis, staging is still intact so a follow-up upload_to_storage
-    # or organize_file can read the bytes.
+    # or move_file can read the bytes.
     assert await media_staging.get_by_handle(handle) is not None
 
 
