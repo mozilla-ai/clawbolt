@@ -351,6 +351,65 @@ async def test_upload_creates_folder(
     assert "/photos" in storage.folders[0]
 
 
+@pytest.mark.asyncio()
+async def test_upload_picks_distinct_filenames_when_list_folder_is_stale(
+    test_user: User,
+) -> None:
+    """Serial uploads to the same folder must not collide on the same index
+    when ``list_folder`` returns stale results.
+
+    Drive's ``files.list`` is eventually consistent: a file just written by
+    ``upload_file`` may not appear in the next ``list_folder`` call. Before
+    the per-turn ``recent_uploads_by_folder`` registry, three uploads to
+    the same folder in one turn all read ``existing=[]`` and all minted
+    ``photo_001.jpg``, silently shadowing one another in Drive (issue
+    surfaced on nathan's 2026-05-13 ``/Catch All/photos/`` upload trio).
+    """
+    storage = MockStorageBackend()
+
+    # Simulate the Drive eventual-consistency lag: ``list_folder`` always
+    # returns whatever was visible at the time of the FIRST call this turn.
+    # Subsequent uploads append to ``storage.files`` but the listing stays
+    # frozen. Mirrors what Drive's search index does in production.
+    stale_snapshot: list = []
+    captured = {"first": False}
+    real_list_folder = storage.list_folder
+
+    async def stale_list_folder(path: str) -> list:
+        if not captured["first"]:
+            stale_snapshot[:] = await real_list_folder(path)
+            captured["first"] = True
+        return list(stale_snapshot)
+
+    storage.list_folder = stale_list_folder  # type: ignore[method-assign]
+
+    tools = create_file_tools(
+        test_user,
+        storage,
+        pending_media={
+            "https://example.com/a.jpg": b"aaa",
+            "https://example.com/b.jpg": b"bbb",
+            "https://example.com/c.jpg": b"ccc",
+        },
+    )
+    upload = tools[0].function
+
+    r1 = await upload(folder_path="/Catch All/photos", original_url="https://example.com/a.jpg")
+    r2 = await upload(folder_path="/Catch All/photos", original_url="https://example.com/b.jpg")
+    r3 = await upload(folder_path="/Catch All/photos", original_url="https://example.com/c.jpg")
+
+    assert not (r1.is_error or r2.is_error or r3.is_error), (r1.content, r2.content, r3.content)
+    written = sorted(k for k in storage.files if k.startswith("Catch All/photos/"))
+    assert len(written) == 3
+    # Three distinct sequence numbers, no duplicates.
+    assert len({k for k in written}) == 3, f"duplicate filenames written: {written}"
+    assert written == [
+        "Catch All/photos/file_001.jpg",
+        "Catch All/photos/file_002.jpg",
+        "Catch All/photos/file_003.jpg",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # move_file tool tests
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 import backend.app.database as _db_module
+from backend.app.agent import media_staging as _media_staging
 from backend.app.agent.approval import reset_approval_gate
 from backend.app.agent.file_store import SessionState, StoredMessage, reset_stores
 from backend.app.agent.memory_db import reset_memory_stores
@@ -235,6 +236,11 @@ def _isolate_stores(_pg_async_engine_session: AsyncEngine, tmp_path: Path) -> Ge
         reset_session_stores()
         reset_memory_stores()
         reset_approval_gate()
+        # In-memory upload-receipt cache survives across tests by design
+        # (matches the 7-day staging TTL in production). Clear it per
+        # test so a prior test's mark_uploaded does not short-circuit a
+        # later test that reuses the same (user_id, original_url) pair.
+        _media_staging._uploaded.clear()
         yield
 
     async def _truncate() -> None:
@@ -251,6 +257,7 @@ def _isolate_stores(_pg_async_engine_session: AsyncEngine, tmp_path: Path) -> Ge
     reset_session_stores()
     reset_memory_stores()
     reset_approval_gate()
+    _media_staging._uploaded.clear()
 
 
 # ---------------------------------------------------------------------------

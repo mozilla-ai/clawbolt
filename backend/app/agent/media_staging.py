@@ -59,11 +59,18 @@ logger = logging.getLogger(__name__)
 STAGING_TTL_SECONDS = 604800
 STAGING_MAX_PER_USER = 50  # Cap memory growth: oldest-expiring entry is evicted on overflow
 
-# Recently-uploaded receipt cache. Shorter TTL than staging because its
-# job is only to absorb same-turn / same-day retries on a handle the
-# model already shipped. Anything older than this should not look like
-# a fresh success on retry; the tool can return its normal NOT_FOUND.
-UPLOAD_RECORD_TTL_SECONDS = 3600  # 1h
+# Recently-uploaded receipt cache. Matches the staging TTL so a handle
+# whose bytes are still on disk always has a corresponding receipt: the
+# tools no longer evict on success (bytes coexist with the permanent
+# home for the staging window), so the receipt is the only mechanism
+# preventing a same-handle retry from writing a second Drive copy.
+# Drive does not dedupe by content the way CompanyCam does, so without
+# this guard a 2h-later retry on the same handle would land a duplicate.
+# The cache is in-process: a worker restart inside the staging window
+# can still produce a duplicate Drive file (no data loss). Persisting
+# this record onto ``staged_media`` would close that gap; tracked for
+# a follow-up.
+UPLOAD_RECORD_TTL_SECONDS = STAGING_TTL_SECONDS  # 7 days
 UPLOAD_RECORD_MAX_PER_USER = 200
 
 
@@ -574,12 +581,12 @@ async def purge_expired() -> int:
 # In-process upload-receipt cache
 # ---------------------------------------------------------------------------
 #
-# Same-turn retries on a handle that already shipped to an external
-# service need a positive idempotent answer instead of "no bytes found".
-# This is short-lived (1h) and intentionally not persisted: by the time
-# a retry happens >1h later, the agent should just succeed via the
-# normal staged-bytes path. Keeping it in-memory avoids extra DB writes
-# on every successful upload.
+# A handle that already shipped to an external service needs an idempotent
+# answer on retry so the tool does not write a second copy. Bytes are
+# preserved across the staging TTL (no longer evicted on success), so the
+# receipt has to age alongside them: anything still resolvable as bytes
+# must also be resolvable as a receipt. Worker-local; persisting onto the
+# ``staged_media`` row is a follow-up that would survive restarts.
 
 
 def mark_uploaded(
