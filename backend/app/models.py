@@ -860,6 +860,16 @@ class StagedMedia(Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
+    # Upload receipt: where this handle's bytes were shipped, populated by
+    # ``media_staging.mark_uploaded`` after a successful tool call. Lives on
+    # the same row as the staged bytes so it shares their TTL and survives
+    # worker restarts. ``service`` is None until the bytes are uploaded.
+    upload_service: Mapped[str | None] = mapped_column(String, nullable=True)
+    upload_external_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    upload_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    upload_target: Mapped[str | None] = mapped_column(Text, nullable=True)
+    upload_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AppSetting(Base):
