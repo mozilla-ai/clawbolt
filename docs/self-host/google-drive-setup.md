@@ -4,7 +4,7 @@ Google Drive is the integration Clawbolt uses to catalog job photos and document
 
 When a user connects Drive, files land in their own account under a top-level `Clawbolt` folder. The integration uses the narrow `drive.file` scope, so the app only sees files it created itself, not the user's existing Drive contents.
 
-Without a Drive connection, the file tools (`upload_to_storage`, `organize_file`, `find_saved_files`, `analyze_saved_file`) stay disabled for that user. Other integrations like CompanyCam still work without Drive.
+Without a Drive connection, the file tools (`upload_to_storage`, `move_file`, `find_saved_files`, `analyze_saved_file`) stay disabled for that user. Other integrations like CompanyCam still work without Drive.
 
 ## Operator setup
 

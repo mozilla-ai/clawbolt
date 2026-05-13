@@ -16,7 +16,7 @@ class ToolName:
 
     # File management
     UPLOAD_TO_STORAGE = "upload_to_storage"
-    ORGANIZE_FILE = "organize_file"
+    MOVE_FILE = "move_file"
     FIND_SAVED_FILES = "find_saved_files"
     ANALYZE_SAVED_FILE = "analyze_saved_file"
 
