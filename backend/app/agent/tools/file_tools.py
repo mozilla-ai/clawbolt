@@ -33,10 +33,12 @@ FILENAME_SLUG_MAX_LENGTH = 30
 # context yet.
 DEFAULT_INBOX_FOLDER = "/Inbox"
 
-# Allowed in any single path segment. Permissive enough to let the agent
-# express "Acme - 123 Main St" or "Job (final)" while still rejecting path
-# traversal and shell metacharacters.
-_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9 _.,()&'+-]+$")
+# Disallowed in any single path segment. Denylist so non-ASCII names
+# (e.g. "Müller Roofing", "Café Owners") survive while we still reject
+# control characters and the shell / filesystem metacharacters Drive
+# disallows. Forward and back slashes are filtered separately so a path
+# with embedded slashes is split, not silently flattened.
+_INVALID_SEGMENT_RE = re.compile(r'[\x00-\x1f\x7f<>:"|?*]')
 
 # Hard caps. A real-world client folder is ~30-60 chars; nothing should need
 # more, and a bounded validator beats letting the LLM invent 4 KB paths.
@@ -84,7 +86,7 @@ class MoveFileParams(BaseModel):
             " (e.g. /Inbox/photo_001.jpg)"
         ),
     )
-    to_folder: str = Field(
+    to_folder_path: str = Field(
         description=(
             "Destination folder, leading slash required (e.g. '/Acme - 123 Main/photos')."
         ),
@@ -138,7 +140,8 @@ def _normalize_folder_path(raw: str | None) -> tuple[str | None, str | None]:
     on failure. Normalization collapses trailing slashes and lower-bound
     bare ``/`` to root (which the storage backend treats as the user's
     top-level Clawbolt folder). Validation rejects path traversal,
-    backslashes, and segments outside :data:`_PATH_SEGMENT_RE`.
+    backslashes, and segments containing :data:`_INVALID_SEGMENT_RE`
+    characters.
 
     Defensive against the LLM passing odd values: empty string, missing
     leading slash, ``..`` traversal, backslashes, control characters,
@@ -173,18 +176,68 @@ def _normalize_folder_path(raw: str | None) -> tuple[str | None, str | None]:
             return None, "folder_path must not contain empty segments."
         if seg in (".", ".."):
             return None, "folder_path must not contain '.' or '..'."
-        if not _PATH_SEGMENT_RE.match(seg):
+        if _INVALID_SEGMENT_RE.search(seg):
             return None, f"folder_path segment {seg!r} contains unsupported characters."
+        if seg != seg.strip():
+            return None, f"folder_path segment {seg!r} has leading or trailing whitespace."
 
     return path, None
+
+
+def _split_file_path(raw: str) -> tuple[str | None, str | None, str | None]:
+    """Validate a full file path and split it into (folder, filename).
+
+    Returns ``(folder, filename, None)`` on success or
+    ``(None, None, error_message)`` on failure. Tolerates a missing
+    leading slash (the LLM occasionally forgets) but routes the folder
+    portion through :func:`_normalize_folder_path` so traversal, oversized
+    paths, and bad characters are rejected the same way as a bare folder
+    arg. The filename portion is also screened for control characters and
+    embedded slashes so a corrupted ``find_saved_files`` result cannot
+    smuggle a directory write past the move.
+    """
+    if not raw or not raw.strip():
+        return None, None, "from_path must be a non-empty file path."
+
+    path = raw.strip()
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if "\\" in path:
+        return None, None, "from_path must use forward slashes only."
+
+    parts = path.rsplit("/", 1)
+    if len(parts) != 2 or not parts[1]:
+        return None, None, f"Cannot parse storage path: {path}"
+    folder_raw, filename = parts
+    folder = folder_raw or "/"
+
+    normalized_folder, error = _normalize_folder_path(folder)
+    if normalized_folder is None:
+        return None, None, error
+
+    if filename in (".", ".."):
+        return None, None, "from_path filename must not be '.' or '..'."
+    if _INVALID_SEGMENT_RE.search(filename):
+        return None, None, f"from_path filename {filename!r} contains unsupported characters."
+    if filename != filename.strip():
+        return None, None, "from_path filename must not have leading or trailing whitespace."
+
+    return normalized_folder, filename, None
 
 
 def _build_filename(
     description: str | None,
     index: int = 1,
-    extension: str = "jpg",
+    extension: str = "bin",
 ) -> str:
-    """Build a meaningful filename from description or fallback."""
+    """Build a meaningful filename from description or fallback.
+
+    Callers in ``upload_to_storage`` always pass an explicit
+    *extension* derived from the real mime type; the ``"bin"`` default
+    only kicks in for direct callers and tests that omit it, and is
+    chosen so a missing mime never silently produces a misleading
+    ``.jpg``.
+    """
     if description and description.strip():
         base = _store_slugify(description, max_length=FILENAME_SLUG_MAX_LENGTH)
     else:
@@ -313,7 +366,7 @@ def create_file_tools(
                         ),
                         receipt=ToolReceipt(
                             action="File already in Drive",
-                            target=prior.target or prior.external_id,
+                            target=prior.target,
                             url=prior.url or None,
                         ),
                     )
@@ -376,33 +429,29 @@ def create_file_tools(
 
     async def move_file(
         from_path: str,
-        to_folder: str,
+        to_folder_path: str,
         new_filename: str | None = None,
     ) -> ToolResult:
         """Move a saved file to a new folder, optionally renaming it."""
-        current_path = from_path.strip()
-        if not current_path.startswith("/"):
-            current_path = f"/{current_path}"
-
-        normalized_folder, path_error = _normalize_folder_path(to_folder)
-        if normalized_folder is None:
+        old_folder, old_filename, from_error = _split_file_path(from_path)
+        if old_folder is None or old_filename is None:
             return ToolResult(
-                content=path_error or "Invalid to_folder.",
+                content=from_error or "Invalid from_path.",
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
-        parts = current_path.rsplit("/", 1)
-        if len(parts) != 2 or not parts[1]:
+        normalized_folder, path_error = _normalize_folder_path(to_folder_path)
+        if normalized_folder is None:
             return ToolResult(
-                content=f"Cannot parse storage path: {current_path}",
+                content=path_error or "Invalid to_folder_path.",
                 is_error=True,
-                error_kind=ToolErrorKind.INTERNAL,
+                error_kind=ToolErrorKind.VALIDATION,
             )
-        old_folder, old_filename = parts
 
-        if old_folder == "":
-            old_folder = "/"
+        current_path = (
+            f"{old_folder}{old_filename}" if old_folder == "/" else f"{old_folder}/{old_filename}"
+        )
 
         existing = await find_saved_file(storage, current_path)
         if existing is None:
@@ -537,6 +586,10 @@ def create_file_tools(
             function=upload_to_storage,
             params_model=UploadToStorageParams,
             usage_hint="Save a recently received file to the user's Drive and return the link.",
+            # Serialize storage mutations within a turn so two uploads (or an
+            # upload + move) cannot race on filename indexing or
+            # collision-avoidance suffixing against the same Drive folder.
+            concurrency_group="user_storage",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 description_builder=lambda args: (
@@ -552,15 +605,16 @@ def create_file_tools(
                 "context that decides where a file should live (a client "
                 "folder, a topic-specific folder, etc.). Quote from_path "
                 "from find_saved_files (for example /Inbox/photo_001.jpg) "
-                "and pass to_folder with a leading slash."
+                "and pass to_folder_path with a leading slash."
             ),
             function=move_file,
             params_model=MoveFileParams,
             usage_hint="Move a saved file to a different folder in the user's Drive.",
+            concurrency_group="user_storage",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 description_builder=lambda args: (
-                    f"Move file to {args.get('to_folder') or 'a new folder'}"
+                    f"Move file to {args.get('to_folder_path') or 'a new folder'}"
                 ),
             ),
         ),

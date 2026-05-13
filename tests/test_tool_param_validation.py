@@ -100,7 +100,7 @@ def test_get_heartbeat_params_has_no_fields() -> None:
     assert isinstance(p, BaseModel)
 
 
-def test_move_file_requires_from_path_and_to_folder() -> None:
+def test_move_file_requires_from_path_and_to_folder_path() -> None:
     """MoveFileParams should reject calls missing the required path fields."""
     with pytest.raises(Exception):  # noqa: B017
         MoveFileParams(from_path="/Inbox/file.jpg")  # type: ignore[call-arg]

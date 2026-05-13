@@ -88,19 +88,37 @@ def test_normalize_folder_path_rejects_unsupported_chars() -> None:
     assert error is not None
 
 
+def test_normalize_folder_path_accepts_unicode_segments() -> None:
+    """Non-ASCII names like 'Müller Roofing' or 'Café Owners' must survive."""
+    normalized, error = _normalize_folder_path("/Müller Roofing/photos")
+    assert error is None
+    assert normalized == "/Müller Roofing/photos"
+
+
 # ---------------------------------------------------------------------------
 # _build_filename tests
 # ---------------------------------------------------------------------------
 
 
 def test_build_filename_with_description() -> None:
-    name = _build_filename("damaged railing", index=1)
+    name = _build_filename("damaged railing", index=1, extension="jpg")
     assert name == "damaged_railing_001.jpg"
 
 
 def test_build_filename_without_description() -> None:
-    name = _build_filename("", index=2)
+    name = _build_filename("", index=2, extension="jpg")
     assert name == "file_002.jpg"
+
+
+def test_build_filename_default_extension_is_bin() -> None:
+    """The default extension is the safe-ish 'bin', not 'jpg'.
+
+    Real callers in ``upload_to_storage`` always pass an explicit
+    extension derived from the mime type. The default catches direct
+    callers that forget; ``.bin`` is honest about the unknown.
+    """
+    name = _build_filename("note", index=1)
+    assert name == "note_001.bin"
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +365,7 @@ def _move_file_function(test_user: User, storage: MockStorageBackend):  # noqa: 
 async def test_move_file_relocates_to_named_folder(
     test_user: User,
 ) -> None:
-    """move_file should move a saved file into the caller-supplied to_folder."""
+    """move_file should move a saved file into the caller-supplied to_folder_path."""
     storage = MockStorageBackend()
     await storage.upload_file(b"img-data", "/Inbox", "file_001.jpg")
 
@@ -355,7 +373,7 @@ async def test_move_file_relocates_to_named_folder(
 
     result = await move_file(
         from_path="/Inbox/file_001.jpg",
-        to_folder="/John Smith - 116 Virginia Ave/photos",
+        to_folder_path="/John Smith - 116 Virginia Ave/photos",
     )
 
     assert result.is_error is False
@@ -377,7 +395,7 @@ async def test_move_file_renames_when_filename_provided(
 
     result = await move_file(
         from_path="/Inbox/file_001.jpg",
-        to_folder="/Acme/photos",
+        to_folder_path="/Acme/photos",
         new_filename="front_porch.jpg",
     )
 
@@ -398,7 +416,7 @@ async def test_move_file_avoids_overwrite_on_filename_collision(
 
     result = await move_file(
         from_path="/Inbox/photo.jpg",
-        to_folder="/Acme/photos",
+        to_folder_path="/Acme/photos",
     )
 
     assert result.is_error is False
@@ -417,7 +435,7 @@ async def test_move_file_emits_receipt(
 
     result = await move_file(
         from_path="/Inbox/file_001.jpg",
-        to_folder="/Acme/photos",
+        to_folder_path="/Acme/photos",
     )
 
     assert result.is_error is False
@@ -437,7 +455,7 @@ async def test_move_file_not_found(
 
     result = await move_file(
         from_path="/Inbox/nonexistent.jpg",
-        to_folder="/Acme/photos",
+        to_folder_path="/Acme/photos",
     )
     assert result.is_error is True
     assert "File not found" in result.content
@@ -447,14 +465,14 @@ async def test_move_file_not_found(
 async def test_move_file_rejects_invalid_destination(
     test_user: User,
 ) -> None:
-    """Path traversal in to_folder should be rejected before storage is touched."""
+    """Path traversal in to_folder_path should be rejected before storage is touched."""
     storage = MockStorageBackend()
     await storage.upload_file(b"img-data", "/Inbox", "file_001.jpg")
     move_file = _move_file_function(test_user, storage)
 
     result = await move_file(
         from_path="/Inbox/file_001.jpg",
-        to_folder="/../escape",
+        to_folder_path="/../escape",
     )
     assert result.is_error is True
 
@@ -470,10 +488,52 @@ async def test_move_file_normalizes_missing_leading_slash(
 
     result = await move_file(
         from_path="Inbox/file_002.jpg",
-        to_folder="/Ralph Smith/photos",
+        to_folder_path="/Ralph Smith/photos",
     )
     assert result.is_error is False
     assert "Moved" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_move_file_from_drive_root(
+    test_user: User,
+) -> None:
+    """A file dropped at the Drive root should still be movable.
+
+    Covers the ``old_folder == '/'`` branch in :func:`_split_file_path`;
+    without that special case, ``rsplit('/', 1)`` would produce an empty
+    ``old_folder`` and the underlying ``storage.move_file`` would
+    receive a malformed source.
+    """
+    storage = MockStorageBackend()
+    await storage.upload_file(b"img-data", "/", "stray.jpg")
+    move_file = _move_file_function(test_user, storage)
+
+    result = await move_file(
+        from_path="/stray.jpg",
+        to_folder_path="/Acme/photos",
+    )
+
+    assert result.is_error is False
+    assert "Moved" in result.content
+    assert any("Acme/photos/stray.jpg" in key for key in storage.files)
+
+
+@pytest.mark.asyncio()
+async def test_move_file_rejects_invalid_from_path(
+    test_user: User,
+) -> None:
+    """Traversal or bad chars in from_path are caught before storage is touched."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"img-data", "/Inbox", "file_001.jpg")
+    move_file = _move_file_function(test_user, storage)
+
+    result = await move_file(
+        from_path="/Inbox/../file_001.jpg",
+        to_folder_path="/Acme/photos",
+    )
+    assert result.is_error is True
+    assert "must not contain" in result.content or "from_path" in result.content
 
 
 # ---------------------------------------------------------------------------
