@@ -320,6 +320,33 @@ def create_file_tools(
                 media_map.setdefault(resolved_url, resolved_bytes)
                 mime_type = resolved_mime
 
+        # Idempotency: if this handle was already filed to Drive within the
+        # staging TTL, return the recorded receipt rather than writing a
+        # second copy. Drive does not dedupe by content, so the receipt
+        # cache is what prevents duplicate Drive files on retried LLM tool
+        # calls now that bytes are no longer evicted after a successful
+        # upload.
+        if original_url:
+            prior = media_staging.get_uploaded(user.id, original_url)
+            if prior is not None and prior.service == "storage":
+                logger.info(
+                    "upload_to_storage idempotent hit: user=%s handle=%s path=%s",
+                    user.id,
+                    original_url,
+                    prior.external_id,
+                )
+                return ToolResult(
+                    content=(
+                        f"File {original_url} was already uploaded to "
+                        f"{prior.external_id}. Not re-uploading."
+                    ),
+                    receipt=ToolReceipt(
+                        action="File already in Drive",
+                        target=prior.target,
+                        url=prior.url or None,
+                    ),
+                )
+
         # Determine file content
         file_bytes = b""
         if original_url and original_url in media_map:
@@ -353,31 +380,6 @@ def create_file_tools(
                 mime_type = staged_mime
 
         if not file_bytes:
-            # A prior tool call in this turn already shipped this handle to
-            # storage and ``evict``ed the bytes. Surface the prior receipt
-            # so the model doesn't read this as a failure and retry. Mirrors
-            # the CompanyCam idempotency in ``companycam_upload_photo``.
-            if original_url:
-                prior = media_staging.get_uploaded(user.id, original_url)
-                if prior is not None and prior.service == "storage":
-                    logger.warning(
-                        "media_handle_referenced_after_eviction service=storage "
-                        "user=%s handle=%s prior_path=%s",
-                        user.id,
-                        original_url,
-                        prior.external_id,
-                    )
-                    return ToolResult(
-                        content=(
-                            f"File {original_url} was already uploaded earlier in "
-                            f"this turn to {prior.external_id}. Not re-uploading."
-                        ),
-                        receipt=ToolReceipt(
-                            action="File already in Drive",
-                            target=prior.target,
-                            url=prior.url or None,
-                        ),
-                    )
             logger.warning("upload_to_storage called but no file content available")
             return ToolResult(
                 content=(
@@ -424,18 +426,21 @@ def create_file_tools(
         recent_for_folder.add(filename)
 
         if original_url:
-            # Record the receipt before evicting so a same-turn retry on the
-            # same handle hits an idempotent result instead of NOT_FOUND.
+            # Record the receipt so a later same-handle retry within the
+            # staging TTL short-circuits via the idempotency check at the
+            # top of this tool instead of writing a second Drive copy.
+            # Bytes intentionally stay in staging: keeps cross-tool flow
+            # simple (``companycam_upload_photo`` can still find them) at
+            # the cost of ~2x storage for the staging window.
             media_staging.mark_uploaded(
                 user.id,
                 original_url,
                 service="storage",
                 external_id=saved.path,
                 url=saved.web_view_link or "",
-                target=filename,
+                target=saved.path,
                 status="uploaded",
             )
-            await media_staging.evict(user.id, original_url)
 
         logger.info("File cataloged: %s", saved.path)
         return ToolResult(

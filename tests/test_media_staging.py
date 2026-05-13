@@ -126,8 +126,12 @@ def test_upload_record_round_trip(test_user: User) -> None:
 
 @pytest.mark.asyncio()
 async def test_upload_record_survives_evict(test_user: User) -> None:
-    """A successful upload evicts staged bytes but keeps the receipt so a
-    same-turn retry on the same handle returns an idempotent result.
+    """The receipt cache is independent of the bytes cache.
+
+    Tools no longer evict bytes after a successful upload, but the eviction
+    function itself is still used (e.g. for ``discard_media``). Verify the
+    two caches age independently: a manual ``evict`` drops the bytes but
+    leaves the receipt intact for the receipt cache's own TTL.
     """
     await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
     media_staging.mark_uploaded(
@@ -202,8 +206,8 @@ async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
 
     assert result.is_error is False
     assert "Uploaded" in result.content
-    # Staging entry should be evicted after a successful upload.
-    assert await media_staging.get_all_for_user(test_user.id) == {}
+    # Staging entry stays for the TTL so cross-tool reuse works.
+    assert "bb_photo" in await media_staging.get_all_for_user(test_user.id)
 
 
 @pytest.mark.asyncio()
@@ -269,7 +273,14 @@ async def test_upload_uses_staged_mime_over_llm_argument(test_user: User) -> Non
 
 
 @pytest.mark.asyncio()
-async def test_upload_evicts_staged_entry(test_user: User) -> None:
+async def test_upload_keeps_staged_entry(test_user: User) -> None:
+    """A successful storage upload must NOT evict the staged bytes.
+
+    The staging cache and the permanent home coexist for the staging TTL
+    so other tools (e.g. ``companycam_upload_photo``) can find the bytes
+    via the same handle without bookkeeping hops. Idempotency on retry
+    is handled by the recorded ``UploadRecord``.
+    """
     await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
     storage = MockStorageBackend()
     tools = create_file_tools(
@@ -284,50 +295,41 @@ async def test_upload_evicts_staged_entry(test_user: User) -> None:
         original_url="bb_photo",
     )
     assert result.is_error is False
-    assert await media_staging.get_all_for_user(test_user.id) == {}
+    # Bytes stay in staging.
+    assert "bb_photo" in await media_staging.get_all_for_user(test_user.id)
+    # Receipt was recorded for the top-of-tool idempotency check.
+    rec = media_staging.get_uploaded(test_user.id, "bb_photo")
+    assert rec is not None and rec.service == "storage"
 
 
 @pytest.mark.asyncio()
-async def test_upload_to_storage_idempotent_retry_after_eviction(
-    test_user: User, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Regression for the same upload-storm pattern that hit CompanyCam:
-    a same-turn retry on an evicted handle previously returned NOT_FOUND,
-    which the model read as failure and retried. Now the second call
-    surfaces the prior upload's path as an idempotent receipt.
-    """
-    import logging
+async def test_upload_to_storage_idempotent_on_same_handle_retry(test_user: User) -> None:
+    """A second ``upload_to_storage`` for the same handle returns the existing receipt.
 
+    With bytes preserved across the staging TTL, the only thing
+    preventing a second Drive copy is the top-of-tool idempotency check
+    that consults ``media_staging.get_uploaded``. Verify the check
+    short-circuits before the upload runs.
+    """
     await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
     storage = MockStorageBackend()
-    # pending_media is the per-turn snapshot the factory closes over; we
-    # mutate it after the first call to simulate the bytes being consumed.
-    pending = {"bb_photo": b"bytes"}
-    tools = create_file_tools(test_user, storage, pending_media=pending)
+    tools = create_file_tools(test_user, storage, pending_media={"bb_photo": b"bytes"})
     upload = tools[0].function
 
-    first = await upload(
-        folder_path="/Jane/photos",
-        original_url="bb_photo",
-    )
+    first = await upload(folder_path="/Jane/photos", original_url="bb_photo")
     assert first.is_error is False
+    assert first.receipt is not None
+    first_path = first.receipt.target
+    drive_writes_after_first = len(storage.files)
 
-    # Simulate the second call in the same turn: bytes are gone from
-    # pending_media (we just popped them, which mirrors what eviction
-    # does to the closure-held map) and from staging.
-    pending.pop("bb_photo", None)
-
-    with caplog.at_level(logging.WARNING, logger="backend.app.agent.tools.file_tools"):
-        second = await upload(
-            folder_path="/Jane/photos",
-            original_url="bb_photo",
-        )
-
-    assert second.is_error is False, (
-        "second upload on the same handle must return an idempotent receipt, not NOT_FOUND"
-    )
+    # Same call again on the same handle. The receipt should short-circuit.
+    second = await upload(folder_path="/Jane/photos", original_url="bb_photo")
+    assert second.is_error is False
+    assert second.receipt is not None
+    assert second.receipt.target == first_path, "second call must surface the prior path"
     assert "already uploaded" in second.content.lower()
-    assert any("media_handle_referenced_after_eviction" in rec.message for rec in caplog.records)
+    # No additional Drive write happened.
+    assert len(storage.files) == drive_writes_after_first
 
 
 class _FakeUploadParams(BaseModel):
