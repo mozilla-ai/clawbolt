@@ -452,6 +452,33 @@ async def _is_magic_link_connected(target: str, user_id: str) -> bool:
     return False
 
 
+async def get_user_connected_integrations(user_id: str) -> dict[str, bool]:
+    """Return a mapping of integration name to ``connected`` flag for *user_id*.
+
+    Covers OAuth integrations from :func:`list_oauth_integrations` plus the
+    magic-link integrations enumerated in ``_MAGIC_LINK_INTEGRATIONS``.
+    Integrations the operator has not configured on this deployment (no
+    OAuth credentials, no magic-link backend) are omitted entirely, so the
+    caller does not have to distinguish "not connected by this user" from
+    "not available on this deployment".
+
+    The result is the authoritative live answer used by
+    :func:`backend.app.agent.system_prompt.build_integration_status_section`
+    so the model never reads connection state out of USER.md (which the
+    model has historically tried to maintain by hand and which drifts the
+    moment a user OAuths or revokes).
+    """
+    result: dict[str, bool] = {}
+    for name in list_oauth_integrations():
+        config = get_oauth_config(name)
+        if config is None or not config.is_configured:
+            continue
+        result[name] = await oauth_service.is_connected(user_id, name)
+    for name in _MAGIC_LINK_INTEGRATIONS:
+        result[name] = await _is_magic_link_connected(name, user_id)
+    return result
+
+
 async def _handle_magic_link_connect(
     user_id: str, target: str, registry: ToolRegistry
 ) -> ToolResult:

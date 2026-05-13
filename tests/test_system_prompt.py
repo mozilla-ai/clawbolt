@@ -1,21 +1,25 @@
 """Tests for the composable system prompt builder."""
 
 import datetime
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from backend.app.agent.system_prompt import (
     SystemPromptBuilder,
+    _strip_integrations_block,
     build_agent_system_prompt,
     build_cross_session_context,
     build_date_section,
     build_identity_section,
     build_instructions_section,
+    build_integration_status_section,
     build_memory_section,
     build_proactive_section,
     build_time_user_context,
     build_tool_guidelines_section,
+    build_user_section,
     to_local_time,
 )
 from backend.app.models import User
@@ -221,6 +225,24 @@ class TestSectionBuilders:
 
 
 class TestBuildAgentSystemPrompt:
+    @pytest.fixture(autouse=True)
+    def _stub_integration_status(self) -> Generator[None, None, None]:
+        """Default the live integration-status helper to "no integrations".
+
+        The real implementation queries ``oauth_service`` for every
+        deployment-configured integration, which would issue a DB query
+        against ``oauth_tokens`` for the test user. The tests here don't
+        care about that section; suppressing it keeps them focused.
+        Tests that want to assert against the section can override this
+        fixture via their own ``patch`` inside the test body.
+        """
+        with patch(
+            "backend.app.agent.system_prompt.build_integration_status_section",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_assembles_all_sections(self) -> None:
         """Full agent prompt should contain all key sections."""
@@ -404,6 +426,15 @@ class TestBuildDateSection:
 
 
 class TestAgentSystemPromptExcludesTime:
+    @pytest.fixture(autouse=True)
+    def _stub_integration_status(self) -> Generator[None, None, None]:
+        with patch(
+            "backend.app.agent.system_prompt.build_integration_status_section",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_agent_prompt_does_not_include_time(self) -> None:
         """System prompt should NOT include current time (moved to user message for caching)."""
@@ -570,3 +601,172 @@ class TestCrossSessionContext:
         assert "## Recent Activity (other channel)" in result
         assert "Draft estimate for deck" in result
         assert "Sure, what size deck?" in result
+
+
+# ---------------------------------------------------------------------------
+# Live integration status section (issue: stale USER.md integration block)
+# ---------------------------------------------------------------------------
+
+
+class TestStripIntegrationsBlock:
+    def test_strips_h1_integrations_section(self) -> None:
+        """A leading-hash ``# Integrations`` block should be removed."""
+        text = (
+            "# User Profile\n"
+            "Name: Alice\n"
+            "\n"
+            "# Integrations\n"
+            "- Google Calendar: connected\n"
+            "- QuickBooks Online: connected\n"
+        )
+        result = _strip_integrations_block(text)
+        assert "# Integrations" not in result
+        assert "Google Calendar" not in result
+        assert "Name: Alice" in result
+
+    def test_strips_h2_integrations_section(self) -> None:
+        """A ``## Integrations`` subsection should be removed."""
+        text = (
+            "## Profile\n"
+            "Name: Alice\n"
+            "\n"
+            "## Integrations\n"
+            "- Google Drive: connected\n"
+            "\n"
+            "## Other\n"
+            "Other content\n"
+        )
+        result = _strip_integrations_block(text)
+        assert "## Integrations" not in result
+        assert "Google Drive" not in result
+        # Sibling section after the stripped block is preserved.
+        assert "## Other" in result
+        assert "Other content" in result
+
+    def test_no_op_when_no_integrations_block(self) -> None:
+        """Text without an Integrations heading should pass through unchanged."""
+        text = "## Profile\nName: Alice\n"
+        assert _strip_integrations_block(text) == text
+
+    def test_no_op_when_empty(self) -> None:
+        """Empty / None-equivalent input should return empty string."""
+        assert _strip_integrations_block("") == ""
+
+    def test_does_not_touch_word_integrations_in_prose(self) -> None:
+        """The literal word ``integrations`` in prose must not trigger a strip."""
+        text = "## Profile\nUses several integrations daily.\n"
+        result = _strip_integrations_block(text)
+        assert "Uses several integrations daily" in result
+
+    def test_stops_at_same_depth_heading(self) -> None:
+        """The strip ends at the next heading of equal or shallower depth."""
+        text = (
+            "## Integrations\n"
+            "- A: connected\n"
+            "### A subheading nested inside\n"
+            "should also be stripped\n"
+            "## Next Section\n"
+            "kept\n"
+        )
+        result = _strip_integrations_block(text)
+        assert "- A: connected" not in result
+        assert "should also be stripped" not in result
+        assert "## Next Section" in result
+        assert "kept" in result
+
+
+class TestBuildUserSectionStripsIntegrations:
+    def test_user_section_strips_legacy_integrations_block(self) -> None:
+        """``build_user_section`` should defensively strip a stale Integrations block."""
+        user = MagicMock(spec=User)
+        user.user_text = "# User Profile\nName: Bob\n\n# Integrations\n- Google Drive: connected\n"
+        result = build_user_section(user)
+        assert "Name: Bob" in result
+        assert "Google Drive" not in result
+
+
+class TestBuildIntegrationStatusSection:
+    @pytest.mark.asyncio
+    async def test_renders_connected_and_not_connected(self) -> None:
+        with patch(
+            "backend.app.agent.tools.integration_tools.get_user_connected_integrations",
+            new_callable=AsyncMock,
+            return_value={
+                "google_drive": False,
+                "google_calendar": True,
+                "quickbooks": True,
+                "appfolio_vendor": False,
+            },
+        ):
+            result = await build_integration_status_section("user-123")
+        assert "Connected: google_calendar, quickbooks" in result
+        assert "Not connected: appfolio_vendor, google_drive" in result
+        assert "Authoritative" in result
+
+    @pytest.mark.asyncio
+    async def test_empty_when_no_integrations_configured(self) -> None:
+        """No section content when the deployment has zero integrations wired."""
+        with patch(
+            "backend.app.agent.tools.integration_tools.get_user_connected_integrations",
+            new_callable=AsyncMock,
+            return_value={},
+        ):
+            result = await build_integration_status_section("user-123")
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_renders_all_not_connected(self) -> None:
+        """If nothing is connected, the section explicitly says so."""
+        with patch(
+            "backend.app.agent.tools.integration_tools.get_user_connected_integrations",
+            new_callable=AsyncMock,
+            return_value={"google_drive": False, "quickbooks": False},
+        ):
+            result = await build_integration_status_section("user-123")
+        assert "Connected: (none)" in result
+        assert "Not connected: google_drive, quickbooks" in result
+
+
+class TestAgentPromptIncludesLiveIntegrationStatus:
+    @pytest.mark.asyncio
+    async def test_section_appears_after_cache_boundary(self) -> None:
+        """The live integration status sits in the dynamic suffix.
+
+        Mid-conversation OAuth completions must take effect on the very
+        next turn, which means the section cannot be inside the cached
+        prefix. Placing it ``dynamic=True`` puts it after the boundary.
+        """
+        user = MagicMock()
+        user.soul_text = "soul"
+        user.user_text = "user"
+        user.id = 1
+        user.timezone = ""
+
+        with (
+            patch(
+                "backend.app.agent.system_prompt.build_memory_context",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch(
+                "backend.app.agent.system_prompt.build_integration_status_section",
+                new_callable=AsyncMock,
+                return_value=(
+                    "Live connection state. Authoritative over anything in USER.md "
+                    "or MEMORY.md.\nConnected: google_calendar\nNot connected: google_drive"
+                ),
+            ),
+        ):
+            prompt = await build_agent_system_prompt(
+                user=user,
+                tools=[],
+                message_context="hello",
+            )
+
+        assert "## Connected Integrations" in prompt
+        assert "Connected: google_calendar" in prompt
+        assert "Not connected: google_drive" in prompt
+        # Must sit after CACHE_BOUNDARY.
+        boundary_idx = prompt.index(SystemPromptBuilder.CACHE_BOUNDARY.strip())
+        section_idx = prompt.index("## Connected Integrations")
+        assert section_idx > boundary_idx
