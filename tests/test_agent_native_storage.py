@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -141,8 +142,17 @@ async def test_get_by_handle_missing(test_user: User) -> None:
 async def test_evict_by_handle(test_user: User) -> None:
     handle = await media_staging.stage(test_user.id, "url-1", b"bytes", "image/jpeg")
     assert handle is not None
+    async with db_session_async() as db:
+        row = (
+            await db.execute(select(StagedMedia).where(StagedMedia.handle == handle))
+        ).scalar_one()
+        disk_path = Path(row.disk_path)
+    assert disk_path.exists()
     assert await media_staging.evict_by_handle(handle) is True
     assert await media_staging.get_by_handle(handle) is None
+    # Disk file goes with the row: a follow-up restart should not see
+    # the bytes laying around either.
+    assert not disk_path.exists()
     # Idempotent: second evict returns False because already gone.
     assert await media_staging.evict_by_handle(handle) is False
 
@@ -216,6 +226,12 @@ async def test_purge_expired_drops_dead_rows(test_user: User) -> None:
     """Rows past ``expires_at`` get swept and their disk bytes removed."""
     handle = await media_staging.stage(test_user.id, "url-expired", b"bytes", "image/jpeg")
     assert handle is not None
+    async with db_session_async() as db:
+        row = (
+            await db.execute(select(StagedMedia).where(StagedMedia.handle == handle))
+        ).scalar_one()
+        disk_path = Path(row.disk_path)
+    assert disk_path.exists()
     past = datetime.now(UTC) - timedelta(hours=1)
     async with db_session_async() as db:
         await db.execute(
@@ -225,6 +241,9 @@ async def test_purge_expired_drops_dead_rows(test_user: User) -> None:
     purged = await media_staging.purge_expired()
     assert purged == 1
     assert await media_staging.get_by_handle(handle) is None
+    # Startup purge must also unlink the bytes; otherwise the deployment
+    # accumulates orphan files on every deploy cycle.
+    assert not disk_path.exists()
 
 
 # ---------------------------------------------------------------------------

@@ -110,9 +110,11 @@ def _disk_path_for(user_id: str, handle: str) -> Path:
 def _mint_handle() -> str:
     """Generate a short opaque handle token for a staged media item.
 
-    Collisions on 48 bits of entropy are astronomically unlikely; the
-    INSERT either takes or hits the ``uq_staged_media_handle``
-    constraint, in which case the caller retries with a fresh handle.
+    48 bits of entropy: collision probability across a 10k-entry table
+    is on the order of 1e-7 over the table's lifetime, so the INSERT
+    either takes or raises ``uq_staged_media_handle`` and the
+    exception propagates. ``stage`` does not catch it; a caller seeing
+    the error should retry, which mints a fresh handle.
     """
     return f"media_{secrets.token_urlsafe(6)}"
 
