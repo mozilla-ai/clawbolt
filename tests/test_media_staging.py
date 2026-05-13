@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Generator
+import uuid
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 from pydantic import BaseModel, Field
+from sqlalchemy import update
 
 from backend.app.agent import media_staging
 from backend.app.agent.approval import (
@@ -23,52 +27,84 @@ from backend.app.agent.messages import ToolCallRequest
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.file_tools import _file_factory, create_file_tools
 from backend.app.agent.tools.registry import ToolContext
+from backend.app.database import db_session_async
 from backend.app.media.download import DownloadedMedia
-from backend.app.models import User
+from backend.app.models import StagedMedia, User
 from tests.mocks.storage import MockStorageBackend
 
 
-@pytest.fixture(autouse=True)
-def _clear_staging_between_tests(test_user: User) -> Generator[None]:
-    media_staging.clear_user(test_user.id)
+@pytest_asyncio.fixture(autouse=True)
+async def _clear_staging_between_tests(test_user: User) -> AsyncGenerator[None]:
+    await media_staging.clear_user(test_user.id)
     yield
-    media_staging.clear_user(test_user.id)
+    await media_staging.clear_user(test_user.id)
 
 
-def test_stage_and_retrieve(test_user: User) -> None:
-    media_staging.stage(test_user.id, "bb_abc", b"bytes", "image/jpeg")
-    result = media_staging.get_all_for_user(test_user.id)
+@pytest_asyncio.fixture
+async def second_user() -> User:
+    """A persisted second user for cross-user isolation tests."""
+    async with db_session_async() as db:
+        user = User(
+            id=str(uuid.uuid4()),
+            user_id=f"second-user-{uuid.uuid4().hex[:8]}",
+            phone="+15557654321",
+            channel_identifier="987654321",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        db.expunge(user)
+    return user
+
+
+@pytest.mark.asyncio()
+async def test_stage_and_retrieve(test_user: User) -> None:
+    await media_staging.stage(test_user.id, "bb_abc", b"bytes", "image/jpeg")
+    result = await media_staging.get_all_for_user(test_user.id)
     assert result == {"bb_abc": b"bytes"}
 
 
-def test_stage_ignores_empty_url_or_content(test_user: User) -> None:
-    media_staging.stage(test_user.id, "", b"bytes", "image/jpeg")
-    media_staging.stage(test_user.id, "bb_empty", b"", "image/jpeg")
-    assert media_staging.get_all_for_user(test_user.id) == {}
+@pytest.mark.asyncio()
+async def test_stage_ignores_empty_url_or_content(test_user: User) -> None:
+    await media_staging.stage(test_user.id, "", b"bytes", "image/jpeg")
+    await media_staging.stage(test_user.id, "bb_empty", b"", "image/jpeg")
+    assert await media_staging.get_all_for_user(test_user.id) == {}
 
 
-def test_evict_removes_entry(test_user: User) -> None:
-    media_staging.stage(test_user.id, "bb_abc", b"bytes", "image/jpeg")
-    media_staging.evict(test_user.id, "bb_abc")
-    assert media_staging.get_all_for_user(test_user.id) == {}
+@pytest.mark.asyncio()
+async def test_evict_removes_entry(test_user: User) -> None:
+    await media_staging.stage(test_user.id, "bb_abc", b"bytes", "image/jpeg")
+    await media_staging.evict(test_user.id, "bb_abc")
+    assert await media_staging.get_all_for_user(test_user.id) == {}
 
 
-def test_expired_entries_are_purged(test_user: User, monkeypatch: pytest.MonkeyPatch) -> None:
-    media_staging.stage(test_user.id, "bb_old", b"bytes", "image/jpeg")
-    # Fast-forward past the TTL.
-    real_monotonic = time.monotonic
-    future = real_monotonic() + media_staging.STAGING_TTL_SECONDS + 1
-    monkeypatch.setattr(media_staging.time, "monotonic", lambda: future)
-    assert media_staging.get_all_for_user(test_user.id) == {}
+@pytest.mark.asyncio()
+async def test_expired_entries_are_purged(test_user: User) -> None:
+    """Rows past ``expires_at`` are filtered out by reads and removed by purge.
+
+    The TTL is wall-clock now (a Postgres ``DateTime``); shift the row's
+    ``expires_at`` into the past instead of fast-forwarding the clock.
+    """
+    handle = await media_staging.stage(test_user.id, "bb_old", b"bytes", "image/jpeg")
+    assert handle is not None
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    async with db_session_async() as db:
+        await db.execute(
+            update(StagedMedia).where(StagedMedia.handle == handle).values(expires_at=past)
+        )
+        await db.commit()
+    assert await media_staging.get_all_for_user(test_user.id) == {}
 
 
-def test_isolation_between_users() -> None:
-    media_staging.stage("user-a", "bb_abc", b"bytes-a", "image/jpeg")
-    media_staging.stage("user-b", "bb_abc", b"bytes-b", "image/jpeg")
-    assert media_staging.get_all_for_user("user-a") == {"bb_abc": b"bytes-a"}
-    assert media_staging.get_all_for_user("user-b") == {"bb_abc": b"bytes-b"}
-    media_staging.clear_user("user-a")
-    media_staging.clear_user("user-b")
+@pytest.mark.asyncio()
+async def test_isolation_between_users(test_user: User, second_user: User) -> None:
+    await media_staging.stage(test_user.id, "bb_abc", b"bytes-a", "image/jpeg")
+    await media_staging.stage(second_user.id, "bb_abc", b"bytes-b", "image/jpeg")
+    assert await media_staging.get_all_for_user(test_user.id) == {"bb_abc": b"bytes-a"}
+    assert await media_staging.get_all_for_user(second_user.id) == {"bb_abc": b"bytes-b"}
+    await media_staging.clear_user(second_user.id)
 
 
 def test_upload_record_round_trip(test_user: User) -> None:
@@ -88,11 +124,12 @@ def test_upload_record_round_trip(test_user: User) -> None:
     assert rec.status == "uploaded"
 
 
-def test_upload_record_survives_evict(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_upload_record_survives_evict(test_user: User) -> None:
     """A successful upload evicts staged bytes but keeps the receipt so a
     same-turn retry on the same handle returns an idempotent result.
     """
-    media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
+    await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
     media_staging.mark_uploaded(
         test_user.id,
         "bb_photo",
@@ -102,8 +139,8 @@ def test_upload_record_survives_evict(test_user: User) -> None:
         target="Some target",
         status="uploaded",
     )
-    media_staging.evict(test_user.id, "bb_photo")
-    assert media_staging.get_all_for_user(test_user.id) == {}
+    await media_staging.evict(test_user.id, "bb_photo")
+    assert await media_staging.get_all_for_user(test_user.id) == {}
     rec = media_staging.get_uploaded(test_user.id, "bb_photo")
     assert rec is not None
     assert rec.external_id == "cc-999"
@@ -126,6 +163,9 @@ def test_upload_record_expires(test_user: User, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_upload_record_isolated_per_user() -> None:
+    """The upload-receipt cache is in-process and unrelated to the
+    ``staged_media`` table, so plain string user_ids are fine here.
+    """
     media_staging.mark_uploaded(
         "user-a",
         "bb_photo",
@@ -136,7 +176,7 @@ def test_upload_record_isolated_per_user() -> None:
         status="uploaded",
     )
     assert media_staging.get_uploaded("user-b", "bb_photo") is None
-    media_staging.clear_user("user-a")
+    media_staging._uploaded.pop("user-a", None)
 
 
 @pytest.mark.asyncio()
@@ -145,14 +185,14 @@ async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
 ) -> None:
     """The agent may call upload_to_storage on a turn with no attachments; staged
     bytes from an earlier turn must still be available so the upload succeeds."""
-    media_staging.stage(test_user.id, "bb_photo", b"photo-bytes", "image/jpeg")
+    await media_staging.stage(test_user.id, "bb_photo", b"photo-bytes", "image/jpeg")
 
     ctx = ToolContext(
         user=test_user,
         storage=MockStorageBackend(),
         downloaded_media=[],
     )
-    tools = _file_factory(ctx)
+    tools = await _file_factory(ctx)
     upload = tools[0].function
 
     result = await upload(
@@ -164,7 +204,7 @@ async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
     assert result.is_error is False
     assert "Uploaded" in result.content
     # Staging entry should be evicted after a successful upload.
-    assert media_staging.get_all_for_user(test_user.id) == {}
+    assert await media_staging.get_all_for_user(test_user.id) == {}
 
 
 @pytest.mark.asyncio()
@@ -173,7 +213,7 @@ async def test_file_factory_prefers_current_turn_over_stale_staging(
 ) -> None:
     """If the same URL is in both current downloaded_media and staging, the
     current-turn bytes win (staging is fallback only)."""
-    media_staging.stage(test_user.id, "bb_photo", b"stale-bytes", "image/jpeg")
+    await media_staging.stage(test_user.id, "bb_photo", b"stale-bytes", "image/jpeg")
     current = DownloadedMedia(
         content=b"fresh-bytes",
         mime_type="image/jpeg",
@@ -185,7 +225,7 @@ async def test_file_factory_prefers_current_turn_over_stale_staging(
         storage=MockStorageBackend(),
         downloaded_media=[current],
     )
-    tools = _file_factory(ctx)
+    tools = await _file_factory(ctx)
     upload = tools[0].function
 
     result = await upload(
@@ -200,23 +240,24 @@ async def test_file_factory_prefers_current_turn_over_stale_staging(
     assert any(v == b"fresh-bytes" for v in storage.files.values())
 
 
-def test_get_mime_type_returns_staged_value(test_user: User) -> None:
-    media_staging.stage(test_user.id, "bb_doc", b"pdf-bytes", "application/pdf")
-    assert media_staging.get_mime_type(test_user.id, "bb_doc") == "application/pdf"
-    assert media_staging.get_mime_type(test_user.id, "missing") is None
+@pytest.mark.asyncio()
+async def test_get_mime_type_returns_staged_value(test_user: User) -> None:
+    await media_staging.stage(test_user.id, "bb_doc", b"pdf-bytes", "application/pdf")
+    assert await media_staging.get_mime_type(test_user.id, "bb_doc") == "application/pdf"
+    assert await media_staging.get_mime_type(test_user.id, "missing") is None
 
 
 @pytest.mark.asyncio()
 async def test_upload_uses_staged_mime_over_llm_argument(test_user: User) -> None:
     """The download layer knows the real mime; the LLM-supplied value must not
     overwrite it (e.g. agent defaults to image/jpeg but file is a PDF)."""
-    media_staging.stage(test_user.id, "bb_doc", b"pdf-bytes", "application/pdf")
+    await media_staging.stage(test_user.id, "bb_doc", b"pdf-bytes", "application/pdf")
     ctx = ToolContext(
         user=test_user,
         storage=MockStorageBackend(),
         downloaded_media=[],
     )
-    tools = _file_factory(ctx)
+    tools = await _file_factory(ctx)
     upload = tools[0].function
 
     result = await upload(
@@ -232,7 +273,7 @@ async def test_upload_uses_staged_mime_over_llm_argument(test_user: User) -> Non
 
 @pytest.mark.asyncio()
 async def test_upload_evicts_staged_entry(test_user: User) -> None:
-    media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
+    await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
     storage = MockStorageBackend()
     tools = create_file_tools(
         test_user,
@@ -247,7 +288,7 @@ async def test_upload_evicts_staged_entry(test_user: User) -> None:
         client_name="Jane",
     )
     assert result.is_error is False
-    assert media_staging.get_all_for_user(test_user.id) == {}
+    assert await media_staging.get_all_for_user(test_user.id) == {}
 
 
 @pytest.mark.asyncio()
@@ -261,7 +302,7 @@ async def test_upload_to_storage_idempotent_retry_after_eviction(
     """
     import logging
 
-    media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
+    await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
     storage = MockStorageBackend()
     # pending_media is the per-turn snapshot the factory closes over; we
     # mutate it after the first call to simulate the bytes being consumed.
@@ -780,11 +821,12 @@ async def test_permissions_write_normalizes_minified_json(test_user: User) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_media_ref_by_handle(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_resolve_media_ref_by_handle(test_user: User) -> None:
     """resolve_media_ref resolves a handle to (original_url, bytes, mime)."""
-    handle = media_staging.stage(test_user.id, "bb_photo_1", b"photo", "image/jpeg")
+    handle = await media_staging.stage(test_user.id, "bb_photo_1", b"photo", "image/jpeg")
     assert handle is not None
-    result = media_staging.resolve_media_ref(test_user.id, handle)
+    result = await media_staging.resolve_media_ref(test_user.id, handle)
     assert result is not None
     url, content, mime = result
     assert url == "bb_photo_1"
@@ -792,10 +834,11 @@ def test_resolve_media_ref_by_handle(test_user: User) -> None:
     assert mime == "image/jpeg"
 
 
-def test_resolve_media_ref_by_url(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_resolve_media_ref_by_url(test_user: User) -> None:
     """resolve_media_ref resolves a URL to (url, bytes, mime)."""
-    media_staging.stage(test_user.id, "bb_photo_2", b"photo2", "image/png")
-    result = media_staging.resolve_media_ref(test_user.id, "bb_photo_2")
+    await media_staging.stage(test_user.id, "bb_photo_2", b"photo2", "image/png")
+    result = await media_staging.resolve_media_ref(test_user.id, "bb_photo_2")
     assert result is not None
     url, content, mime = result
     assert url == "bb_photo_2"
@@ -803,25 +846,26 @@ def test_resolve_media_ref_by_url(test_user: User) -> None:
     assert mime == "image/png"
 
 
-def test_resolve_media_ref_wrong_user(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_resolve_media_ref_wrong_user(test_user: User, second_user: User) -> None:
     """resolve_media_ref rejects handles owned by a different user."""
-    handle = media_staging.stage("other-user", "bb_foreign", b"data", "image/jpeg")
+    handle = await media_staging.stage(second_user.id, "bb_foreign", b"data", "image/jpeg")
     assert handle is not None
-    result = media_staging.resolve_media_ref(test_user.id, handle)
+    result = await media_staging.resolve_media_ref(test_user.id, handle)
     assert result is None
-    media_staging.clear_user("other-user")
 
 
-def test_resolve_media_ref_unknown_ref(test_user: User) -> None:
+@pytest.mark.asyncio()
+async def test_resolve_media_ref_unknown_ref(test_user: User) -> None:
     """resolve_media_ref returns None for unrecognized references."""
-    assert media_staging.resolve_media_ref(test_user.id, "media_UNKNOWN") is None
-    assert media_staging.resolve_media_ref(test_user.id, "https://no.such/url") is None
+    assert await media_staging.resolve_media_ref(test_user.id, "media_UNKNOWN") is None
+    assert await media_staging.resolve_media_ref(test_user.id, "https://no.such/url") is None
 
 
 @pytest.mark.asyncio()
 async def test_upload_to_storage_resolves_handle(test_user: User) -> None:
     """Regression: upload_to_storage must accept media handles, not just URLs."""
-    handle = media_staging.stage(test_user.id, "bb_real_url", b"photo-bytes", "image/jpeg")
+    handle = await media_staging.stage(test_user.id, "bb_real_url", b"photo-bytes", "image/jpeg")
     assert handle is not None
 
     ctx = ToolContext(
@@ -829,7 +873,7 @@ async def test_upload_to_storage_resolves_handle(test_user: User) -> None:
         storage=MockStorageBackend(),
         downloaded_media=[],
     )
-    tools = _file_factory(ctx)
+    tools = await _file_factory(ctx)
     upload = tools[0].function
 
     result = await upload(

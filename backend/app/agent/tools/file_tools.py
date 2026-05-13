@@ -237,7 +237,7 @@ def create_file_tools(
         # Resolve media handles: the LLM may pass a handle from
         # analyze_photo instead of the actual URL.
         if original_url and original_url not in media_map:
-            resolved = media_staging.resolve_media_ref(user.id, original_url)
+            resolved = await media_staging.resolve_media_ref(user.id, original_url)
             if resolved is not None:
                 resolved_url, resolved_bytes, resolved_mime = resolved
                 original_url = resolved_url
@@ -257,7 +257,7 @@ def create_file_tools(
         # The download layer knows the real mime type; prefer that over the
         # LLM-supplied argument so PDFs or HEICs don't get mislabeled.
         if original_url:
-            staged_mime = media_staging.get_mime_type(user.id, original_url)
+            staged_mime = await media_staging.get_mime_type(user.id, original_url)
             if staged_mime:
                 mime_type = staged_mime
 
@@ -330,7 +330,7 @@ def create_file_tools(
                 target=filename,
                 status="uploaded",
             )
-            media_staging.evict(user.id, original_url)
+            await media_staging.evict(user.id, original_url)
 
         logger.info("File cataloged: %s", saved.path)
         return ToolResult(content=f"Uploaded {filename} to {folder_path}/ ({saved.path})")
@@ -548,7 +548,7 @@ def create_file_tools(
     ]
 
 
-def _file_factory(ctx: ToolContext) -> list[Tool]:
+async def _file_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for file tools, used by the registry."""
     # auth_check is the user-visible gate, but defend against direct
     # invocation paths that bypass it (e.g. ``activate_specialist`` before
@@ -559,7 +559,7 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
     pending_media = {m.original_url: m.content for m in ctx.downloaded_media if m.content}
     # Fall back to recent staged bytes so upload_to_storage works even when the
     # agent defers the call to a later turn with no attachments of its own.
-    for url, content in media_staging.get_all_for_user(ctx.user.id).items():
+    for url, content in (await media_staging.get_all_for_user(ctx.user.id)).items():
         pending_media.setdefault(url, content)
     return create_file_tools(ctx.user, ctx.storage, pending_media, ctx.turn_text)
 

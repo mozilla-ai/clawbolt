@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     google_drive_client_id: str = ""
     google_drive_client_secret: str = ""
 
+    # Inbound media staging: bytes for photos/files the user sends over the
+    # messaging channel land here until the agent uploads them somewhere
+    # durable (CompanyCam, Drive) or the 7-day TTL expires. Point this at a
+    # persistent volume in production; the bytes survive process restarts so
+    # the agent can still reference photos from days ago. Metadata lives in
+    # the ``staged_media`` Postgres table.
+    #
+    # MULTI-REPLICA WARNING: this path must be writable by exactly one
+    # application instance. If clawbolt is ever deployed across multiple
+    # replicas, the on-disk bytes are no longer shared and the staging cache
+    # needs to move to Postgres BYTEA or an object store. Tracked at
+    # https://github.com/mozilla-ai/clawbolt/issues/1336.
+    media_staging_base_dir: str = "data/staged_media"
+
     # Agent loop
     approval_timeout_seconds: int = Field(default=120, ge=1)
     agent_processing_timeout_seconds: float = Field(default=300.0, gt=0)

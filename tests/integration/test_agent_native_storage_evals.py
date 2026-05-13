@@ -15,10 +15,11 @@ Scenarios (from design doc /root/.gstack/projects/mozilla-ai-clawbolt/root-main-
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
 
 from backend.app.agent import media_staging
 from backend.app.agent.tools.media_tools import create_media_tools
@@ -26,11 +27,11 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.models import User
 
 
-@pytest.fixture(autouse=True)
-def _clear_staging_between_tests(test_user: User) -> Generator[None]:
-    media_staging.clear_user(test_user.id)
+@pytest_asyncio.fixture(autouse=True)
+async def _clear_staging_between_tests(test_user: User) -> AsyncGenerator[None]:
+    await media_staging.clear_user(test_user.id)
     yield
-    media_staging.clear_user(test_user.id)
+    await media_staging.clear_user(test_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ async def test_eval_contextual_companycam_routing(mock_vision: AsyncMock, test_u
     halves of the scenario; CompanyCam routing is exercised in
     tests/test_companycam_tools.py.
     """
-    handle = media_staging.stage(test_user.id, "url-kitchen", b"photo-bytes", "image/jpeg")
+    handle = await media_staging.stage(test_user.id, "url-kitchen", b"photo-bytes", "image/jpeg")
     assert handle is not None
 
     turn_text = "kitchen demo at 123 Main St"
@@ -62,7 +63,7 @@ async def test_eval_contextual_companycam_routing(mock_vision: AsyncMock, test_u
 
     # The agent decides NOT to call analyze_photo or discard_media. We verify
     # that the tool surface works without side effects to staging.
-    assert media_staging.get_by_handle(handle) is not None
+    assert await media_staging.get_by_handle(handle) is not None
     assert mock_vision.await_count == 0
 
     # Sanity: the tools exist and would work if called, we just expect the
@@ -86,7 +87,7 @@ async def test_eval_no_context_photo(mock_vision: AsyncMock, test_user: User) ->
     exercises the analyze_photo side of the sequence.
     """
     mock_vision.return_value = "A damaged kitchen sink, corroded copper pipes."
-    handle = media_staging.stage(test_user.id, "url-nocaption", b"photo-bytes", "image/jpeg")
+    handle = await media_staging.stage(test_user.id, "url-nocaption", b"photo-bytes", "image/jpeg")
     assert handle is not None
 
     turn_text = "hi"  # Essentially empty context
@@ -106,7 +107,7 @@ async def test_eval_no_context_photo(mock_vision: AsyncMock, test_user: User) ->
     assert passed_context == turn_text
     # After analysis, staging is still intact so a follow-up upload_to_storage
     # or organize_file can read the bytes.
-    assert media_staging.get_by_handle(handle) is not None
+    assert await media_staging.get_by_handle(handle) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +124,7 @@ async def test_eval_opt_out(mock_vision: AsyncMock, test_user: User) -> None:
     user's request. No analyze_photo (user doesn't want vision either), no
     upload_to_storage (explicitly opted out).
     """
-    handle = media_staging.stage(test_user.id, "url-skip", b"photo-bytes", "image/jpeg")
+    handle = await media_staging.stage(test_user.id, "url-skip", b"photo-bytes", "image/jpeg")
     assert handle is not None
 
     turn_text = "don't save this one"
@@ -135,6 +136,6 @@ async def test_eval_opt_out(mock_vision: AsyncMock, test_user: User) -> None:
 
     assert result.is_error is False
     # Staging is now empty for this handle.
-    assert media_staging.get_by_handle(handle) is None
+    assert await media_staging.get_by_handle(handle) is None
     # Vision was never called.
     assert mock_vision.await_count == 0

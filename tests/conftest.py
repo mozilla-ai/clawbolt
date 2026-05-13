@@ -226,7 +226,11 @@ def _isolate_stores(_pg_async_engine_session: AsyncEngine, tmp_path: Path) -> Ge
     after the expected failure.
     """
     # Set up per-test file store isolation
-    with patch.object(settings, "data_dir", str(tmp_path)):
+    staging_dir = tmp_path / "staged_media"
+    with (
+        patch.object(settings, "data_dir", str(tmp_path)),
+        patch.object(settings, "media_staging_base_dir", str(staging_dir)),
+    ):
         reset_stores()
         reset_session_stores()
         reset_memory_stores()

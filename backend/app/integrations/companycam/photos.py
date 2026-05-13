@@ -114,7 +114,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         #    (e.g. "media_abZtYWFs") from analyze_photo instead of the
         #    actual URL. Normalize to original_url + bytes before the
         #    three-tier lookup below.
-        resolved = media_staging.resolve_media_ref(ctx.user.id, original_url)
+        resolved = await media_staging.resolve_media_ref(ctx.user.id, original_url)
         if resolved is not None:
             original_url, file_bytes, mime_type = resolved
 
@@ -129,7 +129,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
 
         # 2. Try media staging (cached bytes, may have been evicted)
         if not file_bytes:
-            all_staged = media_staging.get_all_for_user(ctx.user.id)
+            all_staged = await media_staging.get_all_for_user(ctx.user.id)
             if original_url in all_staged:
                 file_bytes = all_staged[original_url]
 
@@ -253,7 +253,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 target=photo_target(photo),
                 status=status,
             )
-            media_staging.evict(ctx.user.id, original_url)
+            await media_staging.evict(ctx.user.id, original_url)
 
         if status == "processing_error":
             return ToolResult(
