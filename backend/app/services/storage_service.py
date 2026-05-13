@@ -3,11 +3,30 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import random
+import ssl
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# googleapiclient ``Resource`` and its underlying ``httplib2.Http`` are not
+# thread-safe (see googleapis/google-api-python-client docs/thread_safety.md).
+# Two ``.execute()`` calls racing on the same Resource interleave writes on
+# one TLS socket and surface as ``ssl.SSLError: record layer failure`` or
+# ``TimeoutError: read operation timed out`` from the other thread. The fix
+# is to build a fresh Resource per call (no cross-call sharing) and to
+# retry the transient error families on a small backoff in case a genuine
+# network blip slips through.
+_TRANSIENT_RETRY_ATTEMPTS = 3
+_TRANSIENT_RETRY_BASE_DELAY_S = 0.5
+_TRANSIENT_RETRY_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    ssl.SSLError,
+    ConnectionError,
+    TimeoutError,
+)
 
 
 # Top-level folder created in the user's Drive to namespace app-managed
@@ -126,23 +145,73 @@ class GoogleDriveStorage(StorageBackend):
 
     def __init__(self, credentials: DriveOAuthCredentials) -> None:
         self._credentials = credentials
+        # ``_service`` is a test-only override. Production leaves it ``None``
+        # and ``_get_service`` builds a fresh Resource on every call. The
+        # cross-call shared Resource was the root cause of the SSL/timeout
+        # storm in the Durham-receipts incident: one ``Resource`` wraps one
+        # ``httplib2.Http`` which wraps one TLS socket, and the agent fans
+        # uploads out concurrently via ``asyncio.to_thread``.
         self._service: Any = None
         self._folder_cache: dict[str, str] = {}
 
     def _get_service(self) -> Any:
-        if self._service is None:
-            from google.oauth2.credentials import Credentials
-            from googleapiclient.discovery import build
+        if self._service is not None:
+            return self._service
+        return self._build_service()
 
-            creds = Credentials(
-                token=self._credentials.access_token,
-                refresh_token=self._credentials.refresh_token,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=self._credentials.client_id,
-                client_secret=self._credentials.client_secret,
-            )
-            self._service = build("drive", "v3", credentials=creds)
-        return self._service
+    def _build_service(self) -> Any:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=self._credentials.access_token,
+            refresh_token=self._credentials.refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=self._credentials.client_id,
+            client_secret=self._credentials.client_secret,
+        )
+        # ``cache_discovery=False`` silences the file-cache deprecation
+        # warning; the discovery document is small enough that the network
+        # fetch on first call is cached in-process for the rest of the
+        # interpreter's lifetime.
+        return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    async def _execute_with_retry(
+        self,
+        build_request: Callable[[], Any],
+        *,
+        op: str,
+    ) -> Any:
+        """Run a googleapiclient request with bounded backoff on transient errors.
+
+        ``build_request`` is invoked fresh on every attempt so the
+        underlying ``HttpRequest`` (and any ``MediaIoBaseUpload`` it
+        carries) is reconstructed rather than reused after a partial
+        failure. Only ``ssl.SSLError`` / ``ConnectionError`` /
+        ``TimeoutError`` are retried; ``HttpError`` (HTTP-level
+        failures like 4xx/5xx) is left to the caller.
+        """
+        last_exc: BaseException | None = None
+        for attempt in range(_TRANSIENT_RETRY_ATTEMPTS):
+            try:
+                request = build_request()
+                return await asyncio.to_thread(request.execute)
+            except _TRANSIENT_RETRY_EXCEPTIONS as exc:
+                last_exc = exc
+                if attempt == _TRANSIENT_RETRY_ATTEMPTS - 1:
+                    break
+                delay = _TRANSIENT_RETRY_BASE_DELAY_S * (2**attempt) + random.uniform(0, 0.5)
+                logger.warning(
+                    "Transient Drive error on %s (attempt %d/%d): %s; retrying in %.2fs",
+                    op,
+                    attempt + 1,
+                    _TRANSIENT_RETRY_ATTEMPTS,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        assert last_exc is not None
+        raise last_exc
 
     async def _find_folder(self, name: str, parent_id: str | None = None) -> str | None:
         """Return the folder id for *name* under *parent_id*, if it exists."""
@@ -153,8 +222,9 @@ class GoogleDriveStorage(StorageBackend):
             f"name='{safe_name}' and {parent_clause} "
             f"and mimeType='application/vnd.google-apps.folder' and trashed=false"
         )
-        result = await asyncio.to_thread(
-            service.files().list(q=query, fields="files(id)", pageSize=1).execute
+        result = await self._execute_with_retry(
+            lambda: service.files().list(q=query, fields="files(id)", pageSize=1),
+            op="find_folder",
         )
         existing = result.get("files", [])
         if existing:
@@ -173,8 +243,9 @@ class GoogleDriveStorage(StorageBackend):
         }
         if parent_id:
             metadata["parents"] = [parent_id]
-        created = await asyncio.to_thread(
-            service.files().create(body=metadata, fields="id").execute
+        created = await self._execute_with_retry(
+            lambda: service.files().create(body=metadata, fields="id"),
+            op="create_folder",
         )
         return created["id"]
 
@@ -267,7 +338,6 @@ class GoogleDriveStorage(StorageBackend):
         logger.info("Uploading to Google Drive: %s/%s (%d bytes)", path, filename, len(file_bytes))
         folder_id = await self._resolve_path(path)
         service = self._get_service()
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
         storage_path = self._normalized_path(path, filename)
         file_metadata: dict[str, Any] = {
             "name": filename,
@@ -276,14 +346,30 @@ class GoogleDriveStorage(StorageBackend):
         }
         if description:
             file_metadata["description"] = description
-        try:
-            result = await asyncio.to_thread(
-                service.files()
-                .create(body=file_metadata, media_body=media, fields=_DRIVE_FILE_FIELDS)
-                .execute
+
+        # Build the request fresh on each retry. ``MediaIoBaseUpload``
+        # consumes its ``BytesIO`` source as the upload streams, so a
+        # partial-write failure would leave a reused instance at the wrong
+        # offset on the second attempt.
+        def _build() -> Any:
+            media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
+            return service.files().create(
+                body=file_metadata, media_body=media, fields=_DRIVE_FILE_FIELDS
             )
+
+        try:
+            result = await self._execute_with_retry(_build, op="upload_file")
         except HttpError as exc:
             logger.exception("Google Drive upload failed: %s/%s", path, filename)
+            msg = f"Google Drive upload failed for {path}/{filename}: {exc}"
+            raise RuntimeError(msg) from exc
+        except _TRANSIENT_RETRY_EXCEPTIONS as exc:
+            logger.exception(
+                "Google Drive upload failed after %d transient retries: %s/%s",
+                _TRANSIENT_RETRY_ATTEMPTS,
+                path,
+                filename,
+            )
             msg = f"Google Drive upload failed for {path}/{filename}: {exc}"
             raise RuntimeError(msg) from exc
         saved = self._from_drive_file(result, fallback_path=storage_path)
@@ -305,8 +391,9 @@ class GoogleDriveStorage(StorageBackend):
         service = self._get_service()
         safe_name = from_filename.replace("\\", "\\\\").replace("'", "\\'")
         query = f"name='{safe_name}' and '{from_folder_id}' in parents and trashed=false"
-        result = await asyncio.to_thread(
-            service.files().list(q=query, fields="files(id,name)").execute
+        result = await self._execute_with_retry(
+            lambda: service.files().list(q=query, fields="files(id,name)"),
+            op="move_file.list",
         )
         files = result.get("files", [])
         if not files:
@@ -314,9 +401,8 @@ class GoogleDriveStorage(StorageBackend):
             raise FileNotFoundError(msg)
         file_id = files[0]["id"]
         new_path = self._normalized_path(to_path, to_filename)
-        update_result = await asyncio.to_thread(
-            service.files()
-            .update(
+        update_result = await self._execute_with_retry(
+            lambda: service.files().update(
                 fileId=file_id,
                 body={
                     "name": to_filename,
@@ -325,8 +411,8 @@ class GoogleDriveStorage(StorageBackend):
                 addParents=to_folder_id,
                 removeParents=from_folder_id,
                 fields=_DRIVE_FILE_FIELDS,
-            )
-            .execute
+            ),
+            op="move_file.update",
         )
         return self._from_drive_file(update_result, fallback_path=new_path)
 
@@ -336,10 +422,11 @@ class GoogleDriveStorage(StorageBackend):
             return []
         service = self._get_service()
         query = f"'{folder_id}' in parents and trashed=false"
-        result = await asyncio.to_thread(
-            service.files()
-            .list(q=query, fields=f"files({_DRIVE_FILE_FIELDS})", pageSize=200)
-            .execute
+        result = await self._execute_with_retry(
+            lambda: service.files().list(
+                q=query, fields=f"files({_DRIVE_FILE_FIELDS})", pageSize=200
+            ),
+            op="list_folder",
         )
         normalized_path = path.strip("/")
         files: list[SavedFile] = []
@@ -360,8 +447,11 @@ class GoogleDriveStorage(StorageBackend):
         service = self._get_service()
         safe_name = filename.replace("\\", "\\\\").replace("'", "\\'")
         query = f"name='{safe_name}' and '{folder_id}' in parents and trashed=false"
-        result = await asyncio.to_thread(
-            service.files().list(q=query, fields=f"files({_DRIVE_FILE_FIELDS})", pageSize=1).execute
+        result = await self._execute_with_retry(
+            lambda: service.files().list(
+                q=query, fields=f"files({_DRIVE_FILE_FIELDS})", pageSize=1
+            ),
+            op="get_file",
         )
         files = result.get("files", [])
         if not files:
@@ -376,15 +466,14 @@ class GoogleDriveStorage(StorageBackend):
             safe = token.replace("\\", "\\\\").replace("'", "\\'")
             clauses.append(f"(name contains '{safe}' or fullText contains '{safe}')")
         q = " and ".join(clauses)
-        result = await asyncio.to_thread(
-            service.files()
-            .list(
+        result = await self._execute_with_retry(
+            lambda: service.files().list(
                 q=q,
                 fields=f"files({_DRIVE_FILE_FIELDS})",
                 pageSize=bounded,
                 orderBy="modifiedTime desc",
-            )
-            .execute
+            ),
+            op="search_files",
         )
         return [self._from_drive_file(payload) for payload in result.get("files", [])]
 
@@ -405,8 +494,9 @@ class GoogleDriveStorage(StorageBackend):
         service = self._get_service()
         safe_name = filename.replace("\\", "\\\\").replace("'", "\\'")
         query = f"name='{safe_name}' and '{folder_id}' in parents and trashed=false"
-        result = await asyncio.to_thread(
-            service.files().list(q=query, fields="files(id)", pageSize=1).execute
+        result = await self._execute_with_retry(
+            lambda: service.files().list(q=query, fields="files(id)", pageSize=1),
+            op="download_file.list",
         )
         files = result.get("files", [])
         if not files:
@@ -415,8 +505,14 @@ class GoogleDriveStorage(StorageBackend):
 
         file_id = files[0]["id"]
         try:
-            data = await asyncio.to_thread(service.files().get_media(fileId=file_id).execute)
+            data = await self._execute_with_retry(
+                lambda: service.files().get_media(fileId=file_id),
+                op="download_file.get_media",
+            )
         except HttpError as exc:
+            msg = f"Google Drive download failed for {path}: {exc}"
+            raise RuntimeError(msg) from exc
+        except _TRANSIENT_RETRY_EXCEPTIONS as exc:
             msg = f"Google Drive download failed for {path}: {exc}"
             raise RuntimeError(msg) from exc
         return bytes(data)

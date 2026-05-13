@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock
+import ssl
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -297,3 +298,120 @@ async def test_gdrive_root_folder_created_on_first_resolve(
     assert folder_id == "unsorted-id"
     assert s._folder_cache[ROOT_FOLDER_NAME] == "clawbolt-root-id"
     assert s._folder_cache[f"{ROOT_FOLDER_NAME}/Unsorted"] == "unsorted-id"
+
+
+# ---------------------------------------------------------------------------
+# Thread-safety + transient retry (issue: Durham receipt SSL/timeout storm)
+# ---------------------------------------------------------------------------
+
+
+def test_gdrive_get_service_builds_fresh_per_call_in_production() -> None:
+    """``_get_service`` must NOT cache the Resource across calls.
+
+    The cached Resource was the root cause of cross-thread TLS corruption
+    when the agent fanned uploads out via ``asyncio.to_thread``: one
+    Resource wraps one ``httplib2.Http`` which owns one TLS socket, and
+    two threads writing to that socket simultaneously surface as
+    ``ssl.SSLError: record layer failure`` or ``TimeoutError``.
+    """
+    s = GoogleDriveStorage(_drive_credentials())
+    # No test override: ``_service`` stays None and each call must build.
+    built = [MagicMock(name=f"resource-{i}") for i in range(3)]
+    with patch.object(s, "_build_service", side_effect=built) as build_mock:
+        first = s._get_service()
+        second = s._get_service()
+        third = s._get_service()
+    assert build_mock.call_count == 3
+    assert first is built[0]
+    assert second is built[1]
+    assert third is built[2]
+
+
+def test_gdrive_get_service_honors_test_override() -> None:
+    """Tests can still inject a mock by assigning ``_service`` directly."""
+    s = GoogleDriveStorage(_drive_credentials())
+    override = MagicMock(name="override")
+    s._service = override
+    with patch.object(s, "_build_service") as build_mock:
+        assert s._get_service() is override
+        assert s._get_service() is override
+    build_mock.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_upload_retries_ssl_error_then_succeeds(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """A transient ``SSLError`` should trigger a retry and eventually succeed."""
+    gdrive_storage._folder_cache[f"{ROOT_FOLDER_NAME}/folder-id"] = "folder-id"
+    mock_drive_service.files.return_value.create.return_value.execute.side_effect = [
+        ssl.SSLError("record layer failure"),
+        {"id": "file-after-retry", "webViewLink": "https://drive.google.com/file/d/after/view"},
+    ]
+    # Patch sleep so the test does not wait on the backoff.
+    with patch("backend.app.services.storage_service.asyncio.sleep", new=_fake_sleep):
+        saved = await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
+    assert saved.metadata.get("id") == "file-after-retry"
+    assert mock_drive_service.files.return_value.create.return_value.execute.call_count == 2
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_upload_retries_timeout_then_succeeds(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """A transient ``TimeoutError`` should trigger a retry and eventually succeed."""
+    gdrive_storage._folder_cache[f"{ROOT_FOLDER_NAME}/folder-id"] = "folder-id"
+    mock_drive_service.files.return_value.create.return_value.execute.side_effect = [
+        TimeoutError("read operation timed out"),
+        {"id": "file-after-retry"},
+    ]
+    with patch("backend.app.services.storage_service.asyncio.sleep", new=_fake_sleep):
+        saved = await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
+    assert saved.metadata.get("id") == "file-after-retry"
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_upload_gives_up_after_max_retries(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """Repeated transient errors past the retry budget should surface as RuntimeError."""
+    gdrive_storage._folder_cache[f"{ROOT_FOLDER_NAME}/folder-id"] = "folder-id"
+    mock_drive_service.files.return_value.create.return_value.execute.side_effect = ssl.SSLError(
+        "record layer failure"
+    )
+    with (
+        patch("backend.app.services.storage_service.asyncio.sleep", new=_fake_sleep),
+        pytest.raises(RuntimeError, match="Google Drive upload failed"),
+    ):
+        await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
+    # 3 attempts, all failed.
+    assert mock_drive_service.files.return_value.create.return_value.execute.call_count == 3
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_upload_does_not_retry_http_error(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """``HttpError`` is an HTTP-level failure, not a transient network blip.
+
+    Retrying a 4xx/5xx ``HttpError`` would mask real backend problems and
+    delay the user-facing error. Only the transient network classes are
+    retried.
+    """
+    pytest.importorskip("googleapiclient")
+    from googleapiclient.errors import HttpError
+
+    gdrive_storage._folder_cache[f"{ROOT_FOLDER_NAME}/folder-id"] = "folder-id"
+    resp = MagicMock(status=500, reason="Internal Server Error")
+    mock_drive_service.files.return_value.create.return_value.execute.side_effect = HttpError(
+        resp, b"error"
+    )
+    with pytest.raises(RuntimeError, match="Google Drive upload failed"):
+        await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
+    # No retry on HttpError: single attempt only.
+    assert mock_drive_service.files.return_value.create.return_value.execute.call_count == 1
+
+
+async def _fake_sleep(_delay: float) -> None:
+    """Drop-in replacement for ``asyncio.sleep`` in tests that exercise retry backoff."""
+    return None
