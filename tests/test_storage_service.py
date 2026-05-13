@@ -300,6 +300,86 @@ async def test_gdrive_root_folder_created_on_first_resolve(
     assert s._folder_cache[f"{ROOT_FOLDER_NAME}/Unsorted"] == "unsorted-id"
 
 
+@pytest.mark.asyncio()
+async def test_gdrive_search_files_matches_storage_path_tokens(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """``search_files`` must surface files whose ``clawbolt_path`` contains the query.
+
+    Drive's query DSL has no substring operator on ``appProperties.value``, so
+    a search for ``"Catch All"`` returns nothing from the native
+    ``name contains 'Catch' and name contains 'All'`` query when the files
+    are all named ``photo_002.jpg``. ``search_files`` must fall back to a
+    broader list and client-side filter on the path appProperty.
+    """
+
+    def list_side_effect(*, q: str, **_kwargs: object) -> object:
+        # Native name/fullText query: returns nothing (the bug case).
+        if "name contains" in q or "fullText contains" in q:
+            return MagicMock(execute=MagicMock(return_value={"files": []}))
+        # Broad fallback: return three files whose appProperties carry the
+        # storage path.
+        return MagicMock(
+            execute=MagicMock(
+                return_value={
+                    "files": [
+                        {
+                            "id": "f1",
+                            "name": "photo_002.jpg",
+                            "webViewLink": "https://drive.google.com/f1",
+                            "appProperties": {"clawbolt_path": "/Catch All/photos/photo_002.jpg"},
+                        },
+                        {
+                            "id": "f2",
+                            "name": "photo_001.jpg",
+                            "webViewLink": "https://drive.google.com/f2",
+                            "appProperties": {"clawbolt_path": "/Catch All/photos/photo_001.jpg"},
+                        },
+                        {
+                            "id": "f3",
+                            "name": "unrelated.jpg",
+                            "appProperties": {"clawbolt_path": "/Other/folder/unrelated.jpg"},
+                        },
+                    ]
+                }
+            )
+        )
+
+    mock_drive_service.files.return_value.list.side_effect = list_side_effect
+
+    results = await gdrive_storage.search_files(query="Catch All", limit=10)
+
+    returned_paths = [r.path for r in results]
+    assert "/Catch All/photos/photo_002.jpg" in returned_paths
+    assert "/Catch All/photos/photo_001.jpg" in returned_paths
+    assert "/Other/folder/unrelated.jpg" not in returned_paths
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_search_files_skips_fallback_when_native_query_returns_enough(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """When the native query already returns ``limit`` files, no fallback scan.
+
+    Keeps the common case cheap: only pay for the broad list when the
+    name/fullText query is empty or short, which is the bug-fix case.
+    """
+    mock_drive_service.files.return_value.list.return_value.execute.return_value = {
+        "files": [
+            {
+                "id": f"f{i}",
+                "name": f"invoice_{i}.pdf",
+                "appProperties": {"clawbolt_path": f"/Inbox/invoice_{i}.pdf"},
+            }
+            for i in range(5)
+        ]
+    }
+    results = await gdrive_storage.search_files(query="invoice", limit=5)
+    assert len(results) == 5
+    # Single list call total: native query satisfied the bounded request.
+    assert mock_drive_service.files.return_value.list.call_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Thread-safety + transient retry (issue: Durham receipt SSL/timeout storm)
 # ---------------------------------------------------------------------------

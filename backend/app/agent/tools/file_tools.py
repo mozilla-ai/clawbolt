@@ -286,6 +286,14 @@ def create_file_tools(
     # Per-turn cache: same closure lifetime as the tool list, so a saved file
     # analyzed twice in one turn only pays the vision cost once.
     saved_analysis_cache: dict[str, str] = {}
+    # Per-turn registry of filenames already minted by this tool list, keyed by
+    # destination folder. Drive's ``files.list`` is eventually consistent, so a
+    # file just written by ``upload_file`` may not appear in the next
+    # ``list_folder`` call. Without this set, two upload calls in the same turn
+    # against the same folder would both see ``existing=[photo_001]`` and both
+    # mint ``photo_002.jpg``, silently shadowing each other. The set is
+    # populated post-write so it reflects what we know has succeeded.
+    recent_uploads_by_folder: dict[str, set[str]] = {}
 
     async def upload_to_storage(
         folder_path: str | None = None,
@@ -311,6 +319,33 @@ def create_file_tools(
                 original_url = resolved_url
                 media_map.setdefault(resolved_url, resolved_bytes)
                 mime_type = resolved_mime
+
+        # Idempotency: if this handle was already filed to Drive within the
+        # staging TTL, return the recorded receipt rather than writing a
+        # second copy. Drive does not dedupe by content, so the receipt
+        # cache is what prevents duplicate Drive files on retried LLM tool
+        # calls now that bytes are no longer evicted after a successful
+        # upload.
+        if original_url:
+            prior = media_staging.get_uploaded(user.id, original_url)
+            if prior is not None and prior.service == "storage":
+                logger.info(
+                    "upload_to_storage idempotent hit: user=%s handle=%s path=%s",
+                    user.id,
+                    original_url,
+                    prior.external_id,
+                )
+                return ToolResult(
+                    content=(
+                        f"File {original_url} was already uploaded to "
+                        f"{prior.external_id}. Not re-uploading."
+                    ),
+                    receipt=ToolReceipt(
+                        action="File already in Drive",
+                        target=prior.target,
+                        url=prior.url or None,
+                    ),
+                )
 
         # Determine file content
         file_bytes = b""
@@ -345,31 +380,6 @@ def create_file_tools(
                 mime_type = staged_mime
 
         if not file_bytes:
-            # A prior tool call in this turn already shipped this handle to
-            # storage and ``evict``ed the bytes. Surface the prior receipt
-            # so the model doesn't read this as a failure and retry. Mirrors
-            # the CompanyCam idempotency in ``companycam_upload_photo``.
-            if original_url:
-                prior = media_staging.get_uploaded(user.id, original_url)
-                if prior is not None and prior.service == "storage":
-                    logger.warning(
-                        "media_handle_referenced_after_eviction service=storage "
-                        "user=%s handle=%s prior_path=%s",
-                        user.id,
-                        original_url,
-                        prior.external_id,
-                    )
-                    return ToolResult(
-                        content=(
-                            f"File {original_url} was already uploaded earlier in "
-                            f"this turn to {prior.external_id}. Not re-uploading."
-                        ),
-                        receipt=ToolReceipt(
-                            action="File already in Drive",
-                            target=prior.target,
-                            url=prior.url or None,
-                        ),
-                    )
             logger.warning("upload_to_storage called but no file content available")
             return ToolResult(
                 content=(
@@ -389,11 +399,22 @@ def create_file_tools(
             len(file_bytes),
         )
 
-        # Pick the next sequence number from the destination folder.
+        # Pick the next sequence number from the destination folder. Union the
+        # backend listing with names this tool list has already minted this turn
+        # so concurrent or rapid serial uploads cannot collide on the same
+        # index when Drive's eventually-consistent ``files.list`` has not yet
+        # observed the prior write.
         extension = _extension_from_mime(mime_type)
         await storage.create_folder(normalized_folder)
         existing = await storage.list_folder(normalized_folder)
-        filename = _build_filename(description, index=len(existing) + 1, extension=extension)
+        recent_for_folder = recent_uploads_by_folder.setdefault(normalized_folder, set())
+        taken_names = {f.name for f in existing} | recent_for_folder
+        index = len(existing) + 1
+        while True:
+            filename = _build_filename(description, index=index, extension=extension)
+            if filename not in taken_names:
+                break
+            index += 1
 
         saved = await storage.upload_file(
             file_bytes,
@@ -402,20 +423,24 @@ def create_file_tools(
             mime_type=mime_type,
             description=description,
         )
+        recent_for_folder.add(filename)
 
         if original_url:
-            # Record the receipt before evicting so a same-turn retry on the
-            # same handle hits an idempotent result instead of NOT_FOUND.
+            # Record the receipt so a later same-handle retry within the
+            # staging TTL short-circuits via the idempotency check at the
+            # top of this tool instead of writing a second Drive copy.
+            # Bytes intentionally stay in staging: keeps cross-tool flow
+            # simple (``companycam_upload_photo`` can still find them) at
+            # the cost of ~2x storage for the staging window.
             media_staging.mark_uploaded(
                 user.id,
                 original_url,
                 service="storage",
                 external_id=saved.path,
                 url=saved.web_view_link or "",
-                target=filename,
+                target=saved.path,
                 status="uploaded",
             )
-            await media_staging.evict(user.id, original_url)
 
         logger.info("File cataloged: %s", saved.path)
         return ToolResult(
@@ -464,10 +489,12 @@ def create_file_tools(
         # Pick the target filename: caller override if provided, otherwise
         # keep the original. Add a numeric suffix if there is already a
         # file of that name in the destination so the move never silently
-        # overwrites.
+        # overwrites. Union the backend listing with same-turn writes for
+        # the same reason ``upload_to_storage`` does.
         await storage.create_folder(normalized_folder)
         target_existing = await storage.list_folder(normalized_folder)
-        existing_names = {f.name for f in target_existing}
+        recent_for_dest = recent_uploads_by_folder.setdefault(normalized_folder, set())
+        existing_names = {f.name for f in target_existing} | recent_for_dest
         if new_filename and new_filename.strip():
             target_filename = new_filename.strip()
         else:
@@ -491,6 +518,7 @@ def create_file_tools(
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
+        recent_for_dest.add(target_filename)
 
         logger.info("File moved: %s -> %s", current_path, moved.path)
         return ToolResult(

@@ -461,8 +461,9 @@ class GoogleDriveStorage(StorageBackend):
     async def search_files(self, query: str = "", limit: int = 10) -> list[SavedFile]:
         bounded = max(1, min(limit, 100))
         service = self._get_service()
+        tokens = _search_tokens(query)
         clauses = ["trashed=false", "mimeType!='application/vnd.google-apps.folder'"]
-        for token in _search_tokens(query):
+        for token in tokens:
             safe = token.replace("\\", "\\\\").replace("'", "\\'")
             clauses.append(f"(name contains '{safe}' or fullText contains '{safe}')")
         q = " and ".join(clauses)
@@ -475,7 +476,41 @@ class GoogleDriveStorage(StorageBackend):
             ),
             op="search_files",
         )
-        return [self._from_drive_file(payload) for payload in result.get("files", [])]
+        native_payloads = result.get("files", [])
+        matches = [self._from_drive_file(payload) for payload in native_payloads]
+        if not tokens or len(matches) >= bounded:
+            return matches
+
+        # The Drive query only matches filename and indexed full-text content;
+        # the human-readable storage path lives in ``appProperties.clawbolt_path``
+        # which Drive's query DSL only supports as an exact-match operator. To
+        # let users search by folder (e.g. ``"Catch All"`` for files saved
+        # under ``/Catch All/photos/``), fall back to a broader list and
+        # filter client-side. Capped at a recent slice so accounts with many
+        # files don't pay an unbounded scan cost on every search.
+        broad_result = await self._execute_with_retry(
+            lambda: service.files().list(
+                q="trashed=false and mimeType!='application/vnd.google-apps.folder'",
+                fields=f"files({_DRIVE_FILE_FIELDS})",
+                pageSize=max(bounded * 5, 50),
+                orderBy="modifiedTime desc",
+            ),
+            op="search_files.path_fallback",
+        )
+        lower_tokens = [t.lower() for t in tokens]
+        seen_ids: set[str] = {(p.get("id") or "") for p in native_payloads if p.get("id")}
+        for payload in broad_result.get("files", []):
+            file_id = payload.get("id") or ""
+            if file_id in seen_ids:
+                continue
+            path_value = (payload.get("appProperties") or {}).get(_DRIVE_PATH_PROPERTY, "")
+            if not path_value:
+                continue
+            if all(token in path_value.lower() for token in lower_tokens):
+                matches.append(self._from_drive_file(payload))
+                if len(matches) >= bounded:
+                    break
+        return matches
 
     async def download_file(self, path: str) -> bytes:
         from googleapiclient.errors import HttpError

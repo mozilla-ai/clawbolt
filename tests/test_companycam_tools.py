@@ -1324,12 +1324,14 @@ async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_upload_photo_evicts_staging_on_success(test_user: User) -> None:
-    """Regression #1282: a successful upload must evict the staged bytes.
+async def test_upload_photo_keeps_staging_on_success(test_user: User) -> None:
+    """A successful upload must NOT evict the staged bytes.
 
-    CompanyCam dedupes by MD5 account-wide, so if we leave the bytes in
-    media_staging the next turn's upload tool can re-grab them and trip
-    a spurious ``duplicate`` flag against a photo we just uploaded.
+    Bytes stay in staging for the full TTL so cross-tool flows
+    (``upload_to_storage`` -> ``companycam_upload_photo``, or vice versa)
+    can find them without bookkeeping hops. Idempotency on a same-handle
+    retry is provided by the ``mark_uploaded`` receipt cache, which the
+    top-of-tool check honors before re-POSTing.
     """
     from backend.app.agent import media_staging
     from backend.app.agent.tools.names import ToolName
@@ -1377,21 +1379,27 @@ async def test_upload_photo_evicts_staging_on_success(test_user: User) -> None:
             result = await tool.function(project_id="22222222", original_url=photo_url)
 
         assert not result.is_error
-        assert photo_url not in await media_staging.get_all_for_user(user_id), (
-            "staged bytes must be evicted after a successful upload so a "
-            "follow-up turn cannot re-upload them"
+        assert photo_url in await media_staging.get_all_for_user(user_id), (
+            "staged bytes must stay available after success so cross-tool "
+            "reuse works within the staging TTL"
+        )
+        prior = media_staging.get_uploaded(user_id, photo_url)
+        assert prior is not None and prior.service == "companycam", (
+            "the upload receipt must be recorded so a same-handle retry "
+            "short-circuits via the top-of-tool idempotency check"
         )
     finally:
         await media_staging.clear_user(user_id)
 
 
 @pytest.mark.asyncio()
-async def test_upload_photo_evicts_staging_on_duplicate(test_user: User) -> None:
-    """Regression #1282: ``duplicate`` response must also evict the staged bytes.
+async def test_upload_photo_keeps_staging_on_duplicate(test_user: User) -> None:
+    """``duplicate`` response from CompanyCam must NOT evict the staged bytes.
 
-    When CompanyCam reports the upload was a duplicate, the bytes have
-    still been delivered. Keeping them staged invites another redundant
-    upload on the next turn.
+    CompanyCam dedupes by MD5, so a duplicate result means the photo
+    already exists on their side. Either way the bytes stay in staging
+    for the TTL so other tools (e.g. ``upload_to_storage``) can still
+    use them.
     """
     from backend.app.agent import media_staging
     from backend.app.agent.tools.names import ToolName
@@ -1438,9 +1446,9 @@ async def test_upload_photo_evicts_staging_on_duplicate(test_user: User) -> None
             tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
             await tool.function(project_id="44444444", original_url=photo_url)
 
-        assert photo_url not in await media_staging.get_all_for_user(user_id), (
-            "staged bytes must be evicted after a duplicate response so "
-            "the LLM cannot trigger more redundant uploads"
+        assert photo_url in await media_staging.get_all_for_user(user_id), (
+            "staged bytes must stay available after a duplicate result so "
+            "cross-tool reuse works within the staging TTL"
         )
     finally:
         await media_staging.clear_user(user_id)
@@ -1449,8 +1457,9 @@ async def test_upload_photo_evicts_staging_on_duplicate(test_user: User) -> None
 @pytest.mark.asyncio()
 async def test_upload_photo_keeps_staging_on_upload_exception(test_user: User) -> None:
     """If the upload itself raises, the staged bytes must remain so the
-    user (or the agent on retry) can try again. Spy on ``evict`` so this
-    test would still fail if eviction were moved before the try/except."""
+    user (or the agent on retry) can try again. The eviction spy is kept
+    as a guardrail in case a future refactor reintroduces an
+    evict-on-success pattern that accidentally fires on the error path."""
     from backend.app.agent import media_staging
     from backend.app.agent.tools.names import ToolName
     from backend.app.media.download import DownloadedMedia
@@ -1637,9 +1646,9 @@ async def test_upload_photo_strips_dict_description() -> None:
 async def test_upload_photo_can_reuse_saved_file_from_storage(test_user: User) -> None:
     """Saved photos should be reusable when the agent quotes their storage path.
 
-    Mock storage exposes a ``web_view_link`` for every saved file, so the
-    companycam tool routes through that URL and never touches the
-    presigned tunnel URL.
+    The bytes are read from storage and served through the temp media tunnel;
+    Drive ``webViewLink``s are not handed to CompanyCam because they require
+    Google auth and would 302 to a login page for an anonymous fetcher.
     """
     from backend.app.agent.tools.names import ToolName
     from backend.app.integrations.companycam.models import ImageURI, Photo
@@ -1668,11 +1677,153 @@ async def test_upload_photo_can_reuse_saved_file_from_storage(test_user: User) -
     ctx.downloaded_media = []
     ctx.storage = storage
 
-    tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
-    result = await tool.function(project_id="94772883", original_url=saved.path)
+    with (
+        patch(
+            "backend.app.services.webhook.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.routers.media_temp.create_temp_media_url",
+            return_value="https://tunnel.example.com/media/tmp/saved",
+        ) as create_temp,
+    ):
+        tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+        result = await tool.function(project_id="94772883", original_url=saved.path)
 
     assert result.is_error is False
-    assert service.upload_photo.call_args.kwargs["photo_uri"] == saved.web_view_link
+    sent_uri = service.upload_photo.call_args.kwargs["photo_uri"]
+    assert sent_uri == "https://tunnel.example.com/media/tmp/saved"
+    assert sent_uri != saved.web_view_link, (
+        "must not send Drive webViewLink to CompanyCam: "
+        "drive.file-scope files require auth and the link 302s to Google login"
+    )
+    # The bytes shipped to the tunnel must be the saved-file bytes.
+    assert create_temp.call_args.args[0] == b"saved-jpg"
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_finds_staged_bytes_after_prior_storage_upload(
+    test_user: User,
+) -> None:
+    """A handle filed to Drive must still ship to CompanyCam.
+
+    Nathan's 2026-05-13 ``/Catch All/photos/`` flow: agent calls
+    ``upload_to_storage`` for a handle, then in a later turn the LLM
+    asks to push the same handle to CompanyCam. With eviction dropped,
+    the bytes stay in staging for the full TTL and the normal Tier 1
+    lookup picks them up. Idempotency on a same-handle CompanyCam retry
+    is handled by the top-of-tool receipt check (covered separately).
+    """
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+
+    service = MagicMock(spec=CompanyCamService)
+    service.upload_photo = AsyncMock(
+        return_value=Photo(
+            id="42",
+            description="",
+            processing_status="processed",
+            uris=[ImageURI(type="original", uri="https://img.companycam.com/x.jpg")],
+        )
+    )
+
+    user_id = test_user.id
+    handle = "media_persisted_xyz"
+    await media_staging.clear_user(user_id)
+    await media_staging.stage(user_id, handle, b"persisted-bytes", "image/jpeg")
+
+    # Simulate the prior ``upload_to_storage`` call: receipt recorded,
+    # bytes NOT evicted (the new model).
+    media_staging.mark_uploaded(
+        user_id,
+        handle,
+        service="storage",
+        external_id="/Catch All/photos/photo_002.jpg",
+        url="https://drive.google.com/file/d/abc/view",
+        target="photo_002.jpg",
+        status="uploaded",
+    )
+
+    ctx = MagicMock()
+    ctx.user.id = user_id
+    ctx.downloaded_media = []
+    ctx.storage = None
+
+    try:
+        with (
+            patch(
+                "backend.app.services.webhook.discover_tunnel_url",
+                new_callable=AsyncMock,
+                return_value="https://tunnel.example.com",
+            ),
+            patch(
+                "backend.app.routers.media_temp.create_temp_media_url",
+                return_value="https://tunnel.example.com/media/tmp/persisted",
+            ) as create_temp,
+        ):
+            tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+            result = await tool.function(project_id="94772883", original_url=handle)
+
+        assert result.is_error is False, result.content
+        assert create_temp.call_args.args[0] == b"persisted-bytes"
+        assert (
+            service.upload_photo.call_args.kwargs["photo_uri"]
+            == "https://tunnel.example.com/media/tmp/persisted"
+        )
+    finally:
+        await media_staging.clear_user(user_id)
+
+
+@pytest.mark.asyncio()
+async def test_upload_photo_idempotent_on_same_handle_retry(test_user: User) -> None:
+    """A second CompanyCam upload for the same handle returns the existing receipt.
+
+    Without eviction, the bytes are still available on retry; without
+    the top-of-tool receipt check, we would POST the same photo to
+    CompanyCam twice and rely on their MD5 dedupe. Cheaper to short-circuit.
+    """
+    from backend.app.agent import media_staging
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.media.download import DownloadedMedia
+
+    user_id = test_user.id
+    handle = "media_dup_handle"
+    await media_staging.clear_user(user_id)
+    await media_staging.stage(user_id, handle, b"jpg-bytes", "image/jpeg")
+    media_staging.mark_uploaded(
+        user_id,
+        handle,
+        service="companycam",
+        external_id="cc-existing-99",
+        url="https://app.companycam.com/photos/cc-existing-99",
+        target="123 Main",
+        status="uploaded",
+    )
+
+    service = MagicMock(spec=CompanyCamService)
+    service.upload_photo = AsyncMock()  # must NOT be called
+
+    ctx = MagicMock()
+    ctx.user.id = user_id
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"jpg-bytes",
+            mime_type="image/jpeg",
+            original_url=handle,
+            filename="x.jpg",
+        )
+    ]
+
+    try:
+        tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+        result = await tool.function(project_id="123", original_url=handle)
+        assert result.is_error is False
+        assert "cc-existing-99" in result.content
+        service.upload_photo.assert_not_called()
+    finally:
+        await media_staging.clear_user(user_id)
 
 
 @pytest.mark.asyncio()
@@ -1781,21 +1932,20 @@ async def test_upload_photo_rejects_empty_original_url() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_upload_photo_idempotent_retry_after_eviction(
-    caplog: pytest.LogCaptureFixture, test_user: User
+async def test_upload_photo_idempotent_retry_after_first_upload(
+    test_user: User,
 ) -> None:
-    """Option A: a same-turn retry on an evicted handle returns the prior receipt.
+    """A same-handle retry returns the prior receipt without re-POSTing.
 
     Two parallel ``companycam_upload_photo`` calls from one LLM round on
     the same handle previously raced: the first evicted the staged bytes
-    on success, the second fell through to NOT_FOUND ("No photo available
-    to upload"). The model read the error as a failed upload and retried,
-    causing the upload-storm pattern seen in production. This test pins
-    the new behavior: the second call must surface the prior receipt
-    instead.
+    on success, the second fell through to NOT_FOUND. With eviction
+    removed, bytes survive the first call and the second call would
+    happily re-POST the same content to CompanyCam (which dedupes by
+    MD5 but it's still a wasted roundtrip). The top-of-tool receipt
+    check catches this: the second call returns the prior receipt
+    without calling ``service.upload_photo`` a second time.
     """
-    import logging
-
     from backend.app.agent import media_staging
     from backend.app.agent.tools.names import ToolName
     from backend.app.integrations.companycam.models import ImageURI, Photo
@@ -1841,31 +1991,16 @@ async def test_upload_photo_idempotent_retry_after_eviction(
         ):
             tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
             first = await tool.function(project_id="44444444", original_url=photo_url)
-            # Simulate the second-in-turn race: downloaded_media empty
-            # (the prior call consumed and evicted), staging evicted, but
-            # the model retries with the same handle.
-            ctx.downloaded_media = []
-
-            with caplog.at_level(logging.WARNING):
-                second = await tool.function(project_id="44444444", original_url=photo_url)
+            second = await tool.function(project_id="44444444", original_url=photo_url)
 
         assert first.is_error is False
         # Service was only hit once; the retry did not re-upload.
         service.upload_photo.assert_called_once()
 
-        assert second.is_error is False, (
-            "retry on an evicted handle must return a soft idempotent receipt, "
-            "not NOT_FOUND -- otherwise the model reads it as a failure and "
-            "retries again"
-        )
+        assert second.is_error is False
         assert second.receipt is not None
         assert "photos/33333333" in second.receipt.url
         assert "already uploaded" in second.content.lower()
-        # Telemetry: the retry-after-eviction signal must be emitted so we
-        # can measure the pattern across users.
-        assert any(
-            "media_handle_referenced_after_eviction" in rec.message for rec in caplog.records
-        )
     finally:
         await media_staging.clear_user(user_id)
 

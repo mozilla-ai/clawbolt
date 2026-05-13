@@ -110,7 +110,26 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         mime_type = "image/jpeg"
         photo_uri = ""
 
-        # 0. Resolve media handles: the LLM may pass a handle
+        # Idempotency: if this handle was already shipped to CompanyCam within
+        # the staging TTL, return the recorded receipt rather than POSTing the
+        # same bytes again. CompanyCam dedupes by MD5 server-side so a missed
+        # idempotency check is only a wasted roundtrip, but skipping it keeps
+        # the flow clean.
+        prior = media_staging.get_uploaded(ctx.user.id, original_url)
+        if prior is not None and prior.service == "companycam":
+            return ToolResult(
+                content=(
+                    f"Photo {original_url} was already uploaded to CompanyCam "
+                    f"(status={prior.status}, ID {prior.external_id}). Not re-uploading."
+                ),
+                receipt=ToolReceipt(
+                    action="Photo already in CompanyCam",
+                    target=prior.target,
+                    url=prior.url,
+                ),
+            )
+
+        # 1. Resolve media handles: the LLM may pass a handle
         #    (e.g. "media_abZtYWFs") from analyze_photo instead of the
         #    actual URL. Normalize to original_url + bytes before the
         #    three-tier lookup below.
@@ -118,7 +137,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         if resolved is not None:
             original_url, file_bytes, mime_type = resolved
 
-        # 1. Try downloaded_media (current message, not yet evicted)
+        # 2. Try downloaded_media (current message)
         if not file_bytes:
             for media in ctx.downloaded_media:
                 if media.original_url != original_url:
@@ -127,57 +146,36 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 mime_type = media.mime_type or "image/jpeg"
                 break
 
-        # 2. Try media staging (cached bytes, may have been evicted)
+        # 3. Try media staging by URL (rare: the LLM passed the original URL
+        #    rather than the ``media_*`` handle that Tier 1 already handles).
         if not file_bytes:
             all_staged = await media_staging.get_all_for_user(ctx.user.id)
             if original_url in all_staged:
                 file_bytes = all_staged[original_url]
 
-        # 3. Fall back to a saved file in Drive. The agent quotes a storage
-        #    path (e.g. /Astro Home/photos/foo.jpg) when it wants to push a
-        #    previously saved file into CompanyCam.
+        # 4. Fall back to a saved file in Drive. The agent quotes a storage
+        #    path (e.g. /Astro Home/photos/foo.jpg) when pushing a
+        #    previously saved file (older than the staging TTL, or the
+        #    agent simply prefers the explicit path) into CompanyCam.
+        #
+        #    Always download the bytes; do NOT hand CompanyCam a Drive
+        #    ``webViewLink``. Files written under ``drive.file`` scope are
+        #    private, and the link itself is an HTML preview page that
+        #    302-redirects to ``accounts.google.com`` for an unauthenticated
+        #    fetcher. CompanyCam's ingest pulls the URL anonymously and
+        #    would either store HTML or fail. Routing through the temp
+        #    media tunnel below is the same path that handle-staged
+        #    photos take and is battle-tested.
         if not file_bytes and ctx.storage is not None:
             saved = await find_saved_file(ctx.storage, original_url)
             if saved is not None:
                 mime_type = saved.mime_type or "image/jpeg"
-                # Cloud storage: prefer the shareable URL; CompanyCam can
-                # download Drive ``webViewLink``s without a presigned URL.
-                if saved.web_view_link:
-                    photo_uri = saved.web_view_link
-                else:
-                    try:
-                        file_bytes = await read_saved_file_bytes(ctx.storage, saved)
-                    except FileNotFoundError:
-                        logger.warning("Saved media missing from storage: %s", saved.path)
+                try:
+                    file_bytes = await read_saved_file_bytes(ctx.storage, saved)
+                except FileNotFoundError:
+                    logger.warning("Saved media missing from storage: %s", saved.path)
 
         if not file_bytes and not photo_uri:
-            # Option A: a prior tool call in this turn already shipped
-            # this handle to CompanyCam, then evict() dropped the bytes.
-            # Surface the prior receipt instead of an error so the model
-            # doesn't read this as "the upload failed" and retry again.
-            prior = media_staging.get_uploaded(ctx.user.id, original_url)
-            if prior is not None and prior.service == "companycam":
-                logger.warning(
-                    "media_handle_referenced_after_eviction service=companycam "
-                    "user=%s handle=%s project=%s prior_status=%s",
-                    ctx.user.id,
-                    original_url,
-                    project_id,
-                    prior.status,
-                )
-                content = (
-                    f"Photo {original_url} was already uploaded to CompanyCam "
-                    f"earlier in this turn (status={prior.status}, ID {prior.external_id}). "
-                    f"Not re-uploading."
-                )
-                return ToolResult(
-                    content=content,
-                    receipt=ToolReceipt(
-                        action="Photo already in CompanyCam",
-                        target=prior.target,
-                        url=prior.url,
-                    ),
-                )
             return ToolResult(
                 content=(
                     "No photo available to upload. Send a photo in the "
@@ -234,15 +232,13 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             app_url,
         )
 
-        # CompanyCam dedupes by MD5 across the whole account, so re-uploading
-        # the same staged bytes in a later turn comes back as ``duplicate``.
-        # Drop the staged copy now that CompanyCam has accepted it, mirroring
-        # the post-upload eviction in ``file_tools.upload_to_storage``. Skip
-        # on ``processing_error``: that status means CompanyCam could not
-        # fetch our temp URL, so a retry can still source bytes from staging.
-        # Before evicting, leave a recently-uploaded record so a same-turn
-        # retry on the same handle hits an idempotent receipt instead of
-        # NOT_FOUND.
+        # Record the upload so a later same-handle retry within the staging
+        # TTL short-circuits via the idempotency check at the top of this
+        # tool. Bytes intentionally stay in staging: CompanyCam dedupes by
+        # MD5 server-side, so even a missed idempotency check is only a
+        # wasted roundtrip. Skip on ``processing_error``: that status means
+        # CompanyCam could not fetch our temp URL, and we want a retry to
+        # be a fresh attempt rather than a no-op receipt.
         if original_url and status != "processing_error":
             media_staging.mark_uploaded(
                 ctx.user.id,
@@ -253,7 +249,6 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 target=photo_target(photo),
                 status=status,
             )
-            await media_staging.evict(ctx.user.id, original_url)
 
         if status == "processing_error":
             return ToolResult(
