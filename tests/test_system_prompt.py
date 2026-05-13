@@ -12,6 +12,7 @@ from backend.app.agent.system_prompt import (
     build_agent_system_prompt,
     build_cross_session_context,
     build_date_section,
+    build_heartbeat_system_prompt,
     build_identity_section,
     build_instructions_section,
     build_integration_status_section,
@@ -770,3 +771,62 @@ class TestAgentPromptIncludesLiveIntegrationStatus:
         boundary_idx = prompt.index(SystemPromptBuilder.CACHE_BOUNDARY.strip())
         section_idx = prompt.index("## Connected Integrations")
         assert section_idx > boundary_idx
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_prompt_includes_section(self) -> None:
+        """The heartbeat-decision prompt also gets the live integration section.
+
+        Heartbeat runs on a timer outside the agent loop and was previously
+        the only place where a stale USER.md integration block would still
+        bite (the agent had no chance to ``manage_integration(status)``
+        between heartbeats). Live injection closes that gap.
+        """
+        user = MagicMock()
+        user.soul_text = "soul"
+        user.user_text = "user"
+        user.id = 1
+        user.timezone = ""
+
+        with (
+            patch(
+                "backend.app.agent.system_prompt.build_memory_context",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch(
+                "backend.app.agent.system_prompt.build_integration_status_section",
+                new_callable=AsyncMock,
+                return_value="Connected: google_calendar\nNot connected: google_drive",
+            ),
+        ):
+            prompt = await build_heartbeat_system_prompt(user, recent_messages="(none)")
+
+        assert "## Connected Integrations" in prompt
+        assert "Connected: google_calendar" in prompt
+        assert "Not connected: google_drive" in prompt
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_prompt_omits_section_when_no_integrations(self) -> None:
+        """When the deployment has no integrations configured, the section
+        is suppressed entirely rather than rendering an empty heading."""
+        user = MagicMock()
+        user.soul_text = "soul"
+        user.user_text = "user"
+        user.id = 1
+        user.timezone = ""
+
+        with (
+            patch(
+                "backend.app.agent.system_prompt.build_memory_context",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch(
+                "backend.app.agent.system_prompt.build_integration_status_section",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+        ):
+            prompt = await build_heartbeat_system_prompt(user, recent_messages="(none)")
+
+        assert "## Connected Integrations" not in prompt
