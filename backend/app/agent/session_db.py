@@ -33,6 +33,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.store_cache import StoreCache
@@ -194,6 +195,28 @@ def _delete_all_messages_for_session(cs_id: int) -> Delete[tuple[Message]]:
         .where(Message.session_id == cs_id)
         .execution_options(synchronize_session="fetch")
     )
+
+
+async def _reset_trim_watermark_if_orphaned(db: AsyncSession, cs: ChatSession) -> None:
+    """Reset ``last_trim_seq`` to None when nothing above the watermark remains.
+
+    ``load_conversation_history`` filters to ``seq > last_trim_seq``, and new
+    inserts pick the next seq via ``max(seq) + 1`` (which is 1 when the table
+    is empty). If a partial delete (via :meth:`SessionStore.delete_message_async`
+    or :meth:`SessionStore.delete_messages_by_seqs_async`) removes every row
+    above the watermark, the watermark becomes a permanent ceiling: every
+    future inserted message satisfies ``seq <= last_trim_seq`` and is silently
+    filtered out of LLM context. Same failure mode the docstring on
+    ``delete_messages_async`` warns about, just via the per-seq paths.
+
+    Resetting here drops the watermark only when there is nothing left for it
+    to protect; trimmed facts already live in MEMORY.md / USER.md / SOUL.md.
+    """
+    if cs.last_trim_seq is None:
+        return
+    max_seq = (await db.execute(_select_max_seq(cs.id))).scalar()
+    if max_seq is None or max_seq <= cs.last_trim_seq:
+        cs.last_trim_seq = None
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +645,8 @@ class SessionStore:
                 return False
             result = await db.execute(_delete_message_by_seq(cs.id, seq))
             count: int = cast("CursorResult[object]", result).rowcount
+            if count > 0:
+                await _reset_trim_watermark_if_orphaned(db, cs)
             await db.commit()
             return count > 0
 
@@ -642,6 +667,8 @@ class SessionStore:
                 return 0
             result = await db.execute(_delete_messages_by_seqs(cs.id, seqs))
             count: int = cast("CursorResult[object]", result).rowcount
+            if count > 0:
+                await _reset_trim_watermark_if_orphaned(db, cs)
             await db.commit()
             return count
 

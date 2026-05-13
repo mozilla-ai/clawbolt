@@ -372,6 +372,104 @@ async def test_delete_messages_async_resets_trim_watermark(
         assert cs.last_trim_seq is None
 
 
+async def test_delete_message_async_resets_orphaned_trim_watermark(
+    async_db: async_sessionmaker,
+) -> None:
+    """Per-seq delete that orphans the watermark must reset it.
+
+    Production repro: a session was compacted up to seq=335 (so
+    ``last_trim_seq=335``), then the user deleted every remaining row
+    via the per-seq endpoint. Future inserts started at seq=1 again
+    (``_select_max_seq`` returns 0 on an empty table), but
+    ``load_conversation_history`` kept filtering them all out because
+    ``seq > 335`` was never true. The LLM saw only the live inbound,
+    losing every prior turn, including freshly attached media.
+    """
+    user_id = await _create_user(async_db)
+    store = SessionStore(user_id)
+    session, _ = await store.get_or_create_session_async()
+    await store.add_message_async(session, direction="inbound", body="a")
+
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).where(ChatSession.user_id == user_id))
+        ).scalar_one()
+        cs.last_trim_seq = 199
+        await db.commit()
+
+    assert await store.delete_message_async(session.session_id, 1) is True
+
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).where(ChatSession.user_id == user_id))
+        ).scalar_one()
+        assert cs.last_trim_seq is None
+
+
+async def test_delete_message_async_preserves_live_trim_watermark(
+    async_db: async_sessionmaker,
+) -> None:
+    """Per-seq delete that leaves rows above the watermark must keep it.
+
+    Trimmed facts already live in MEMORY.md / USER.md / SOUL.md;
+    re-feeding pre-watermark rows to the LLM would duplicate the
+    extracted memory. Only clear the watermark when the delete leaves
+    nothing above it.
+    """
+    user_id = await _create_user(async_db)
+    store = SessionStore(user_id)
+    session, _ = await store.get_or_create_session_async()
+    for body in ("a", "b", "c"):
+        await store.add_message_async(session, direction="inbound", body=body)
+
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).where(ChatSession.user_id == user_id))
+        ).scalar_one()
+        cs.last_trim_seq = 1
+        await db.commit()
+
+    assert await store.delete_message_async(session.session_id, 2) is True
+
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).where(ChatSession.user_id == user_id))
+        ).scalar_one()
+        assert cs.last_trim_seq == 1
+
+
+async def test_delete_messages_by_seqs_async_resets_orphaned_trim_watermark(
+    async_db: async_sessionmaker,
+) -> None:
+    """Batch-seq delete that orphans the watermark must reset it.
+
+    Same failure mode as the per-seq path: deleting every live row in a
+    single batch call leaves an orphan watermark that silently filters
+    every future insert.
+    """
+    user_id = await _create_user(async_db)
+    store = SessionStore(user_id)
+    session, _ = await store.get_or_create_session_async()
+    for body in ("a", "b"):
+        await store.add_message_async(session, direction="inbound", body=body)
+
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).where(ChatSession.user_id == user_id))
+        ).scalar_one()
+        cs.last_trim_seq = 50
+        await db.commit()
+
+    deleted = await store.delete_messages_by_seqs_async(session.session_id, [1, 2])
+    assert deleted == 2
+
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).where(ChatSession.user_id == user_id))
+        ).scalar_one()
+        assert cs.last_trim_seq is None
+
+
 # ---------------------------------------------------------------------------
 # last-timestamp helpers
 # ---------------------------------------------------------------------------
