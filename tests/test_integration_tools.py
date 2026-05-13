@@ -107,6 +107,52 @@ async def test_usage_hint_instructs_status_check_first(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_usage_hint_forbids_repasting_stale_oauth_url(test_user: User) -> None:
+    """The usage_hint must tell the agent not to re-paste an OAuth link.
+
+    Regression for the Durham-receipts incident: the agent generated a Drive
+    connect URL, the user said the link "never arrived" / "didn't send",
+    and the agent simply re-rendered the same URL from chat history
+    twice before finally re-running ``manage_integration``. The OAuth
+    state token in that URL is single-use, so re-pasting is at best a
+    no-op and at worst confusing. The fix is structural: the rule lives
+    in the tool's usage_hint so every conversation sees it.
+    """
+    ctx = ToolContext(user=test_user)
+    tools = create_integration_tools(ctx)
+    tool = next(t for t in tools if t.name == ToolName.MANAGE_INTEGRATION)
+    assert tool.usage_hint is not None
+    hint_lower = tool.usage_hint.lower()
+    # Anti-pattern is named explicitly.
+    assert "re-paste" in hint_lower or "repaste" in hint_lower, (
+        "usage_hint should explicitly forbid re-pasting the previous OAuth URL"
+    )
+    # Recovery action is also named so the model has a destination.
+    assert "fresh" in hint_lower, "usage_hint should tell the agent to mint a fresh link on retry"
+
+
+@pytest.mark.asyncio()
+async def test_usage_hint_forbids_declaring_state_from_stale_sources(test_user: User) -> None:
+    """The usage_hint must forbid declaring connection state without a status call.
+
+    Regression for the Durham-receipts incident: the agent declared
+    "Google Drive isn't connected" from USER.md without calling
+    manage_integration(status), and USER.md had been written before the
+    user OAuthed. The fix tells the agent that ``action='status'`` is
+    the only authoritative source for connection state.
+    """
+    ctx = ToolContext(user=test_user)
+    tools = create_integration_tools(ctx)
+    tool = next(t for t in tools if t.name == ToolName.MANAGE_INTEGRATION)
+    assert tool.usage_hint is not None
+    hint_lower = tool.usage_hint.lower()
+    assert "user.md" in hint_lower or "memory.md" in hint_lower, (
+        "usage_hint should call out USER.md / MEMORY.md as non-authoritative "
+        "sources for connection state"
+    )
+
+
+@pytest.mark.asyncio()
 async def test_usage_hint_lists_current_oauth_integrations(test_user: User) -> None:
     """The manage_integration usage_hint must enumerate every OAuth integration
     registered on the current deployment, render their human-readable labels,
