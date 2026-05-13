@@ -4,9 +4,9 @@ import pytest
 
 from backend.app.agent.file_store import slugify as _slugify
 from backend.app.agent.tools.file_tools import (
-    _build_client_folder,
+    DEFAULT_INBOX_FOLDER,
     _build_filename,
-    build_folder_path,
+    _normalize_folder_path,
     create_file_tools,
 )
 from backend.app.agent.tools.names import ToolName
@@ -28,60 +28,64 @@ def test_slugify_max_length() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _build_client_folder tests
+# _normalize_folder_path tests
 # ---------------------------------------------------------------------------
 
 
-def test_build_client_folder_both() -> None:
-    assert _build_client_folder("John Smith", "116 Virginia Ave") == (
-        "John Smith - 116 Virginia Ave"
-    )
+def test_normalize_folder_path_defaults_to_inbox_when_blank() -> None:
+    for raw in (None, "", "   "):
+        normalized, error = _normalize_folder_path(raw)
+        assert error is None
+        assert normalized == DEFAULT_INBOX_FOLDER
 
 
-def test_build_client_folder_name_only() -> None:
-    assert _build_client_folder("Jane Doe") == "Jane Doe"
+def test_normalize_folder_path_accepts_client_style_nested_path() -> None:
+    normalized, error = _normalize_folder_path("/Acme - 123 Main St/photos")
+    assert error is None
+    assert normalized == "/Acme - 123 Main St/photos"
 
 
-def test_build_client_folder_address_only() -> None:
-    assert _build_client_folder(client_address="42 Elm St") == "42 Elm St"
+def test_normalize_folder_path_strips_trailing_slash() -> None:
+    normalized, _ = _normalize_folder_path("/Inbox/")
+    assert normalized == "/Inbox"
 
 
-def test_build_client_folder_none() -> None:
-    assert _build_client_folder() == ""
+def test_normalize_folder_path_accepts_root() -> None:
+    normalized, error = _normalize_folder_path("/")
+    assert error is None
+    assert normalized == "/"
 
 
-def test_build_client_folder_whitespace_only() -> None:
-    assert _build_client_folder("  ", "  ") == ""
+def test_normalize_folder_path_rejects_missing_leading_slash() -> None:
+    normalized, error = _normalize_folder_path("Inbox")
+    assert normalized is None
+    assert error is not None
+    assert "must start with '/'" in error
 
 
-# ---------------------------------------------------------------------------
-# build_folder_path tests
-# ---------------------------------------------------------------------------
+def test_normalize_folder_path_rejects_traversal() -> None:
+    normalized, error = _normalize_folder_path("/Inbox/../Secrets")
+    assert normalized is None
+    assert error is not None
+    assert "'.." in error or "'.'" in error
 
 
-def test_build_folder_path_with_client_name_and_address() -> None:
-    path = build_folder_path("job_photo", client_name="John", client_address="116 Virginia Ave")
-    assert path == "/John - 116 Virginia Ave/photos"
+def test_normalize_folder_path_rejects_backslash() -> None:
+    normalized, error = _normalize_folder_path(r"/Inbox\foo")
+    assert normalized is None
+    assert error is not None
 
 
-def test_build_folder_path_with_client_name_only() -> None:
-    path = build_folder_path("document", client_name="Jane Doe")
-    assert path == "/Jane Doe/documents"
+def test_normalize_folder_path_rejects_empty_segment() -> None:
+    normalized, error = _normalize_folder_path("/Inbox//foo")
+    assert normalized is None
+    assert error is not None
 
 
-def test_build_folder_path_with_address_only() -> None:
-    path = build_folder_path("estimate", client_address="42 Elm St")
-    assert path == "/42 Elm St/estimates"
-
-
-def test_build_folder_path_no_client_falls_back_to_unsorted() -> None:
-    path = build_folder_path("job_photo")
-    assert path.startswith("/Unsorted/")
-
-
-def test_build_folder_path_unknown_category() -> None:
-    path = build_folder_path("unknown_type", client_name="Alice")
-    assert path == "/Alice/other"
+def test_normalize_folder_path_rejects_unsupported_chars() -> None:
+    normalized, error = _normalize_folder_path("/Inbox/<weird>")
+    assert normalized is None
+    assert error is not None
 
 
 # ---------------------------------------------------------------------------
@@ -90,13 +94,13 @@ def test_build_folder_path_unknown_category() -> None:
 
 
 def test_build_filename_with_description() -> None:
-    name = _build_filename("damaged railing", "job_photo", index=1)
+    name = _build_filename("damaged railing", index=1)
     assert name == "damaged_railing_001.jpg"
 
 
 def test_build_filename_without_description() -> None:
-    name = _build_filename("", "job_photo", index=2)
-    assert name == "photo_002.jpg"
+    name = _build_filename("", index=2)
+    assert name == "file_002.jpg"
 
 
 # ---------------------------------------------------------------------------
@@ -105,10 +109,10 @@ def test_build_filename_without_description() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_upload_writes_file_to_storage(
+async def test_upload_writes_file_to_caller_supplied_folder(
     test_user: User,
 ) -> None:
-    """upload_to_storage should write to the storage backend with the right path."""
+    """upload_to_storage should write to the folder_path the caller passed."""
     storage = MockStorageBackend()
     tools = create_file_tools(
         test_user,
@@ -118,10 +122,8 @@ async def test_upload_writes_file_to_storage(
     upload = tools[0].function
 
     result = await upload(
-        file_category="job_photo",
+        folder_path="/Johnson - 116 Virginia Ave/photos",
         description="Damaged deck railing",
-        client_name="Johnson",
-        client_address="116 Virginia Ave",
         original_url="https://example.com/media/photo.jpg",
     )
 
@@ -129,6 +131,39 @@ async def test_upload_writes_file_to_storage(
     assert "Uploaded" in result.content
     assert "damaged_deck_railing_001.jpg" in result.content
     assert any("Johnson - 116 Virginia Ave/photos" in key for key in storage.files)
+
+
+@pytest.mark.asyncio()
+async def test_upload_emits_receipt_with_drive_link(
+    test_user: User,
+) -> None:
+    """Successful upload should attach a ToolReceipt carrying the Drive share URL.
+
+    The receipt is what plain-text channels (iMessage, Telegram, SMS) and
+    the webchat reply use to surface a tappable link without relying on
+    the LLM to remember it across turns. Mirrors the CompanyCam upload
+    pattern in ``companycam_upload_photo``.
+    """
+    storage = MockStorageBackend()
+    tools = create_file_tools(
+        test_user,
+        storage,
+        pending_media={"https://example.com/media/photo.jpg": b"img-bytes"},
+    )
+    upload = tools[0].function
+
+    result = await upload(
+        folder_path="/Inbox",
+        description="reference shot",
+        original_url="https://example.com/media/photo.jpg",
+    )
+
+    assert result.is_error is False
+    assert result.receipt is not None
+    assert result.receipt.action == "Uploaded file to Drive"
+    assert result.receipt.target.startswith("/Inbox/")
+    assert result.receipt.url is not None
+    assert result.receipt.url.startswith("https://")
 
 
 @pytest.mark.asyncio()
@@ -145,9 +180,8 @@ async def test_upload_persists_description_on_storage_metadata(
     upload = tools[0].function
 
     await upload(
-        file_category="job_photo",
+        folder_path="/Loeffler/documents",
         description="receipt for fasteners",
-        client_name="Loeffler",
         original_url="https://example.com/p.jpg",
     )
 
@@ -156,10 +190,10 @@ async def test_upload_persists_description_on_storage_metadata(
 
 
 @pytest.mark.asyncio()
-async def test_upload_to_client_folder(
+async def test_upload_defaults_to_inbox_when_folder_path_omitted(
     test_user: User,
 ) -> None:
-    """Files with client info should go to the client folder."""
+    """upload_to_storage should land files in /Inbox when no folder_path is provided."""
     storage = MockStorageBackend()
     tools = create_file_tools(
         test_user,
@@ -168,56 +202,67 @@ async def test_upload_to_client_folder(
     )
     upload = tools[0].function
 
-    await upload(
-        file_category="document",
+    result = await upload(
         description="Invoice from supplier",
-        client_name="Jane Smith",
         mime_type="application/pdf",
     )
 
+    assert result.is_error is False
     assert len(storage.files) == 1
     path = next(iter(storage.files))
-    assert "Jane Smith/documents/" in path
+    assert "Inbox/" in path
     assert path.endswith(".pdf")
 
 
 @pytest.mark.asyncio()
-async def test_upload_without_client_goes_to_unsorted(
+async def test_upload_accepts_root_folder_path(
     test_user: User,
 ) -> None:
-    """Files without client info should go to Unsorted/{date}/."""
+    """folder_path='/' should drop the file at the top of the user's Clawbolt folder."""
     storage = MockStorageBackend()
     tools = create_file_tools(
         test_user,
         storage,
-        pending_media={"https://example.com/doc.pdf": b"pdf-bytes"},
+        pending_media={"https://example.com/f.jpg": b"bytes"},
     )
     upload = tools[0].function
 
-    await upload(
-        file_category="document",
-        description="Invoice from supplier",
-        mime_type="application/pdf",
-    )
-
+    result = await upload(folder_path="/", description="loose photo")
+    assert result.is_error is False
     assert len(storage.files) == 1
-    path = next(iter(storage.files))
-    assert "Unsorted/" in path
-    assert path.endswith(".pdf")
 
 
 @pytest.mark.asyncio()
-async def test_upload_no_media_returns_error(
+async def test_upload_rejects_invalid_folder_path(
     test_user: User,
 ) -> None:
-    """Upload with no pending media should return error guiding to organize_file."""
+    """Path traversal and other malformed paths should error before touching storage."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(
+        test_user,
+        storage,
+        pending_media={"https://example.com/f.jpg": b"bytes"},
+    )
+    upload = tools[0].function
+
+    result = await upload(folder_path="/Inbox/../etc", description="x")
+    assert result.is_error is True
+    assert "folder_path" in result.content
+    assert len(storage.files) == 0
+
+
+@pytest.mark.asyncio()
+async def test_upload_no_media_returns_error_pointing_at_move_file(
+    test_user: User,
+) -> None:
+    """Upload with no pending media should return an error pointing at move_file."""
     storage = MockStorageBackend()
     tools = create_file_tools(test_user, storage, pending_media={})
     upload = tools[0].function
 
-    result = await upload(file_category="job_photo")
+    result = await upload(folder_path="/Inbox")
     assert "No file content" in result.content
-    assert "organize_file" in result.content
+    assert "move_file" in result.content
     assert result.is_error is True
 
 
@@ -234,7 +279,7 @@ async def test_upload_uses_first_media_if_no_url(
     )
     upload = tools[0].function
 
-    result = await upload(file_category="job_photo", description="Auto selected")
+    result = await upload(folder_path="/Inbox", description="Auto selected")
     assert "Uploaded" in result.content
     assert result.is_error is False
     assert len(storage.files) == 1
@@ -257,14 +302,12 @@ async def test_upload_sequential_indexing(
     upload = tools[0].function
 
     result1 = await upload(
-        file_category="job_photo",
+        folder_path="/Test Client/photos",
         original_url="https://example.com/1.jpg",
-        client_name="Test Client",
     )
     result2 = await upload(
-        file_category="job_photo",
+        folder_path="/Test Client/photos",
         original_url="https://example.com/2.jpg",
-        client_name="Test Client",
     )
 
     assert "_001." in result1.content
@@ -284,118 +327,150 @@ async def test_upload_creates_folder(
     )
     upload = tools[0].function
 
-    await upload(file_category="job_photo", client_name="Fence Client")
+    await upload(folder_path="/Fence Client/photos")
     assert len(storage.folders) == 1
     assert "Fence Client" in storage.folders[0]
     assert "/photos" in storage.folders[0]
 
 
 # ---------------------------------------------------------------------------
-# organize_file tool tests
+# move_file tool tests
 # ---------------------------------------------------------------------------
 
 
+def _move_file_function(test_user: User, storage: MockStorageBackend):  # noqa: ANN202
+    tools = create_file_tools(test_user, storage)
+    return next(t for t in tools if t.name == ToolName.MOVE_FILE).function
+
+
 @pytest.mark.asyncio()
-async def test_organize_file_moves_to_client_folder(
+async def test_move_file_relocates_to_named_folder(
     test_user: User,
 ) -> None:
-    """organize_file should move an auto-saved file into the client folder."""
+    """move_file should move a saved file into the caller-supplied to_folder."""
     storage = MockStorageBackend()
-    await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
+    await storage.upload_file(b"img-data", "/Inbox", "file_001.jpg")
 
-    tools = create_file_tools(test_user, storage)
-    organize = tools[1].function
+    move_file = _move_file_function(test_user, storage)
 
-    result = await organize(
-        storage_path="/Unsorted/2026-03-02/file_001.jpg",
-        file_category="job_photo",
-        client_name="John Smith",
-        client_address="116 Virginia Ave",
-        description="Front porch damage",
+    result = await move_file(
+        from_path="/Inbox/file_001.jpg",
+        to_folder="/John Smith - 116 Virginia Ave/photos",
     )
 
-    assert "Moved" in result.content
-    assert "John Smith - 116 Virginia Ave" in result.content
-    assert "front_porch_damage_001.jpg" in result.content
     assert result.is_error is False
-
-    # Verify storage state: old key gone, new key present
-    assert "Unsorted/2026-03-02/file_001.jpg" not in storage.files
+    assert "Moved" in result.content
+    assert "John Smith - 116 Virginia Ave/photos/file_001.jpg" in result.content
+    assert "Inbox/file_001.jpg" not in storage.files
     assert any("John Smith" in k for k in storage.files)
 
 
 @pytest.mark.asyncio()
-async def test_organize_file_not_found(
+async def test_move_file_renames_when_filename_provided(
     test_user: User,
 ) -> None:
-    """organize_file should return an error if the file is not in storage."""
+    """new_filename should override the source filename for the destination."""
     storage = MockStorageBackend()
-    tools = create_file_tools(test_user, storage)
-    organize = tools[1].function
+    await storage.upload_file(b"img-data", "/Inbox", "file_001.jpg")
 
-    result = await organize(
-        storage_path="/Unsorted/2026-03-02/nonexistent.jpg",
-        file_category="job_photo",
-        client_name="Jane",
+    move_file = _move_file_function(test_user, storage)
+
+    result = await move_file(
+        from_path="/Inbox/file_001.jpg",
+        to_folder="/Acme/photos",
+        new_filename="front_porch.jpg",
     )
+
+    assert result.is_error is False
+    assert "front_porch.jpg" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_move_file_avoids_overwrite_on_filename_collision(
+    test_user: User,
+) -> None:
+    """When the destination already has the target name, suffix with _002 etc."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"old", "/Inbox", "photo.jpg")
+    await storage.upload_file(b"existing", "/Acme/photos", "photo.jpg")
+
+    move_file = _move_file_function(test_user, storage)
+
+    result = await move_file(
+        from_path="/Inbox/photo.jpg",
+        to_folder="/Acme/photos",
+    )
+
+    assert result.is_error is False
+    assert "photo_002.jpg" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_move_file_emits_receipt(
+    test_user: User,
+) -> None:
+    """move_file should emit a ToolReceipt with the destination link."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"img-data", "/Inbox", "file_001.jpg")
+
+    move_file = _move_file_function(test_user, storage)
+
+    result = await move_file(
+        from_path="/Inbox/file_001.jpg",
+        to_folder="/Acme/photos",
+    )
+
+    assert result.is_error is False
+    assert result.receipt is not None
+    assert result.receipt.action == "Moved file in Drive"
+    assert result.receipt.target.startswith("/Acme/photos/")
+    assert result.receipt.url is not None
+
+
+@pytest.mark.asyncio()
+async def test_move_file_not_found(
+    test_user: User,
+) -> None:
+    """move_file should return NOT_FOUND if the source path does not exist."""
+    storage = MockStorageBackend()
+    move_file = _move_file_function(test_user, storage)
+
+    result = await move_file(
+        from_path="/Inbox/nonexistent.jpg",
+        to_folder="/Acme/photos",
+    )
+    assert result.is_error is True
     assert "File not found" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_move_file_rejects_invalid_destination(
+    test_user: User,
+) -> None:
+    """Path traversal in to_folder should be rejected before storage is touched."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"img-data", "/Inbox", "file_001.jpg")
+    move_file = _move_file_function(test_user, storage)
+
+    result = await move_file(
+        from_path="/Inbox/file_001.jpg",
+        to_folder="/../escape",
+    )
     assert result.is_error is True
 
 
 @pytest.mark.asyncio()
-async def test_organize_file_already_in_client_folder(
+async def test_move_file_normalizes_missing_leading_slash(
     test_user: User,
 ) -> None:
-    """organize_file should return early if the file is already in a client folder."""
+    """from_path should be normalized when the LLM forgets the leading slash."""
     storage = MockStorageBackend()
-    await storage.upload_file(b"img-data", "/Jane/photos", "deck_001.jpg")
+    await storage.upload_file(b"img-data", "/Inbox", "file_002.jpg")
+    move_file = _move_file_function(test_user, storage)
 
-    tools = create_file_tools(test_user, storage)
-    organize = tools[1].function
-
-    result = await organize(
-        storage_path="/Jane/photos/deck_001.jpg",
-        file_category="job_photo",
-        client_name="Jane",
-    )
-    assert "already organized" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_organize_file_without_client_returns_error(
-    test_user: User,
-) -> None:
-    """organize_file without client_name or client_address should return an error."""
-    storage = MockStorageBackend()
-    await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
-
-    tools = create_file_tools(test_user, storage)
-    organize = tools[1].function
-
-    result = await organize(
-        storage_path="/Unsorted/2026-03-02/file_001.jpg",
-        file_category="job_photo",
-    )
-    assert "Error" in result.content
-    assert "client_name or client_address is required" in result.content
-    assert result.is_error is True
-
-
-@pytest.mark.asyncio()
-async def test_organize_file_normalizes_missing_leading_slash(
-    test_user: User,
-) -> None:
-    """organize_file should accept storage_path with or without a leading slash."""
-    storage = MockStorageBackend()
-    await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_002.jpg")
-
-    tools = create_file_tools(test_user, storage)
-    organize = tools[1].function
-
-    result = await organize(
-        storage_path="Unsorted/2026-03-02/file_002.jpg",
-        file_category="job_photo",
-        client_name="Ralph Smith",
+    result = await move_file(
+        from_path="Inbox/file_002.jpg",
+        to_folder="/Ralph Smith/photos",
     )
     assert result.is_error is False
     assert "Moved" in result.content

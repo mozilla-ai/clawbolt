@@ -196,9 +196,8 @@ async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
     upload = tools[0].function
 
     result = await upload(
-        file_category="job_photo",
+        folder_path="/David Graham/photos",
         description="Tile job",
-        client_name="David Graham",
     )
 
     assert result.is_error is False
@@ -229,9 +228,8 @@ async def test_file_factory_prefers_current_turn_over_stale_staging(
     upload = tools[0].function
 
     result = await upload(
-        file_category="job_photo",
+        folder_path="/David Graham/photos",
         original_url="bb_photo",
-        client_name="David Graham",
     )
     assert result.is_error is False
     # The fresh bytes should have been used; inspect the mock storage.
@@ -261,9 +259,8 @@ async def test_upload_uses_staged_mime_over_llm_argument(test_user: User) -> Non
     upload = tools[0].function
 
     result = await upload(
-        file_category="document",
+        folder_path="/Jane/documents",
         original_url="bb_doc",
-        client_name="Jane",
         mime_type="image/jpeg",  # LLM's wrong guess
     )
     assert result.is_error is False
@@ -283,9 +280,8 @@ async def test_upload_evicts_staged_entry(test_user: User) -> None:
     upload = tools[0].function
 
     result = await upload(
-        file_category="job_photo",
+        folder_path="/Jane/photos",
         original_url="bb_photo",
-        client_name="Jane",
     )
     assert result.is_error is False
     assert await media_staging.get_all_for_user(test_user.id) == {}
@@ -311,9 +307,8 @@ async def test_upload_to_storage_idempotent_retry_after_eviction(
     upload = tools[0].function
 
     first = await upload(
-        file_category="job_photo",
+        folder_path="/Jane/photos",
         original_url="bb_photo",
-        client_name="Jane",
     )
     assert first.is_error is False
 
@@ -324,9 +319,8 @@ async def test_upload_to_storage_idempotent_retry_after_eviction(
 
     with caplog.at_level(logging.WARNING, logger="backend.app.agent.tools.file_tools"):
         second = await upload(
-            file_category="job_photo",
+            folder_path="/Jane/photos",
             original_url="bb_photo",
-            client_name="Jane",
         )
 
     assert second.is_error is False, (
@@ -440,8 +434,7 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
     agent.register_tools([upload_tool])
 
     args = {
-        "file_category": "job_photo",
-        "client_name": "David Graham",
+        "folder_path": "/David Graham/photos",
         "original_url": "bb_photo",
     }
     parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
@@ -499,7 +492,7 @@ async def test_always_deny_does_not_emit_synthetic_tool_record(test_user: User) 
     )
     agent.register_tools([upload_tool])
 
-    args = {"file_category": "job_photo", "client_name": "Jane", "original_url": "bb_photo"}
+    args = {"folder_path": "/Jane/photos", "original_url": "bb_photo"}
     parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
     raw = [ParsedToolCall(id="call_0", name="upload_to_storage", arguments=args)]
     records: list[StoredToolInteraction] = []
@@ -575,8 +568,7 @@ async def test_always_allow_does_not_emit_synthetic_tool_record(test_user: User)
     agent.register_tools([upload_tool])
 
     args = {
-        "file_category": "job_photo",
-        "client_name": "David Graham",
+        "folder_path": "/David Graham/photos",
         "original_url": "bb_photo",
     }
     parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
@@ -877,9 +869,8 @@ async def test_upload_to_storage_resolves_handle(test_user: User) -> None:
     upload = tools[0].function
 
     result = await upload(
-        file_category="job_photo",
+        folder_path="/Test Client/photos",
         original_url=handle,
-        client_name="Test Client",
     )
     assert result.is_error is False
     assert "Uploaded" in result.content
