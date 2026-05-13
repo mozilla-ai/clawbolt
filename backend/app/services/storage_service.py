@@ -43,7 +43,7 @@ class SavedFile:
     Fields are derived from the backend's native metadata, not from a
     Clawbolt-side shadow table. ``path`` is the human-readable storage
     path the agent quotes across turns and tools (e.g.
-    ``/Astro Home Management - 123 Penn Ave/photos/foo.jpg``).
+    ``/Astro Home Management - 123 Main Street/photos/foo.jpg``).
     """
 
     path: str
