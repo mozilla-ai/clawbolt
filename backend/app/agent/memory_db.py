@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Select, Update, select, update
+from sqlalchemy import Select, TextClause, Update, select, text, update
 
 from backend.app.agent.markdown_registry import (
     append_with_window,
@@ -60,9 +60,27 @@ def _doc_select_for_update(user_id: str) -> Select[tuple[MemoryDocument]]:
     Instead, the append path SELECTs the row under ``FOR UPDATE``,
     decrypts automatically on read, concatenates in Python, and writes
     the full new plaintext back. The row-level lock serializes
-    concurrent appenders so neither side loses its update.
+    concurrent appenders against an existing row; first-append
+    callers (no row yet) are serialized by the per-user advisory
+    lock in ``append_history`` because ``FOR UPDATE`` on a missing
+    row acquires no predicate lock.
     """
     return select(MemoryDocument).filter_by(user_id=user_id).with_for_update()
+
+
+def _advisory_lock_key(user_id: str) -> str:
+    """Stable string key for the per-user MemoryDocument advisory lock."""
+    return f"memory_doc:{user_id}"
+
+
+def _advisory_lock_sql() -> TextClause:
+    """``pg_advisory_xact_lock`` SQL bound to a ``:k`` parameter.
+
+    The lock is transaction-scoped and released only on COMMIT / ROLLBACK,
+    not when the Python execute() returns. Caller binds ``{"k": <key>}``.
+    Mirrors the pattern in ``backend/app/agent/session_db.py``.
+    """
+    return text("SELECT pg_advisory_xact_lock(hashtext(:k))")
 
 
 def _append_history_update(doc_id: int, full_new_text: str) -> Update:
@@ -169,6 +187,14 @@ class MemoryStore:
         is an ``EncryptedString`` column whose envelope format is not
         concat-safe.
 
+        Takes a per-user ``pg_advisory_xact_lock`` at the top so the
+        first-append branch (no row yet) cannot race: ``FOR UPDATE``
+        on a missing row acquires no predicate lock, so two concurrent
+        first-appends would otherwise both see ``None``, both INSERT,
+        and one would lose to ``uq_memory_documents_user_id``
+        (issue #1224). The lock is released automatically on COMMIT
+        or ROLLBACK of the surrounding transaction.
+
         Guarantees a newline between the existing text and the new
         entry: if the stored text is non-empty and does not already
         end with a newline (e.g. a manual edit, or older text written
@@ -190,6 +216,10 @@ class MemoryStore:
         policy = get_policy("HISTORY.md")
         budget = policy.byte_budget if policy is not None else None
         async with db_session_async() as db:
+            await db.execute(
+                _advisory_lock_sql(),
+                {"k": _advisory_lock_key(self.user_id)},
+            )
             doc = (await db.execute(_doc_select_for_update(self.user_id))).scalar_one_or_none()
             if doc is None:
                 full_new_text = (

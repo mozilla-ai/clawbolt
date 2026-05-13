@@ -16,9 +16,11 @@ in ``tests/conftest.py``.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from backend.app.agent.memory_db import MemoryStore, get_memory_store
 from backend.app.models import MemoryDocument, User
@@ -318,3 +320,98 @@ async def test_async_writer_reads_back_through_async_session(
     reader = getattr(store, attr_reader)
     await writer("smoke value")
     assert await reader() == "smoke value"
+
+
+# ---------------------------------------------------------------------------
+# First-append concurrency: regression for issue #1224.
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryStoreFirstAppendConcurrency:
+    """Regression for issue #1224: ``MemoryStore.append_history`` first-append race.
+
+    Before the fix, the create-on-first-append branch ran an
+    unsynchronized SELECT then INSERT: ``SELECT ... FOR UPDATE`` on a
+    missing row acquires no predicate lock, so two concurrent
+    first-appends could both see ``None``, both INSERT, and the loser
+    would hit ``IntegrityError`` on ``uq_memory_documents_user_id``.
+
+    The fix takes a per-user ``pg_advisory_xact_lock`` at the top of
+    ``append_history`` so the create branch is serialized. This test
+    exercises the race directly: two tasks call ``append_history``
+    against the same user with no row yet, gated through an
+    ``asyncio.Barrier`` so both enter the critical section together.
+    Both must succeed and the final history must contain both entries.
+
+    These tests do NOT use the ``async_db`` fixture: ``async_db``
+    rebinds the session factory to a single shared connection, which
+    would serialize the two append calls inside Python and defeat the
+    race. The session-scoped ``_isolate_async_engine`` autouse fixture
+    already binds ``_async_session_factory`` to a ``NullPool`` async
+    engine, so each ``db_session_async()`` opens its own asyncpg
+    connection from the engine. The ``_isolate_stores`` autouse
+    teardown TRUNCATEs every table after the test.
+    """
+
+    _ACQUIRE_TIMEOUT_S = 10.0
+
+    async def _seed_user(self, engine: AsyncEngine, user_pk: str, phone: str) -> None:
+        """Insert the User row through a dedicated connection.
+
+        Commits immediately so concurrent tasks below can see the row
+        through their own connections under READ COMMITTED.
+        """
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            db.add(
+                User(
+                    id=user_pk,
+                    user_id=f"async-mem-{user_pk[:8]}",
+                    phone=phone,
+                    channel_identifier=f"mem-race-{user_pk[:8]}",
+                    preferred_channel="telegram",
+                    onboarding_complete=True,
+                )
+            )
+            await db.commit()
+
+    async def _append_in_task(
+        self,
+        user_pk: str,
+        entry: str,
+        barrier: asyncio.Barrier,
+    ) -> str:
+        """Wait at the barrier, then call ``append_history`` once.
+
+        Both tasks release together so they hit the critical section
+        in ``append_history`` concurrently. Each call goes through
+        ``db_session_async()``, which under the session-scoped
+        ``NullPool`` engine opens its own asyncpg connection.
+        """
+        await barrier.wait()
+        store = MemoryStore(user_pk)
+        return await store.append_history(entry)
+
+    async def test_two_concurrent_first_appends_both_succeed(
+        self,
+        _pg_async_engine: AsyncEngine,
+    ) -> None:
+        """Two concurrent first-appends for the same user both land."""
+        user_pk = "memstore-first-append-race-user"
+        await self._seed_user(_pg_async_engine, user_pk, "+15555550144")
+
+        barrier = asyncio.Barrier(2)
+        task_a = asyncio.create_task(self._append_in_task(user_pk, "entry-A", barrier))
+        task_b = asyncio.create_task(self._append_in_task(user_pk, "entry-B", barrier))
+
+        # Both must complete without IntegrityError. ``asyncio.gather``
+        # raises the first exception it sees, so a pre-fix run would
+        # surface the race here.
+        await asyncio.wait_for(
+            asyncio.gather(task_a, task_b),
+            timeout=self._ACQUIRE_TIMEOUT_S,
+        )
+
+        store = MemoryStore(user_pk)
+        history = await store.read_history_async()
+        assert "entry-A" in history, f"missing entry-A; history={history!r}"
+        assert "entry-B" in history, f"missing entry-B; history={history!r}"
