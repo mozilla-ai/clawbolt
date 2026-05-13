@@ -325,9 +325,11 @@ def create_file_tools(
         # second copy. Drive does not dedupe by content, so the receipt
         # cache is what prevents duplicate Drive files on retried LLM tool
         # calls now that bytes are no longer evicted after a successful
-        # upload.
+        # upload. The lookup is DB-backed (column on the staged_media row),
+        # so a worker restart inside the staging TTL does not lose the
+        # idempotency guarantee.
         if original_url:
-            prior = media_staging.get_uploaded(user.id, original_url)
+            prior = await media_staging.get_uploaded(user.id, original_url)
             if prior is not None and prior.service == "storage":
                 logger.info(
                     "upload_to_storage idempotent hit: user=%s handle=%s path=%s",
@@ -432,7 +434,7 @@ def create_file_tools(
             # Bytes intentionally stay in staging: keeps cross-tool flow
             # simple (``companycam_upload_photo`` can still find them) at
             # the cost of ~2x storage for the staging window.
-            media_staging.mark_uploaded(
+            await media_staging.mark_uploaded(
                 user.id,
                 original_url,
                 service="storage",

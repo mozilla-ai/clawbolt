@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
@@ -107,8 +106,11 @@ async def test_isolation_between_users(test_user: User, second_user: User) -> No
     await media_staging.clear_user(second_user.id)
 
 
-def test_upload_record_round_trip(test_user: User) -> None:
-    media_staging.mark_uploaded(
+@pytest.mark.asyncio()
+async def test_upload_record_round_trip(test_user: User) -> None:
+    """``mark_uploaded`` writes onto the staged row and ``get_uploaded`` reads it back."""
+    await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
+    await media_staging.mark_uploaded(
         test_user.id,
         "bb_photo",
         service="companycam",
@@ -117,7 +119,7 @@ def test_upload_record_round_trip(test_user: User) -> None:
         target="123 Main St",
         status="uploaded",
     )
-    rec = media_staging.get_uploaded(test_user.id, "bb_photo")
+    rec = await media_staging.get_uploaded(test_user.id, "bb_photo")
     assert rec is not None
     assert rec.service == "companycam"
     assert rec.external_id == "cc-123"
@@ -125,16 +127,56 @@ def test_upload_record_round_trip(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_upload_record_survives_evict(test_user: User) -> None:
-    """The receipt cache is independent of the bytes cache.
+async def test_upload_record_resolvable_by_either_handle_or_url(test_user: User) -> None:
+    """``get_uploaded`` accepts either the staged handle or the original URL.
 
-    Tools no longer evict bytes after a successful upload, but the eviction
-    function itself is still used (e.g. for ``discard_media``). Verify the
-    two caches age independently: a manual ``evict`` drops the bytes but
-    leaves the receipt intact for the receipt cache's own TTL.
+    Production path: the channel layer stages bytes under a real URL and
+    mints a short ``media_*`` handle. The LLM sees the handle, so a
+    top-of-tool idempotency check is keyed on the handle. ``mark_uploaded``
+    fires after the tool has resolved the handle to the URL. Both forms
+    must hit the same row so the receipt is findable on retry.
+    """
+    handle = await media_staging.stage(
+        test_user.id,
+        "https://channel.example.com/photo.jpg",
+        b"bytes",
+        "image/jpeg",
+    )
+    assert handle is not None
+    # Receipt recorded against the URL form (what mark_uploaded sees
+    # post-resolve in the real tools).
+    await media_staging.mark_uploaded(
+        test_user.id,
+        "https://channel.example.com/photo.jpg",
+        service="storage",
+        external_id="/Inbox/photo_001.jpg",
+        url="https://drive.google.com/file/d/abc/view",
+        target="/Inbox/photo_001.jpg",
+        status="uploaded",
+    )
+    # Lookup by handle (what the LLM passes on retry) hits the same row.
+    rec = await media_staging.get_uploaded(test_user.id, handle)
+    assert rec is not None
+    assert rec.external_id == "/Inbox/photo_001.jpg"
+    # Lookup by URL also works.
+    rec_by_url = await media_staging.get_uploaded(
+        test_user.id, "https://channel.example.com/photo.jpg"
+    )
+    assert rec_by_url is not None
+    assert rec_by_url.external_id == "/Inbox/photo_001.jpg"
+
+
+@pytest.mark.asyncio()
+async def test_upload_record_dropped_with_evict(test_user: User) -> None:
+    """Eviction drops the staged row entirely, so the receipt goes with it.
+
+    The lifetime alignment is intentional: if the bytes are gone (and
+    therefore the bytes cannot be re-uploaded as the same content), the
+    receipt no longer guards anything and there is nothing to be
+    idempotent about. Matches the bytes' TTL.
     """
     await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
-    media_staging.mark_uploaded(
+    await media_staging.mark_uploaded(
         test_user.id,
         "bb_photo",
         service="companycam",
@@ -145,33 +187,15 @@ async def test_upload_record_survives_evict(test_user: User) -> None:
     )
     await media_staging.evict(test_user.id, "bb_photo")
     assert await media_staging.get_all_for_user(test_user.id) == {}
-    rec = media_staging.get_uploaded(test_user.id, "bb_photo")
-    assert rec is not None
-    assert rec.external_id == "cc-999"
+    assert await media_staging.get_uploaded(test_user.id, "bb_photo") is None
 
 
-def test_upload_record_expires(test_user: User, monkeypatch: pytest.MonkeyPatch) -> None:
-    media_staging.mark_uploaded(
+@pytest.mark.asyncio()
+async def test_upload_record_isolated_per_user(test_user: User, second_user: User) -> None:
+    """One user's receipt does not surface for a different user with the same handle."""
+    await media_staging.stage(test_user.id, "bb_photo", b"bytes-a", "image/jpeg")
+    await media_staging.mark_uploaded(
         test_user.id,
-        "bb_photo",
-        service="companycam",
-        external_id="cc-1",
-        url="https://app.companycam.com/photos/cc-1",
-        target="t",
-        status="uploaded",
-    )
-    real_monotonic = time.monotonic
-    future = real_monotonic() + media_staging.UPLOAD_RECORD_TTL_SECONDS + 1
-    monkeypatch.setattr(media_staging.time, "monotonic", lambda: future)
-    assert media_staging.get_uploaded(test_user.id, "bb_photo") is None
-
-
-def test_upload_record_isolated_per_user() -> None:
-    """The upload-receipt cache is in-process and unrelated to the
-    ``staged_media`` table, so plain string user_ids are fine here.
-    """
-    media_staging.mark_uploaded(
-        "user-a",
         "bb_photo",
         service="companycam",
         external_id="cc-a",
@@ -179,8 +203,73 @@ def test_upload_record_isolated_per_user() -> None:
         target="t",
         status="uploaded",
     )
-    assert media_staging.get_uploaded("user-b", "bb_photo") is None
-    media_staging._uploaded.pop("user-a", None)
+    assert await media_staging.get_uploaded(second_user.id, "bb_photo") is None
+
+
+@pytest.mark.asyncio()
+async def test_upload_record_survives_simulated_worker_restart(test_user: User) -> None:
+    """Regression for #1347: receipts must survive a process restart.
+
+    The pre-fix in-memory dict was lost on any worker restart, which let
+    a same-handle retry write a duplicate Drive copy. Simulate a restart
+    by reading the receipt through a fresh ``AsyncSessionLocal`` after
+    the write session committed; the DB row is the source of truth so
+    the read must succeed.
+    """
+    from sqlalchemy import select as _select
+
+    from backend.app.database import AsyncSessionLocal as _Sess
+    from backend.app.models import StagedMedia as _SM
+
+    await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
+    await media_staging.mark_uploaded(
+        test_user.id,
+        "bb_photo",
+        service="storage",
+        external_id="/Inbox/photo_001.jpg",
+        url="https://drive.google.com/file/d/abc/view",
+        target="/Inbox/photo_001.jpg",
+        status="uploaded",
+    )
+
+    # Cross-session read: a different DB session sees the committed row,
+    # which is what a post-restart process would see.
+    sess = _Sess()
+    try:
+        row = (
+            await sess.execute(
+                _select(_SM).where(_SM.user_id == test_user.id, _SM.original_url == "bb_photo")
+            )
+        ).scalar_one_or_none()
+    finally:
+        await sess.close()
+    assert row is not None
+    assert row.upload_service == "storage"
+    assert row.upload_external_id == "/Inbox/photo_001.jpg"
+
+    # And the public API surfaces the receipt as a UploadRecord.
+    rec = await media_staging.get_uploaded(test_user.id, "bb_photo")
+    assert rec is not None
+    assert rec.service == "storage"
+    assert rec.external_id == "/Inbox/photo_001.jpg"
+
+
+@pytest.mark.asyncio()
+async def test_upload_record_returns_none_for_unstaged_handle(test_user: User) -> None:
+    """A ``mark_uploaded`` call for a never-staged URL is a no-op."""
+    await media_staging.mark_uploaded(
+        test_user.id,
+        "https://never-staged.example.com/x.jpg",
+        service="storage",
+        external_id="/Inbox/x.jpg",
+        url="",
+        target="/Inbox/x.jpg",
+        status="uploaded",
+    )
+    assert (
+        await media_staging.get_uploaded(test_user.id, "https://never-staged.example.com/x.jpg")
+        is None
+    )
 
 
 @pytest.mark.asyncio()
@@ -298,7 +387,7 @@ async def test_upload_keeps_staged_entry(test_user: User) -> None:
     # Bytes stay in staging.
     assert "bb_photo" in await media_staging.get_all_for_user(test_user.id)
     # Receipt was recorded for the top-of-tool idempotency check.
-    rec = media_staging.get_uploaded(test_user.id, "bb_photo")
+    rec = await media_staging.get_uploaded(test_user.id, "bb_photo")
     assert rec is not None and rec.service == "storage"
 
 
