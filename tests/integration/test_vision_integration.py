@@ -16,6 +16,7 @@ import pytest
 from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
 from backend.app.media.vision import analyze_image
+from backend.app.models import User
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
@@ -98,7 +99,7 @@ async def test_analyze_image_with_context() -> None:
 
 @pytest.mark.integration()
 @skip_without_anthropic_key
-async def test_pipeline_stages_image_for_agent() -> None:
+async def test_pipeline_stages_image_for_agent(test_user: User) -> None:
     """Media pipeline should stage images and surface handles in the combined context.
 
     With agent-native storage, vision is deferred to the agent (analyze_photo tool).
@@ -115,14 +116,13 @@ async def test_pipeline_stages_image_for_agent() -> None:
         filename="test_image.png",
     )
 
-    user_id = "test-vision-integration"
     # Pre-stage the media so the pipeline can find the handle
-    media_staging.stage(user_id, media.original_url, media.content, media.mime_type)
+    await media_staging.stage(test_user.id, media.original_url, media.content, media.mime_type)
 
     result = await process_message_media(
         text_body="Here's a photo of the job site",
         media_items=[media],
-        user_id=user_id,
+        user_id=test_user.id,
     )
 
     assert len(result.media_results) == 1

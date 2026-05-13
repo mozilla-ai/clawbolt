@@ -96,10 +96,13 @@ async def process_message_media(
             len(media_items),
         )
 
-    handles: list[str | None] = [
-        media_staging.get_handle_for(user_id, m.original_url) if user_id else None
-        for m in media_items
-    ]
+    handles: list[str | None]
+    if user_id:
+        handles = await asyncio.gather(
+            *(media_staging.get_handle_for(user_id, m.original_url) for m in media_items)
+        )
+    else:
+        handles = [None for _ in media_items]
 
     tasks = [_process_single_media(m, handle=handles[i]) for i, m in enumerate(media_items)]
     media_results = list(await asyncio.gather(*tasks))

@@ -1324,7 +1324,7 @@ async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_upload_photo_evicts_staging_on_success() -> None:
+async def test_upload_photo_evicts_staging_on_success(test_user: User) -> None:
     """Regression #1282: a successful upload must evict the staged bytes.
 
     CompanyCam dedupes by MD5 account-wide, so if we leave the bytes in
@@ -1336,11 +1336,11 @@ async def test_upload_photo_evicts_staging_on_success() -> None:
     from backend.app.integrations.companycam.models import ImageURI, Photo
     from backend.app.media.download import DownloadedMedia
 
-    user_id = "test-user-evict-success"
+    user_id = test_user.id
     photo_url = "https://example.com/staged-success.jpg"
-    media_staging.clear_user(user_id)
-    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
-    assert photo_url in media_staging.get_all_for_user(user_id)
+    await media_staging.clear_user(user_id)
+    await media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+    assert photo_url in await media_staging.get_all_for_user(user_id)
 
     service = MagicMock(spec=CompanyCamService)
     photo_obj = Photo(
@@ -1377,16 +1377,16 @@ async def test_upload_photo_evicts_staging_on_success() -> None:
             result = await tool.function(project_id="22222222", original_url=photo_url)
 
         assert not result.is_error
-        assert photo_url not in media_staging.get_all_for_user(user_id), (
+        assert photo_url not in await media_staging.get_all_for_user(user_id), (
             "staged bytes must be evicted after a successful upload so a "
             "follow-up turn cannot re-upload them"
         )
     finally:
-        media_staging.clear_user(user_id)
+        await media_staging.clear_user(user_id)
 
 
 @pytest.mark.asyncio()
-async def test_upload_photo_evicts_staging_on_duplicate() -> None:
+async def test_upload_photo_evicts_staging_on_duplicate(test_user: User) -> None:
     """Regression #1282: ``duplicate`` response must also evict the staged bytes.
 
     When CompanyCam reports the upload was a duplicate, the bytes have
@@ -1398,11 +1398,11 @@ async def test_upload_photo_evicts_staging_on_duplicate() -> None:
     from backend.app.integrations.companycam.models import ImageURI, Photo
     from backend.app.media.download import DownloadedMedia
 
-    user_id = "test-user-evict-duplicate"
+    user_id = test_user.id
     photo_url = "https://example.com/staged-duplicate.jpg"
-    media_staging.clear_user(user_id)
-    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
-    assert photo_url in media_staging.get_all_for_user(user_id)
+    await media_staging.clear_user(user_id)
+    await media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+    assert photo_url in await media_staging.get_all_for_user(user_id)
 
     service = MagicMock(spec=CompanyCamService)
     photo_obj = Photo(
@@ -1438,16 +1438,16 @@ async def test_upload_photo_evicts_staging_on_duplicate() -> None:
             tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
             await tool.function(project_id="44444444", original_url=photo_url)
 
-        assert photo_url not in media_staging.get_all_for_user(user_id), (
+        assert photo_url not in await media_staging.get_all_for_user(user_id), (
             "staged bytes must be evicted after a duplicate response so "
             "the LLM cannot trigger more redundant uploads"
         )
     finally:
-        media_staging.clear_user(user_id)
+        await media_staging.clear_user(user_id)
 
 
 @pytest.mark.asyncio()
-async def test_upload_photo_keeps_staging_on_upload_exception() -> None:
+async def test_upload_photo_keeps_staging_on_upload_exception(test_user: User) -> None:
     """If the upload itself raises, the staged bytes must remain so the
     user (or the agent on retry) can try again. Spy on ``evict`` so this
     test would still fail if eviction were moved before the try/except."""
@@ -1455,10 +1455,10 @@ async def test_upload_photo_keeps_staging_on_upload_exception() -> None:
     from backend.app.agent.tools.names import ToolName
     from backend.app.media.download import DownloadedMedia
 
-    user_id = "test-user-keep-on-error"
+    user_id = test_user.id
     photo_url = "https://example.com/staged-error.jpg"
-    media_staging.clear_user(user_id)
-    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+    await media_staging.clear_user(user_id)
+    await media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
 
     service = MagicMock(spec=CompanyCamService)
     service.upload_photo = AsyncMock(side_effect=RuntimeError("network down"))
@@ -1492,15 +1492,15 @@ async def test_upload_photo_keeps_staging_on_upload_exception() -> None:
 
         assert result.is_error
         evict_spy.assert_not_called()
-        assert photo_url in media_staging.get_all_for_user(user_id), (
+        assert photo_url in await media_staging.get_all_for_user(user_id), (
             "staged bytes must survive a service-side failure so a retry still has the content"
         )
     finally:
-        media_staging.clear_user(user_id)
+        await media_staging.clear_user(user_id)
 
 
 @pytest.mark.asyncio()
-async def test_upload_photo_keeps_staging_on_processing_error() -> None:
+async def test_upload_photo_keeps_staging_on_processing_error(test_user: User) -> None:
     """Regression #1282: ``processing_error`` means CompanyCam could not
     fetch the temp URL. A retry can succeed if the connectivity issue
     resolves, so the staged bytes must remain available for it."""
@@ -1509,10 +1509,10 @@ async def test_upload_photo_keeps_staging_on_processing_error() -> None:
     from backend.app.integrations.companycam.models import ImageURI, Photo
     from backend.app.media.download import DownloadedMedia
 
-    user_id = "test-user-processing-error"
+    user_id = test_user.id
     photo_url = "https://example.com/staged-processing-error.jpg"
-    media_staging.clear_user(user_id)
-    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+    await media_staging.clear_user(user_id)
+    await media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
 
     service = MagicMock(spec=CompanyCamService)
     photo_obj = Photo(
@@ -1549,12 +1549,12 @@ async def test_upload_photo_keeps_staging_on_processing_error() -> None:
             result = await tool.function(project_id="77777777", original_url=photo_url)
 
         assert result.is_error
-        assert photo_url in media_staging.get_all_for_user(user_id), (
+        assert photo_url in await media_staging.get_all_for_user(user_id), (
             "staged bytes must survive ``processing_error`` so a retry can "
             "re-mint the temp URL with the same content"
         )
     finally:
-        media_staging.clear_user(user_id)
+        await media_staging.clear_user(user_id)
 
 
 def test_upload_photo_concurrency_group_serializes_per_project() -> None:
@@ -1782,7 +1782,7 @@ async def test_upload_photo_rejects_empty_original_url() -> None:
 
 @pytest.mark.asyncio()
 async def test_upload_photo_idempotent_retry_after_eviction(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, test_user: User
 ) -> None:
     """Option A: a same-turn retry on an evicted handle returns the prior receipt.
 
@@ -1801,11 +1801,11 @@ async def test_upload_photo_idempotent_retry_after_eviction(
     from backend.app.integrations.companycam.models import ImageURI, Photo
     from backend.app.media.download import DownloadedMedia
 
-    user_id = "test-user-idempotent-retry"
+    user_id = test_user.id
     photo_url = "https://example.com/photo-once.jpg"
 
-    media_staging.clear_user(user_id)
-    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+    await media_staging.clear_user(user_id)
+    await media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
 
     service = MagicMock(spec=CompanyCamService)
     photo_obj = Photo(
@@ -1867,11 +1867,11 @@ async def test_upload_photo_idempotent_retry_after_eviction(
             "media_handle_referenced_after_eviction" in rec.message for rec in caplog.records
         )
     finally:
-        media_staging.clear_user(user_id)
+        await media_staging.clear_user(user_id)
 
 
 @pytest.mark.asyncio()
-async def test_upload_photo_records_duplicate_status_for_retry() -> None:
+async def test_upload_photo_records_duplicate_status_for_retry(test_user: User) -> None:
     """When CompanyCam dedupes the first upload, a retry on the same handle
     still surfaces the duplicate receipt (no spurious ``No photo`` error).
     """
@@ -1880,11 +1880,11 @@ async def test_upload_photo_records_duplicate_status_for_retry() -> None:
     from backend.app.integrations.companycam.models import ImageURI, Photo
     from backend.app.media.download import DownloadedMedia
 
-    user_id = "test-user-dup-retry"
+    user_id = test_user.id
     photo_url = "https://example.com/photo-dup.jpg"
 
-    media_staging.clear_user(user_id)
-    media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
+    await media_staging.clear_user(user_id)
+    await media_staging.stage(user_id, photo_url, b"fake-jpg", "image/jpeg")
 
     service = MagicMock(spec=CompanyCamService)
     photo_obj = Photo(
@@ -1929,7 +1929,7 @@ async def test_upload_photo_records_duplicate_status_for_retry() -> None:
         # does not think the retry actually shipped a new copy.
         assert "duplicate" in second.content.lower() or "already" in second.content.lower()
     finally:
-        media_staging.clear_user(user_id)
+        await media_staging.clear_user(user_id)
 
 
 # ---------------------------------------------------------------------------
