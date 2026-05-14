@@ -567,7 +567,11 @@ def create_quickbooks_tools(
         total = result.get("TotalAmt")
         display_name = result.get("DisplayName", "")
 
-        parts = [f"{entity_type} created in QuickBooks.", f"Id: {entity_id}"]
+        # LLM-facing content stays terse and data-only so the model has no
+        # receipt-shaped phrasing to bullet-point back to the user. The
+        # auto-appended ToolReceipt is the canonical user-facing rendering
+        # (see regression test guarding ``qb_send`` content).
+        parts = ["ok", f"Id: {entity_id}"]
         if doc_num:
             parts.append(f"DocNumber: {doc_num}")
         if total is not None:
@@ -613,7 +617,7 @@ def create_quickbooks_tools(
         total = result.get("TotalAmt")
         display_name = result.get("DisplayName", "")
 
-        parts = [f"{entity_type} updated in QuickBooks.", f"Id: {entity_id}"]
+        parts = ["ok", f"Id: {entity_id}"]
         if doc_num:
             parts.append(f"DocNumber: {doc_num}")
         if total is not None:
@@ -654,8 +658,13 @@ def create_quickbooks_tools(
                 error_kind=ToolErrorKind.SERVICE,
             )
 
+        # Drop the verb + recipient from the LLM-facing content: that
+        # phrasing was getting bullet-pointed in prose right before the
+        # auto-receipt rendered the same action structurally, producing
+        # a double-bullet for one underlying call. Bug observed in
+        # production 2026-05-13 on a contractor's invoice send.
         return ToolResult(
-            content=f"{entity_type} {entity_id} sent to {email} via QuickBooks.",
+            content=f"ok | {entity_type} Id: {entity_id}",
             receipt=ToolReceipt(
                 action=f"Emailed QuickBooks {entity_type.lower()} to",
                 target=email,

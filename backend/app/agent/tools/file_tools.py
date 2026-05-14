@@ -445,8 +445,11 @@ def create_file_tools(
             )
 
         logger.info("File cataloged: %s", saved.path)
+        # Content terse and data-only; the auto-appended receipt is the
+        # user-facing render. Keeps the LLM from mimicking
+        # "Uploaded {file} to {folder}" as prose right before the receipt.
         return ToolResult(
-            content=f"Uploaded {filename} to {normalized_folder} ({saved.path})",
+            content=f"ok | path: {saved.path}",
             receipt=ToolReceipt(
                 action="Uploaded file to Drive",
                 target=saved.path,
@@ -524,7 +527,7 @@ def create_file_tools(
 
         logger.info("File moved: %s -> %s", current_path, moved.path)
         return ToolResult(
-            content=f"Moved {old_filename} to {moved.path}",
+            content=f"ok | path: {moved.path}",
             receipt=ToolReceipt(
                 action="Moved file in Drive",
                 target=moved.path,

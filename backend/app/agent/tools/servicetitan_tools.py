@@ -382,8 +382,12 @@ def build_servicetitan_tools(service: ServiceTitanService) -> list[Tool]:
         # dict; the createdOn timestamp confirms the write landed.
         created_on = payload.get("createdOn") if isinstance(payload, dict) else None
         timestamp_phrase = f" at {created_on}" if created_on else ""
+        # Content terse and data-only; the auto-appended receipt carries
+        # the user-facing rendering. Avoids the LLM bullet-pointing
+        # "Added note to ServiceTitan job X" right before the receipt
+        # renders the same action.
         return ToolResult(
-            content=f"Added note to ServiceTitan job {job_id}{pinned_phrase}{timestamp_phrase}.",
+            content=f"ok | job: {job_id}{pinned_phrase}{timestamp_phrase}",
             receipt=ToolReceipt(
                 action="Added ServiceTitan job note",
                 target=f"job #{job_id}{pinned_phrase}",

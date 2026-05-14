@@ -146,7 +146,7 @@ async def test_upload_writes_file_to_caller_supplied_folder(
     )
 
     assert result.is_error is False
-    assert "Uploaded" in result.content
+    assert result.content.startswith("ok")
     assert "damaged_deck_railing_001.jpg" in result.content
     assert any("Johnson - 123 Main Streetreet/photos" in key for key in storage.files)
 
@@ -298,7 +298,7 @@ async def test_upload_uses_first_media_if_no_url(
     upload = tools[0].function
 
     result = await upload(folder_path="/Inbox", description="Auto selected")
-    assert "Uploaded" in result.content
+    assert result.content.startswith("ok")
     assert result.is_error is False
     assert len(storage.files) == 1
 
@@ -436,7 +436,7 @@ async def test_move_file_relocates_to_named_folder(
     )
 
     assert result.is_error is False
-    assert "Moved" in result.content
+    assert result.content.startswith("ok")
     assert "John Smith - 123 Main Streetreet/photos/file_001.jpg" in result.content
     assert "Inbox/file_001.jpg" not in storage.files
     assert any("John Smith" in k for k in storage.files)
@@ -550,7 +550,7 @@ async def test_move_file_normalizes_missing_leading_slash(
         to_folder_path="/Ralph Smith/photos",
     )
     assert result.is_error is False
-    assert "Moved" in result.content
+    assert result.content.startswith("ok")
 
 
 @pytest.mark.asyncio()
@@ -574,7 +574,7 @@ async def test_move_file_from_drive_root(
     )
 
     assert result.is_error is False
-    assert "Moved" in result.content
+    assert result.content.startswith("ok")
     assert any("Acme/photos/stray.jpg" in key for key in storage.files)
 
 

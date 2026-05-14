@@ -89,8 +89,10 @@ async def test_qb_create_customer() -> None:
     )
 
     assert result.is_error is False
-    assert "Customer created" in result.content
-    assert "New Customer LLC" in result.content
+    # Content is terse and data-only (no "Customer created in QuickBooks"
+    # phrasing that the LLM would bullet-point alongside the receipt).
+    assert result.content.startswith("ok")
+    assert "Name: New Customer LLC" in result.content
     assert len(svc.created) == 1
     entity_type, body = svc.created[0]
     assert entity_type == "Customer"
@@ -150,7 +152,7 @@ async def test_qb_create_estimate() -> None:
     )
 
     assert result.is_error is False
-    assert "Estimate created" in result.content
+    assert result.content.startswith("ok")
     assert "$600.00" in result.content
     assert len(svc.created) == 1
     entity_type, body = svc.created[0]
@@ -187,7 +189,7 @@ async def test_qb_create_invoice() -> None:
     )
 
     assert result.is_error is False
-    assert "Invoice created" in result.content
+    assert result.content.startswith("ok")
     assert "$350.00" in result.content
     entity_type, body = svc.created[0]
     assert entity_type == "Invoice"
@@ -218,7 +220,7 @@ async def test_qb_create_invoice_with_linked_estimate() -> None:
     )
 
     assert result.is_error is False
-    assert "Invoice created" in result.content
+    assert result.content.startswith("ok")
     _, body = svc.created[0]
     assert body["LinkedTxn"][0]["TxnId"] == "42"
     assert body["LinkedTxn"][0]["TxnType"] == "Estimate"
@@ -287,7 +289,7 @@ async def test_qb_update_estimate() -> None:
     )
 
     assert result.is_error is False
-    assert "Estimate updated" in result.content
+    assert result.content.startswith("ok")
     assert "Id: 2001" in result.content
     assert "$600.00" in result.content
     assert len(svc.updated) == 1
@@ -315,8 +317,8 @@ async def test_qb_update_customer() -> None:
     )
 
     assert result.is_error is False
-    assert "Customer updated" in result.content
-    assert "John Smith" in result.content
+    assert result.content.startswith("ok")
+    assert "Name: John Smith" in result.content
     _, body = svc.updated[0]
     assert body["PrimaryPhone"]["FreeFormNumber"] == "555-9999"
 
@@ -423,7 +425,11 @@ async def test_qb_send_invoice_success() -> None:
     result = await fn(entity_type="Invoice", entity_id="42", email="client@example.com")
 
     assert result.is_error is False
-    assert "Invoice 42 sent to client@example.com" in result.content
+    # Content stays terse and data-only; the recipient and action verb
+    # live in the ToolReceipt, not in the LLM-facing content. Pinned by
+    # the dedicated anti-mimicry test below.
+    assert result.content.startswith("ok")
+    assert "Id: 42" in result.content
     assert svc.sent == [("Invoice", "42", "client@example.com")]
 
 
@@ -436,8 +442,57 @@ async def test_qb_send_estimate_success() -> None:
     result = await fn(entity_type="Estimate", entity_id="2001", email="client@example.com")
 
     assert result.is_error is False
-    assert "Estimate 2001 sent to client@example.com" in result.content
+    assert result.content.startswith("ok")
+    assert "Id: 2001" in result.content
     assert svc.sent == [("Estimate", "2001", "client@example.com")]
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_content_does_not_invite_receipt_mimicry() -> None:
+    """The LLM-facing content for qb_send must not carry the action verb
+    or recipient that the auto-receipt already renders.
+
+    Regression for a 2026-05-13 production observation: a contractor's
+    invoice email turned into a double-bullet in the iMessage reply.
+
+    Final body shipped:
+        Sent.
+
+        - Sent QuickBooks invoice 573 to <email>
+
+        - Emailed QuickBooks invoice to <email>
+          app.qbo.intuit.com/app/invoice?txnId=573
+
+    The first bullet was LLM-fabricated prose mimicking the tool result
+    text (``"Invoice 573 sent to <email> via QuickBooks."``); the second
+    was the auto-appended ToolReceipt. Mirrors the CompanyCam
+    anti-mimicry guard from #1069 but expands it to the recipient and
+    action verb, since those (not the URL) were the mimic trigger here.
+    """
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_send")
+
+    result = await fn(entity_type="Invoice", entity_id="573", email="paula@example.com")
+    assert result.is_error is False
+    assert result.receipt is not None
+
+    # The receipt's URL must not appear in content (the existing #1069
+    # guard, now a per-tool invariant). FakeQBService omits the URL, so
+    # only assert when a URL is actually rendered.
+    if result.receipt.url is not None:
+        assert result.receipt.url not in result.content, (
+            f"content leaked receipt URL: {result.content!r}"
+        )
+    # The recipient (target) must not appear in content. Inlining the
+    # email teaches the model to bullet-point it in prose.
+    assert "paula@example.com" not in result.content, (
+        f"content leaked recipient email: {result.content!r}"
+    )
+    # The action verb ("Emailed" / "sent") must not appear in content.
+    lowered = result.content.lower()
+    for verb in ("sent", "emailed"):
+        assert verb not in lowered, f"content uses receipt-shaped verb {verb!r}: {result.content!r}"
 
 
 @pytest.mark.asyncio()

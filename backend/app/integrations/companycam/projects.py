@@ -74,7 +74,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             )
 
         return ToolResult(
-            content=(f"Created CompanyCam project: {project.name or name} (ID: {project.id})"),
+            content=f"ok | project Id: {project.id}",
             receipt=ToolReceipt(
                 action="Created CompanyCam project",
                 target=project_target(project),
@@ -109,7 +109,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             )
 
         return ToolResult(
-            content=f"Updated CompanyCam project: {project.name or ''} (ID: {project_id})",
+            content=f"ok | project Id: {project_id}",
             receipt=ToolReceipt(
                 action="Updated CompanyCam project",
                 target=project_target(project),
@@ -163,7 +163,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
                 error_kind=ToolErrorKind.SERVICE,
             )
         return ToolResult(
-            content=f"Project {project_id} archived successfully.",
+            content=f"ok | project Id: {project_id}",
             receipt=ToolReceipt(
                 action="Archived CompanyCam project",
                 target=project_target(None),
@@ -183,7 +183,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
                 error_kind=ToolErrorKind.SERVICE,
             )
         return ToolResult(
-            content=f"Project {project_id} permanently deleted.",
+            content=f"ok | project Id: {project_id} (deleted)",
             receipt=ToolReceipt(
                 action="Deleted CompanyCam project",
                 target=project_target(None),
@@ -205,7 +205,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
                 error_kind=ToolErrorKind.SERVICE,
             )
         return ToolResult(
-            content=f"Notepad updated on project {project_id}.",
+            content=f"ok | project Id: {project_id}",
             receipt=ToolReceipt(
                 action="Updated notepad on CompanyCam project",
                 target=project_target(None),
