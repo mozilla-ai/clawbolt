@@ -95,10 +95,7 @@ def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
                 error_kind=ToolErrorKind.SERVICE,
             )
         return ToolResult(
-            content=(
-                f"Created checklist '{cl.name or 'Untitled'}' (ID: {cl.id}) "
-                f"on project {project_id}."
-            ),
+            content=f"ok | checklist Id: {cl.id} | project: {project_id}",
             receipt=ToolReceipt(
                 action="Created CompanyCam checklist",
                 target=_sanitize(cl.name or "", 40) or "checklist",

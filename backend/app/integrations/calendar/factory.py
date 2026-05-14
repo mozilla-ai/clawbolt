@@ -533,12 +533,15 @@ def create_calendar_tools(
         # Minimal content. The rich record (title, start, end) lives only in
         # the ToolReceipt below, which is rendered server-side and shown to
         # the user. Don't echo title/dates back to the LLM here: when we did,
-        # the model pattern-matched the formatted "field | field | field"
-        # layout into a fabricated bullet ("- Created Google Calendar event:
-        # Lunch with Tam\n  Thu Apr 30, 12:00 PM") that doubled the receipt
-        # block in the outbound. Matches the CompanyCam convention.
+        # the model pattern-matched the rich content into a fabricated bullet
+        # ("- Created Google Calendar event: Lunch with Tam\n  Thu Apr 30,
+        # 12:00 PM") that doubled the receipt block in the outbound. Same
+        # shape as the qb_send / qb_create fix. Calendar uses parens instead
+        # of pipes (`ok ({id})` not `ok | id: {id}`) because the existing
+        # `test_*_event_content_is_minimal` tests guard against pipes in
+        # calendar content for that same mimic shape.
         return ToolResult(
-            content=f"Event created (id={event.id}).",
+            content=f"ok ({event.id})",
             receipt=ToolReceipt(
                 action="Scheduled calendar event",
                 target=(f"{event.title} on {event.start.strftime('%Y-%m-%d %H:%M')}"),
@@ -615,7 +618,7 @@ def create_calendar_tools(
         # Minimal content. See calendar_create_event above for why the rich
         # record stays in the receipt and not in content.
         return ToolResult(
-            content=f"Event updated (id={event.id}).",
+            content=f"ok ({event.id})",
             receipt=ToolReceipt(
                 action="Updated calendar event",
                 target=(f"{event.title} on {event.start.strftime('%Y-%m-%d %H:%M')}"),
@@ -656,7 +659,7 @@ def create_calendar_tools(
             )
 
         return ToolResult(
-            content=f"Event {event_id} deleted.",
+            content=f"ok ({event_id} deleted)",
             receipt=ToolReceipt(
                 action="Canceled calendar event",
                 target=event_id,

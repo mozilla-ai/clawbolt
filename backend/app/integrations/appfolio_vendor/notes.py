@@ -139,7 +139,7 @@ def build_note_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[T
         photo_count = len(files)
         photo_phrase = f", added {photo_count} photo(s)" if photo_count else ""
         return ToolResult(
-            content=f"Updated note {note_id}{photo_phrase}.",
+            content=f"ok | work order: #{work_order_id} | note: {note_id}{photo_phrase}",
             receipt=ToolReceipt(
                 action="Updated AppFolio work order note",
                 target=f"#{work_order_id} note {note_id}{photo_phrase}",

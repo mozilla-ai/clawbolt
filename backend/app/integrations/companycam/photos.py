@@ -265,7 +265,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
 
         if status == "duplicate":
             return ToolResult(
-                content=f"CompanyCam detected this as a duplicate photo (ID: {photo.id}).",
+                content=f"ok | duplicate | photo Id: {photo.id}",
                 receipt=ToolReceipt(
                     action="Photo already in CompanyCam",
                     target=photo_target(photo),
@@ -277,7 +277,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         if status == "pending":
             status_note = " (still processing, may take a moment to appear)"
         return ToolResult(
-            content=f"Photo uploaded to CompanyCam project {project_id}{status_note}.",
+            content=f"ok | photo Id: {photo.id} | project: {project_id}{status_note}",
             receipt=ToolReceipt(
                 action="Uploaded photo to CompanyCam",
                 target=photo_target(photo),
@@ -311,7 +311,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             )
         parent_url = project_url(target_id) if target_type == "project" else photo_url(target_id)
         return ToolResult(
-            content=f"Comment added to {target_type} {target_id} (ID: {comment.id}).",
+            content=f"ok | {target_type} Id: {target_id} | comment Id: {comment.id}",
             receipt=ToolReceipt(
                 action=f"Commented on CompanyCam {target_type}",
                 target=comment_target(content),
@@ -382,7 +382,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             )
         tag_names = [t.display_value or t.value or "?" for t in result_tags]
         return ToolResult(
-            content=f"Tagged photo {photo_id} with: {', '.join(tag_names)}",
+            content=f"ok | photo Id: {photo_id} | tags: {', '.join(tag_names)}",
             receipt=ToolReceipt(
                 action="Tagged CompanyCam photo",
                 target=tags_target(tag_names),
@@ -402,7 +402,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 error_kind=ToolErrorKind.SERVICE,
             )
         return ToolResult(
-            content=f"Photo {photo_id} permanently deleted.",
+            content=f"ok | photo Id: {photo_id} (deleted)",
             receipt=ToolReceipt(
                 action="Deleted CompanyCam photo",
                 target=photo_target(None),

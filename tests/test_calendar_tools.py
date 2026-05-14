@@ -422,7 +422,7 @@ async def test_create_event_auto_select_single_calendar() -> None:
         end="2026-03-28T17:00:00",
     )
     assert result.is_error is False
-    assert "Event created" in result.content
+    assert result.content.startswith("ok")
 
 
 @pytest.mark.asyncio()
@@ -556,7 +556,7 @@ async def test_create_event_happy_path(cal_tools: list[Tool]) -> None:
         calendar_id="primary",
     )
     assert result.is_error is False
-    assert "Event created" in result.content
+    assert result.content.startswith("ok")
     # Title and times are intentionally NOT in content -- they live in the
     # ToolReceipt below to stop the LLM from pattern-matching the structured
     # content into a fabricated bullet that doubles the receipt block.
@@ -737,7 +737,7 @@ async def test_update_event_happy_path() -> None:
         title="Job: Smith Kitchen Remodel (Revised)",
     )
     assert result.is_error is False
-    assert "Event updated" in result.content
+    assert result.content.startswith("ok")
     # Title is intentionally NOT in content; it lives in the receipt only.
     assert "Revised" not in result.content
     assert result.receipt is not None
@@ -1102,7 +1102,7 @@ async def test_create_event_auto_selects_allowed_calendar() -> None:
         end="2026-03-28T17:00:00",
     )
     assert result.is_error is False
-    assert "Event created" in result.content
+    assert result.content.startswith("ok")
 
 
 @pytest.mark.asyncio()
@@ -1238,7 +1238,7 @@ async def test_read_only_calendar_blocks_write_tools() -> None:
         end="2026-03-28T17:00:00",
     )
     assert result.is_error is False
-    assert "Event created" in result.content
+    assert result.content.startswith("ok")
 
 
 @pytest.mark.asyncio()
