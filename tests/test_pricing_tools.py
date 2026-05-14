@@ -14,7 +14,10 @@ import httpx
 import pytest
 
 from backend.app.integrations.supplier_pricing.cache import SupplierCache
-from backend.app.integrations.supplier_pricing.homedepot import HomeDepotSupplier
+from backend.app.integrations.supplier_pricing.homedepot import (
+    HomeDepotSupplier,
+    _build_fallback_url,
+)
 from backend.app.integrations.supplier_pricing.protocol import Location, ProductResult
 
 # ---------------------------------------------------------------------------
@@ -57,6 +60,19 @@ def _make_httpx_response(status_code: int = 200, json_data: dict | None = None) 
 # ---------------------------------------------------------------------------
 
 
+class TestBuildFallbackUrl:
+    def test_with_product_id(self) -> None:
+        assert _build_fallback_url("317061059") == "https://www.homedepot.com/p/317061059"
+        assert _build_fallback_url("abc123") == "https://www.homedepot.com/p/abc123"
+
+    def test_with_empty_product_id(self) -> None:
+        assert _build_fallback_url("") == ""
+
+    def test_with_none_product_id(self) -> None:
+        # Simulate product_id being a falsy string like "" from product.get("product_id", "")
+        assert _build_fallback_url("") == ""
+
+
 class TestHomeDepotSupplier:
     def test_init(self) -> None:
         s = HomeDepotSupplier(api_key="test-key")
@@ -89,6 +105,59 @@ class TestHomeDepotSupplier:
         assert r.brand == "Handprint"
         assert r.rating == 4.5
         assert "homedepot.com" in r.product_url
+
+    @pytest.mark.asyncio
+    async def test_search_fallback_url_when_link_missing(self) -> None:
+        """When SerpApi doesn't return a link, fall back to product_id URL."""
+        supplier = HomeDepotSupplier(api_key="test-key")
+        products = [
+            {
+                "product_id": "317061059",
+                "title": "23/32 in. x 4 ft. x 8 ft. BC Sanded Pine Plywood",
+                "price": 42.98,
+            }
+        ]
+        mock_resp = _make_httpx_response(200, {"products": products})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            results = await supplier.search_products("plywood", Location(zip_code="15213"))
+
+        assert len(results) == 1
+        assert results[0].product_url == "https://www.homedepot.com/p/317061059"
+
+    @pytest.mark.asyncio
+    async def test_search_fallback_url_no_product_id(self) -> None:
+        """When both link and product_id are missing, product_url is empty."""
+        supplier = HomeDepotSupplier(api_key="test-key")
+        products = [
+            {
+                "title": "Some Item",
+                "price": 10.99,
+            }
+        ]
+        mock_resp = _make_httpx_response(200, {"products": products})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            results = await supplier.search_products("item", Location(zip_code="15213"))
+
+        assert len(results) == 1
+        assert results[0].product_url == ""
 
     @pytest.mark.asyncio
     async def test_search_retry_on_429_then_success(self) -> None:
@@ -384,12 +453,17 @@ class TestSupplierSearchTool:
         assert not result.is_error
         assert "Plywood Sheet" in result.content
         assert "$42.98" in result.content
+        assert "Link: https://homedepot.com/p/123" in result.content
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_api(self) -> None:
         results = [
             ProductResult(
-                supplier="homedepot", product_id="1", name="Cached Item", price_dollars=10.0
+                supplier="homedepot",
+                product_id="1",
+                name="Cached Item",
+                price_dollars=10.0,
+                product_url="https://homedepot.com/p/1",
             )
         ]
         tool_fn, mock_supplier, _cache = self._make_tool(results=results)
@@ -399,6 +473,7 @@ class TestSupplierSearchTool:
 
         assert not result.is_error
         assert "Cached Item" in result.content
+        assert "Link: https://homedepot.com/p/1" in result.content
         assert mock_supplier.search_products.call_count == 1
 
     @pytest.mark.asyncio
