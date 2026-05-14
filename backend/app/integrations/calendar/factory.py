@@ -536,9 +536,9 @@ def create_calendar_tools(
         # the model pattern-matched the formatted "field | field | field"
         # layout into a fabricated bullet ("- Created Google Calendar event:
         # Lunch with Tam\n  Thu Apr 30, 12:00 PM") that doubled the receipt
-        # block in the outbound. Matches the CompanyCam convention.
+        # block in the outbound. Same shape as the qb_send / qb_create fix.
         return ToolResult(
-            content=f"Event created (id={event.id}).",
+            content=f"ok ({event.id})",
             receipt=ToolReceipt(
                 action="Scheduled calendar event",
                 target=(f"{event.title} on {event.start.strftime('%Y-%m-%d %H:%M')}"),
@@ -615,7 +615,7 @@ def create_calendar_tools(
         # Minimal content. See calendar_create_event above for why the rich
         # record stays in the receipt and not in content.
         return ToolResult(
-            content=f"Event updated (id={event.id}).",
+            content=f"ok ({event.id})",
             receipt=ToolReceipt(
                 action="Updated calendar event",
                 target=(f"{event.title} on {event.start.strftime('%Y-%m-%d %H:%M')}"),
@@ -656,7 +656,7 @@ def create_calendar_tools(
             )
 
         return ToolResult(
-            content=f"Event {event_id} deleted.",
+            content=f"ok ({event_id} deleted)",
             receipt=ToolReceipt(
                 action="Canceled calendar event",
                 target=event_id,

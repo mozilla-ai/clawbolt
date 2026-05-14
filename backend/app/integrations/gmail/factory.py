@@ -300,8 +300,10 @@ def create_gmail_tools(service: GmailService) -> list[Tool]:
 
         # Receipt strings get rendered to the user, so keep them short.
         receipt_target = f"reply to {reply_to_message_id}" if reply_to_message_id else ", ".join(to)
+        # Content stays terse and data-only so the model has no
+        # receipt-shaped phrasing to bullet-point in its reply.
         return ToolResult(
-            content=f"Message sent (id={result.id}, thread={result.thread_id}).",
+            content=f"ok | id: {result.id} | thread: {result.thread_id}",
             receipt=ToolReceipt(
                 action="Sent email via Gmail",
                 target=receipt_target,

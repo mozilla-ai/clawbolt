@@ -336,7 +336,7 @@ async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
     )
 
     assert result.is_error is False
-    assert "Uploaded" in result.content
+    assert result.content.startswith("ok")
     # Staging entry stays for the TTL so cross-tool reuse works.
     assert "bb_photo" in await media_staging.get_all_for_user(test_user.id)
 
@@ -1006,4 +1006,4 @@ async def test_upload_to_storage_resolves_handle(test_user: User) -> None:
         original_url=handle,
     )
     assert result.is_error is False
-    assert "Uploaded" in result.content
+    assert result.content.startswith("ok")
