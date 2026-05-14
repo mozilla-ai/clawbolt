@@ -9,8 +9,9 @@ from __future__ import annotations
 import logging
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.companycam.errors import classify_companycam_error
 from backend.app.integrations.companycam.params import (
     CompanyCamCreateChecklistParams,
     CompanyCamGetChecklistParams,
@@ -38,7 +39,7 @@ def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         if not checklists:
             return ToolResult(content="No checklists found on this project.")
@@ -60,7 +61,7 @@ def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         status = "completed" if cl.completed_at else "in progress"
         lines = [f"Checklist: {cl.name or 'Untitled'} (ID: {cl.id}) [{status}]"]
@@ -92,7 +93,7 @@ def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         return ToolResult(
             content=f"ok | checklist Id: {cl.id} | project: {project_id}",

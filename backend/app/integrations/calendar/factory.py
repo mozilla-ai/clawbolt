@@ -18,6 +18,10 @@ from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolR
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal
+from backend.app.integrations._google_errors import (
+    format_google_api_message,
+    parse_google_api_error,
+)
 from backend.app.integrations.calendar.provider import (
     CalendarEventCreate,
     CalendarEventUpdate,
@@ -882,7 +886,7 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
     status = exc.response.status_code
     body = ""
     with contextlib.suppress(Exception):
-        body = exc.response.text[:500]
+        body = exc.response.text[:1000]
     logger.warning(
         "Calendar HTTP %d during %s: url=%s body=%s",
         status,
@@ -890,21 +894,32 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
         str(exc.request.url) if exc.request else "unknown",
         body,
     )
+    message, _reason = parse_google_api_error(body)
     if status == 401:
         return ToolResult(
             content="Calendar disconnected. Please reconnect Google Calendar in Settings.",
             is_error=True,
-            error_kind=ToolErrorKind.SERVICE,
+            error_kind=ToolErrorKind.AUTH,
         )
     if status == 403:
+        # 403 has many causes for Calendar: forbidden (read-only calendar
+        # under the granted scope), accessNotConfigured (Calendar API
+        # disabled in the GCP project), domainPolicy (Workspace admin
+        # block), insufficientPermissions (missing scope), etc. We surface
+        # Google's own message verbatim so the user sees the actual cause
+        # instead of a "this calendar is read-only" guess that's wrong
+        # whenever the real cause is operator-side config.
+        if message:
+            content = (
+                f"Calendar denied the request while trying to {action}: "
+                f"{format_google_api_message(message)}"
+            )
+        else:
+            content = f"Calendar denied the request while trying to {action} (HTTP 403)."
         return ToolResult(
-            content=(
-                f"Permission denied while trying to {action}. "
-                "This calendar is likely read-only. "
-                "Use calendar_list_calendars to check which calendars allow writes."
-            ),
+            content=content,
             is_error=True,
-            error_kind=ToolErrorKind.VALIDATION,
+            error_kind=ToolErrorKind.PERMISSION,
         )
     if status == 404:
         return ToolResult(

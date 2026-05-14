@@ -8,6 +8,8 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from backend.app.agent.tools.base import ToolErrorKind
+from backend.app.integrations.companycam.errors import classify_companycam_error
 from backend.app.integrations.companycam.params import (
     CompanyCamTagPhotoParams,
     CompanyCamUploadPhotoParams,
@@ -2325,3 +2327,39 @@ async def test_two_photo_upload_renders_each_url_exactly_once() -> None:
     # renderer, so we count the host+path.
     assert final.count("app.companycam.com/photos/3136949848") == 1
     assert final.count("app.companycam.com/photos/3136949871") == 1
+
+
+# ---------------------------------------------------------------------------
+# classify_companycam_error
+# ---------------------------------------------------------------------------
+
+
+def _make_status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://api.companycam.com/v2/projects")
+    response = httpx.Response(status, request=request)
+    return httpx.HTTPStatusError(f"HTTP {status}", request=request, response=response)
+
+
+def test_classify_401_is_auth() -> None:
+    """401 must be AUTH so the LLM tells the user to reconnect, not "try
+    a different approach" (the SERVICE hint that would have fired before)."""
+    assert classify_companycam_error(_make_status_error(401)) == ToolErrorKind.AUTH
+
+
+def test_classify_403_is_permission() -> None:
+    assert classify_companycam_error(_make_status_error(403)) == ToolErrorKind.PERMISSION
+
+
+def test_classify_404_is_not_found() -> None:
+    assert classify_companycam_error(_make_status_error(404)) == ToolErrorKind.NOT_FOUND
+
+
+def test_classify_500_falls_through_to_service() -> None:
+    assert classify_companycam_error(_make_status_error(500)) == ToolErrorKind.SERVICE
+
+
+def test_classify_non_http_exception_is_service() -> None:
+    """Connection errors, JSON errors, and other non-HTTP exceptions stay
+    SERVICE so the agent still gets the "try a different approach" hint."""
+    assert classify_companycam_error(ConnectionError("boom")) == ToolErrorKind.SERVICE
+    assert classify_companycam_error(ValueError("bad json")) == ToolErrorKind.SERVICE

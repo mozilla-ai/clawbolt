@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from backend.app.agent.approval import PermissionLevel
@@ -12,6 +14,7 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext
 from backend.app.integrations.calendar.factory import (
     _calendar_factory,
+    _handle_http_error,
     _parse_dt,
     _resolve_tz,
     create_calendar_tools,
@@ -1301,17 +1304,59 @@ async def test_free_busy_reader_blocks_writes() -> None:
     assert "No calendars allow create event" in result.content
 
 
-@pytest.mark.asyncio()
-async def test_403_error_mentions_permissions() -> None:
-    """A 403 from Google should tell the agent it's a permissions issue."""
-    import httpx
+def _make_http_error(status: int, body: str = "") -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://www.googleapis.com/calendar/v3/calendars/x/events")
+    response = httpx.Response(status, request=request, text=body)
+    return httpx.HTTPStatusError(f"HTTP {status}", request=request, response=response)
 
-    from backend.app.integrations.calendar.factory import _handle_http_error
 
-    request = httpx.Request("POST", "https://example.com/calendars/test/events")
-    response = httpx.Response(403, request=request, text="Forbidden")
-    exc = httpx.HTTPStatusError("Forbidden", request=request, response=response)
-    result = _handle_http_error(exc, "create event")
+def test_401_is_auth_kind_not_service() -> None:
+    """401 should classify as AUTH so the LLM hint tells the user to reconnect,
+    not "try a different approach" (SERVICE hint)."""
+    result = _handle_http_error(_make_http_error(401), "create event")
     assert result.is_error is True
-    assert "Permission denied" in result.content
-    assert "read-only" in result.content
+    assert result.error_kind == ToolErrorKind.AUTH
+    assert "disconnected" in result.content.lower()
+
+
+def test_403_surfaces_google_message_not_read_only_guess() -> None:
+    """403 with a non-read-only cause (Calendar API disabled in GCP) must
+    surface Google's actual message, not the canned "read-only" guess.
+
+    Sibling regression to the Gmail accessNotConfigured bug: the calendar
+    factory was the original template the Gmail factory was copied from,
+    and carried the same VALIDATION-misclassification + canned-guess shape.
+    """
+    google_message = (
+        "Google Calendar API has not been used in project 1033137896781 before "
+        "or it is disabled. Enable it by visiting https://console.developers."
+        "google.com/apis/api/calendar-json.googleapis.com/overview?project="
+        "1033137896781 then retry."
+    )
+    body = json.dumps(
+        {
+            "error": {
+                "code": 403,
+                "message": google_message,
+                "errors": [{"reason": "accessNotConfigured", "message": google_message}],
+            }
+        }
+    )
+    result = _handle_http_error(_make_http_error(403, body), "create event")
+
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.PERMISSION
+    # Google's real message round-trips so the user sees the actual cause.
+    assert google_message in result.content
+    # The canned "read-only calendar" guess MUST NOT appear for this 403.
+    assert "read-only" not in result.content.lower()
+
+
+def test_403_with_unparseable_body_falls_back() -> None:
+    result = _handle_http_error(
+        _make_http_error(403, "<html>upstream proxy noise</html>"), "create event"
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.PERMISSION
+    assert "HTTP 403" in result.content
+    assert "read-only" not in result.content.lower()

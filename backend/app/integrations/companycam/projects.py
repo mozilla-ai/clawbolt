@@ -12,6 +12,7 @@ import logging
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.companycam.errors import classify_companycam_error
 from backend.app.integrations.companycam.params import (
     CompanyCamArchiveProjectParams,
     CompanyCamCreateProjectParams,
@@ -47,7 +48,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam search error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
 
         if not projects:
@@ -70,7 +71,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error creating project: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
 
         return ToolResult(
@@ -105,7 +106,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error updating project: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
 
         return ToolResult(
@@ -126,7 +127,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
 
         lines = [f"Project: {project.name or 'Untitled'} (ID: {project.id})"]
@@ -160,7 +161,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         return ToolResult(
             content=f"ok | project Id: {project_id}",
@@ -180,7 +181,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         return ToolResult(
             content=f"ok | project Id: {project_id} (deleted)",
@@ -202,7 +203,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         return ToolResult(
             content=f"ok | project Id: {project_id}",
@@ -225,7 +226,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         if not docs:
             return ToolResult(content="No documents found on this project.")
