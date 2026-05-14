@@ -553,8 +553,93 @@ async def test_gmail_search_tool_handles_401_as_disconnected() -> None:
         result = await tool.function("q", 5)
 
     assert result.is_error is True
-    assert result.error_kind == ToolErrorKind.SERVICE
+    # AUTH (not SERVICE) so the LLM hint tells the user to reauthenticate
+    # via the dashboard instead of suggesting a transient retry.
+    assert result.error_kind == ToolErrorKind.AUTH
     assert "disconnected" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_gmail_search_tool_403_surfaces_gmail_message() -> None:
+    """403 with a non-scope cause (Gmail API disabled in GCP) must surface the
+    actual Gmail message, not the canned 'missing scope, reconnect' guess.
+
+    Regression for the production incident where a real ``accessNotConfigured``
+    error was rendered as "missing the required scope; disconnect and reconnect"
+    AND tagged ``error_kind=VALIDATION``, which made the agent append the
+    misleading "[Check the expected parameter format...]" hint.
+    """
+    service = _make_service()
+    body = (
+        '{"error": {"code": 403, '
+        '"message": "Gmail API has not been used in project 1033137896781 '
+        "before or it is disabled. Enable it by visiting "
+        "https://console.developers.google.com/apis/api/gmail.googleapis.com/"
+        'overview?project=1033137896781 then retry.", '
+        '"errors": [{"reason": "accessNotConfigured", '
+        '"message": "Gmail API has not been used in project..."}]}}'
+    )
+    err = httpx.HTTPStatusError(
+        "403",
+        request=httpx.Request("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages"),
+        response=httpx.Response(403, text=body),
+    )
+    with patch.object(service, "search_messages", new_callable=AsyncMock, side_effect=err):
+        tools = create_gmail_tools(service)
+        tool = _get_tool(tools, ToolName.GMAIL_SEARCH)
+        result = await tool.function("q", 5)
+
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.PERMISSION
+    assert "Gmail API has not been used" in result.content
+    # The canned scope-reconnect guess MUST NOT appear for this 403.
+    assert "missing" not in result.content.lower()
+    assert "reconnect" not in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_gmail_search_tool_403_insufficient_permissions_keeps_reconnect_hint() -> None:
+    """When Gmail's reason is genuinely ``insufficientPermissions`` the
+    "disconnect and reconnect to grant scopes" advice IS the right fix, so we
+    keep it for that specific reason."""
+    service = _make_service()
+    body = (
+        '{"error": {"code": 403, "message": "Insufficient Permission", '
+        '"errors": [{"reason": "insufficientPermissions", '
+        '"message": "Insufficient Permission"}]}}'
+    )
+    err = httpx.HTTPStatusError(
+        "403",
+        request=httpx.Request("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages"),
+        response=httpx.Response(403, text=body),
+    )
+    with patch.object(service, "search_messages", new_callable=AsyncMock, side_effect=err):
+        tools = create_gmail_tools(service)
+        tool = _get_tool(tools, ToolName.GMAIL_SEARCH)
+        result = await tool.function("q", 5)
+
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.PERMISSION
+    assert "missing a required scope" in result.content
+    assert "reconnect" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_gmail_search_tool_403_with_unparseable_body_falls_back() -> None:
+    service = _make_service()
+    err = httpx.HTTPStatusError(
+        "403",
+        request=httpx.Request("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages"),
+        response=httpx.Response(403, text="<html>upstream proxy noise</html>"),
+    )
+    with patch.object(service, "search_messages", new_callable=AsyncMock, side_effect=err):
+        tools = create_gmail_tools(service)
+        tool = _get_tool(tools, ToolName.GMAIL_SEARCH)
+        result = await tool.function("q", 5)
+
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.PERMISSION
+    assert "HTTP 403" in result.content
 
 
 @pytest.mark.asyncio()
