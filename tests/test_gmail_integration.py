@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -570,14 +571,30 @@ async def test_gmail_search_tool_403_surfaces_gmail_message() -> None:
     misleading "[Check the expected parameter format...]" hint.
     """
     service = _make_service()
-    body = (
-        '{"error": {"code": 403, '
-        '"message": "Gmail API has not been used in project 1033137896781 '
-        "before or it is disabled. Enable it by visiting "
-        "https://console.developers.google.com/apis/api/gmail.googleapis.com/"
-        'overview?project=1033137896781 then retry.", '
-        '"errors": [{"reason": "accessNotConfigured", '
-        '"message": "Gmail API has not been used in project..."}]}}'
+    # The message field is the exact text Gmail returned in prod for this
+    # bug. The full sentence ("If you enabled this API recently, wait a few
+    # minutes for the action to propagate...") must round-trip untruncated,
+    # because that's the actionable hint right after the operator hits Enable.
+    gmail_message = (
+        "Gmail API has not been used in project 1033137896781 before or it is "
+        "disabled. Enable it by visiting https://console.developers.google.com/"
+        "apis/api/gmail.googleapis.com/overview?project=1033137896781 then "
+        "retry. If you enabled this API recently, wait a few minutes for the "
+        "action to propagate to our systems and retry."
+    )
+    body = json.dumps(
+        {
+            "error": {
+                "code": 403,
+                "message": gmail_message,
+                "errors": [
+                    {
+                        "reason": "accessNotConfigured",
+                        "message": "Gmail API has not been used in project...",
+                    }
+                ],
+            }
+        }
     )
     err = httpx.HTTPStatusError(
         "403",
@@ -591,7 +608,11 @@ async def test_gmail_search_tool_403_surfaces_gmail_message() -> None:
 
     assert result.is_error is True
     assert result.error_kind == ToolErrorKind.PERMISSION
-    assert "Gmail API has not been used" in result.content
+    # Full message round-trips, including the trailing "wait a few minutes"
+    # sentence that the previous 300-char cap dropped.
+    assert gmail_message in result.content
+    assert "wait a few minutes" in result.content
+    assert "..." not in result.content
     # The canned scope-reconnect guess MUST NOT appear for this 403.
     assert "missing" not in result.content.lower()
     assert "reconnect" not in result.content.lower()

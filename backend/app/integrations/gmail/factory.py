@@ -175,9 +175,11 @@ def _parse_gmail_error(body: str) -> tuple[str, str]:
 
 
 # Cap Gmail's message text so a verbose 403 (which can include a console URL
-# and several sentences) doesn't blow past a reasonable line length when the
-# LLM renders it back to the user.
-_MAX_GMAIL_MESSAGE_CHARS = 300
+# and several sentences) doesn't blow past a reasonable agent reply. 500 fits
+# Gmail's real accessNotConfigured message in full, including the "wait a few
+# minutes for propagation" sentence that matters right after the operator
+# enables the API.
+_MAX_GMAIL_MESSAGE_CHARS = 500
 
 
 def _format_gmail_message(message: str) -> str:
