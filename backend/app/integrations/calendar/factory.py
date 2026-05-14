@@ -533,10 +533,13 @@ def create_calendar_tools(
         # Minimal content. The rich record (title, start, end) lives only in
         # the ToolReceipt below, which is rendered server-side and shown to
         # the user. Don't echo title/dates back to the LLM here: when we did,
-        # the model pattern-matched the formatted "field | field | field"
-        # layout into a fabricated bullet ("- Created Google Calendar event:
-        # Lunch with Tam\n  Thu Apr 30, 12:00 PM") that doubled the receipt
-        # block in the outbound. Same shape as the qb_send / qb_create fix.
+        # the model pattern-matched the rich content into a fabricated bullet
+        # ("- Created Google Calendar event: Lunch with Tam\n  Thu Apr 30,
+        # 12:00 PM") that doubled the receipt block in the outbound. Same
+        # shape as the qb_send / qb_create fix. Calendar uses parens instead
+        # of pipes (`ok ({id})` not `ok | id: {id}`) because the existing
+        # `test_*_event_content_is_minimal` tests guard against pipes in
+        # calendar content for that same mimic shape.
         return ToolResult(
             content=f"ok ({event.id})",
             receipt=ToolReceipt(

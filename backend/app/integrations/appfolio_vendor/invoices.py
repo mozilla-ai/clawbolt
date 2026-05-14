@@ -329,11 +329,11 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
             invoice_id = str(result.get("id") or result.get("invoice", {}).get("id") or "")
         total = _line_items_total(typed_items)
         photo_phrase = f" with {len(files)} attachment(s)" if files else ""
+        invoice_phrase = f" | invoice Id: {invoice_id}" if invoice_id else ""
         return ToolResult(
             content=(
-                f"Created invoice on work order {work_order_id} for ${total:.2f}"
-                f" ({len(typed_items)} line item(s)){photo_phrase}"
-                + (f" (invoice id {invoice_id})." if invoice_id else ".")
+                f"ok | work order: #{work_order_id} | total: ${total:.2f}"
+                f" | line items: {len(typed_items)}{photo_phrase}{invoice_phrase}"
             ),
             receipt=ToolReceipt(
                 action="Created AppFolio invoice",
@@ -381,11 +381,9 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         invoice_id = ""
         if isinstance(result, dict):
             invoice_id = str(result.get("id") or "")
+        invoice_phrase = f" | invoice Id: {invoice_id}" if invoice_id else ""
         return ToolResult(
-            content=(
-                f"Uploaded {len(files)} file(s) as an invoice on work order"
-                f" {work_order_id}" + (f" (invoice id {invoice_id})." if invoice_id else ".")
-            ),
+            content=(f"ok | work order: #{work_order_id} | files: {len(files)}{invoice_phrase}"),
             receipt=ToolReceipt(
                 action="Uploaded AppFolio invoice",
                 target=f"#{work_order_id} ({len(files)} file)",
