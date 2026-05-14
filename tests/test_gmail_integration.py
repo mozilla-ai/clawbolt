@@ -608,11 +608,11 @@ async def test_gmail_search_tool_403_surfaces_gmail_message() -> None:
 
     assert result.is_error is True
     assert result.error_kind == ToolErrorKind.PERMISSION
-    # Full message round-trips, including the trailing "wait a few minutes"
-    # sentence that the previous 300-char cap dropped.
+    # Full message round-trips (substring match also fails on truncation,
+    # since the cap would replace the tail with "..."). Explicit assert on
+    # the previously-dropped propagation-wait sentence locks down the bug.
     assert gmail_message in result.content
     assert "wait a few minutes" in result.content
-    assert "..." not in result.content
     # The canned scope-reconnect guess MUST NOT appear for this 403.
     assert "missing" not in result.content.lower()
     assert "reconnect" not in result.content.lower()
