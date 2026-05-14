@@ -15,7 +15,6 @@ Gmail OAuth client, matching the Calendar pattern.
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -26,6 +25,10 @@ from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
+from backend.app.integrations._google_errors import (
+    format_google_api_message,
+    parse_google_api_error,
+)
 from backend.app.integrations.gmail.service import (
     GmailMessage,
     GmailMessageSummary,
@@ -149,45 +152,6 @@ def _format_message(m: GmailMessage) -> str:
     return "\n".join(lines)
 
 
-def _parse_gmail_error(body: str) -> tuple[str, str]:
-    """Return ``(message, reason)`` from a Gmail JSON error body.
-
-    Gmail's REST error shape is
-    ``{"error": {"code": ..., "message": "...", "errors": [{"reason": "..."}]}}``.
-    Returns empty strings when the body is missing, not JSON, or lacks the
-    expected shape so callers can fall through to a generic message.
-    """
-    if not body:
-        return "", ""
-    try:
-        data = json.loads(body)
-    except (ValueError, TypeError):
-        return "", ""
-    err = data.get("error") if isinstance(data, dict) else None
-    if not isinstance(err, dict):
-        return "", ""
-    message = err.get("message") or ""
-    reason = ""
-    errors = err.get("errors")
-    if isinstance(errors, list) and errors and isinstance(errors[0], dict):
-        reason = errors[0].get("reason") or ""
-    return message, reason
-
-
-# Cap Gmail's message text so a verbose 403 (which can include a console URL
-# and several sentences) doesn't blow past a reasonable agent reply. 500 fits
-# Gmail's real accessNotConfigured message in full, including the "wait a few
-# minutes for propagation" sentence that matters right after the operator
-# enables the API.
-_MAX_GMAIL_MESSAGE_CHARS = 500
-
-
-def _format_gmail_message(message: str) -> str:
-    if len(message) <= _MAX_GMAIL_MESSAGE_CHARS:
-        return message
-    return message[:_MAX_GMAIL_MESSAGE_CHARS].rstrip() + "..."
-
-
 def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
     status = exc.response.status_code
     body = ""
@@ -200,7 +164,7 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
         str(exc.request.url) if exc.request else "unknown",
         body,
     )
-    message, reason = _parse_gmail_error(body)
+    message, reason = parse_google_api_error(body)
     if status == 401:
         return ToolResult(
             content="Gmail disconnected. Please reconnect Gmail in Settings.",
@@ -223,7 +187,7 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
         elif message:
             content = (
                 f"Gmail denied the request while trying to {action}: "
-                f"{_format_gmail_message(message)}"
+                f"{format_google_api_message(message)}"
             )
         else:
             content = f"Gmail denied the request while trying to {action} (HTTP 403)."
