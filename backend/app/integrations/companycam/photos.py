@@ -20,6 +20,7 @@ from backend.app.agent.saved_media import (
 )
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.companycam.errors import classify_companycam_error
 from backend.app.integrations.companycam.params import (
     CompanyCamAddCommentParams,
     CompanyCamDeletePhotoParams,
@@ -208,7 +209,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             return ToolResult(
                 content=f"CompanyCam upload error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
 
         # Poll for processing status (CompanyCam downloads the image async)
@@ -307,7 +308,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         parent_url = project_url(target_id) if target_type == "project" else photo_url(target_id)
         return ToolResult(
@@ -341,7 +342,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         if not comments:
             return ToolResult(content=f"No comments on this {target_type}.")
@@ -378,7 +379,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         tag_names = [t.display_value or t.value or "?" for t in result_tags]
         return ToolResult(
@@ -399,7 +400,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         return ToolResult(
             content=f"ok | photo Id: {photo_id} (deleted)",
@@ -451,7 +452,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             return ToolResult(
                 content=f"CompanyCam error: {exc}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=classify_companycam_error(exc),
             )
         if not photos:
             return ToolResult(content="No photos found matching the criteria.")
