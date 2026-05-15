@@ -73,8 +73,9 @@ def _format_results(
         lines.append(name_line)
         if parts:
             lines.append(f"   {' | '.join(parts)}")
-        if p.product_url:
-            lines.append(f"   {p.product_url}")
+        # Always show the product URL so the user can purchase.
+        url = p.product_url or "(no link available)"
+        lines.append(f"   Link: {url}")
         lines.append("")
 
     return "\n".join(lines).rstrip()

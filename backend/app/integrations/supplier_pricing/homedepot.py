@@ -24,6 +24,19 @@ def _normalize_product_url(url: str) -> str:
     return url.replace("//apionline.homedepot.com", "//www.homedepot.com", 1)
 
 
+def _build_fallback_url(product_id: str) -> str:
+    """Construct a Home Depot product URL from its product_id if available.
+
+    Home Depot product URLs follow the pattern:
+    https://www.homedepot.com/p/{product_id}
+
+    This is used when SerpApi does not return a "link" field for a product.
+    """
+    if not product_id:
+        return ""
+    return f"https://www.homedepot.com/p/{product_id}"
+
+
 class HomeDepotSupplier:
     """Home Depot product search via SerpApi's dedicated HD engine.
 
@@ -107,7 +120,10 @@ class HomeDepotSupplier:
                     was_price_dollars=was_dollars,
                     in_stock=in_stock,
                     aisle="",
-                    product_url=_normalize_product_url(product.get("link", "")),
+                    product_url=_normalize_product_url(
+                        product.get("link", "")
+                        or _build_fallback_url(product.get("product_id", ""))
+                    ),
                     image_url=product.get("thumbnail", ""),
                     rating=product.get("rating"),
                 )
