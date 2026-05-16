@@ -8,7 +8,7 @@ time:
   ``appfolio_connect`` tool. This must stay reachable even when the user
   has no credential, since pasting the token *is* the connect path.
 * ``appfolio_vendor`` (specialist, gated on connection state): the data
-  tools (work-order reads, notes with photos, invoices). When the user
+  tools (work-order reads + status updates, notes with photos, invoices). When the user
   is not yet connected, ``_appfolio_vendor_auth_check`` returns a reason
   string so the registry surfaces it under "Not connected" rather than
   letting the LLM believe AppFolio is ready to use.
@@ -32,6 +32,9 @@ from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
 from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
 from backend.app.integrations.appfolio_vendor.notes import build_note_tools
 from backend.app.integrations.appfolio_vendor.service import build_service
+from backend.app.integrations.appfolio_vendor.work_order_writes import (
+    build_work_order_write_tools,
+)
 from backend.app.integrations.appfolio_vendor.work_orders import build_work_order_tools
 
 if TYPE_CHECKING:
@@ -95,6 +98,7 @@ async def _appfolio_vendor_factory(ctx: ToolContext) -> list[Tool]:
     )
     tools: list[Tool] = []
     tools.extend(build_work_order_tools(service))
+    tools.extend(build_work_order_write_tools(service))
     tools.extend(build_note_tools(service, ctx))
     tools.extend(build_invoice_tools(service, ctx))
     return tools
@@ -144,11 +148,15 @@ def _register() -> None:
         _appfolio_vendor_factory,
         core=False,
         summary=(
-            "AppFolio Vendor Portal: view and search work orders, read and add "
-            "notes (with photos), and create or upload invoices"
+            "AppFolio Vendor Portal: view and search work orders, update their "
+            "status (e.g. mark complete), read and add notes (with photos), "
+            "and create or upload invoices"
         ),
         display_name="AppFolio Vendor Portal",
-        dashboard_description="View work orders, add notes, and create invoices in AppFolio Vendor Portal",
+        dashboard_description=(
+            "View work orders, update status, add notes, and create invoices "
+            "in AppFolio Vendor Portal"
+        ),
         dashboard_group="Integrations",
         dashboard_group_order=2,
         sub_tools=[
@@ -166,6 +174,16 @@ def _register() -> None:
                 ToolName.APPFOLIO_GET_WORK_ORDER,
                 "Get full details for one AppFolio work order",
                 default_permission="always",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_UPDATE_WORK_ORDER_STATUS,
+                "Update the status code on an AppFolio work order",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.APPFOLIO_UNDO_WORK_ORDER_STATUS,
+                "Revert a recent AppFolio work order status change",
+                default_permission="ask",
             ),
             SubToolInfo(
                 ToolName.APPFOLIO_LIST_NOTES,

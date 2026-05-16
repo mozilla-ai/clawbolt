@@ -1,7 +1,8 @@
 # AppFolio Vendor Portal
 
-Read work orders and notes, add notes (with photos), and create invoices
-on the user's AppFolio Vendor Portal.
+Read work orders and notes, update work-order status (e.g. mark
+complete), add notes (with photos), and create invoices on the user's
+AppFolio Vendor Portal.
 
 ## Tools
 
@@ -11,11 +12,16 @@ on the user's AppFolio Vendor Portal.
 | appfolio_list_work_orders | List work orders, filter by status | Auto |
 | appfolio_search_work_orders | Search by address, number, or text | Auto |
 | appfolio_get_work_order | One work order's details | Auto |
+| appfolio_update_work_order_status | Update the status code (e.g. mark complete) | Ask |
+| appfolio_undo_work_order_status | Revert a recent status change | Ask |
 | appfolio_list_notes | List notes on a work order | Auto |
 | appfolio_add_note | Add a note (with optional photos) | Ask |
 | appfolio_update_note | Edit an existing note | Ask |
 | appfolio_create_invoice | Build a line-itemized invoice with photos | Ask |
 | appfolio_upload_invoice_pdf | Upload a pre-built invoice PDF | Ask |
+
+Common status codes: `0` = new, `4` = in progress, `8` = completed.
+Confirm with the user when uncertain rather than guessing.
 
 ## Photos and documents
 

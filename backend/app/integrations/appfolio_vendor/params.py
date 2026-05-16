@@ -60,6 +60,27 @@ class AppFolioGetWorkOrderParams(BaseModel):
     work_order_id: str = Field(description="AppFolio work order ID.")
 
 
+class AppFolioUpdateWorkOrderStatusParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID to update.")
+    status_code: int = Field(
+        description=(
+            "Numeric status code AppFolio expects. Common values:"
+            " 0=new, 4=in progress, 8=completed."
+            " Confirm with the user when uncertain rather than guessing."
+        ),
+    )
+
+
+class AppFolioUndoWorkOrderStatusParams(BaseModel):
+    work_order_id: str = Field(description="AppFolio work order ID.")
+    previous_status: str = Field(
+        description=(
+            "The status the work order should revert to. Pass the prior"
+            " status code or label as returned by appfolio_get_work_order."
+        ),
+    )
+
+
 class AppFolioListNotesParams(BaseModel):
     work_order_id: str = Field(description="AppFolio work order ID.")
 

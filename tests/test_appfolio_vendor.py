@@ -687,6 +687,103 @@ async def test_resolve_customer_id_raises_when_profile_has_none() -> None:
             await service.add_work_order_note("999001", body_text="x")
 
 
+@pytest.mark.asyncio()
+async def test_update_work_order_status_sends_patch_with_customer_id() -> None:
+    """``update_work_order_status`` must PATCH the work-order endpoint with
+    the SPA-verified body shape: ``{"work_order": {"status_code": N},
+    "customer_id": "..."}``. ``customer_id`` is required by AppFolio; the
+    service falls back to the cached credential value (or resolves from
+    ``/profiles/me``) when not passed explicitly.
+
+    Regression: status updates were dropped in #1331 and reinstated when
+    vendors flagged they had lost the "mark complete" path.
+    """
+    cred = AppFolioCredential(
+        user_id="u1",
+        jwt="jwt-1",
+        fingerprint="fp-1",
+        customer_ids=["cust-9001"],
+        extra={},
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    response = _mock_response(json_data={"id": 999001, "status_code": 8})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.update_work_order_status("999001", status_code=8)
+
+    args, kwargs = client.request.call_args
+    assert args[0] == "PATCH"
+    assert args[1].endswith("/maintenance/api/work_orders/999001")
+    assert kwargs["json"] == {
+        "work_order": {"status_code": 8},
+        "customer_id": "cust-9001",
+    }
+
+
+@pytest.mark.asyncio()
+async def test_undo_work_order_status_sends_patch_to_undo_endpoint() -> None:
+    """``undo_work_order_status`` must PATCH the dedicated ``/undo_status``
+    sub-route with ``{"work_order": {"status": <prev>}, "customer_id":
+    "..."}``. AppFolio accepts either the int code or the string label for
+    ``previous_status``; the service passes through whatever the caller
+    supplied so the API-side validation stays canonical.
+    """
+    cred = AppFolioCredential(
+        user_id="u1",
+        jwt="jwt-1",
+        fingerprint="fp-1",
+        customer_ids=["cust-9001"],
+        extra={},
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    response = _mock_response(json_data={"id": 999001, "status_code": 4})
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.undo_work_order_status("999001", previous_status="in_progress")
+
+    args, kwargs = client.request.call_args
+    assert args[0] == "PATCH"
+    assert args[1].endswith("/maintenance/api/work_orders/999001/undo_status")
+    assert kwargs["json"] == {
+        "work_order": {"status": "in_progress"},
+        "customer_id": "cust-9001",
+    }
+
+
+def test_appfolio_vendor_factory_registers_status_write_tools() -> None:
+    """Registry must surface ``appfolio_update_work_order_status`` and
+    ``appfolio_undo_work_order_status`` as sub-tools of the
+    ``appfolio_vendor`` factory at ``ask`` permission.
+
+    Without these entries the LLM cannot see the tool on its schema,
+    cannot call it, and falls back to telling the user to flip status
+    manually in AppFolio — the exact regression that motivated bringing
+    these back.
+    """
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
+
+    ensure_tool_modules_imported()
+    sub_tools = default_registry.get_factory_sub_tools("appfolio_vendor")
+    by_name = {st.name: st for st in sub_tools}
+    update_st = by_name.get(ToolName.APPFOLIO_UPDATE_WORK_ORDER_STATUS)
+    undo_st = by_name.get(ToolName.APPFOLIO_UNDO_WORK_ORDER_STATUS)
+    assert update_st is not None, "update_work_order_status sub-tool missing from registry"
+    assert undo_st is not None, "undo_work_order_status sub-tool missing from registry"
+    assert update_st.default_permission == "ask"
+    assert undo_st.default_permission == "ask"
+
+
 def test_client_version_header_is_opaque_hex() -> None:
     """The ``X-Vendor-Portal-Web-Client`` header value must not identify
     Clawbolt to AppFolio. Match the SPA's git-SHA shape (40-char hex)."""

@@ -74,6 +74,8 @@ class ToolName:
     APPFOLIO_LIST_WORK_ORDERS = "appfolio_list_work_orders"
     APPFOLIO_SEARCH_WORK_ORDERS = "appfolio_search_work_orders"
     APPFOLIO_GET_WORK_ORDER = "appfolio_get_work_order"
+    APPFOLIO_UPDATE_WORK_ORDER_STATUS = "appfolio_update_work_order_status"
+    APPFOLIO_UNDO_WORK_ORDER_STATUS = "appfolio_undo_work_order_status"
     APPFOLIO_LIST_NOTES = "appfolio_list_notes"
     APPFOLIO_ADD_NOTE = "appfolio_add_note"
     APPFOLIO_UPDATE_NOTE = "appfolio_update_note"
