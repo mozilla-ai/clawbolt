@@ -492,6 +492,37 @@ class AppFolioVendorService:
         self._credential.customer_ids = ids
         return ids[0]
 
+    async def update_work_order_status(
+        self,
+        work_order_id: str,
+        *,
+        status_code: int,
+        customer_id: str | None = None,
+    ) -> Any:
+        """PATCH a work order's status code.
+
+        SPA-verified shape: ``{"work_order": {"status_code": N}, "customer_id": "..."}``.
+        snake_case throughout; ``customer_id`` is required.
+        """
+        cid = customer_id or await self._resolve_primary_customer_id()
+        return await self.patch(
+            f"/maintenance/api/work_orders/{work_order_id}",
+            json_body={"work_order": {"status_code": status_code}, "customer_id": cid},
+        )
+
+    async def undo_work_order_status(
+        self,
+        work_order_id: str,
+        *,
+        previous_status: int | str,
+        customer_id: str | None = None,
+    ) -> Any:
+        cid = customer_id or await self._resolve_primary_customer_id()
+        return await self.patch(
+            f"/maintenance/api/work_orders/{work_order_id}/undo_status",
+            json_body={"work_order": {"status": previous_status}, "customer_id": cid},
+        )
+
     # ------------------------------------------------------------------
     # Work-order notes
     # ------------------------------------------------------------------
