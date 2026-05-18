@@ -27,7 +27,7 @@ customers, HVAC / Plumbing / Electrical work, jobs in every common
 status (Scheduled, Dispatched, InProgress, Completed, Hold, Canceled),
 and appointments scattered around a fixed reference date ("today") so
 date-range filters have something to find. The data is shaped like a
-Denver-metro contractor's customer book so demo screenshots look like
+Pittsburgh-metro contractor's customer book so demo screenshots look like
 real customer-management work, but every value is fully synthetic per
 the project PII rules: names are common-name combinations not tied to
 any real person, addresses combine real cities with randomized street
@@ -147,7 +147,7 @@ def _seed_customers() -> list[dict[str, Any]]:
     address and one or two contacts (phone + optionally email or mobile).
     IDs start at 1001 to look like real ServiceTitan record numbers.
 
-    The dataset is shaped like a Denver-metro HVAC/plumbing/electrical
+    The dataset is shaped like a Pittsburgh-metro HVAC/plumbing/electrical
     contractor's customer book so demo screenshots feel like real
     customer-management work rather than placeholder fixtures. Every
     value is fully synthetic per the project PII rules:
@@ -171,9 +171,9 @@ def _seed_customers() -> list[dict[str, Any]]:
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
                 "street": "1247 Westwood Dr",
-                "city": "Lakewood",
-                "state": "CO",
-                "zip": "80232",
+                "city": "Mt Lebanon",
+                "state": "PA",
+                "zip": "15228",
                 "country": "USA",
             },
             "contacts": [
@@ -187,9 +187,9 @@ def _seed_customers() -> list[dict[str, Any]]:
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
                 "street": "832 Linden St",
-                "city": "Aurora",
-                "state": "CO",
-                "zip": "80012",
+                "city": "Penn Hills",
+                "state": "PA",
+                "zip": "15235",
                 "country": "USA",
             },
             "contacts": [
@@ -198,14 +198,14 @@ def _seed_customers() -> list[dict[str, Any]]:
         },
         {
             "id": 1003,
-            "name": "Cascade Heights Property Group",
+            "name": "Steelbrook Property Group",
             "type": CUSTOMER_TYPE_COMMERCIAL,
             "address": {
-                "street": "11500 E 40th Ave",
+                "street": "11500 Foundry Ave",
                 "unit": "Suite 240",
-                "city": "Denver",
-                "state": "CO",
-                "zip": "80239",
+                "city": "Pittsburgh",
+                "state": "PA",
+                "zip": "15222",
                 "country": "USA",
             },
             "contacts": [
@@ -213,7 +213,7 @@ def _seed_customers() -> list[dict[str, Any]]:
                 {
                     "id": 5005,
                     "type": CONTACT_TYPE_EMAIL,
-                    "value": "ops@cascadeheights.example.com",
+                    "value": "ops@steelbrook.example.com",
                 },
             ],
         },
@@ -223,9 +223,9 @@ def _seed_customers() -> list[dict[str, Any]]:
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
                 "street": "4218 Vassar Pl",
-                "city": "Englewood",
-                "state": "CO",
-                "zip": "80113",
+                "city": "Pittsburgh",
+                "state": "PA",
+                "zip": "15217",
                 "country": "USA",
             },
             "contacts": [
@@ -239,9 +239,9 @@ def _seed_customers() -> list[dict[str, Any]]:
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
                 "street": "3091 Birchwood Cir",
-                "city": "Centennial",
-                "state": "CO",
-                "zip": "80122",
+                "city": "Shaler",
+                "state": "PA",
+                "zip": "15116",
                 "country": "USA",
             },
             "contacts": [
@@ -254,9 +254,9 @@ def _seed_customers() -> list[dict[str, Any]]:
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
                 "street": "671 Ridgeline Way",
-                "city": "Boulder",
-                "state": "CO",
-                "zip": "80303",
+                "city": "Fox Chapel",
+                "state": "PA",
+                "zip": "15238",
                 "country": "USA",
             },
             "contacts": [
@@ -266,14 +266,14 @@ def _seed_customers() -> list[dict[str, Any]]:
         },
         {
             "id": 1007,
-            "name": "Larkspur Restaurant Partners",
+            "name": "Lantern District Restaurant Partners",
             "type": CUSTOMER_TYPE_COMMERCIAL,
             "address": {
                 "street": "5475 Tech Center Dr",
                 "unit": "Suite 800",
-                "city": "Greenwood Village",
-                "state": "CO",
-                "zip": "80111",
+                "city": "Cranberry Twp",
+                "state": "PA",
+                "zip": "16066",
                 "country": "USA",
             },
             "contacts": [
@@ -281,7 +281,7 @@ def _seed_customers() -> list[dict[str, Any]]:
                 {
                     "id": 5012,
                     "type": CONTACT_TYPE_EMAIL,
-                    "value": "facilities@larkspur-rp.example.com",
+                    "value": "facilities@lanternrp.example.com",
                 },
             ],
         },
@@ -291,9 +291,9 @@ def _seed_customers() -> list[dict[str, Any]]:
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
                 "street": "5544 Sage Hollow Rd",
-                "city": "Lakewood",
-                "state": "CO",
-                "zip": "80228",
+                "city": "Pittsburgh",
+                "state": "PA",
+                "zip": "15232",
                 "country": "USA",
             },
             "contacts": [
@@ -306,9 +306,9 @@ def _seed_customers() -> list[dict[str, Any]]:
             "type": CUSTOMER_TYPE_RESIDENTIAL,
             "address": {
                 "street": "1812 Cedar Bluff Ave",
-                "city": "Aurora",
-                "state": "CO",
-                "zip": "80016",
+                "city": "Bethel Park",
+                "state": "PA",
+                "zip": "15102",
                 "country": "USA",
             },
             "contacts": [
@@ -318,13 +318,13 @@ def _seed_customers() -> list[dict[str, Any]]:
         },
         {
             "id": 1010,
-            "name": "Highline Industrial Holdings",
+            "name": "Forge Industrial Holdings",
             "type": CUSTOMER_TYPE_COMMERCIAL,
             "address": {
                 "street": "8155 E Maplewood Ave",
-                "city": "Greenwood Village",
-                "state": "CO",
-                "zip": "80111",
+                "city": "Robinson Twp",
+                "state": "PA",
+                "zip": "15205",
                 "country": "USA",
             },
             "contacts": [
@@ -332,7 +332,7 @@ def _seed_customers() -> list[dict[str, Any]]:
                 {
                     "id": 5017,
                     "type": CONTACT_TYPE_EMAIL,
-                    "value": "ap@highline-ih.example.com",
+                    "value": "ap@forge-ih.example.com",
                 },
             ],
         },
