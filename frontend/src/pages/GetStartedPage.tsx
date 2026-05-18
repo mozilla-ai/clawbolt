@@ -248,7 +248,7 @@ export default function GetStartedPage() {
               {selectedChannel === 'none' ? (
                 <p className="text-sm text-muted-foreground mt-1">
                   You can always add a messaging channel later from the{' '}
-                  <button type="button" className="text-primary hover:underline font-medium" onClick={() => navigate('/app/channels')}>
+                  <button type="button" className="text-primary hover:underline font-medium" onClick={() => navigate('/app/settings/channels')}>
                     Channels page
                   </button>
                   .
@@ -332,7 +332,7 @@ export default function GetStartedPage() {
                               <button
                                 type="button"
                                 className="text-primary hover:underline font-medium"
-                                onClick={() => navigate('/app/channels')}
+                                onClick={() => navigate('/app/settings/channels')}
                               >
                                 set up a channel
                               </button>

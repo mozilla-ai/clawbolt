@@ -42,7 +42,7 @@ test.describe('OSS Smoke Tests', () => {
 
     // Primary nav items (visible by default).
     await expect(page.getByRole('link', { name: /chat/i })).toBeVisible();
-    await expect(page.getByRole('link', { name: /channels/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /approvals/i })).toBeVisible();
     await expect(page.getByRole('link', { name: /integrations/i })).toBeVisible();
     await expect(page.getByRole('link', { name: /settings/i })).toBeVisible();
 

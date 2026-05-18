@@ -508,7 +508,7 @@ describe('DashboardPage', () => {
     const channelsCard = screen.getByText('Channels').closest('[tabindex]');
     if (channelsCard) {
       await user.click(channelsCard);
-      expect(mockNavigate).toHaveBeenCalledWith('/app/channels');
+      expect(mockNavigate).toHaveBeenCalledWith('/app/settings/channels');
     }
   });
 
