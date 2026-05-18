@@ -18,7 +18,6 @@ const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const HeartbeatPage = lazy(() => import('@/pages/HeartbeatPage'));
 const SoulPage = lazy(() => import('@/pages/SoulPage'));
 const UserPage = lazy(() => import('@/pages/UserPage'));
-const ChannelsPage = lazy(() => import('@/pages/ChannelsPage'));
 const PermissionsPage = lazy(() => import('@/pages/PermissionsPage'));
 const ToolsPage = lazy(() => import('@/pages/ToolsPage'));
 const OAuthCallbackPage = lazy(() => import('@/pages/OAuthCallbackPage'));
