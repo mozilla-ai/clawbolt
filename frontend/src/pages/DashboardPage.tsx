@@ -199,7 +199,7 @@ export default function DashboardPage() {
           description="Messaging platforms your assistant listens on."
           configured={channelConfigured}
           icon={<ChannelsIcon />}
-          onClick={() => navigate('/app/channels')}
+          onClick={() => navigate('/app/settings/channels')}
           isLoading={channelData.isLoading}
           isError={channelData.isError}
         >

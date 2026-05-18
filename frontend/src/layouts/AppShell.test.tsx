@@ -91,7 +91,7 @@ describe('AppShell', () => {
     expect(screen.getByText('Priorities')).toBeInTheDocument();
     expect(screen.getByText('Personality')).toBeInTheDocument();
     expect(screen.getByText('About You')).toBeInTheDocument();
-    // Approvals is no longer a sidebar nav item; it's a Settings tab now.
+    // Channels is no longer a sidebar nav item; it's a Settings tab now.
     expect(screen.queryByText('Channels')).not.toBeInTheDocument();
   });
 
