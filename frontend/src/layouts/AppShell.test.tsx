@@ -66,12 +66,12 @@ describe('AppShell', () => {
     await waitFor(() => {
       expect(screen.getByText('Dashboard')).toBeInTheDocument();
     });
-    expect(screen.getByText('Channels')).toBeInTheDocument();
+    expect(screen.getByText('Approvals')).toBeInTheDocument();
     expect(screen.getByText('Integrations')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByText('Chat')).toBeInTheDocument();
     // Knowledge/Priorities/Personality/About You live under the
-    // "Personalize" fold; Approvals moved into Settings tabs.
+    // "Personalize" fold; Channels moved into Settings tabs.
     expect(screen.getByText('Personalize')).toBeInTheDocument();
     expect(screen.queryByText('Knowledge')).not.toBeInTheDocument();
   });
@@ -91,8 +91,8 @@ describe('AppShell', () => {
     expect(screen.getByText('Priorities')).toBeInTheDocument();
     expect(screen.getByText('Personality')).toBeInTheDocument();
     expect(screen.getByText('About You')).toBeInTheDocument();
-    // Approvals is no longer a sidebar nav item; it's a Settings tab now.
-    expect(screen.queryByText('Approvals')).not.toBeInTheDocument();
+    // Channels is no longer a sidebar nav item; it's a Settings tab now.
+    expect(screen.queryByText('Channels')).not.toBeInTheDocument();
   });
 
   it('renders Dashboard first and Chat last in sidebar', async () => {
@@ -108,6 +108,15 @@ describe('AppShell', () => {
       expect(links[0]?.textContent).toContain('Dashboard');
       expect(links[links.length - 1]?.textContent).toContain('Chat');
     }
+  });
+
+  it('does not render a Channels nav link (moved into Settings tabs)', async () => {
+    renderWithRouter(<AppShell />, { route: '/app' });
+
+    await waitFor(() => {
+      expect(screen.getByText('Approvals')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Channels')).not.toBeInTheDocument();
   });
 
   it('does not render a Conversations nav link', async () => {
