@@ -122,10 +122,10 @@ async def test_search_customers_by_name_returns_match(async_test_user: Any) -> N
         build_servicetitan_tools(service), ToolName.SERVICETITAN_SEARCH_CUSTOMERS
     )
 
-    result = await search.function(query="Cascade")
+    result = await search.function(query="Steelbrook")
     assert result.is_error is False
-    # Seed "Cascade Heights Property Group" has id 1003 and a phone in the 555 range.
-    assert "Cascade Heights Property Group" in result.content
+    # Seed "Steelbrook Property Group" has id 1003 and a phone in the 555 range.
+    assert "Steelbrook Property Group" in result.content
     assert "#1003" in result.content
 
 
@@ -184,7 +184,7 @@ async def test_search_customers_truncates_to_limit(async_test_user: Any) -> None
     )
 
     # Several seed customers (Marcus Chen, James Hollis, Rebecca Tran,
-    # Daniel Brennan, William Voss, Highline Industrial Holdings, ...)
+    # Daniel Brennan, Forge Industrial Holdings, ...)
     # include lower-case "e" somewhere in their names. The fake matches
     # case-insensitive substring on the ``name`` filter.
     result = await search.function(query="e", limit=2)
@@ -211,9 +211,9 @@ async def test_get_customer_returns_full_record(async_test_user: Any) -> None:
 
     result = await get_customer.function(customer_id=1003)
     assert result.is_error is False
-    assert "Cascade Heights Property Group" in result.content
+    assert "Steelbrook Property Group" in result.content
     assert "Commercial" in result.content
-    assert "11500 E 40th Ave" in result.content
+    assert "11500 Foundry Ave" in result.content
     assert "+15555550103" in result.content
 
 

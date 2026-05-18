@@ -194,13 +194,13 @@ async def test_customers_search_by_name(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
         f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
-        params={"name": "cascade"},
+        params={"name": "steelbrook"},
         headers={"Authorization": f"Bearer {bearer}"},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["totalCount"] == 1
-    assert body["data"][0]["name"] == "Cascade Heights Property Group"
+    assert body["data"][0]["name"] == "Steelbrook Property Group"
 
 
 @pytest.mark.asyncio()
@@ -262,12 +262,12 @@ async def test_customers_search_by_city(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
         f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
-        params={"city": "lakewood"},
+        params={"city": "pittsburgh"},
         headers={"Authorization": f"Bearer {bearer}"},
     )
     body = resp.json()
     assert body["totalCount"] >= 1
-    assert all("lakewood" in c["address"]["city"].lower() for c in body["data"])
+    assert all("pittsburgh" in c["address"]["city"].lower() for c in body["data"])
 
 
 @pytest.mark.asyncio()
@@ -275,13 +275,13 @@ async def test_customers_search_by_state(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
         f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers",
-        params={"state": "CO"},
+        params={"state": "PA"},
         headers={"Authorization": f"Bearer {bearer}"},
     )
     body = resp.json()
-    # Every seed customer lives in CO, so the filter matches the whole set.
+    # Every seed customer lives in PA, so the filter matches the whole set.
     assert body["totalCount"] == 10
-    assert all(c["address"]["state"] == "CO" for c in body["data"])
+    assert all(c["address"]["state"] == "PA" for c in body["data"])
 
 
 @pytest.mark.asyncio()
