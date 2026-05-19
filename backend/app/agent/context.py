@@ -314,8 +314,20 @@ def _stored_messages_to_agent_messages(messages: list[Any]) -> list[AgentMessage
     history: list[AgentMessage] = []
     last_was_approval_prompt = False
     for msg in messages:
-        # Prefer processed context (includes media descriptions) over raw body
-        content = msg.processed_context if msg.processed_context else msg.body
+        if msg.direction == MessageDirection.OUTBOUND:
+            # Feed the LLM its pre-receipt prose, not the dispatched body.
+            # The dispatched body has the deterministic receipt block
+            # appended by ``append_receipts``; reading it back here on the
+            # next turn would train the model on its own appended
+            # receipts, after which it reproduces the bullet on the next
+            # write turn and the receipt grep has to clean it up
+            # post-hoc. ``llm_reply_text`` is populated by
+            # ``persist_outbound``; legacy rows (before migration 037)
+            # have it empty and fall back to ``body``.
+            content = msg.llm_reply_text or msg.body
+        else:
+            # Prefer processed context (includes media descriptions) over raw body
+            content = msg.processed_context if msg.processed_context else msg.body
         if msg.direction == MessageDirection.INBOUND:
             # Rapid-fire attachment-only messages can be batched so the
             # placeholder row is persisted with no body and no processed

@@ -224,6 +224,66 @@ def test_append_strips_multiple_fabricated_bullets() -> None:
     assert body.startswith("Both reminders are set.")
 
 
+def test_append_strips_gmail_fabricated_bullet() -> None:
+    """Regression: Jesse's transcript shipped "- Sent email to X" right next
+    to the canonical "- Sent email via Gmail X" because "sent" / "email"
+    weren't in the hand-maintained strip vocabulary. After switching to
+    auto-derived nouns (and adding "sent" to the global verb set), the
+    fabricated bullet gets caught."""
+    body = append_receipts(
+        ("Sent.\n\n- Sent email to jane.doe@example.com"),
+        [
+            _tc_with_receipt(
+                "gmail_send",
+                action="Sent email via Gmail",
+                target="jane.doe@example.com",
+            )
+        ],
+    )
+    assert "- Sent email to jane.doe@example.com" not in body
+    assert body.count("- Sent email via Gmail jane.doe@example.com") == 1
+    assert body.startswith("Sent.")
+
+
+def test_strip_nouns_auto_derive_from_novel_action() -> None:
+    """A brand-new write-side tool with an unfamiliar action verb / noun
+    pair still gets a working strip on its first occurrence. No
+    per-integration maintenance on the strip vocabulary required."""
+    body = append_receipts(
+        ("Done.\n\n- Posted update to project channel #remodel-jobs"),
+        [
+            _tc_with_receipt(
+                "slack_post",
+                action="Posted Slack channel update",
+                target="#remodel-jobs",
+            )
+        ],
+    )
+    # Auto-derived nouns from "Posted Slack channel update" include
+    # "channel" and "update", and "posted" is in the verb set.
+    assert "- Posted update to project channel" not in body
+    assert "- Posted Slack channel update #remodel-jobs" in body
+
+
+def test_strip_skips_stopwords_in_receipt_action() -> None:
+    """Stopwords ("via", "to") in the receipt action must not become
+    strip nouns. Otherwise a bullet like "- Created a quick note for the
+    team" would be stripped just because "for" appeared in the action
+    "Sent email via Gmail" or similar."""
+    body = append_receipts(
+        ("All set.\n\n- Created a quick note for the team"),
+        [
+            _tc_with_receipt(
+                "gmail_send",
+                action="Sent email via Gmail",
+                target="team@example.com",
+            )
+        ],
+    )
+    # The bullet stays — "for" is a stopword, not a strip noun.
+    assert "- Created a quick note for the team" in body
+
+
 def test_append_strips_delete_fabricated_bullet() -> None:
     """The LLM also fabricates "Deleted Google Calendar event:" lines for
     cancellations. Same scrub should catch them."""

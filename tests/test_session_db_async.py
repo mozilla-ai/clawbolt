@@ -193,6 +193,37 @@ async def test_add_message_async_round_trips_thinking_text(
     )
 
 
+async def test_add_message_async_round_trips_llm_reply_text(
+    async_db: async_sessionmaker,
+) -> None:
+    """Outbound messages persist and re-read the pre-receipt LLM prose.
+
+    ``body`` and ``llm_reply_text`` are stored independently so the
+    history rebuilder can feed the LLM its own pre-receipt text on the
+    next turn without the appended receipt block contaminating its
+    context (see ``backend/app/agent/context.py``). This test pins both:
+    the column survives the round-trip through ``EncryptedString``, and
+    the DTO carries the value back to callers without a reload.
+    """
+    user_id = await _create_user(async_db)
+    store = SessionStore(user_id)
+    session, _ = await store.get_or_create_session_async()
+
+    saved = await store.add_message_async(
+        session,
+        direction="outbound",
+        body="Sent.\n\n- Sent email via Gmail jane.doe@example.com",
+        llm_reply_text="Sent.",
+    )
+    assert saved.body == "Sent.\n\n- Sent email via Gmail jane.doe@example.com"
+    assert saved.llm_reply_text == "Sent."
+
+    reloaded = await store.load_session_async(session.session_id)
+    assert reloaded is not None
+    assert reloaded.messages[-1].body == ("Sent.\n\n- Sent email via Gmail jane.doe@example.com")
+    assert reloaded.messages[-1].llm_reply_text == "Sent."
+
+
 async def test_add_message_by_session_id_async_assigns_seq_independently(
     async_db: async_sessionmaker,
 ) -> None:

@@ -1088,12 +1088,18 @@ async def run_heartbeat_for_user(
 
         session, _ = await get_or_create_conversation(user.id)
         session_store = get_session_store(user.id)
+        # Heartbeats do not run through ``dispatch_reply_step`` so no
+        # receipt block is appended; ``body`` and ``llm_reply_text`` are
+        # the same prose. Writing both anyway keeps the column populated
+        # so the history rebuilder never has to fall back to ``body`` for
+        # heartbeat-driven turns.
         await session_store.add_message(
             session=session,
             direction=MessageDirection.OUTBOUND,
             body=reply_text,
             tool_interactions_json=tool_interactions,
             thinking_text=response.thinking_text if response else "",
+            llm_reply_text=reply_text,
         )
 
         # Record heartbeat log for persistent rate limiting

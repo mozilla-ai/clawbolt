@@ -426,11 +426,17 @@ async def persist_outbound(
     if response.tool_calls:
         tool_interactions = json.dumps([tc.model_dump(mode="json") for tc in response.tool_calls])
 
-    # Store the body that was actually dispatched to the user (LLM prose +
-    # any receipt block) so the DB matches what the user saw. Falls back to
-    # ``reply_text`` for code paths that bypass ``dispatch_reply_step``
-    # (heartbeats, error fallbacks).
+    # ``body`` is what the user saw (LLM prose + receipt block); falls back
+    # to ``reply_text`` for code paths that bypass ``dispatch_reply_step``
+    # (heartbeats, error fallbacks). ``llm_reply_text`` is the LLM's prose
+    # *before* the receipt block was appended, kept around so the history
+    # rebuild on the next turn can feed the LLM its own text without the
+    # receipt block (see ``backend/app/agent/context.py``). When the two
+    # are identical (no receipt was appended), we still write
+    # ``llm_reply_text`` so legacy-row fallback can distinguish "no LLM
+    # reply persisted" from "LLM reply equals body".
     body = response.dispatched_body or response.reply_text
+    llm_reply_text = response.reply_text
 
     session_store = get_session_store(user_id)
     await session_store.add_message(
@@ -439,6 +445,7 @@ async def persist_outbound(
         body=body,
         tool_interactions_json=tool_interactions,
         thinking_text=response.thinking_text,
+        llm_reply_text=llm_reply_text,
     )
 
 

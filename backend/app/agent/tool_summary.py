@@ -271,8 +271,11 @@ def append_receipts(reply_text: str, tool_calls: list[StoredToolInteraction]) ->
 # "saved", "added", "set", "moved", "named", "organized") to avoid
 # stripping legitimate user-facing prose like "Saved $5k by switching
 # estimate templates" or "Added 3 hours to the labor estimate".
-# In prod we only saw the LLM fabricate with "Created", "Scheduled",
-# "Deleted"; the rest are receipt-flavored siblings of those.
+#
+# The verb set is intentionally global rather than auto-derived from the
+# receipts in scope: the LLM frequently uses a synonym for the receipt's
+# verb (receipt says "Scheduled calendar event", LLM bullet says
+# "Created calendar event"), and the strip should catch that.
 _FABRICATED_RECEIPT_VERBS: frozenset[str] = frozenset(
     {
         "archived",
@@ -280,46 +283,76 @@ _FABRICATED_RECEIPT_VERBS: frozenset[str] = frozenset(
         "cancelled",
         "created",
         "deleted",
+        "emailed",
+        "filed",
         "modified",
+        "posted",
         "removed",
+        "replied",
         "scheduled",
+        "sent",
+        "submitted",
         "tagged",
         "updated",
         "uploaded",
     }
 )
 
-# Subject nouns the LLM uses when it fabricates a receipt-shaped bullet
-# for a calendar/photo/job/accounting action. The bullet must mention
-# at least one of these to qualify for stripping; this keeps the filter
-# conservative (an unrelated bullet like "- Saved progress for next
-# time" stays put because none of these nouns appear).
-_FABRICATED_RECEIPT_NOUNS: frozenset[str] = frozenset(
+# Stopwords pulled from receipt action strings before they become strip
+# nouns. Keeps "Sent email via Gmail" from contributing "via" as a noun.
+_RECEIPT_ACTION_STOPWORDS: frozenset[str] = frozenset(
     {
-        "appointment",
-        "bill",
-        "calendar",
-        "checklist",
-        "comment",
-        "customer",
-        "document",
-        "estimate",
-        "event",
-        "file",
-        "image",
-        "invoice",
-        "meeting",
-        "memo",
-        "note",
-        "photo",
-        "project",
-        "reminder",
-        "tag",
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "via",
+        "with",
     }
 )
 
 _BULLET_RE = re.compile(r"^\s*-\s+(\w+)(.*)$")
 _INDENT_RE = re.compile(r"^\s{2,}\S")
+_WORD_SPLIT_RE = re.compile(r"[^\w]+")
+
+
+def _strip_nouns_from_receipts(tool_calls: list[StoredToolInteraction]) -> set[str]:
+    """Pull strip-eligible nouns out of this turn's actual receipts.
+
+    Each receipt's ``action`` string is split into words; the first word
+    is the verb and is dropped (the verb set is global, see above), and
+    the remainder contributes content nouns. Stopwords ("via", "to",
+    "for") and short tokens are filtered. Lowercased. Empty when the
+    turn produced no real receipts.
+
+    Auto-derivation replaces the hand-maintained noun list this filter
+    used to ship. New integrations (a Gmail ``Sent email via Gmail``
+    action, a future Slack ``Posted message to channel`` action) get
+    coverage for free: their action verbiage IS the strip vocabulary
+    for that turn. Conservative by construction because the match is
+    only valid against actions that actually fired in this turn, so an
+    unrelated bullet using the same noun in a non-receipt turn is left
+    alone (the outer strip is already gated on ``has_real_receipt``).
+    """
+    nouns: set[str] = set()
+    for tc in tool_calls:
+        if tc.is_error or tc.receipt is None or not tc.receipt.action:
+            continue
+        words = [w.lower() for w in _WORD_SPLIT_RE.split(tc.receipt.action) if w]
+        for word in words[1:]:  # skip the verb
+            if len(word) >= 3 and word not in _RECEIPT_ACTION_STOPWORDS:
+                nouns.add(word)
+    return nouns
 
 
 def _strip_fabricated_receipts(
@@ -332,17 +365,18 @@ def _strip_fabricated_receipts(
     receipt, so on tool-less responses (or read-only tool turns) we never
     touch the LLM's output. A bullet qualifies for stripping when it
     starts with ``-`` followed by a known write-side action verb AND
-    mentions a known subject noun (``event``, ``photo``, ``project``,
-    etc.). Any indented continuation line immediately after a stripped
-    bullet (the LLM's "Thu Apr 30, 12:00 PM" date line) is also dropped.
+    mentions a noun pulled from a real receipt that fired this turn
+    (see :func:`_strip_nouns_from_receipts`). Any indented continuation
+    line immediately after a stripped bullet (the LLM's "Thu Apr 30,
+    12:00 PM" date line) is also dropped.
 
     Trailing blank lines created by the strip are collapsed so the
     canonical receipt block joins cleanly afterward.
     """
     if not reply_text:
         return reply_text
-    has_real_receipt = any(not tc.is_error and tc.receipt is not None for tc in tool_calls)
-    if not has_real_receipt:
+    nouns = _strip_nouns_from_receipts(tool_calls)
+    if not nouns:
         return reply_text
 
     lines = reply_text.split("\n")
@@ -357,9 +391,7 @@ def _strip_fabricated_receipts(
         if match:
             verb = match.group(1).lower()
             rest = match.group(2).lower()
-            if verb in _FABRICATED_RECEIPT_VERBS and any(
-                noun in rest for noun in _FABRICATED_RECEIPT_NOUNS
-            ):
+            if verb in _FABRICATED_RECEIPT_VERBS and any(noun in rest for noun in nouns):
                 drop_indented = True
                 continue
         kept.append(line)

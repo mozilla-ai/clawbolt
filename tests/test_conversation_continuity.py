@@ -105,6 +105,55 @@ async def test_load_history_prefers_processed_context(
 
 
 @pytest.mark.asyncio()
+async def test_load_history_outbound_uses_llm_reply_text_when_set(
+    conversation: SessionState,
+) -> None:
+    """Outbound history should feed the LLM its pre-receipt prose, not the
+    dispatched body.
+
+    The dispatched body includes the deterministic receipt block. Reading
+    it back next turn would train the model on its own appended receipts
+    and force the post-hoc grep dedup to clean up the imitation. Storing
+    ``llm_reply_text`` separately and preferring it here closes the loop.
+    """
+    conversation.messages.append(
+        StoredMessage(
+            direction="outbound",
+            body="Sent.\n\n- Sent email via Gmail jane.doe@example.com",
+            llm_reply_text="Sent.",
+            seq=1,
+        )
+    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=2))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 1
+    assert history[0].content == "Sent."
+
+
+@pytest.mark.asyncio()
+async def test_load_history_outbound_falls_back_to_body_for_legacy_rows(
+    conversation: SessionState,
+) -> None:
+    """Rows persisted before migration 037 have an empty ``llm_reply_text``;
+    the rebuild path must fall back to ``body`` so legacy conversations
+    keep loading. New turns will fix forward as they get persisted."""
+    conversation.messages.append(
+        StoredMessage(
+            direction="outbound",
+            body="Got it.",
+            llm_reply_text="",
+            seq=1,
+        )
+    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=2))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 1
+    assert history[0].content == "Got it."
+
+
+@pytest.mark.asyncio()
 async def test_load_history_skips_blank_inbound_placeholder_rows(
     conversation: SessionState,
 ) -> None:
