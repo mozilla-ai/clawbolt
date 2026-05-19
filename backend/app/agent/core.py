@@ -682,7 +682,11 @@ class ClawboltAgent:
                 # this" preview hoping the LLM would skip restating it;
                 # the LLM restated it anyway and ``append_receipts``
                 # then added a second copy at dispatch, doubling every
-                # receipt block in the outbound message.
+                # receipt block in the outbound message. Migration 037
+                # also closes the cross-turn version of this loop by
+                # storing the LLM's pre-receipt prose in
+                # ``messages.llm_reply_text`` so the history rebuilder
+                # does not train the model on its own appended receipts.
             record = StoredToolInteraction(
                 tool_call_id=tc_req.id,
                 name=tool_name,
