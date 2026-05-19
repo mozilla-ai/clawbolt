@@ -1,5 +1,4 @@
 import { render } from '@testing-library/react';
-import { createElement } from 'react';
 import { getExtraNavItems } from '@/extensions/nav';
 
 const APPROVALS_SHIELD_CHECK_PATH_PREFIX = 'M9 12l2 2 4-4';
@@ -14,7 +13,7 @@ describe('getExtraNavItems', () => {
   it('renders the Admin icon with a different SVG path than the Approvals shield-check', () => {
     const items = getExtraNavItems(false, true);
     const Icon = items[0]!.icon;
-    const { container } = render(createElement(Icon));
+    const { container } = render(<Icon />);
     const path = container.querySelector('path')?.getAttribute('d') ?? '';
     expect(path).not.toBe('');
     expect(path.startsWith(APPROVALS_SHIELD_CHECK_PATH_PREFIX)).toBe(false);
