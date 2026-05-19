@@ -22,6 +22,7 @@ from backend.app.integrations.gmail.factory import (
     create_gmail_tools,
 )
 from backend.app.integrations.gmail.service import (
+    GmailAttachment,
     GmailMessage,
     GmailMessageSummary,
     GmailSendResult,
@@ -38,6 +39,7 @@ from backend.app.services.oauth import (
     get_oauth_config,
     list_oauth_integrations,
 )
+from backend.app.services.storage_service import SavedFile, StorageBackend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -846,3 +848,404 @@ def test_manage_integration_hint_mentions_gmail() -> None:
     hint = _build_available_integrations_hint(default_registry)
     assert "Gmail" in hint
     assert "'gmail'" in hint
+
+
+# ---------------------------------------------------------------------------
+# Attachment support
+# ---------------------------------------------------------------------------
+
+
+def _parse_rfc822(raw: bytes) -> Any:
+    """Parse an RFC822 bytes blob into an EmailMessage for inspection."""
+    from email import message_from_bytes
+    from email.policy import default
+
+    return message_from_bytes(raw, policy=default)
+
+
+def test_build_rfc822_with_attachments_is_multipart_with_named_parts() -> None:
+    """An RFC822 message with attachments is multipart and each attachment
+    carries the right MIME type and filename."""
+    attachments = [
+        GmailAttachment(
+            content=b"%PDF-1.4 fake pdf payload",
+            maintype="application",
+            subtype="pdf",
+            filename="invoice_001.pdf",
+        ),
+        GmailAttachment(
+            content=b"\x89PNG\r\n\x1a\nfake png",
+            maintype="image",
+            subtype="png",
+            filename="site_photo.png",
+        ),
+    ]
+    raw = _build_rfc822(
+        sender="me@example.com",
+        to=["jane.doe@example.com"],
+        subject="receipts",
+        body="See attached.",
+        attachments=attachments,
+    )
+    parsed = _parse_rfc822(raw)
+    assert parsed.is_multipart()
+
+    parts = list(parsed.iter_parts())
+    # First part is the text body, then one part per attachment.
+    body_parts = [p for p in parts if p.get_content_maintype() == "text"]
+    attach_parts = [p for p in parts if p.get_filename()]
+    assert len(body_parts) == 1
+    assert body_parts[0].get_content().strip() == "See attached."
+
+    filenames = {p.get_filename() for p in attach_parts}
+    assert filenames == {"invoice_001.pdf", "site_photo.png"}
+
+    pdf_part = next(p for p in attach_parts if p.get_filename() == "invoice_001.pdf")
+    assert pdf_part.get_content_type() == "application/pdf"
+    assert pdf_part.get_content_disposition() == "attachment"
+
+    png_part = next(p for p in attach_parts if p.get_filename() == "site_photo.png")
+    assert png_part.get_content_type() == "image/png"
+
+
+def test_build_rfc822_without_attachments_stays_non_multipart() -> None:
+    """A message with no attachments must not be promoted to multipart, so
+    the existing single-part behaviour is preserved for callers that don't
+    pass attachments."""
+    raw = _build_rfc822(
+        sender="me@example.com",
+        to=["jane.doe@example.com"],
+        subject="hi",
+        body="hello",
+    )
+    parsed = _parse_rfc822(raw)
+    assert parsed.is_multipart() is False
+
+
+class _FakeStorage(StorageBackend):
+    """Minimal in-memory StorageBackend for attachment tests.
+
+    Maps storage paths to (SavedFile, bytes). ``download_file`` raises
+    FileNotFoundError when the path is unknown or marked as a folder, which
+    is the same shape ``GoogleDriveStorage.download_file`` uses.
+    """
+
+    def __init__(
+        self,
+        files: dict[str, tuple[SavedFile, bytes]] | None = None,
+        folder_paths: set[str] | None = None,
+    ) -> None:
+        self._files: dict[str, tuple[SavedFile, bytes]] = files or {}
+        self._folder_paths: set[str] = folder_paths or set()
+
+    async def upload_file(
+        self,
+        file_bytes: bytes,
+        path: str,
+        filename: str,
+        *,
+        mime_type: str = "application/octet-stream",
+        description: str = "",
+    ) -> SavedFile:
+        raise NotImplementedError
+
+    async def create_folder(self, path: str) -> str:
+        raise NotImplementedError
+
+    async def move_file(
+        self, from_path: str, from_filename: str, to_path: str, to_filename: str
+    ) -> SavedFile:
+        raise NotImplementedError
+
+    async def list_folder(self, path: str) -> list[SavedFile]:
+        raise NotImplementedError
+
+    async def download_file(self, path: str) -> bytes:
+        if path in self._folder_paths:
+            msg = f"Cannot download a folder path from storage: {path}"
+            raise FileNotFoundError(msg)
+        if path not in self._files:
+            msg = f"File not found in storage: {path}"
+            raise FileNotFoundError(msg)
+        return self._files[path][1]
+
+    async def get_file(self, path: str) -> SavedFile | None:
+        if path in self._files:
+            return self._files[path][0]
+        return None
+
+    async def search_files(self, query: str = "", limit: int = 10) -> list[SavedFile]:
+        if not query.strip():
+            return [saved for saved, _ in self._files.values()][:limit]
+        out: list[SavedFile] = []
+        q = query.lower()
+        for saved, _ in self._files.values():
+            if q in saved.path.lower() or q in saved.name.lower():
+                out.append(saved)
+        return out[:limit]
+
+
+def _saved(path: str, name: str | None = None) -> SavedFile:
+    return SavedFile(path=path, name=name or path.rsplit("/", 1)[-1])
+
+
+@pytest.mark.asyncio()
+async def test_gmail_send_with_attachments_resolves_paths_and_calls_service() -> None:
+    """End-to-end: the tool resolves saved-file paths and forwards them to
+    the service as GmailAttachment records, which then build a multipart
+    RFC822 message."""
+    service = _make_service()
+    storage = _FakeStorage(
+        files={
+            "/Acme Plumbing/receipts/invoice_001.pdf": (
+                _saved("/Acme Plumbing/receipts/invoice_001.pdf"),
+                b"%PDF-1.4 fake",
+            ),
+            "/Acme Plumbing/photos/site.jpg": (
+                _saved("/Acme Plumbing/photos/site.jpg"),
+                b"\xff\xd8\xff fake jpeg",
+            ),
+        }
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_send_message(**kwargs: Any) -> GmailSendResult:
+        captured.update(kwargs)
+        return GmailSendResult(id="sent-1", thread_id="thread-1")
+
+    with patch.object(service, "send_message", side_effect=fake_send_message):
+        tools = create_gmail_tools(service, storage=storage)
+        tool = _get_tool(tools, ToolName.GMAIL_SEND)
+        result = await tool.function(
+            ["jane.doe@example.com"],
+            "Receipts",
+            "Please find attached.",
+            "",
+            [
+                "/Acme Plumbing/receipts/invoice_001.pdf",
+                "/Acme Plumbing/photos/site.jpg",
+            ],
+        )
+
+    assert result.is_error is False
+    assert result.receipt is not None
+    # Receipt should mention attachment count.
+    assert "2 attachments" in result.receipt.target
+
+    attachments = captured["attachments"]
+    assert [a.filename for a in attachments] == ["invoice_001.pdf", "site.jpg"]
+    assert attachments[0].maintype == "application"
+    assert attachments[0].subtype == "pdf"
+    assert attachments[1].maintype == "image"
+    assert attachments[1].subtype == "jpeg"
+
+
+@pytest.mark.asyncio()
+async def test_gmail_send_attachments_reject_total_over_cap() -> None:
+    """Sum of attachment bytes over 20 MB must return a VALIDATION error
+    before any send is attempted."""
+    service = _make_service()
+    big_payload = b"\x00" * (11 * 1024 * 1024)  # 11 MB each
+    storage = _FakeStorage(
+        files={
+            "/big/a.bin": (_saved("/big/a.bin"), big_payload),
+            "/big/b.bin": (_saved("/big/b.bin"), big_payload),
+        }
+    )
+
+    with patch.object(service, "send_message", new_callable=AsyncMock) as mock_send:
+        tools = create_gmail_tools(service, storage=storage)
+        tool = _get_tool(tools, ToolName.GMAIL_SEND)
+        result = await tool.function(
+            ["jane.doe@example.com"],
+            "huge",
+            "body",
+            "",
+            ["/big/a.bin", "/big/b.bin"],
+        )
+
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "20 MB" in result.content
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_gmail_send_attachments_unknown_extension_falls_back_to_octet_stream() -> None:
+    """An attachment whose extension mimetypes can't classify still attaches,
+    as application/octet-stream."""
+    service = _make_service()
+    storage = _FakeStorage(
+        files={
+            "/Acme/data/blob.weirdext": (_saved("/Acme/data/blob.weirdext"), b"opaque bytes"),
+        }
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_send_message(**kwargs: Any) -> GmailSendResult:
+        captured.update(kwargs)
+        return GmailSendResult(id="sent-1", thread_id="thread-1")
+
+    with patch.object(service, "send_message", side_effect=fake_send_message):
+        tools = create_gmail_tools(service, storage=storage)
+        tool = _get_tool(tools, ToolName.GMAIL_SEND)
+        result = await tool.function(
+            ["jane.doe@example.com"],
+            "weird",
+            "body",
+            "",
+            ["/Acme/data/blob.weirdext"],
+        )
+
+    assert result.is_error is False
+    attachments = captured["attachments"]
+    assert len(attachments) == 1
+    assert attachments[0].maintype == "application"
+    assert attachments[0].subtype == "octet-stream"
+
+
+@pytest.mark.asyncio()
+async def test_gmail_send_rejects_folder_path_attachment() -> None:
+    """A path ending with '/' is a folder reference and must be rejected
+    with a clean validation error, not a 500."""
+    service = _make_service()
+    storage = _FakeStorage()
+    with patch.object(service, "send_message", new_callable=AsyncMock) as mock_send:
+        tools = create_gmail_tools(service, storage=storage)
+        tool = _get_tool(tools, ToolName.GMAIL_SEND)
+        result = await tool.function(
+            ["jane.doe@example.com"],
+            "s",
+            "b",
+            "",
+            ["/Acme Plumbing/receipts/"],
+        )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "folder" in result.content.lower()
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_gmail_send_surfaces_download_filenotfound_as_validation() -> None:
+    """If the storage backend raises FileNotFoundError (e.g. the path resolves
+    to a folder in Drive), the tool surfaces a validation error rather than
+    letting the exception bubble up as a 500-style SERVICE failure."""
+    service = _make_service()
+    storage = _FakeStorage(
+        # The path resolves via get_file (we register it as a SavedFile) but
+        # download_file raises FileNotFoundError, mimicking Drive folder
+        # behaviour.
+        files={
+            "/Acme/photos/site_folder_lookalike": (
+                _saved("/Acme/photos/site_folder_lookalike"),
+                b"unused",
+            ),
+        },
+        folder_paths={"/Acme/photos/site_folder_lookalike"},
+    )
+    with patch.object(service, "send_message", new_callable=AsyncMock) as mock_send:
+        tools = create_gmail_tools(service, storage=storage)
+        tool = _get_tool(tools, ToolName.GMAIL_SEND)
+        result = await tool.function(
+            ["jane.doe@example.com"],
+            "s",
+            "b",
+            "",
+            ["/Acme/photos/site_folder_lookalike"],
+        )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_gmail_send_attachment_with_no_storage_backend_is_rejected() -> None:
+    """When Drive isn't connected (storage is None), any attachment request
+    must error cleanly so the user gets pointed at the Drive connect flow."""
+    service = _make_service()
+    tools = create_gmail_tools(service, storage=None)
+    tool = _get_tool(tools, ToolName.GMAIL_SEND)
+    result = await tool.function(
+        ["jane.doe@example.com"],
+        "s",
+        "b",
+        "",
+        ["/Acme Plumbing/receipts/inv.pdf"],
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "drive" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_gmail_send_without_attachments_still_works() -> None:
+    """Backwards-compat: callers that don't pass attachments get the same
+    plain-text behaviour as before."""
+    service = _make_service()
+    sent = GmailSendResult(id="sent-1", thread_id="thread-1")
+    with patch.object(service, "send_message", new_callable=AsyncMock, return_value=sent):
+        tools = create_gmail_tools(service, storage=_FakeStorage())
+        tool = _get_tool(tools, ToolName.GMAIL_SEND)
+        result = await tool.function(["jane.doe@example.com"], "subj", "body")
+    assert result.is_error is False
+    assert result.receipt is not None
+    # No attachment count in the receipt when there are no attachments.
+    assert "attachment" not in result.receipt.target.lower()
+
+
+def test_gmail_send_approval_description_mentions_attachment_count() -> None:
+    """The approval prompt has to tell the user how many attachments are
+    on the outgoing message before they say yes."""
+    service = _make_service()
+    tools = create_gmail_tools(service)
+    tool = _get_tool(tools, ToolName.GMAIL_SEND)
+    assert tool.approval_policy is not None
+    assert tool.approval_policy.description_builder is not None
+    desc = tool.approval_policy.description_builder(
+        {
+            "to": ["jane.doe@example.com"],
+            "attachments": ["/Acme/receipts/inv.pdf", "/Acme/photos/site.jpg"],
+        }
+    )
+    assert "jane.doe@example.com" in desc
+    assert "2 attachments" in desc
+
+    # Singular noun for one attachment.
+    desc_one = tool.approval_policy.description_builder(
+        {"to": ["jane.doe@example.com"], "attachments": ["/Acme/receipts/inv.pdf"]}
+    )
+    assert "1 attachment" in desc_one
+    assert "attachments" not in desc_one  # exact singular form
+
+    # Reply path still reads as "Reply via Gmail".
+    desc_reply = tool.approval_policy.description_builder(
+        {
+            "to": ["jane.doe@example.com"],
+            "reply_to_message_id": "m1",
+            "attachments": ["/Acme/receipts/inv.pdf"],
+        }
+    )
+    assert desc_reply.startswith("Reply via Gmail")
+    assert "1 attachment" in desc_reply
+
+
+@pytest.mark.asyncio()
+async def test_gmail_send_attachment_missing_file_returns_not_found() -> None:
+    """A path that doesn't resolve via find_saved_file/search must surface
+    NOT_FOUND rather than a generic SERVICE error."""
+    service = _make_service()
+    storage = _FakeStorage()
+    with patch.object(service, "send_message", new_callable=AsyncMock) as mock_send:
+        tools = create_gmail_tools(service, storage=storage)
+        tool = _get_tool(tools, ToolName.GMAIL_SEND)
+        result = await tool.function(
+            ["jane.doe@example.com"],
+            "s",
+            "b",
+            "",
+            ["/Acme Plumbing/missing.pdf"],
+        )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.NOT_FOUND
+    mock_send.assert_not_called()

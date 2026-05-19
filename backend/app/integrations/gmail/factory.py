@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import mimetypes
 from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+from backend.app.agent.saved_media import find_saved_file, read_saved_file_bytes
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
@@ -30,16 +32,26 @@ from backend.app.integrations._google_errors import (
     parse_google_api_error,
 )
 from backend.app.integrations.gmail.service import (
+    GmailAttachment,
     GmailMessage,
     GmailMessageSummary,
     GmailService,
 )
 from backend.app.services.oauth import oauth_service
+from backend.app.services.storage_service import StorageBackend
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
+
+
+# Gmail enforces a 25 MB cap on the whole RFC 5322 message (after Gmail
+# base64-encodes the bytes for the API). We bound the raw attachment payload
+# at 20 MB so the base64 expansion (~33%), headers, and body still leave us
+# under Gmail's wire limit instead of relying on Gmail to reject it.
+# Source: https://support.google.com/mail/answer/6584
+_MAX_ATTACHMENT_TOTAL_BYTES = 20 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +117,15 @@ class GmailSendParams(BaseModel):
             "send a brand-new message."
         ),
     )
+    attachments: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional list of saved-file storage paths to attach (e.g. "
+            "'/Acme Plumbing/receipts/invoice_001.pdf'). Use find_saved_files "
+            "to discover paths. Each entry must point to an individual file, "
+            "not a folder. Total attachment size is capped at 20 MB."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +171,128 @@ def _format_message(m: GmailMessage) -> str:
     lines.append("Body:")
     lines.append(m.body or "(empty body)")
     return "\n".join(lines)
+
+
+def _describe_gmail_send(args: dict[str, object]) -> str:
+    """Approval-prompt description for ``gmail_send``.
+
+    Mentions attachment count when present so the user knows the prompt is
+    not just "send this text body" before they approve.
+    """
+    raw_attachments = args.get("attachments")
+    attachment_count = len(raw_attachments) if isinstance(raw_attachments, list) else 0
+    suffix = ""
+    if attachment_count:
+        noun = "attachment" if attachment_count == 1 else "attachments"
+        suffix = f" with {attachment_count} {noun}"
+    if args.get("reply_to_message_id"):
+        return f"Reply via Gmail{suffix}"
+    raw_to = args.get("to")
+    to_list: list[str] = [str(item) for item in raw_to] if isinstance(raw_to, list) else []
+    return f"Send Gmail to {', '.join(to_list)}{suffix}"
+
+
+def _guess_mime_parts(path: str) -> tuple[str, str]:
+    """Map a storage path to a ``(maintype, subtype)`` tuple.
+
+    Falls back to ``application/octet-stream`` when ``mimetypes`` can't
+    classify the extension, so unknown file types still attach instead of
+    erroring out at the wire level.
+    """
+    guessed, _ = mimetypes.guess_type(path)
+    if not guessed or "/" not in guessed:
+        return "application", "octet-stream"
+    maintype, _, subtype = guessed.partition("/")
+    return maintype, subtype
+
+
+async def _resolve_attachments(
+    storage: StorageBackend | None,
+    paths: list[str],
+) -> tuple[list[GmailAttachment], ToolResult | None]:
+    """Resolve a list of saved-file storage paths to ``GmailAttachment`` records.
+
+    Returns ``(attachments, error_result)``. On any validation failure the
+    second element is a populated ``ToolResult`` and the caller should return
+    it directly. On success the second element is ``None``.
+    """
+    if not paths:
+        return [], None
+    if storage is None:
+        return [], ToolResult(
+            content=(
+                "Cannot attach files: Google Drive is not connected. "
+                "Ask the user to connect Drive before sending attachments."
+            ),
+            is_error=True,
+            error_kind=ToolErrorKind.VALIDATION,
+        )
+
+    resolved: list[GmailAttachment] = []
+    total_bytes = 0
+    for raw_path in paths:
+        path = raw_path.strip()
+        if not path:
+            return [], ToolResult(
+                content="Attachment path cannot be empty.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        if path.endswith("/"):
+            return [], ToolResult(
+                content=(
+                    f"Cannot attach a folder ({path}). Use find_saved_files to "
+                    "list the individual files inside it, then pass those paths."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        saved = await find_saved_file(storage, path)
+        if saved is None:
+            return [], ToolResult(
+                content=(
+                    f"Saved file not found for attachment path: {path}. "
+                    "Use find_saved_files to confirm the path."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        try:
+            data = await read_saved_file_bytes(storage, saved)
+        except FileNotFoundError as exc:
+            # storage_service.download_file raises FileNotFoundError for both
+            # missing files and folder paths; surface either as a clean
+            # validation error rather than a 500.
+            return [], ToolResult(
+                content=(
+                    f"Could not read attachment {path}: {exc}. "
+                    "Folders cannot be attached; pass individual file paths."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        total_bytes += len(data)
+        if total_bytes > _MAX_ATTACHMENT_TOTAL_BYTES:
+            mb_limit = _MAX_ATTACHMENT_TOTAL_BYTES // (1024 * 1024)
+            return [], ToolResult(
+                content=(
+                    f"Attachments exceed the {mb_limit} MB total cap "
+                    "(Gmail rejects messages larger than 25 MB after encoding). "
+                    "Remove or shrink some files and try again."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        maintype, subtype = _guess_mime_parts(saved.name or path)
+        resolved.append(
+            GmailAttachment(
+                content=data,
+                maintype=maintype,
+                subtype=subtype,
+                filename=saved.name or path.rsplit("/", 1)[-1],
+            )
+        )
+    return resolved, None
 
 
 def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
@@ -224,8 +367,16 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
 # ---------------------------------------------------------------------------
 
 
-def create_gmail_tools(service: GmailService) -> list[Tool]:
-    """Create Gmail tools bound to a service instance."""
+def create_gmail_tools(
+    service: GmailService,
+    storage: StorageBackend | None = None,
+) -> list[Tool]:
+    """Create Gmail tools bound to a service instance.
+
+    *storage* is optional: when omitted (e.g. the user hasn't connected
+    Drive), ``gmail_send`` rejects any request that includes attachments
+    with a clear validation error instead of crashing.
+    """
 
     async def _run_search(query: str, max_results: int, empty_msg: str) -> ToolResult:
         try:
@@ -286,6 +437,7 @@ def create_gmail_tools(service: GmailService) -> list[Tool]:
         subject: str,
         body: str,
         reply_to_message_id: str = "",
+        attachments: list[str] | None = None,
     ) -> ToolResult:
         if not to:
             return ToolResult(
@@ -293,12 +445,16 @@ def create_gmail_tools(service: GmailService) -> list[Tool]:
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
+        resolved_attachments, attach_error = await _resolve_attachments(storage, attachments or [])
+        if attach_error is not None:
+            return attach_error
         try:
             result = await service.send_message(
                 to=to,
                 subject=subject,
                 body=body,
                 reply_to_message_id=reply_to_message_id,
+                attachments=resolved_attachments,
             )
         except httpx.TimeoutException:
             return ToolResult(
@@ -320,6 +476,10 @@ def create_gmail_tools(service: GmailService) -> list[Tool]:
 
         # Receipt strings get rendered to the user, so keep them short.
         receipt_target = f"reply to {reply_to_message_id}" if reply_to_message_id else ", ".join(to)
+        if resolved_attachments:
+            count = len(resolved_attachments)
+            noun = "attachment" if count == 1 else "attachments"
+            receipt_target = f"{receipt_target} ({count} {noun})"
         # Content stays terse and data-only so the model has no
         # receipt-shaped phrasing to bullet-point in its reply.
         return ToolResult(
@@ -396,22 +556,25 @@ def create_gmail_tools(service: GmailService) -> list[Tool]:
                 "Send an email from the user's Gmail account. Pass "
                 "reply_to_message_id to thread the new message onto an "
                 "existing conversation (the original headers and threadId "
-                "are wired up for you)."
+                "are wired up for you). Optionally attach saved files by "
+                "passing their storage paths in 'attachments' (paths come "
+                "from find_saved_files, e.g. '/Acme/receipts/inv_001.pdf'). "
+                "Total attachment size is capped at 20 MB."
             ),
             function=gmail_send,
             params_model=GmailSendParams,
             usage_hint=(
                 "Use when the user explicitly asks you to send or reply to "
-                "an email. Confirm recipients, subject, and body in chat "
-                "before calling this tool. Always default to plain text."
+                "an email. Confirm recipients, subject, body, and any "
+                "attachments in chat before calling this tool. Default to "
+                "plain text bodies. To attach files, first run "
+                "find_saved_files to get storage paths and pass them in "
+                "the 'attachments' list; only individual files attach, not "
+                "folders."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
-                description_builder=lambda args: (
-                    "Reply via Gmail"
-                    if args.get("reply_to_message_id")
-                    else f"Send Gmail to {', '.join(args.get('to', []) or [])}"
-                ),
+                description_builder=_describe_gmail_send,
             ),
         ),
     ]
@@ -457,7 +620,10 @@ async def _gmail_factory(ctx: ToolContext) -> list[Tool]:
         token_expires_at=token.expires_at or 0.0,
         on_token_refresh=oauth_service.build_on_refresh_callback(ctx.user.id, "gmail"),
     )
-    return create_gmail_tools(service)
+    # ``ctx.storage`` may be None when the user has not connected Drive;
+    # gmail_send rejects attachment requests with a validation error in
+    # that case so the rest of the Gmail tools still work.
+    return create_gmail_tools(service, storage=ctx.storage)
 
 
 def _register() -> None:
