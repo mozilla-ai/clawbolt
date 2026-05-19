@@ -280,8 +280,31 @@ def test_strip_skips_stopwords_in_receipt_action() -> None:
             )
         ],
     )
-    # The bullet stays — "for" is a stopword, not a strip noun.
+    # The bullet stays, "for" is a stopword, not a strip noun.
     assert "- Created a quick note for the team" in body
+
+
+def test_strip_uses_word_boundaries_not_substring() -> None:
+    """A bullet whose words only substring-match a strip noun must
+    survive. Auto-derived nouns can be short (e.g. "email"), so substring
+    matching would falsely strip a legitimate caveat like "- Sent emails
+    to the team yesterday" (plural "emails" contains "email") whenever a
+    Gmail receipt fires this turn.
+    """
+    body = append_receipts(
+        ("Sent.\n\n- Sent emails to the team yesterday already"),
+        [
+            _tc_with_receipt(
+                "gmail_send",
+                action="Sent email via Gmail",
+                target="jane.doe@example.com",
+            )
+        ],
+    )
+    # Bullet stays: "emails" is a distinct word from the strip noun "email".
+    assert "- Sent emails to the team yesterday already" in body
+    # And the canonical receipt is still appended below.
+    assert "- Sent email via Gmail jane.doe@example.com" in body
 
 
 def test_append_strips_delete_fabricated_bullet() -> None:

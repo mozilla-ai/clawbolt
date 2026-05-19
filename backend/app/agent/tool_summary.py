@@ -326,6 +326,17 @@ _INDENT_RE = re.compile(r"^\s{2,}\S")
 _WORD_SPLIT_RE = re.compile(r"[^\w]+")
 
 
+def _bullet_words(rest: str) -> set[str]:
+    """Lowercased word tokens from the part of a bullet after the verb.
+
+    Word-boundary tokenization keeps "Sent emails out" from matching a
+    strip noun "email" (substring) when the LLM's "emails" is a different
+    word about a different action. Mirrors the splitter used for receipt
+    actions so both sides see the same notion of "a word".
+    """
+    return {w.lower() for w in _WORD_SPLIT_RE.split(rest) if w}
+
+
 def _strip_nouns_from_receipts(tool_calls: list[StoredToolInteraction]) -> set[str]:
     """Pull strip-eligible nouns out of this turn's actual receipts.
 
@@ -390,8 +401,8 @@ def _strip_fabricated_receipts(
         match = _BULLET_RE.match(line)
         if match:
             verb = match.group(1).lower()
-            rest = match.group(2).lower()
-            if verb in _FABRICATED_RECEIPT_VERBS and any(noun in rest for noun in nouns):
+            rest_words = _bullet_words(match.group(2))
+            if verb in _FABRICATED_RECEIPT_VERBS and not rest_words.isdisjoint(nouns):
                 drop_indented = True
                 continue
         kept.append(line)
