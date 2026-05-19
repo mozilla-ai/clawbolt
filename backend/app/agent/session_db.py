@@ -61,6 +61,7 @@ def _msg_to_stored(msg: Message) -> StoredMessage:
         processed_context=msg.processed_context,
         tool_interactions_json=msg.tool_interactions_json,
         thinking_text=msg.thinking_text,
+        llm_reply_text=msg.llm_reply_text,
         external_message_id=msg.external_message_id,
         media_urls_json=msg.media_urls_json,
         timestamp=ts,
@@ -230,6 +231,7 @@ _MESSAGE_UPDATABLE_FIELDS: frozenset[str] = frozenset(
         "processed_context",
         "tool_interactions_json",
         "thinking_text",
+        "llm_reply_text",
         "external_message_id",
         "media_urls_json",
     }
@@ -387,6 +389,7 @@ class SessionStore:
         processed_context: str = "",
         tool_interactions_json: str = "",
         thinking_text: str = "",
+        llm_reply_text: str = "",
         channel: str = "",
     ) -> StoredMessage:
         """Deprecated alias of :meth:`add_message_async`."""
@@ -399,6 +402,7 @@ class SessionStore:
             processed_context=processed_context,
             tool_interactions_json=tool_interactions_json,
             thinking_text=thinking_text,
+            llm_reply_text=llm_reply_text,
             channel=channel,
         )
 
@@ -412,6 +416,7 @@ class SessionStore:
         processed_context: str = "",
         tool_interactions_json: str = "",
         thinking_text: str = "",
+        llm_reply_text: str = "",
         channel: str = "",
     ) -> StoredMessage:
         """Insert a message into the database and update the in-memory session."""
@@ -444,6 +449,7 @@ class SessionStore:
                 processed_context=processed_context,
                 tool_interactions_json=tool_interactions_json,
                 thinking_text=thinking_text,
+                llm_reply_text=llm_reply_text,
                 external_message_id=external_message_id,
                 media_urls_json=media_urls_json,
                 timestamp=now,
@@ -462,6 +468,7 @@ class SessionStore:
                 processed_context=processed_context,
                 tool_interactions_json=tool_interactions_json,
                 thinking_text=thinking_text,
+                llm_reply_text=llm_reply_text,
                 external_message_id=external_message_id,
                 media_urls_json=media_urls_json,
                 timestamp=now.isoformat(),
@@ -488,6 +495,7 @@ class SessionStore:
         processed_context: str = "",
         tool_interactions_json: str = "",
         thinking_text: str = "",
+        llm_reply_text: str = "",
         channel: str = "",
     ) -> StoredMessage:
         """Deprecated alias of :meth:`add_message_by_session_id_async`."""
@@ -500,6 +508,7 @@ class SessionStore:
             processed_context=processed_context,
             tool_interactions_json=tool_interactions_json,
             thinking_text=thinking_text,
+            llm_reply_text=llm_reply_text,
             channel=channel,
         )
 
@@ -513,6 +522,7 @@ class SessionStore:
         processed_context: str = "",
         tool_interactions_json: str = "",
         thinking_text: str = "",
+        llm_reply_text: str = "",
         channel: str = "",
     ) -> StoredMessage:
         """Insert a message using only the session_id (no SessionState needed).
@@ -540,6 +550,7 @@ class SessionStore:
                 processed_context=processed_context,
                 tool_interactions_json=tool_interactions_json,
                 thinking_text=thinking_text,
+                llm_reply_text=llm_reply_text,
                 external_message_id=external_message_id,
                 media_urls_json=media_urls_json,
                 timestamp=now,
@@ -556,6 +567,7 @@ class SessionStore:
                 processed_context=processed_context,
                 tool_interactions_json=tool_interactions_json,
                 thinking_text=thinking_text,
+                llm_reply_text=llm_reply_text,
                 external_message_id=external_message_id,
                 media_urls_json=media_urls_json,
                 timestamp=now.isoformat(),
