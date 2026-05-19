@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -86,6 +86,22 @@ class GmailSendResult:
 
     id: str
     thread_id: str
+
+
+class GmailAttachment(NamedTuple):
+    """A single attachment to include on an outbound Gmail message.
+
+    The Gmail API takes a fully assembled RFC 5322 message and base64-encodes
+    it, so the only thing we need at this layer is bytes + MIME hints +
+    filename. Resolving a storage path to bytes happens in the tool layer
+    (see ``gmail_send`` in ``factory.py``), not here, so the service stays
+    backend-agnostic and easy to unit test.
+    """
+
+    content: bytes
+    maintype: str
+    subtype: str
+    filename: str
 
 
 class GmailService:
@@ -267,6 +283,7 @@ class GmailService:
         subject: str,
         body: str,
         reply_to_message_id: str = "",
+        attachments: list[GmailAttachment] | None = None,
     ) -> GmailSendResult:
         """Send a new message, optionally threading onto an existing message.
 
@@ -275,6 +292,10 @@ class GmailService:
         threads correctly in Gmail (and any other RFC 5322 client). The
         ``threadId`` field on the send body is what makes Gmail's UI bundle
         the messages; the headers cover everyone else.
+
+        *attachments* is a list of ``GmailAttachment`` records; when present
+        the message is built as ``multipart/mixed`` with the body as the
+        first part and each attachment as a subsequent MIME part.
         """
         if not self._sender_email:
             await self.get_profile()
@@ -302,6 +323,7 @@ class GmailService:
             body=body,
             in_reply_to=in_reply_to,
             references=references,
+            attachments=attachments or [],
         )
         raw_b64 = base64.urlsafe_b64encode(rfc822).decode("ascii")
         send_body: dict[str, Any] = {"raw": raw_b64}
@@ -429,8 +451,15 @@ def _build_rfc822(
     body: str,
     in_reply_to: str = "",
     references: str = "",
+    attachments: list[GmailAttachment] | None = None,
 ) -> bytes:
-    """Build an RFC 5322 message ready for base64url Gmail send."""
+    """Build an RFC 5322 message ready for base64url Gmail send.
+
+    When *attachments* is non-empty, ``EmailMessage.add_attachment`` upgrades
+    the message to ``multipart/mixed`` automatically: the text body becomes
+    the first part, each attachment a sibling part with its own
+    ``Content-Type`` and ``Content-Disposition: attachment`` header.
+    """
     msg = EmailMessage()
     msg["From"] = sender
     msg["To"] = ", ".join(to)
@@ -442,10 +471,18 @@ def _build_rfc822(
     if references:
         msg["References"] = references
     msg.set_content(body)
+    for att in attachments or []:
+        msg.add_attachment(
+            att.content,
+            maintype=att.maintype,
+            subtype=att.subtype,
+            filename=att.filename,
+        )
     return bytes(msg)
 
 
 __all__ = [
+    "GmailAttachment",
     "GmailMessage",
     "GmailMessageSummary",
     "GmailSendResult",
