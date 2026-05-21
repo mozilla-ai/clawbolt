@@ -250,6 +250,116 @@ async def test_gdrive_move_file_not_found(
 
 
 @pytest.mark.asyncio()
+async def test_gdrive_get_file_falls_back_to_app_property_when_folder_walk_fails(
+    mock_drive_service: MagicMock,
+) -> None:
+    """Folder rename (or any folder-walk miss) must not turn an existing file into NOT_FOUND.
+
+    Regression for issue #1364: a user moved their folder around in Drive
+    (or the per-turn ``_folder_cache`` never learned about it), and the
+    legacy ``get_file`` -> ``_resolve_existing_path`` -> ``_find_folder``
+    chain returned ``None`` even though the file was still tagged with the
+    canonical ``clawbolt_path`` appProperty. ``move_file`` then surfaced
+    "File not found at <path>" through the pre-check in ``file_tools``.
+    Looking up by appProperty first uses the same handle the upload wrote,
+    so the file resolves regardless of folder structure drift.
+    """
+    s = GoogleDriveStorage(_drive_credentials())
+    s._service = mock_drive_service
+    s._folder_cache[ROOT_FOLDER_NAME] = "root-folder-id"
+    # Cache is empty for the client folder, and the folder-walk query is
+    # rigged to find nothing -- the renamed-in-Drive case.
+    file_payload = {
+        "id": "file-xyz",
+        "name": "receipt_001.jpg",
+        "parents": ["renamed-parent-id"],
+        "appProperties": {"clawbolt_path": "/John Smith - 123 Main/documents/receipt_001.jpg"},
+        "webViewLink": "https://drive.google.com/file/d/xyz/view",
+    }
+
+    def list_side_effect(*, q: str, **_kwargs: object) -> object:
+        if "appProperties has" in q and "receipt_001.jpg" in q:
+            return MagicMock(execute=MagicMock(return_value={"files": [file_payload]}))
+        # Every folder-walk / name-match query misses.
+        return MagicMock(execute=MagicMock(return_value={"files": []}))
+
+    mock_drive_service.files.return_value.list.side_effect = list_side_effect
+
+    saved = await s.get_file("/John Smith - 123 Main/documents/receipt_001.jpg")
+    assert saved is not None
+    assert saved.path == "/John Smith - 123 Main/documents/receipt_001.jpg"
+    assert saved.name == "receipt_001.jpg"
+    assert saved.metadata.get("id") == "file-xyz"
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_move_file_uses_actual_parents_for_remove(
+    mock_drive_service: MagicMock,
+) -> None:
+    """removeParents must come from the file's real Drive metadata, not the cached source folder.
+
+    When a folder gets renamed (or the from_path resolves to a stale
+    folder id), passing the cached ``from_folder_id`` as ``removeParents``
+    is a silent no-op -- the file ends up in both the old AND the new
+    folder. Using the file's actual current parents (read from the
+    appProperty lookup) keeps the move atomic.
+    """
+    s = GoogleDriveStorage(_drive_credentials())
+    s._service = mock_drive_service
+    s._folder_cache[ROOT_FOLDER_NAME] = "root-folder-id"
+    s._folder_cache[f"{ROOT_FOLDER_NAME}/dest-folder"] = "dest-folder-id"
+    file_payload = {
+        "id": "file-abc",
+        "name": "file_001.jpg",
+        "parents": ["actual-parent-id"],
+        "appProperties": {"clawbolt_path": "/src-folder/file_001.jpg"},
+    }
+
+    def list_side_effect(*, q: str, **_kwargs: object) -> object:
+        if "appProperties has" in q:
+            return MagicMock(execute=MagicMock(return_value={"files": [file_payload]}))
+        return MagicMock(execute=MagicMock(return_value={"files": []}))
+
+    mock_drive_service.files.return_value.list.side_effect = list_side_effect
+    mock_drive_service.files.return_value.update.return_value.execute.return_value = {
+        "id": "file-abc",
+        "webViewLink": "https://drive.google.com/file/d/abc/view",
+    }
+
+    moved = await s.move_file("src-folder", "file_001.jpg", "dest-folder", "file_001.jpg")
+
+    assert moved.metadata.get("id") == "file-abc"
+    update_call = mock_drive_service.files.return_value.update.call_args
+    assert update_call is not None
+    # removeParents pulls from the payload's ``parents``, not the cached
+    # source folder id we never had to begin with.
+    assert update_call.kwargs.get("removeParents") == "actual-parent-id"
+    assert update_call.kwargs.get("addParents") == "dest-folder-id"
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_download_file_falls_back_to_app_property(
+    mock_drive_service: MagicMock,
+) -> None:
+    """download_file must reach files whose folder walk fails but appProperty is intact."""
+    s = GoogleDriveStorage(_drive_credentials())
+    s._service = mock_drive_service
+    s._folder_cache[ROOT_FOLDER_NAME] = "root-folder-id"
+
+    def list_side_effect(*, q: str, **_kwargs: object) -> object:
+        if "appProperties has" in q:
+            return MagicMock(execute=MagicMock(return_value={"files": [{"id": "file-xyz"}]}))
+        return MagicMock(execute=MagicMock(return_value={"files": []}))
+
+    mock_drive_service.files.return_value.list.side_effect = list_side_effect
+
+    content = await s.download_file("/Client/photo.jpg")
+
+    assert content == b"drive-bytes"
+    mock_drive_service.files.return_value.get_media.assert_called_once_with(fileId="file-xyz")
+
+
+@pytest.mark.asyncio()
 async def test_gdrive_resolve_path_caches_results(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
