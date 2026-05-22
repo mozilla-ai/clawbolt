@@ -276,6 +276,36 @@ class GoogleDriveStorage(StorageBackend):
 
         return current_id
 
+    async def _find_by_app_path(self, path: str) -> dict[str, Any] | None:
+        """Look up a file by its canonical ``clawbolt_path`` appProperty.
+
+        Drive's appProperties query supports exact-match on (key, value)
+        pairs, which makes this the natural way to resolve a path that
+        was minted by :meth:`upload_file` or :meth:`move_file`. Independent
+        of folder structure, folder name case, and the in-process
+        ``_folder_cache`` state, so it succeeds for files whose containing
+        folder was renamed or whose parent the folder cache forgot about.
+        Returns the raw payload (so callers can read ``parents`` for a
+        precise move) or ``None`` when no file is tagged with that path.
+        """
+        if not path:
+            return None
+        service = self._get_service()
+        normalized = path if path.startswith("/") else f"/{path.strip('/')}"
+        safe_value = normalized.replace("\\", "\\\\").replace("'", "\\'")
+        query = (
+            f"appProperties has {{ key='{_DRIVE_PATH_PROPERTY}' and value='{safe_value}' }}"
+            " and trashed=false"
+        )
+        result = await self._execute_with_retry(
+            lambda: service.files().list(
+                q=query, fields=f"files({_DRIVE_FILE_FIELDS})", pageSize=1
+            ),
+            op="find_by_app_path",
+        )
+        files = result.get("files", [])
+        return files[0] if files else None
+
     async def _resolve_existing_path(self, path: str) -> str | None:
         """Translate a human-readable path to an existing Google Drive folder ID."""
         parts = [p for p in path.strip("/").split("/") if p]
@@ -386,32 +416,60 @@ class GoogleDriveStorage(StorageBackend):
     async def move_file(
         self, from_path: str, from_filename: str, to_path: str, to_filename: str
     ) -> SavedFile:
-        from_folder_id = await self._resolve_path(from_path)
+        # Primary lookup by canonical clawbolt_path. Returns the file's
+        # actual current parents, so the removeParents we pass to update()
+        # matches reality even if the source folder was renamed or the
+        # folder cache is stale.
+        canonical_from = self._normalized_path(from_path, from_filename)
+        payload = await self._find_by_app_path(canonical_from)
+        from_parent_ids: list[str] = []
+        file_id: str | None = None
+        if payload is not None:
+            file_id = payload.get("id")
+            from_parent_ids = list(payload.get("parents") or [])
+        if file_id is None:
+            # Fallback: locate the file via its folder + name. Source folder
+            # must already exist. Never auto-create it, that would just
+            # silently pollute the user's Drive with empty folders on a
+            # NOT_FOUND.
+            from_folder_id = await self._resolve_existing_path(from_path)
+            if from_folder_id is None:
+                msg = f"File not found: {from_filename} in {from_path}"
+                raise FileNotFoundError(msg)
+            service = self._get_service()
+            safe_name = from_filename.replace("\\", "\\\\").replace("'", "\\'")
+            query = f"name='{safe_name}' and '{from_folder_id}' in parents and trashed=false"
+            result = await self._execute_with_retry(
+                lambda: service.files().list(q=query, fields="files(id,name,parents)"),
+                op="move_file.list",
+            )
+            files = result.get("files", [])
+            if not files:
+                msg = f"File not found: {from_filename} in {from_path}"
+                raise FileNotFoundError(msg)
+            file_id = files[0]["id"]
+            from_parent_ids = list(files[0].get("parents") or [from_folder_id])
+
         to_folder_id = await self._resolve_path(to_path)
-        service = self._get_service()
-        safe_name = from_filename.replace("\\", "\\\\").replace("'", "\\'")
-        query = f"name='{safe_name}' and '{from_folder_id}' in parents and trashed=false"
-        result = await self._execute_with_retry(
-            lambda: service.files().list(q=query, fields="files(id,name)"),
-            op="move_file.list",
-        )
-        files = result.get("files", [])
-        if not files:
-            msg = f"File not found: {from_filename} in {from_path}"
-            raise FileNotFoundError(msg)
-        file_id = files[0]["id"]
         new_path = self._normalized_path(to_path, to_filename)
+        service = self._get_service()
+        # Drop every current parent so the file lands cleanly under the new
+        # one. Passing the cached from_folder_id alone would be a no-op when
+        # the file's real parent differs from what the caller assumed.
+        remove_parents = ",".join(from_parent_ids) if from_parent_ids else None
+        update_kwargs: dict[str, Any] = {
+            "fileId": file_id,
+            "body": {
+                "name": to_filename,
+                "appProperties": {_DRIVE_PATH_PROPERTY: new_path},
+            },
+            "addParents": to_folder_id,
+            "fields": _DRIVE_FILE_FIELDS,
+        }
+        if remove_parents:
+            update_kwargs["removeParents"] = remove_parents
         update_result = await self._execute_with_retry(
-            lambda: service.files().update(
-                fileId=file_id,
-                body={
-                    "name": to_filename,
-                    "appProperties": {_DRIVE_PATH_PROPERTY: new_path},
-                },
-                addParents=to_folder_id,
-                removeParents=from_folder_id,
-                fields=_DRIVE_FILE_FIELDS,
-            ),
+            lambda: service.files().update(**update_kwargs),
             op="move_file.update",
         )
         return self._from_drive_file(update_result, fallback_path=new_path)
@@ -436,7 +494,16 @@ class GoogleDriveStorage(StorageBackend):
         return files
 
     async def get_file(self, path: str) -> SavedFile | None:
-        normalized = path.strip("/")
+        canonical = path if path.startswith("/") else f"/{path.strip('/')}"
+        # Primary: exact-match the canonical ``clawbolt_path`` appProperty.
+        # Robust to folder renames in Drive and to ``_folder_cache`` misses
+        # that would otherwise turn an existing file into a NOT_FOUND.
+        payload = await self._find_by_app_path(canonical)
+        if payload is not None:
+            return self._from_drive_file(payload, fallback_path=canonical)
+        # Fallback: legacy folder-walk + name match. Catches files whose
+        # appProperty was never set (pre-cutover uploads) or got cleared.
+        normalized = canonical.strip("/")
         if not normalized or "/" not in normalized:
             folder_path, filename = "", normalized
         else:
@@ -456,7 +523,7 @@ class GoogleDriveStorage(StorageBackend):
         files = result.get("files", [])
         if not files:
             return None
-        return self._from_drive_file(files[0], fallback_path=f"/{normalized}")
+        return self._from_drive_file(files[0], fallback_path=canonical)
 
     async def search_files(self, query: str = "", limit: int = 10) -> list[SavedFile]:
         bounded = max(1, min(limit, 100))
@@ -520,25 +587,31 @@ class GoogleDriveStorage(StorageBackend):
             msg = "Cannot download a folder path from Google Drive."
             raise FileNotFoundError(msg)
 
-        folder_path, filename = normalized.rsplit("/", 1) if "/" in normalized else ("", normalized)
-        folder_id = await self._resolve_existing_path(folder_path)
-        if folder_id is None:
-            msg = f"Google Drive folder not found for {path!r}"
-            raise FileNotFoundError(msg)
-
+        canonical = f"/{normalized}"
+        # Primary: canonical clawbolt_path lookup. Same robustness story as
+        # get_file: a file whose folder was renamed still downloads.
+        payload = await self._find_by_app_path(canonical)
+        file_id: str | None = payload.get("id") if payload is not None else None
         service = self._get_service()
-        safe_name = filename.replace("\\", "\\\\").replace("'", "\\'")
-        query = f"name='{safe_name}' and '{folder_id}' in parents and trashed=false"
-        result = await self._execute_with_retry(
-            lambda: service.files().list(q=query, fields="files(id)", pageSize=1),
-            op="download_file.list",
-        )
-        files = result.get("files", [])
-        if not files:
-            msg = f"File not found in Google Drive: {path}"
-            raise FileNotFoundError(msg)
-
-        file_id = files[0]["id"]
+        if file_id is None:
+            folder_path, filename = (
+                normalized.rsplit("/", 1) if "/" in normalized else ("", normalized)
+            )
+            folder_id = await self._resolve_existing_path(folder_path)
+            if folder_id is None:
+                msg = f"Google Drive folder not found for {path!r}"
+                raise FileNotFoundError(msg)
+            safe_name = filename.replace("\\", "\\\\").replace("'", "\\'")
+            query = f"name='{safe_name}' and '{folder_id}' in parents and trashed=false"
+            result = await self._execute_with_retry(
+                lambda: service.files().list(q=query, fields="files(id)", pageSize=1),
+                op="download_file.list",
+            )
+            files = result.get("files", [])
+            if not files:
+                msg = f"File not found in Google Drive: {path}"
+                raise FileNotFoundError(msg)
+            file_id = files[0]["id"]
         try:
             data = await self._execute_with_retry(
                 lambda: service.files().get_media(fileId=file_id),
