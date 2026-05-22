@@ -429,7 +429,7 @@ class GoogleDriveStorage(StorageBackend):
             from_parent_ids = list(payload.get("parents") or [])
         if file_id is None:
             # Fallback: locate the file via its folder + name. Source folder
-            # must already exist -- never auto-create it, that would just
+            # must already exist. Never auto-create it, that would just
             # silently pollute the user's Drive with empty folders on a
             # NOT_FOUND.
             from_folder_id = await self._resolve_existing_path(from_path)
@@ -589,7 +589,7 @@ class GoogleDriveStorage(StorageBackend):
 
         canonical = f"/{normalized}"
         # Primary: canonical clawbolt_path lookup. Same robustness story as
-        # get_file -- a file whose folder was renamed still downloads.
+        # get_file: a file whose folder was renamed still downloads.
         payload = await self._find_by_app_path(canonical)
         file_id: str | None = payload.get("id") if payload is not None else None
         service = self._get_service()

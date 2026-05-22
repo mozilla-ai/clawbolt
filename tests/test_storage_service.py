@@ -268,7 +268,7 @@ async def test_gdrive_get_file_falls_back_to_app_property_when_folder_walk_fails
     s._service = mock_drive_service
     s._folder_cache[ROOT_FOLDER_NAME] = "root-folder-id"
     # Cache is empty for the client folder, and the folder-walk query is
-    # rigged to find nothing -- the renamed-in-Drive case.
+    # rigged to find nothing, mirroring the renamed-in-Drive case.
     file_payload = {
         "id": "file-xyz",
         "name": "receipt_001.jpg",
@@ -300,7 +300,7 @@ async def test_gdrive_move_file_uses_actual_parents_for_remove(
 
     When a folder gets renamed (or the from_path resolves to a stale
     folder id), passing the cached ``from_folder_id`` as ``removeParents``
-    is a silent no-op -- the file ends up in both the old AND the new
+    is a silent no-op, and the file ends up in both the old AND the new
     folder. Using the file's actual current parents (read from the
     appProperty lookup) keeps the move atomic.
     """
