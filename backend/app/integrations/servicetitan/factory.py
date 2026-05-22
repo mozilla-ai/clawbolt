@@ -87,9 +87,11 @@ async def _servicetitan_auth_check(ctx: ToolContext) -> str | None:
     if await is_connected(ctx.user.id):
         return None
     return (
-        "ServiceTitan is not connected. Ask the user to paste their Tenant ID,"
-        " Client ID, and Client Secret, then call connect_servicetitan to"
-        " validate and persist them."
+        "ServiceTitan is not connected. Use "
+        "manage_integration(action='connect', target='servicetitan') "
+        "for instructions, then navigate to the Clawbolt web app "
+        "(Settings > Tools) to enter your Tenant ID, Client ID, and "
+        "Client Secret securely."
     )
 
 

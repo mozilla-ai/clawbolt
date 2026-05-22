@@ -36,6 +36,7 @@ from backend.app.models import ChannelRoute, User
 from backend.app.routers import (
     auth,
     health,
+    integrations,
     media_temp,
     oauth,
     user_calendar,
@@ -395,6 +396,7 @@ app.include_router(user_memory.router, prefix="/api")
 app.include_router(user_permissions.router, prefix="/api")
 app.include_router(user_tools.router, prefix="/api")
 app.include_router(user_calendar.router, prefix="/api")
+app.include_router(integrations.router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Static file serving (built frontend)

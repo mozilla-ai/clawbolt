@@ -1879,51 +1879,31 @@ async def test_4xx_log_summarizes_base64_files(caplog: Any) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_appfolio_connect_message_omits_customer_count(async_test_user: Any) -> None:
-    """Regression for #1275: connect must not surface 'customer' counts.
-
-    The OAuth2 migration in #1269 stopped populating ``customer_ids`` on
-    the exchange result, leaving the receipt forever rendering "0
-    customer(s)". Rather than backfill via /profiles/me just to print a
-    number that vendors don't think in, we drop the framing entirely.
+async def test_appfolio_connect_redirects_to_web_app(async_test_user: Any) -> None:
+    """The auth tool now redirects to the Clawbolt web app instead of
+    accepting credentials in chat. Issue #1337.
     """
     from backend.app.agent.tools.names import ToolName
     from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
-    from backend.app.integrations.appfolio_vendor.service import AccessExchangeResult
 
     user_id = async_test_user.id
     tools = build_auth_tools(user_id)
     connect = next(t for t in tools if t.name == ToolName.APPFOLIO_CONNECT)
 
-    fake_result = AccessExchangeResult(
-        jwt="jwt-1",
-        customer_ids=[],
-        raw={},
-        refresh_token="rt-1",
-    )
-    with patch(
-        "backend.app.integrations.appfolio_vendor.auth_tools.exchange_magic_link",
-        new=AsyncMock(return_value=fake_result),
-    ):
-        result = await connect.function(magic_link="eyJ.fake.token")
+    result = await connect.function(magic_link="any_input")
 
-    assert result.is_error is False
-    assert result.content == "AppFolio connected. Tools are now available."
-    assert "customer" not in result.content.lower()
-    assert result.receipt is not None
-    assert "customer" not in (result.receipt.target or "").lower()
+    assert result.is_error is True
+    assert "Clawbolt web app" in result.content
+    assert "Settings > Tools" in result.content
 
 
 @pytest.mark.asyncio()
-async def test_appfolio_connect_parse_failure_hint_steers_to_token_paste(
+async def test_appfolio_connect_hint_steers_to_web_app(
     async_test_user: Any,
 ) -> None:
-    """Regression for #1297: parse-failure hint must mention the iMessage gotcha.
+    """The hint should tell the agent to navigate to the Clawbolt web app.
 
-    When the user pastes a full magic-link URL over iMessage, the SMS
-    client strips the query params and the token never reaches us. The
-    validation hint has to tell the agent to ask for the token alone, not
-    the full URL, so the next attempt actually succeeds.
+    Credentials are no longer accepted in chat per issue #1337.
     """
     from backend.app.agent.tools.names import ToolName
     from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
@@ -1931,13 +1911,12 @@ async def test_appfolio_connect_parse_failure_hint_steers_to_token_paste(
     tools = build_auth_tools(async_test_user.id)
     connect = next(t for t in tools if t.name == ToolName.APPFOLIO_CONNECT)
 
-    # Empty input triggers MagicLinkError -> the validation hint we care about.
     result = await connect.function(magic_link="")
 
     assert result.is_error is True
     assert result.hint is not None
-    assert "magic_link_token=" in result.hint
-    assert "iMessage" in result.hint
+    assert "Clawbolt web app" in result.hint
+    assert "Settings > Tools" in result.hint
 
 
 @pytest.mark.asyncio()

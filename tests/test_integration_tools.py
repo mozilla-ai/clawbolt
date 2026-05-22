@@ -134,14 +134,14 @@ async def test_usage_hint_lists_current_oauth_integrations(test_user: User) -> N
             f"missing '{oauth_name}'"
         )
 
-    # Magic-link integrations (paste-token auth, e.g. appfolio_vendor) are
+    # Web-connect integrations (web-app auth, e.g. appfolio_vendor, servicetitan) are
     # also routed through manage_integration and so must appear in the hint
     # for the same staleness-override reason as OAuth integrations.
-    from backend.app.agent.tools.integration_tools import _MAGIC_LINK_INTEGRATIONS
+    from backend.app.agent.tools.integration_tools import _WEB_CONNECT_INTEGRATIONS
 
-    for magic_link_name in _MAGIC_LINK_INTEGRATIONS:
-        assert magic_link_name in tool.usage_hint, (
-            f"usage_hint should reference every magic-link integration; missing '{magic_link_name}'"
+    for web_connect_name in _WEB_CONNECT_INTEGRATIONS:
+        assert web_connect_name in tool.usage_hint, (
+            f"usage_hint should reference every web-connect integration; missing '{web_connect_name}'"
         )
 
     # Human-readable labels render for at least one well-known integration.
@@ -460,13 +460,13 @@ async def test_set_enabled_updates_existing_row(test_user: User) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Magic-link integrations (AppFolio Vendor Portal)
+# Web-connect integrations (AppFolio Vendor Portal, ServiceTitan)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
 async def test_status_lists_appfolio_with_connection_state(test_user: User) -> None:
-    """Status should surface AppFolio's magic-link connection state.
+    """Status should surface AppFolio's connection state.
 
     Regression for the dev.clawbolt.ai bug where the agent told the user
     "AppFolio is listed as an integration but it's not set up yet on the
@@ -500,15 +500,12 @@ async def test_status_marks_appfolio_connected(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_connect_appfolio_returns_magic_link_instructions(test_user: User) -> None:
-    """Connect with target='appfolio_vendor' should return paste-token instructions.
+async def test_connect_appfolio_returns_web_app_instructions(test_user: User) -> None:
+    """Connect with target='appfolio_vendor' should return web-app instructions.
 
-    The agent-facing message must mention vendor.appfolio.com (so the
-    agent can guide the user to the right site) and appfolio_connect (so
-    the agent knows which tool finishes the flow). It must also tell the
-    agent to ask the user for the token only (not the full URL), because
-    iMessage strips query params from pasted links and the token gets
-    lost. Regression for issue #1297.
+    The agent-facing message must mention the Clawbolt web app and guide
+    the user to Settings > Tools to enter their magic link securely.
+    Credentials are no longer accepted in chat per issue #1337.
     """
     with patch(
         "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
@@ -517,12 +514,13 @@ async def test_connect_appfolio_returns_magic_link_instructions(test_user: User)
         result = await _call(test_user, "connect", "appfolio_vendor")
     assert not result.is_error
     assert "vendor.appfolio.com" in result.content
-    assert "appfolio_connect" in result.content
+    assert "Clawbolt web app" in result.content
+    assert "Settings > Tools" in result.content
     # Should NOT claim AppFolio "does not use OAuth" or look like a rejection.
     assert "does not use OAuth" not in result.content
-    # Must steer the agent toward the token-only paste flow.
-    assert "magic_link_token=" in result.content
-    assert "iMessage" in result.content
+    # Must NOT mention chat-based paste flow anymore.
+    assert "magic_link_token=" not in result.content
+    assert "iMessage" not in result.content
 
 
 @pytest.mark.asyncio()
@@ -571,8 +569,8 @@ async def test_disconnect_appfolio_when_not_connected(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_appfolio_usage_hint_mentions_magic_link(test_user: User) -> None:
-    """The usage_hint should tell the agent that AppFolio uses magic-link auth.
+async def test_appfolio_usage_hint_mentions_web_app(test_user: User) -> None:
+    """The usage_hint should tell the agent that AppFolio uses web-app auth.
 
     Without this guidance the agent would assume a connect URL is coming
     back and either stall or pass the instructions through verbatim.
@@ -583,7 +581,8 @@ async def test_appfolio_usage_hint_mentions_magic_link(test_user: User) -> None:
     assert tool.usage_hint is not None
     hint = tool.usage_hint.lower()
     assert "appfolio" in hint
-    assert "magic-link" in hint or "magic link" in hint
+    assert "servicetitan" in hint
+    assert "Clawbolt web app" in hint or "Clawbolt web app" in hint.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -716,7 +715,7 @@ async def test_status_renders_registry_display_names_for_every_integration(
 
 
 def test_user_facing_integrations_declare_display_names() -> None:
-    """Every user-facing OAuth or magic-link integration must declare a
+    """Every user-facing OAuth or web-connect integration must declare a
     ``display_name`` at registration so manage_integration never falls
     back to the raw factory key in agent output.
 
@@ -726,7 +725,7 @@ def test_user_facing_integrations_declare_display_names() -> None:
     silently leaking ``companycam`` / ``google_drive`` style raw keys
     into chat.
     """
-    from backend.app.agent.tools.integration_tools import _MAGIC_LINK_INTEGRATIONS
+    from backend.app.agent.tools.integration_tools import _WEB_CONNECT_INTEGRATIONS
     from backend.app.services.oauth import list_oauth_integrations
 
     # Every OAuth integration must be reachable through some factory's
@@ -745,13 +744,13 @@ def test_user_facing_integrations_declare_display_names() -> None:
             f"a display_name in its registry.register() call"
         )
 
-    # Magic-link integrations share the factory name with the target.
-    for target in _MAGIC_LINK_INTEGRATIONS:
+    # Web-connect integrations share the factory name with the target.
+    for target in _WEB_CONNECT_INTEGRATIONS:
         factory = default_registry.get_factory(target)
         assert factory is not None, (
-            f"Magic-link integration {target!r} must be registered as a factory"
+            f"Web-connect integration {target!r} must be registered as a factory"
         )
-        assert factory.display_name, f"Magic-link factory {target!r} must declare a display_name"
+        assert factory.display_name, f"Web-connect factory {target!r} must declare a display_name"
 
 
 @pytest.mark.asyncio()
@@ -831,7 +830,7 @@ async def test_get_user_connected_integrations_skips_unconfigured_oauth() -> Non
         ),
         patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth_service,
         patch(
-            "backend.app.agent.tools.integration_tools._is_magic_link_connected",
+            "backend.app.agent.tools.integration_tools._is_web_connect_connected",
             new_callable=AsyncMock,
             return_value=False,
         ),
@@ -842,8 +841,8 @@ async def test_get_user_connected_integrations_skips_unconfigured_oauth() -> Non
     # gmail is unconfigured -> not in the dict at all.
     assert "gmail" not in result
     assert result["google_drive"] is True
-    # Magic-link integrations still appear: they have no separate
-    # "configured" check; the magic-link plumbing is always available
+    # Web-connect integrations still appear: they have no separate
+    # "configured" check; the web-connect plumbing is always available
     # when the integration is registered.
     assert "appfolio_vendor" in result
 
@@ -878,7 +877,7 @@ async def test_get_user_connected_integrations_reflects_per_user_state() -> None
         ),
         patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth_service,
         patch(
-            "backend.app.agent.tools.integration_tools._is_magic_link_connected",
+            "backend.app.agent.tools.integration_tools._is_web_connect_connected",
             new_callable=AsyncMock,
             return_value=False,
         ),

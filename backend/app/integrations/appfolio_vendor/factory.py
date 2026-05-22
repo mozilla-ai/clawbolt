@@ -122,8 +122,8 @@ async def _appfolio_vendor_auth_check(ctx: ToolContext) -> str | None:
     return (
         "AppFolio Vendor Portal is not connected. Use "
         "manage_integration(action='connect', target='appfolio_vendor') "
-        "for the magic-link recipe, then call appfolio_connect with the "
-        "URL the user pastes."
+        "for instructions, then navigate to the Clawbolt web app "
+        "(Settings > Tools) to enter your magic link securely."
     )
 
 

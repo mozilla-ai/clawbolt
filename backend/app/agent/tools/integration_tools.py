@@ -16,6 +16,7 @@ from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.appfolio_vendor import auth as appfolio_auth
+from backend.app.integrations.servicetitan import auth as servicetitan_auth
 from backend.app.services.oauth import get_oauth_config, list_oauth_integrations, oauth_service
 
 if TYPE_CHECKING:
@@ -23,20 +24,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Tool groups that use magic-link / paste-token auth instead of OAuth. These
+# Tool groups that use web-app credential input instead of OAuth. These
 # do not show up in ``list_oauth_integrations()`` but should still be
 # manageable through ``manage_integration`` so the agent has a single
-# discovery surface for "connect <integration>".
-_MAGIC_LINK_INTEGRATIONS: set[str] = {"appfolio_vendor"}
+# discovery surface for "connect <integration>." The connect flow
+# redirects users to the Clawbolt web app where credentials are entered
+# securely, rather than accepting pasted secrets in chat.
+_WEB_CONNECT_INTEGRATIONS: set[str] = {"appfolio_vendor", "servicetitan"}
 
 # Core factories that back a user-facing integration but should not surface
 # in ``manage_integration`` listings or be enable/disable-able on their own.
 # These are visibility-paired with another factory: when the user-facing
 # integration is disabled, the backing factory follows. ``appfolio_auth``
-# holds the magic-link connect tools that must stay on the schema even when
+# holds the connect tools that must stay on the schema even when
 # ``appfolio_vendor`` reports "not connected"; ``servicetitan_auth`` plays
-# the same role for the paste-credentials ``connect_servicetitan`` tool.
-# From the user's perspective each pair is one integration.
+# the same role for the ``connect_servicetitan`` tool. From the user's
+# perspective each pair is one integration.
 _HIDDEN_CORE_FACTORIES: dict[str, str] = {
     "appfolio_auth": "appfolio_vendor",
     "servicetitan_auth": "servicetitan",
@@ -60,7 +63,7 @@ def _display_name_for_oauth(registry: ToolRegistry, oauth_name: str) -> str:
 def _build_available_integrations_hint(registry: ToolRegistry) -> str:
     """Return a sentence enumerating the integrations this deployment supports.
 
-    Built from ``list_oauth_integrations()`` plus ``_MAGIC_LINK_INTEGRATIONS``
+    Built from ``list_oauth_integrations()`` plus ``_WEB_CONNECT_INTEGRATIONS``
     so new integrations surface in the system prompt automatically once
     their factory is wired up. This is the LLM's authoritative signal that
     an integration exists: prior ``manage_integration`` results sitting in
@@ -74,13 +77,13 @@ def _build_available_integrations_hint(registry: ToolRegistry) -> str:
     would reject.
     """
     oauth_targets = sorted(list_oauth_integrations())
-    magic_link_targets = sorted(_MAGIC_LINK_INTEGRATIONS)
+    web_connect_targets = sorted(_WEB_CONNECT_INTEGRATIONS)
 
     display_names = [_display_name_for_oauth(registry, name) for name in oauth_targets]
-    display_names.extend(registry.get_display_name(name) for name in magic_link_targets)
+    display_names.extend(registry.get_display_name(name) for name in web_connect_targets)
     display_names.sort()
 
-    all_targets = sorted({*oauth_targets, *magic_link_targets})
+    all_targets = sorted({*oauth_targets, *web_connect_targets})
     target_tokens = ", ".join(f"'{name}'" for name in all_targets)
 
     return (
@@ -170,8 +173,10 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
                 f"for something they already set up). "
                 f"Call with action='connect' and a target from the list above to "
                 f"generate an OAuth link the user can tap to connect. "
-                f"For 'appfolio_vendor' you'll get magic-link instructions instead "
-                f"of a URL; follow them and then call appfolio_connect directly. "
+                f"For 'appfolio_vendor' and 'servicetitan', the user must navigate"
+                f" to the Clawbolt web app to enter credentials securely; tell"
+                f" them to open Settings > Tools and click Connect on the"
+                f" integration card. "
                 f"Call with action='enable'/'disable' and target=group_name to toggle tools."
             ),
             # Enable/disable and connect/disconnect mutate the per-user
@@ -210,7 +215,7 @@ async def _handle_status(
 
             # Check OAuth connection status. Factories backed by OAuth
             # declare ``oauth_name`` at registration time; an empty value
-            # means the factory is not OAuth-backed (e.g. magic-link or
+            # means the factory is not OAuth-backed (e.g. web-connect or
             # purely local tools).
             oauth_name = factory.oauth_name
             if oauth_name:
@@ -220,8 +225,8 @@ async def _handle_status(
                     status_parts.append("connected" if connected else "not connected")
                 else:
                     status_parts.append("not configured by admin")
-            elif name in _MAGIC_LINK_INTEGRATIONS:
-                connected = await _is_magic_link_connected(name, user_id)
+            elif name in _WEB_CONNECT_INTEGRATIONS:
+                connected = await _is_web_connect_connected(name, user_id)
                 status_parts.append("connected" if connected else "not connected")
 
             integration_lines.append(f"- {name}: {display} ({', '.join(status_parts)})")
@@ -346,7 +351,7 @@ def _resolve_oauth_name(target: str, registry: ToolRegistry) -> str:
 
 
 async def _handle_connect(user_id: str, target: str, registry: ToolRegistry) -> ToolResult:
-    """Generate an OAuth authorization URL for an integration."""
+    """Generate an OAuth authorization URL or web-app connect instructions."""
     # Hidden backing factories are never directly addressable by users; the
     # connect flow goes through the user-facing factory they back.
     if target in _HIDDEN_CORE_FACTORIES:
@@ -356,10 +361,10 @@ async def _handle_connect(user_id: str, target: str, registry: ToolRegistry) -> 
             error_kind=ToolErrorKind.NOT_FOUND,
         )
 
-    # Magic-link integrations have their own connect flow (paste-a-token)
-    # and don't fit the OAuth URL model.
-    if target in _MAGIC_LINK_INTEGRATIONS:
-        return await _handle_magic_link_connect(user_id, target, registry)
+    # Web-connect integrations (AppFolio, ServiceTitan) redirect to the
+    # Clawbolt web app where credentials are entered securely.
+    if target in _WEB_CONNECT_INTEGRATIONS:
+        return await _handle_web_connect(user_id, target, registry)
 
     oauth_name = _resolve_oauth_name(target, registry)
 
@@ -411,8 +416,8 @@ async def _handle_disconnect(user_id: str, target: str, registry: ToolRegistry) 
             error_kind=ToolErrorKind.NOT_FOUND,
         )
 
-    if target in _MAGIC_LINK_INTEGRATIONS:
-        return await _handle_magic_link_disconnect(user_id, target, registry)
+    if target in _WEB_CONNECT_INTEGRATIONS:
+        return await _handle_web_connect_disconnect(user_id, target, registry)
 
     oauth_name = _resolve_oauth_name(target, registry)
 
@@ -445,10 +450,12 @@ async def _handle_disconnect(user_id: str, target: str, registry: ToolRegistry) 
     )
 
 
-async def _is_magic_link_connected(target: str, user_id: str) -> bool:
-    """Dispatch ``is_connected`` lookup for magic-link integrations."""
+async def _is_web_connect_connected(target: str, user_id: str) -> bool:
+    """Dispatch ``is_connected`` lookup for web-connect integrations."""
     if target == "appfolio_vendor":
         return await appfolio_auth.is_connected(user_id)
+    if target == "servicetitan":
+        return await servicetitan_auth.is_connected(user_id)
     return False
 
 
@@ -456,9 +463,9 @@ async def get_user_connected_integrations(user_id: str) -> dict[str, bool]:
     """Return a mapping of integration name to ``connected`` flag for *user_id*.
 
     Covers OAuth integrations from :func:`list_oauth_integrations` plus the
-    magic-link integrations enumerated in ``_MAGIC_LINK_INTEGRATIONS``.
+    web-connect integrations enumerated in ``_WEB_CONNECT_INTEGRATIONS``.
     Integrations the operator has not configured on this deployment (no
-    OAuth credentials, no magic-link backend) are omitted entirely, so the
+    OAuth credentials, no web-connect backend) are omitted entirely, so the
     caller does not have to distinguish "not connected by this user" from
     "not available on this deployment".
 
@@ -474,21 +481,17 @@ async def get_user_connected_integrations(user_id: str) -> dict[str, bool]:
         if config is None or not config.is_configured:
             continue
         result[name] = await oauth_service.is_connected(user_id, name)
-    for name in _MAGIC_LINK_INTEGRATIONS:
-        result[name] = await _is_magic_link_connected(name, user_id)
+    for name in _WEB_CONNECT_INTEGRATIONS:
+        result[name] = await _is_web_connect_connected(name, user_id)
     return result
 
 
-async def _handle_magic_link_connect(
-    user_id: str, target: str, registry: ToolRegistry
-) -> ToolResult:
-    """Return paste-token instructions for a magic-link integration.
+async def _handle_web_connect(user_id: str, target: str, registry: ToolRegistry) -> ToolResult:
+    """Return web-app navigation instructions for a web-connect integration.
 
-    These integrations cannot be connected with a single URL: the user
-    has to request a magic link from the vendor's web UI and paste it
-    back. We return that recipe so the agent can guide the user, then
-    rely on the integration's own auth tool (e.g. ``appfolio_connect``)
-    to finish the flow.
+    These integrations require the user to enter credentials in the
+    Clawbolt web app rather than pasting them in chat. The agent
+    instructs the user to navigate to the Tools page and click Connect.
     """
     if target == "appfolio_vendor":
         display = registry.get_display_name(target)
@@ -499,34 +502,52 @@ async def _handle_magic_link_connect(
                 ),
             )
         logger.info(
-            "User %s requested magic-link connect instructions for '%s' via chat",
+            "User %s requested web-app connect instructions for '%s' via chat",
             user_id,
             target,
         )
         return ToolResult(
             content=(
-                f"{display} uses magic-link auth (no OAuth URL). "
-                "Walk the user through these steps: "
-                "(1) open vendor.appfolio.com on their phone or laptop, "
-                "(2) enter their email and request a sign-in link, "
-                "(3) when the email arrives, copy only the token from "
-                "the link's URL (everything after 'magic_link_token='), "
-                "not the full URL. iMessage and other SMS clients strip "
-                "query params from pasted links. Then call "
-                "appfolio_connect with the pasted token."
+                f"To connect {display}, open your Clawbolt web app and navigate"
+                f" to Settings > Tools. Click 'Connect' on the {display} card"
+                f" and paste your magic link there. The magic link comes from"
+                f" vendor.appfolio.com - request a sign-in link and copy the"
+                f" token from the URL."
+            ),
+        )
+    if target == "servicetitan":
+        display = registry.get_display_name(target)
+        if await servicetitan_auth.is_connected(user_id):
+            return ToolResult(
+                content=(
+                    f"{display} is already connected. Use action='disconnect' first to reconnect."
+                ),
+            )
+        logger.info(
+            "User %s requested web-app connect instructions for '%s' via chat",
+            user_id,
+            target,
+        )
+        return ToolResult(
+            content=(
+                f"To connect {display}, open your Clawbolt web app and navigate"
+                f" to Settings > Tools. Click 'Connect' on the {display} card"
+                f" and enter your Tenant ID, Client ID, and Client Secret."
+                f" These come from ServiceTitan > Settings > Integrations >"
+                f" API Application Access."
             ),
         )
     return ToolResult(
-        content=f"No magic-link connect flow registered for '{target}'.",
+        content=f"No web-app connect flow registered for '{target}'.",
         is_error=True,
         error_kind=ToolErrorKind.VALIDATION,
     )
 
 
-async def _handle_magic_link_disconnect(
+async def _handle_web_connect_disconnect(
     user_id: str, target: str, registry: ToolRegistry
 ) -> ToolResult:
-    """Clear stored credentials for a magic-link integration."""
+    """Clear stored credentials for a web-connect integration."""
     if target == "appfolio_vendor":
         display = registry.get_display_name(target)
         if not await appfolio_auth.is_connected(user_id):
@@ -537,7 +558,27 @@ async def _handle_magic_link_disconnect(
             )
         await appfolio_auth.clear_credential(user_id)
         logger.info(
-            "User %s disconnected magic-link integration '%s' via chat",
+            "User %s disconnected web-connect integration '%s' via chat",
+            user_id,
+            target,
+        )
+        return ToolResult(
+            content=(
+                f"Disconnected {display}. "
+                "The tools are still enabled but won't work until you reconnect."
+            ),
+        )
+    if target == "servicetitan":
+        display = registry.get_display_name(target)
+        if not await servicetitan_auth.is_connected(user_id):
+            return ToolResult(
+                content=f"{display} is not currently connected.",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        await servicetitan_auth.clear_credentials(user_id)
+        logger.info(
+            "User %s disconnected web-connect integration '%s' via chat",
             user_id,
             target,
         )
@@ -548,7 +589,7 @@ async def _handle_magic_link_disconnect(
             ),
         )
     return ToolResult(
-        content=f"No magic-link disconnect flow registered for '{target}'.",
+        content=f"No web-app disconnect flow registered for '{target}'.",
         is_error=True,
         error_kind=ToolErrorKind.VALIDATION,
     )

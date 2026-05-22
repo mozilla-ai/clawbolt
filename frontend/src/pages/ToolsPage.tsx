@@ -6,6 +6,8 @@ import { toast } from '@/lib/toast';
 import { displayName, subToolDisplayName, getToolOAuthStatus } from '@/lib/tool-utils';
 import { IntegrationIcon } from '@/components/integration-icons';
 import PermissionSelector, { PERM_OPTIONS, type PermLevel } from '@/components/PermissionSelector';
+import Field from '@/components/ui/field';
+import Input from '@/components/ui/input';
 
 const PERM_LEVEL_CLASSNAMES: Record<PermLevel, string> = {
   always: 'text-success',
@@ -28,6 +30,10 @@ import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect,
 import api from '@/api';
 import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
+// Integrations that use web-app credential input instead of OAuth.
+// These show a Connect button that opens a credential form in the web UI.
+const WEB_CONNECT_INTEGRATIONS = new Set(['appfolio_vendor', 'servicetitan']);
+
 export default function ToolsPage() {
   const { data, isPending } = useToolConfig();
   const updateMutation = useUpdateToolConfig();
@@ -35,6 +41,16 @@ export default function ToolsPage() {
   const disconnectMutation = useOAuthDisconnect();
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [connectingIntegration, setConnectingIntegration] = useState<string | null>(null);
+
+  // State for web-connect credential forms (AppFolio, ServiceTitan)
+  const [showAppfolioForm, setShowAppfolioForm] = useState(false);
+  const [appfolioMagicLink, setAppfolioMagicLink] = useState('');
+  const [appfolioConnecting, setAppfolioConnecting] = useState(false);
+  const [showServiceTitanForm, setShowServiceTitanForm] = useState(false);
+  const [stTenantId, setStTenantId] = useState('');
+  const [stClientId, setStClientId] = useState('');
+  const [stClientSecret, setStClientSecret] = useState('');
+  const [stConnecting, setStConnecting] = useState(false);
 
   const tools = data?.tools ?? [];
   const oauthMap: Record<string, OAuthStatusEntry> = {};
@@ -102,6 +118,46 @@ export default function ToolsPage() {
     });
   };
 
+  const handleAppfolioConnect = async () => {
+    if (!appfolioMagicLink.trim()) {
+      toast.error('Please enter the magic link from your AppFolio email.');
+      return;
+    }
+    setAppfolioConnecting(true);
+    try {
+      await api.connectAppfolio(appfolioMagicLink.trim());
+      toast.success('AppFolio Vendor Portal connected successfully.');
+      setShowAppfolioForm(false);
+      setAppfolioMagicLink('');
+    } catch (e) {
+      const err = e instanceof Error ? e.message : 'Failed to connect AppFolio';
+      toast.error(err);
+    } finally {
+      setAppfolioConnecting(false);
+    }
+  };
+
+  const handleServiceTitanConnect = async () => {
+    if (!stTenantId.trim() || !stClientId.trim() || !stClientSecret.trim()) {
+      toast.error('Tenant ID, Client ID, and Client Secret are all required.');
+      return;
+    }
+    setStConnecting(true);
+    try {
+      await api.connectServiceTitan(stTenantId.trim(), stClientId.trim(), stClientSecret.trim());
+      toast.success('ServiceTitan connected successfully.');
+      setShowServiceTitanForm(false);
+      setStTenantId('');
+      setStClientId('');
+      setStClientSecret('');
+    } catch (e) {
+      const err = e instanceof Error ? e.message : 'Failed to connect ServiceTitan';
+      toast.error(err);
+    } finally {
+      setStConnecting(false);
+    }
+  };
+
   if (isPending && !data) {
     return (
       <div>
@@ -131,6 +187,7 @@ export default function ToolsPage() {
             {integrationTools.map((tool) => {
               const oauthIntegration = tool.oauth_name;
               const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(oauthIntegration, oauthMap, tool.configured);
+              const isWebConnect = WEB_CONNECT_INTEGRATIONS.has(tool.name);
 
               return (
                 <Card key={tool.name}>
@@ -145,7 +202,7 @@ export default function ToolsPage() {
                               <span className={`size-1.5 rounded-full inline-block shrink-0 ${
                                 isConnected ? 'bg-success' : 'bg-warning'
                               }`} />
-                              {needsOAuth ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
+                              {(needsOAuth || isWebConnect) ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -176,6 +233,26 @@ export default function ToolsPage() {
                           onClick={() => void handleConnect(oauthIntegration)}
                           disabled={connectingIntegration === oauthIntegration}
                           isLoading={connectingIntegration === oauthIntegration}
+                        >
+                          Connect
+                        </Button>
+                      )}
+                      {isWebConnect && isConnected && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void handleDisconnect('', tool.name)}
+                        >
+                          Disconnect
+                        </Button>
+                      )}
+                      {isWebConnect && !isConnected && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            if (tool.name === 'appfolio_vendor') setShowAppfolioForm(true);
+                            else if (tool.name === 'servicetitan') setShowServiceTitanForm(true);
+                          }}
                         >
                           Connect
                         </Button>
@@ -225,6 +302,122 @@ export default function ToolsPage() {
         </section>
       )}
 
+      {/* AppFolio connect modal */}
+      {showAppfolioForm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={(e) => {
+            // Close when clicking the overlay backdrop, not the modal content
+            if (e.target === e.currentTarget) setShowAppfolioForm(false);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="appfolio-modal-title"
+        >
+          <div className="bg-card border border-border rounded-lg shadow-lg w-full max-w-sm mx-4 p-5 animate-message-in">
+            <h3 id="appfolio-modal-title" className="text-base font-semibold font-display text-foreground">
+              Connect AppFolio Vendor Portal
+            </h3>
+            <div className="mt-3 space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Paste the magic link from your AppFolio email. Open vendor.appfolio.com,
+                request a sign-in link, and copy the token from the URL.
+              </p>
+              <Field label="Magic Link URL or Token">
+                <Input
+                  value={appfolioMagicLink}
+                  onChange={(e) => setAppfolioMagicLink(e.target.value)}
+                  placeholder="e.g. https://vendor.appfolio.com/?magic_link_token=..."
+                />
+              </Field>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAppfolioForm(false)}
+                disabled={appfolioConnecting}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleAppfolioConnect}
+                disabled={appfolioConnecting}
+                isLoading={appfolioConnecting}
+              >
+                Connect
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ServiceTitan connect modal */}
+      {showServiceTitanForm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={(e) => {
+            // Close when clicking the overlay backdrop, not the modal content
+            if (e.target === e.currentTarget) setShowServiceTitanForm(false);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="st-modal-title"
+        >
+          <div className="bg-card border border-border rounded-lg shadow-lg w-full max-w-sm mx-4 p-5 animate-message-in">
+            <h3 id="st-modal-title" className="text-base font-semibold font-display text-foreground">
+              Connect ServiceTitan
+            </h3>
+            <div className="mt-3 space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Enter your ServiceTitan credentials from Settings > Integrations >
+                API Application Access.
+              </p>
+              <Field label="Tenant ID">
+                <Input
+                  value={stTenantId}
+                  onChange={(e) => setStTenantId(e.target.value)}
+                  placeholder="e.g. 1234567"
+                />
+              </Field>
+              <Field label="Client ID">
+                <Input
+                  value={stClientId}
+                  onChange={(e) => setStClientId(e.target.value)}
+                  placeholder="e.g. my-client-id"
+                />
+              </Field>
+              <Field label="Client Secret">
+                <Input
+                  type="password"
+                  value={stClientSecret}
+                  onChange={(e) => setStClientSecret(e.target.value)}
+                  placeholder="Enter client secret"
+                />
+              </Field>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowServiceTitanForm(false)}
+                disabled={stConnecting}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleServiceTitanConnect}
+                disabled={stConnecting}
+                isLoading={stConnecting}
+              >
+                Connect
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

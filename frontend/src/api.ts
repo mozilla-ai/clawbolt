@@ -251,6 +251,31 @@ const api = {
     });
     if (error) _throwApiError(error, 'Failed to disconnect OAuth');
   },
+
+  // Web-based integration connect (AppFolio, ServiceTitan)
+  connectAppfolio: async (magicLink: string) => {
+    const { data, error } = await client.POST('/api/integrations/appfolio_vendor/connect', {
+      body: { magic_link: magicLink },
+    });
+    if (error) _throwApiError(error, 'Failed to connect AppFolio');
+    return data as { status: string; message: string };
+  },
+  connectServiceTitan: async (tenantId: string, clientId: string, clientSecret: string) => {
+    const { data, error } = await client.POST('/api/integrations/servicetitan/connect', {
+      body: { tenant_id: tenantId, client_id: clientId, client_secret: clientSecret },
+    });
+    if (error) _throwApiError(error, 'Failed to connect ServiceTitan');
+    return data as { status: string; message: string };
+  },
+  disconnectAppfolio: async () => {
+    const { error } = await client.DELETE('/api/integrations/appfolio_vendor/disconnect');
+    if (error) _throwApiError(error, 'Failed to disconnect AppFolio');
+  },
+  disconnectServiceTitan: async () => {
+    const { error } = await client.DELETE('/api/integrations/servicetitan/disconnect');
+    if (error) _throwApiError(error, 'Failed to disconnect ServiceTitan');
+  },
+
   // Calendar config
   getCalendarList: async () => {
     const { data, error } = await client.GET('/api/user/calendar/calendars');

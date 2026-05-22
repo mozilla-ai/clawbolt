@@ -19,7 +19,6 @@ from backend.app.agent.tools.registry import ToolContext, default_registry
 from backend.app.integrations.servicetitan import _fake as fake_module
 from backend.app.integrations.servicetitan.auth import (
     is_connected,
-    load_credentials,
     save_credentials,
 )
 from backend.app.integrations.servicetitan.auth_tools import build_auth_tools
@@ -185,7 +184,9 @@ async def test_data_factory_returns_all_tools_when_connected(async_test_user: An
 
 
 @pytest.mark.asyncio()
-async def test_connect_servicetitan_persists_credentials(async_test_user: Any) -> None:
+async def test_connect_servicetitan_redirects_to_web_app(async_test_user: Any) -> None:
+    """The auth tool now redirects to the Clawbolt web app instead of
+    accepting credentials in chat. Issue #1337."""
     user_id = async_test_user.id
     tools = build_auth_tools(user_id)
     assert len(tools) == 1
@@ -197,24 +198,20 @@ async def test_connect_servicetitan_persists_credentials(async_test_user: Any) -
         client_id="my-client-id",
         client_secret="my-secret",
     )
-    assert result.is_error is False
-    assert "connected" in result.content.lower()
-    assert result.receipt is not None
-    assert "1234567" in result.receipt.target
+    assert result.is_error is True
+    assert "Clawbolt web app" in result.content
+    assert "Settings > Tools" in result.content
+    assert "ServiceTitan" in result.content
 
-    assert await is_connected(user_id) is True
-    cred = await load_credentials(user_id)
-    assert cred is not None
-    assert cred.tenant_id == "1234567"
-    assert cred.client_id == "my-client-id"
-    assert cred.client_secret == "my-secret"
-    assert cred.app_key == "fake-st-app-key"
-    assert cred.access_token == fake_module.FAKE_TOKEN_VALUE
-    assert cred.expires_at > time.time()
+    # No credentials should have been persisted.
+    assert await is_connected(user_id) is False
 
 
 @pytest.mark.asyncio()
-async def test_connect_servicetitan_rejects_empty_fields(async_test_user: Any) -> None:
+async def test_connect_servicetitan_redirects_even_with_empty_fields(
+    async_test_user: Any,
+) -> None:
+    """The tool now always redirects to web app regardless of input."""
     user_id = async_test_user.id
     tools = build_auth_tools(user_id)
     connect_tool = tools[0]
@@ -225,15 +222,14 @@ async def test_connect_servicetitan_rejects_empty_fields(async_test_user: Any) -
         client_secret="csec",
     )
     assert result.is_error is True
-    assert result.error_kind is not None
-    assert "required" in result.content.lower()
+    assert "Clawbolt web app" in result.content
 
 
 @pytest.mark.asyncio()
-async def test_connect_servicetitan_errors_without_app_key(
+async def test_connect_servicetitan_redirects_regardless_of_app_key(
     async_test_user: Any,
 ) -> None:
-    """When the operator has not set the App Key, connect must fail loudly."""
+    """The tool now always redirects to web app regardless of App Key config."""
     from backend.app.config import settings as _settings
 
     user_id = async_test_user.id
@@ -246,14 +242,14 @@ async def test_connect_servicetitan_errors_without_app_key(
             client_secret="csec",
         )
     assert result.is_error is True
-    assert "SERVICETITAN_APP_KEY" in result.content
+    assert "Clawbolt web app" in result.content
 
 
 @pytest.mark.asyncio()
-async def test_connect_servicetitan_strips_and_rejects_blank_client_secret(
+async def test_connect_servicetitan_redirects_even_with_blank_secret(
     async_test_user: Any,
 ) -> None:
-    """A whitespace-only Client Secret must surface as a validation error."""
+    """The tool now always redirects to web app regardless of input."""
     user_id = async_test_user.id
     tools = build_auth_tools(user_id)
     connect_tool = tools[0]
@@ -261,22 +257,17 @@ async def test_connect_servicetitan_strips_and_rejects_blank_client_secret(
     result = await connect_tool.function(
         tenant_id="t",
         client_id="cid",
-        client_secret="   ",  # stripped to empty before the mint call
+        client_secret="   ",
     )
     assert result.is_error is True
-    assert "required" in result.content.lower()
+    assert "Clawbolt web app" in result.content
 
 
 @pytest.mark.asyncio()
-async def test_connect_servicetitan_surfaces_token_endpoint_failure(
+async def test_connect_servicetitan_redirects_regardless_of_token_failure(
     async_test_user: Any,
 ) -> None:
-    """When the fake rejects the credentials, the tool surfaces an AUTH error.
-
-    Patches the mint helper to raise so this test actually exercises the
-    failure-path branch in the connect tool, not the local validation
-    branch that catches blank fields up front.
-    """
+    """The tool now always redirects to web app regardless of token state."""
     user_id = async_test_user.id
     tools = build_auth_tools(user_id)
     connect_tool = tools[0]
@@ -296,5 +287,4 @@ async def test_connect_servicetitan_surfaces_token_endpoint_failure(
             client_secret="csec",
         )
     assert result.is_error is True
-    assert "rejected" in result.content.lower()
-    assert result.error_kind is not None
+    assert "Clawbolt web app" in result.content
