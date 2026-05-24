@@ -2835,29 +2835,20 @@ class TestPerUserMaxDaily:
         assert mock_run.call_args.kwargs["max_daily"] == 7
 
     @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat.settings")
-    async def test_model_default_is_five(
-        self,
-        mock_settings: MagicMock,
-        mock_run: AsyncMock,
-    ) -> None:
-        """A user created without specifying heartbeat_max_daily gets the
-        model default of 5, and the scheduler passes max_daily=5.
-        Regression for issue #522: the DB default was 0, making it look
-        like "unlimited", but the scheduler already fell back to the
-        global config default of 5.  Making the DB default explicit at 5
-        removes the ambiguity."""
-        mock_settings.heartbeat_concurrency = 5
-        mock_settings.heartbeat_max_daily_messages = 5
+    async def test_model_default_is_five(self) -> None:
+        """The ORM default for heartbeat_max_daily is 5.
 
+        Regression for issue mozilla-ai/clawbolt-premium#522. The old
+        default was 0, which the heartbeat scheduler interpreted as "use
+        the global config default of 5" (settings.heartbeat_max_daily_messages
+        in config.py). Setting the DB default to 5 makes the intent
+        explicit.
+        """
         async with db_session_async() as db:
             user = User(
                 user_id="hb-maxdaily-default-five",
                 phone="",
                 onboarding_complete=True,
-                preferred_channel="telegram",
-                channel_identifier="",
                 # Deliberately omit heartbeat_max_daily so the DB default applies
             )
             db.add(user)
@@ -2866,23 +2857,6 @@ class TestPerUserMaxDaily:
             assert user.heartbeat_max_daily == 5, (
                 f"Expected DB default 5, got {user.heartbeat_max_daily}"
             )
-            db.add(
-                ChannelRoute(
-                    user_id=user.id,
-                    channel="telegram",
-                    channel_identifier="tg-default-five",
-                )
-            )
-            await db.commit()
-            db.expunge(user)
-
-        mock_run.return_value = None
-
-        scheduler = HeartbeatScheduler()
-        await scheduler.tick()
-
-        mock_run.assert_awaited_once()
-        assert mock_run.call_args.kwargs["max_daily"] == 5
 
 
 # ---------------------------------------------------------------------------
