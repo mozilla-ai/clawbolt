@@ -2834,6 +2834,30 @@ class TestPerUserMaxDaily:
         mock_run.assert_awaited_once()
         assert mock_run.call_args.kwargs["max_daily"] == 7
 
+    @pytest.mark.asyncio
+    async def test_model_default_is_five(self) -> None:
+        """The ORM default for heartbeat_max_daily is 5.
+
+        Regression for issue mozilla-ai/clawbolt-premium#522. The old
+        default was 0, which the heartbeat scheduler interpreted as "use
+        the global config default of 5" (settings.heartbeat_max_daily_messages
+        in config.py). Setting the DB default to 5 makes the intent
+        explicit.
+        """
+        async with db_session_async() as db:
+            user = User(
+                user_id="hb-maxdaily-default-five",
+                phone="",
+                onboarding_complete=True,
+                # Deliberately omit heartbeat_max_daily so the DB default applies
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            assert user.heartbeat_max_daily == 5, (
+                f"Expected DB default 5, got {user.heartbeat_max_daily}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Heartbeat history formatting

@@ -135,7 +135,7 @@ def test_get_profile_includes_heartbeat_max_daily(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert "heartbeat_max_daily" in data
-    assert data["heartbeat_max_daily"] == 0
+    assert data["heartbeat_max_daily"] == 5
 
 
 def test_update_profile_heartbeat_max_daily(client: TestClient) -> None:
