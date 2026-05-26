@@ -473,7 +473,7 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.body && (
-                    <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
+                    <p className="text-sm whitespace-pre-wrap break-words">{msg.body}</p>
                   )}
 
                   {msg.toolInteractions && msg.toolInteractions.length > 0 && (

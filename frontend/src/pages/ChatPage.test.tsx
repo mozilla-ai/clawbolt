@@ -283,6 +283,43 @@ describe('ChatPage tool interaction expand/collapse', () => {
   });
 });
 
+describe('ChatPage message body wrapping', () => {
+  it('wraps long unbreakable strings (e.g. URLs) inside the message bubble', async () => {
+    const sessionId = '1_3000';
+    const longUrl =
+      'https://example.com/oauth/connect?state=' + 'a'.repeat(200) + '&redirect=https://app.example.com/callback';
+    mockApi.getConversation.mockResolvedValue({
+      session_id: sessionId,
+      user_id: '1',
+      created_at: '2025-01-01T00:00:00Z',
+      last_message_at: '2025-01-01T00:01:00Z',
+      channel: 'webchat',
+      initial_system_prompt: '',
+      messages: [
+        {
+          seq: 1,
+          direction: 'inbound',
+          body: 'Connect my calendar',
+          timestamp: '2025-01-01T00:00:00Z',
+          tool_interactions: [],
+        },
+        {
+          seq: 2,
+          direction: 'outbound',
+          body: longUrl,
+          timestamp: '2025-01-01T00:01:00Z',
+          tool_interactions: [],
+        },
+      ],
+    });
+
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
+
+    const body = await screen.findByText(longUrl);
+    expect(body.className).toContain('break-words');
+  });
+});
+
 describe('ChatPage conversation auto-load', () => {
   it('loads the user conversation on mount', async () => {
     mockApi.getConversation.mockResolvedValue({
