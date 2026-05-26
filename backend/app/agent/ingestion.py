@@ -776,7 +776,12 @@ async def process_inbound_from_bus(
 
     # -- Intercept approval responses before normal processing --
     gate = get_approval_gate()
-    if gate.has_pending(user.id) and inbound.text:
+    # A message carrying media attachments has payload the agent needs
+    # to act on (photos to upload, files to save), so it is never just
+    # an approval reply -- even if the caption happens to be "yes". Let
+    # such messages flow into the normal pipeline; the next iteration
+    # will resolve the gate as INTERRUPTED via the fall-through path.
+    if gate.has_pending(user.id) and inbound.text and not inbound.media_refs:
         # Fast path: exact keyword match
         decision = _parse_approval_response(inbound.text)
 
@@ -792,10 +797,20 @@ async def process_inbound_from_bus(
             decision = await classify_approval_response(inbound.text)
 
         if decision is not None:
+            # The body is intentionally not persisted as a Message row (see
+            # the explanatory block below). That makes it invisible to any
+            # later audit query unless we leave a single visible breadcrumb
+            # in the application log. Include external_message_id so an
+            # ops query can join consumed approvals back to
+            # ``idempotency_keys`` and confirm "this webhook arrived and
+            # was eaten by the approval gate" without spelunking history.
             logger.info(
-                "Approval resolved for user %s: %s (from %r)",
+                "Approval consumed for user %s: decision=%s ext_id=%s body_len=%d media=%d text=%r",
                 user.id,
                 decision,
+                inbound.external_message_id,
+                len(inbound.text or ""),
+                len(inbound.media_refs),
                 inbound.text[:100],
             )
             await gate.resolve(user.id, decision)
