@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
+import { Outlet, Route, Routes } from 'react-router-dom';
 import { renderWithRouter } from '@/test/test-utils';
 import { ChatActivityProvider } from '@/contexts/ChatActivityContext';
 import ChatPage from './ChatPage';
@@ -47,7 +49,6 @@ describe('ChatPage tool interactions', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -88,7 +89,6 @@ describe('ChatPage tool interactions', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -128,7 +128,6 @@ describe('ChatPage tool interaction expand/collapse', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -294,7 +293,6 @@ describe('ChatPage message body wrapping', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -328,7 +326,6 @@ describe('ChatPage conversation auto-load', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -366,7 +363,6 @@ describe('ChatPage conversation auto-load', () => {
       created_at: '',
       last_message_at: '',
       channel: '',
-      initial_system_prompt: '',
       messages: [],
     });
 
@@ -423,7 +419,6 @@ describe('ChatPage current system prompt panel', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: 'STALE FIRST-TURN PROMPT',
       messages: [
         {
           seq: 1,
@@ -462,10 +457,6 @@ describe('ChatPage current system prompt panel', () => {
     expect(toggle).toBeInTheDocument();
     expect(mockApi.getConversationSystemPrompt).not.toHaveBeenCalled();
 
-    // We must NOT show the stale frozen snapshot. Even before opening
-    // the panel, the old initial_system_prompt text should be absent.
-    expect(screen.queryByText('STALE FIRST-TURN PROMPT')).not.toBeInTheDocument();
-
     // Expanding triggers a single fetch with the active session id and
     // renders the live prompt body.
     const user = userEvent.setup();
@@ -485,7 +476,6 @@ describe('ChatPage current system prompt panel', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -537,7 +527,6 @@ describe('ChatPage failed-send cleanup (issue #1368)', () => {
       created_at: '',
       last_message_at: '',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [],
     });
     mockApi.sendChatMessage.mockRejectedValue(new Error('Request failed: 403'));
@@ -557,3 +546,114 @@ describe('ChatPage failed-send cleanup (issue #1368)', () => {
     });
   });
 });
+
+describe('ChatPage system prompt panel visibility', () => {
+  const sessionWithMessages = (sessionId: string) => ({
+    session_id: sessionId,
+    user_id: '1',
+    created_at: '2025-01-01T00:00:00Z',
+    last_message_at: '2025-01-01T00:01:00Z',
+    channel: 'webchat' as const,
+    messages: [
+      {
+        seq: 1,
+        direction: 'inbound' as const,
+        body: 'Hi',
+        timestamp: '2025-01-01T00:00:00Z',
+        tool_interactions: [],
+      },
+      {
+        seq: 2,
+        direction: 'outbound' as const,
+        body: 'Hello!',
+        timestamp: '2025-01-01T00:01:00Z',
+        tool_interactions: [],
+      },
+    ],
+  });
+
+  it('hides the panel for non-admin users on a premium deployment', async () => {
+    const sessionId = '1_5100';
+    mockApi.getConversation.mockResolvedValue(sessionWithMessages(sessionId));
+
+    const { unmount } = renderWithRouter(
+      <ChatActivityProvider>
+        <OutletCtxProvider value={{ isPremium: true, isAdmin: false }}>
+          <ChatPage />
+        </OutletCtxProvider>
+      </ChatActivityProvider>,
+      { route: `/app/chat?session=${sessionId}` },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /current system prompt/i })).not.toBeInTheDocument();
+    expect(mockApi.getConversationSystemPrompt).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
+  it('shows the panel for admin users on a premium deployment', async () => {
+    const sessionId = '1_5101';
+    mockApi.getConversation.mockResolvedValue(sessionWithMessages(sessionId));
+    mockApi.getConversationSystemPrompt.mockResolvedValue({
+      session_id: sessionId,
+      system_prompt: 'ADMIN-VISIBLE PROMPT',
+      is_onboarding: false,
+    });
+
+    renderWithRouter(
+      <ChatActivityProvider>
+        <OutletCtxProvider value={{ isPremium: true, isAdmin: true }}>
+          <ChatPage />
+        </OutletCtxProvider>
+      </ChatActivityProvider>,
+      { route: `/app/chat?session=${sessionId}` },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /current system prompt/i })).toBeInTheDocument();
+  });
+
+  it('shows the panel on OSS standalone (no premium auth)', async () => {
+    const sessionId = '1_5102';
+    mockApi.getConversation.mockResolvedValue(sessionWithMessages(sessionId));
+
+    renderWithRouter(
+      <ChatActivityProvider>
+        <OutletCtxProvider value={{ isPremium: false, isAdmin: false }}>
+          <ChatPage />
+        </OutletCtxProvider>
+      </ChatActivityProvider>,
+      { route: `/app/chat?session=${sessionId}` },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /current system prompt/i })).toBeInTheDocument();
+  });
+});
+
+/** Test helper that injects an outlet context value into the React tree. */
+function OutletCtxProvider({
+  value,
+  children,
+}: {
+  value: { isPremium: boolean; isAdmin: boolean };
+  children: ReactNode;
+}) {
+  return (
+    <Routes>
+      <Route element={<Outlet context={value} />}>
+        <Route path="*" element={children} />
+      </Route>
+    </Routes>
+  );
+}

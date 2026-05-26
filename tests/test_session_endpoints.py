@@ -524,7 +524,10 @@ async def test_delete_conversation_history(client: TestClient, test_user: User) 
     resp = client.get("/api/user/conversation")
     detail = resp.json()
     assert detail["messages"] == []
-    assert detail["initial_system_prompt"] == ""
+    # The conversation endpoint intentionally does not expose
+    # ``initial_system_prompt``. Store-level coverage of "delete clears
+    # the prompt" lives in ``test_session_db_async.py``.
+    assert "initial_system_prompt" not in detail
 
 
 async def test_delete_conversation_history_preserves_memory(
