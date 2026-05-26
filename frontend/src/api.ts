@@ -407,12 +407,12 @@ const api = {
 
     const connect = (): void => {
       if (controller.signal.aborted) return;
-      const token = getAccessToken();
 
-      fetch('/api/user/chat/activity', {
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        signal: controller.signal,
-      })
+      // _authedFetch refreshes once on 401 and retries, so a token that ages
+      // out mid-stream no longer terminates the activity feed; only a
+      // refresh-also-fails 401 (or a real 403) still trips the auth-stop
+      // branch below.
+      _authedFetch('/api/user/chat/activity', { signal: controller.signal })
         .then((res) => {
           if (!res.ok || !res.body) {
             if (res.status === 401 || res.status === 403) {

@@ -120,4 +120,32 @@ describe('_authedFetch', () => {
     expect(res.status).toBe(403);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('passes init fields through (signal, method, etc.) to fetch', async () => {
+    // Long-lived SSE callers rely on signal propagation so abort() actually
+    // tears down the connection. Verify init flows through verbatim on both
+    // the original request and the retry path.
+    setAccessToken(makeJwt(NOW_S + 3600));
+    const controller = new AbortController();
+
+    fetchMock
+      .mockResolvedValueOnce(new Response('', { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: makeJwt(NOW_S + 3600),
+            refresh_token: 'rt-new',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+
+    await _authedFetch('/api/user/chat/activity', { signal: controller.signal });
+
+    const firstInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const retryInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(firstInit.signal).toBe(controller.signal);
+    expect(retryInit.signal).toBe(controller.signal);
+  });
 });
