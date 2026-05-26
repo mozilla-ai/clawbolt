@@ -75,6 +75,87 @@ export async function _authedFetch(input: string, init: RequestInit = {}): Promi
   return fetch(input, buildInit());
 }
 
+/**
+ * XHR-based upload helper. fetch() with FormData cannot report upload-side
+ * progress (you only get download progress via the response stream); for the
+ * chat POST the user wants to watch their image bytes go up, so this routes
+ * through XMLHttpRequest where ``xhr.upload.onprogress`` is available.
+ *
+ * Mirrors the auth behaviour of _authedFetch: proactive refresh near token
+ * expiry, and one retry after a refresh on a 401 response. Honours an
+ * AbortSignal and a timeout. The retry path re-sends the same FormData under
+ * the assumption that File parts can be re-read; for our use that's true
+ * because the File comes straight from the browser file picker.
+ *
+ * Returns a real Response so the existing call site can call ``.json()`` and
+ * ``.status`` without knowing it's XHR underneath. #1368.
+ */
+interface UploadOptions {
+  signal?: AbortSignal;
+  onProgress?: (loaded: number, total: number) => void;
+  timeoutMs?: number;
+}
+
+async function _uploadFormData(
+  url: string,
+  formData: FormData,
+  options: UploadOptions = {},
+): Promise<Response> {
+  const doOnce = (): Promise<Response> =>
+    new Promise<Response>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      const headers = _getAuthHeaders();
+      for (const [name, value] of Object.entries(headers)) {
+        xhr.setRequestHeader(name, value);
+      }
+      if (options.timeoutMs) {
+        xhr.timeout = options.timeoutMs;
+      }
+      if (options.onProgress) {
+        xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+          if (e.lengthComputable) {
+            options.onProgress!(e.loaded, e.total);
+          }
+        });
+      }
+      xhr.addEventListener('load', () => {
+        // Wrap the XHR response in a real Response so callers don't care
+        // about the impl. responseText is the body we need; XHR's other
+        // response types stay unused.
+        resolve(new Response(xhr.responseText, { status: xhr.status }));
+      });
+      xhr.addEventListener('error', () => {
+        reject(new TypeError('Network error'));
+      });
+      xhr.addEventListener('abort', () => {
+        reject(new DOMException('Upload aborted', 'AbortError'));
+      });
+      xhr.addEventListener('timeout', () => {
+        reject(new DOMException('Upload timed out', 'TimeoutError'));
+      });
+      if (options.signal) {
+        if (options.signal.aborted) {
+          xhr.abort();
+          return;
+        }
+        options.signal.addEventListener('abort', () => xhr.abort(), { once: true });
+      }
+      xhr.send(formData);
+    });
+
+  if (getAccessToken() && _shouldProactivelyRefresh(_getAccessTokenExp())) {
+    await tryRefresh();
+  }
+
+  const res = await doOnce();
+  if (res.status !== 401) return res;
+
+  const refreshed = await tryRefresh();
+  if (!refreshed) return res;
+  return doOnce();
+}
+
 /** Error with an HTTP status attached, so callers can distinguish 404 from other failures. */
 class ApiError extends Error {
   status: number | undefined;
@@ -479,6 +560,7 @@ const api = {
     files?: File[],
     onEvent?: (event: { type: string; tool_name?: string; content?: string }) => void,
     onAccepted?: (accepted: ChatAccepted) => void,
+    uploadOpts?: { onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal },
   ): Promise<ChatResponse> => {
     const formData = new FormData();
     formData.append('message', message);
@@ -488,22 +570,25 @@ const api = {
       }
     }
 
-    // Step 1: Submit message to bus. multipart/form-data has to bypass the
-    // typed openapi-fetch client, so route through _authedFetch to keep the
-    // proactive-refresh + 401-retry behaviour. The 2 minute timeout caps how
-    // long a stuck POST can leave the spinner up; once it fires, the catch
-    // block in ChatPage drops the optimistic message so the user sees a
-    // clear failure instead of a hung send. #1368.
+    // Step 1: Submit message to bus via XHR (vs. fetch) so we can surface
+    // upload-byte progress to the caller and let them abort mid-flight.
+    // _uploadFormData also runs the same proactive-refresh + 401-retry path
+    // _authedFetch has. The 2 minute timeout caps how long a stuck POST can
+    // leave the spinner up; once it fires the catch in ChatPage marks the
+    // optimistic message as failed so the user can retry. #1368.
     let submitRes: Response;
     try {
-      submitRes = await _authedFetch('/api/user/chat', {
-        method: 'POST',
-        body: formData,
-        signal: AbortSignal.timeout(120_000),
+      submitRes = await _uploadFormData('/api/user/chat', formData, {
+        signal: uploadOpts?.signal,
+        onProgress: uploadOpts?.onProgress,
+        timeoutMs: 120_000,
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'TimeoutError') {
         throw new Error('Upload timed out. Please try again.');
+      }
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new Error('Upload canceled.');
       }
       throw err;
     }
