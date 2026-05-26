@@ -547,6 +547,53 @@ describe('ChatPage failed-send cleanup (issue #1368)', () => {
   });
 });
 
+describe('ChatPage file attachment blob URLs (issue #1368)', () => {
+  it('creates each preview blob URL once, not on every keystroke', async () => {
+    // Before the fix, the chip rendering called URL.createObjectURL(file)
+    // inline on every render. Typing in the textarea re-renders ChatPage,
+    // so each keystroke leaked a new blob URL. For phone-sized photos that
+    // showed up as visible typing lag.
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test-url');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    try {
+      const { container } = renderWithRouter(
+        <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+      );
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
+      const user = userEvent.setup();
+      await user.upload(fileInput, png);
+
+      // One URL for the freshly attached image.
+      expect(createSpy).toHaveBeenCalledTimes(1);
+
+      // Typing should NOT allocate any new blob URLs.
+      const textarea = await screen.findByPlaceholderText('Type a message...');
+      await user.type(textarea, 'caption text');
+      expect(createSpy).toHaveBeenCalledTimes(1);
+
+      // Removing the chip revokes the URL exactly once.
+      const removeButton = screen.getByRole('button', { name: /remove photo\.png/i });
+      await user.click(removeButton);
+      expect(revokeSpy).toHaveBeenCalledWith('blob:test-url');
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+});
+
 describe('ChatPage system prompt panel visibility', () => {
   const sessionWithMessages = (sessionId: string) => ({
     session_id: sessionId,

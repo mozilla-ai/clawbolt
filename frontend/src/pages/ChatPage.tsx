@@ -20,6 +20,20 @@ interface FileAttachment {
   previewUrl?: string;
 }
 
+/**
+ * A staged file plus its blob preview URL. The URL is created once when the
+ * file is selected and lives until the file is either removed from the chip
+ * row or transferred onto a sent message. Critically, the URL is NOT
+ * regenerated on render; the previous implementation called
+ * URL.createObjectURL() inside the chip JSX, which produced a new blob URL
+ * on every keystroke (since typing re-renders ChatPage) and caused noticeable
+ * input lag for phone-sized photos. #1368.
+ */
+interface SelectedFile {
+  file: File;
+  previewUrl?: string;
+}
+
 interface ChatMessage {
   id: number;
   role: 'user' | 'assistant';
@@ -48,7 +62,7 @@ export default function ChatPage() {
   const [pendingCount, setPendingCount] = useState(0);
   const pendingRef = useRef(0);
   const sending = pendingCount > 0;
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const { agentBusy, activityTool, doneTick } = useChatActivity();
@@ -144,14 +158,24 @@ export default function ChatPage() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newFiles = Array.from(e.target.files || []);
     if (newFiles.length > 0) {
-      setSelectedFiles((prev) => [...prev, ...newFiles]);
+      setSelectedFiles((prev) => [
+        ...prev,
+        ...newFiles.map((file) => ({
+          file,
+          previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+        })),
+      ]);
     }
     // Reset so the same file can be re-selected
     e.target.value = '';
   };
 
   const removeFile = (index: number) => {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setSelectedFiles((prev) => {
+      const entry = prev[index];
+      if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -159,11 +183,15 @@ export default function ChatPage() {
     const text = input.trim();
     if (!text && selectedFiles.length === 0) return;
 
-    // Build attachments for display
-    const attachments: FileAttachment[] = selectedFiles.map((f) => ({
-      name: f.name,
-      type: f.type,
-      previewUrl: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined,
+    // Build attachments for display. Reuse the blob URLs created at file-select
+    // time so we don't allocate a second one per attachment (the optimistic
+    // message and the chip can share the same URL). After this call the URLs
+    // are owned by the rendered message; the chip row is cleared below
+    // without revoking, so previews remain valid in the chat.
+    const attachments: FileAttachment[] = selectedFiles.map((entry) => ({
+      name: entry.file.name,
+      type: entry.file.type,
+      previewUrl: entry.previewUrl,
     }));
 
     const userMsg: ChatMessage = {
@@ -175,7 +203,8 @@ export default function ChatPage() {
     };
     setMessages((prev) => [...prev, userMsg]);
 
-    const filesToSend = selectedFiles.length > 0 ? [...selectedFiles] : undefined;
+    const filesToSend =
+      selectedFiles.length > 0 ? selectedFiles.map((entry) => entry.file) : undefined;
     setInput('');
     setSelectedFiles([]);
     pendingRef.current++;
@@ -235,8 +264,15 @@ export default function ChatPage() {
       // and then silently vanish on the next successful send (which
       // invalidates the conversation query and replaces local state with
       // what the server has, which never includes a message whose POST
-      // failed). #1368.
-      setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+      // failed). Revoke any attachment blob URLs the optimistic message
+      // owned, since nothing else will. #1368.
+      setMessages((prev) => {
+        const removed = prev.find((m) => m.id === userMsg.id);
+        removed?.attachments?.forEach((att) => {
+          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+        });
+        return prev.filter((m) => m.id !== userMsg.id);
+      });
     } finally {
       if (!mountedRef.current) return;
       pendingRef.current--;
@@ -709,28 +745,28 @@ export default function ChatPage() {
             {/* File preview chips */}
             {selectedFiles.length > 0 && (
               <div className="flex flex-wrap gap-1.5 px-1">
-                {selectedFiles.map((file, i) => (
+                {selectedFiles.map((entry, i) => (
                   <div
                     key={i}
                     className="flex items-center gap-1.5 bg-card border border-border text-foreground text-xs px-2 py-1 rounded-md"
                   >
-                    {file.type.startsWith('image/') ? (
+                    {entry.previewUrl ? (
                       <img
-                        src={URL.createObjectURL(file)}
-                        alt={file.name}
+                        src={entry.previewUrl}
+                        alt={entry.file.name}
                         className="w-5 h-5 rounded object-cover"
                       />
                     ) : (
                       <FileIcon />
                     )}
-                    <span className="truncate max-w-[100px]">{file.name}</span>
-                    <Tooltip content={`Remove ${file.name}`} delay={400} closeDelay={0}>
+                    <span className="truncate max-w-[100px]">{entry.file.name}</span>
+                    <Tooltip content={`Remove ${entry.file.name}`} delay={400} closeDelay={0}>
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => removeFile(i)}
                         className="ml-0.5 text-muted-foreground hover:text-foreground"
-                        aria-label={`Remove ${file.name}`}
+                        aria-label={`Remove ${entry.file.name}`}
                       >
                         <CloseIcon />
                       </Button>
