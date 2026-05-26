@@ -195,11 +195,6 @@ export default function ChatPage() {
   }, []);
 
   // Populate messages from conversation history when it loads.
-  // Server messages never carry a previewUrl, so any blob URL on the about-to-
-  // be-replaced local messages came from an optimistic send and has nothing
-  // else holding it alive once we drop the message. Revoke before replacing so
-  // long-lived chat sessions do not accumulate one orphaned blob per uploaded
-  // image. #1368.
   useEffect(() => {
     if (!sessionDetail) return;
     const loaded: ChatMessage[] = sessionDetail.messages.map((m) => ({
@@ -210,14 +205,7 @@ export default function ChatPage() {
       seq: m.seq,
       toolInteractions: m.tool_interactions && m.tool_interactions.length > 0 ? m.tool_interactions : undefined,
     }));
-    setMessages((prev) => {
-      prev.forEach((m) => {
-        m.attachments?.forEach((att) => {
-          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-        });
-      });
-      return loaded;
-    });
+    setMessages(loaded);
   }, [sessionDetail]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -356,10 +344,27 @@ export default function ChatPage() {
           () => {
             // POST succeeded with a request_id, i.e. the upload bytes are
             // safely on the server and the agent is now the bottleneck.
-            // Flip the spinner on here, not at send-click, so users
-            // watching an upload aren't told "Thinking..." until thinking
-            // actually starts.
+            // Two transitions land at this exact moment:
+            //   1. Clear the upload overlay on the bubble. The previous
+            //      version cleared it only after api.sendChatMessage
+            //      resolved (i.e. after the agent's full reply), so the
+            //      progress ring would stick at whatever value the final
+            //      xhr.upload.progress event reported until the agent
+            //      finished -- typically seconds to minutes. That's the
+            //      "stuck at 40%" symptom from #1368.
+            //   2. Flip on the "Thinking..." spinner, since the agent is
+            //      now the bottleneck.
             if (!mountedRef.current) return;
+            setMessages((prev) => prev.map((m) =>
+              m.id === msgId
+                ? {
+                    ...m,
+                    uploadState: undefined,
+                    uploadProgress: undefined,
+                    uploadAbort: undefined,
+                  }
+                : m,
+            ));
             thinkingIncremented = true;
             setThinkingCount((c) => c + 1);
           },
@@ -377,20 +382,8 @@ export default function ChatPage() {
             : undefined,
         );
         if (!mountedRef.current) return;
-
-        // Upload + reply succeeded: clear the upload overlay on the bubble.
-        setMessages((prev) => prev.map((m) =>
-          m.id === msgId
-            ? {
-                ...m,
-                uploadState: undefined,
-                uploadProgress: undefined,
-                uploadAbort: undefined,
-                // Keep uploadOriginals so the File handles can be GC'd via
-                // the next conversation refetch wiping the optimistic msg.
-              }
-            : m,
-        ));
+        // The upload overlay was already cleared by the onAccepted
+        // callback above; we just need to drop the agent reply in.
 
         // Skip adding an assistant message when the reply is empty
         // (the agent chose not to respond, e.g. user asked for silence).
