@@ -473,7 +473,7 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.body && (
-                    <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
+                    <p className="text-sm whitespace-pre-wrap break-words">{msg.body}</p>
                   )}
 
                   {msg.toolInteractions && msg.toolInteractions.length > 0 && (
@@ -541,7 +541,7 @@ export default function ChatPage() {
                             </button>
                             {isExpanded && (
                               <div className="px-2 pb-2 space-y-2">
-                                <div className="font-mono text-[14px] whitespace-pre-wrap max-h-60 overflow-y-auto bg-panel/50 rounded px-2 py-1.5">
+                                <div className="font-mono text-[14px] whitespace-pre-wrap break-words max-h-60 overflow-y-auto bg-panel/50 rounded px-2 py-1.5">
                                   {result || 'No result'}
                                 </div>
                                 {hasArgs && (
@@ -549,7 +549,7 @@ export default function ChatPage() {
                                     <span className="text-xs font-medium opacity-70">
                                       Args
                                     </span>
-                                    <pre className="font-mono text-[14px] whitespace-pre-wrap max-h-40 overflow-y-auto bg-panel/50 rounded px-2 py-1.5 mt-0.5">
+                                    <pre className="font-mono text-[14px] whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-panel/50 rounded px-2 py-1.5 mt-0.5">
                                       {(() => { try { return JSON.stringify(args, null, 2); } catch { return String(args); } })()}
                                     </pre>
                                   </div>
