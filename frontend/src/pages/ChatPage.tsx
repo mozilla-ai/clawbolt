@@ -62,7 +62,20 @@ export default function ChatPage() {
   const [pendingCount, setPendingCount] = useState(0);
   const pendingRef = useRef(0);
   const sending = pendingCount > 0;
-  const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
+  // Mirror of selectedFiles. The unmount cleanup reads this ref so it can
+  // revoke chip preview URLs without resubscribing on every render (which
+  // would race against removeFile's own revoke). #1368.
+  const selectedFilesRef = useRef<SelectedFile[]>([]);
+  const [selectedFiles, _setSelectedFiles] = useState<SelectedFile[]>([]);
+  // Wrap setSelectedFiles so selectedFilesRef stays in lockstep with state.
+  // A missed sync would let a staged chip URL leak past navigation.
+  const setSelectedFiles: typeof _setSelectedFiles = useCallback((value) => {
+    _setSelectedFiles((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value;
+      selectedFilesRef.current = next;
+      return next;
+    });
+  }, []);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const { agentBusy, activityTool, doneTick } = useChatActivity();
@@ -90,6 +103,20 @@ export default function ChatPage() {
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
+  }, []);
+
+  // Revoke any staged chip preview URLs when the user navigates away with
+  // an attachment still selected (otherwise those blob URLs leak until page
+  // reload). URLs already transferred to a sent message are owned by the
+  // message and revoked separately on conversation refetch / failed send.
+  // Uses selectedFilesRef so the cleanup sees the latest selection at unmount
+  // time without resubscribing on every render.
+  useEffect(() => {
+    return () => {
+      selectedFilesRef.current.forEach((entry) => {
+        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      });
+    };
   }, []);
 
   // Refresh conversation data when the agent finishes, so replies produced while
@@ -141,7 +168,12 @@ export default function ChatPage() {
     inputRef.current?.focus();
   }, []);
 
-  // Populate messages from conversation history when it loads
+  // Populate messages from conversation history when it loads.
+  // Server messages never carry a previewUrl, so any blob URL on the about-to-
+  // be-replaced local messages came from an optimistic send and has nothing
+  // else holding it alive once we drop the message. Revoke before replacing so
+  // long-lived chat sessions do not accumulate one orphaned blob per uploaded
+  // image. #1368.
   useEffect(() => {
     if (!sessionDetail) return;
     const loaded: ChatMessage[] = sessionDetail.messages.map((m) => ({
@@ -152,7 +184,14 @@ export default function ChatPage() {
       seq: m.seq,
       toolInteractions: m.tool_interactions && m.tool_interactions.length > 0 ? m.tool_interactions : undefined,
     }));
-    setMessages(loaded);
+    setMessages((prev) => {
+      prev.forEach((m) => {
+        m.attachments?.forEach((att) => {
+          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+        });
+      });
+      return loaded;
+    });
   }, [sessionDetail]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
