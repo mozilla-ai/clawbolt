@@ -527,3 +527,33 @@ describe('ChatPage current system prompt panel', () => {
     expect(screen.getByText(/onboarding/i)).toBeInTheDocument();
   });
 });
+
+describe('ChatPage failed-send cleanup (issue #1368)', () => {
+  it('removes the optimistic user message when sendChatMessage rejects', async () => {
+    // Empty conversation so the only visible user message is the one we send.
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      initial_system_prompt: '',
+      messages: [],
+    });
+    mockApi.sendChatMessage.mockRejectedValue(new Error('Request failed: 403'));
+
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>);
+
+    const textarea = await screen.findByPlaceholderText('Type a message...');
+    const user = userEvent.setup();
+    await user.type(textarea, 'check this out');
+    await user.keyboard('{Enter}');
+
+    // The optimistic message appears briefly, then is removed when the POST
+    // rejects. Without the cleanup it would linger until the next successful
+    // send wiped it via a conversation refetch.
+    await waitFor(() => {
+      expect(screen.queryByText('check this out')).not.toBeInTheDocument();
+    });
+  });
+});
