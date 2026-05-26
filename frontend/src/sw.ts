@@ -9,10 +9,13 @@ declare const self: ServiceWorkerGlobalScope
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
 
-// Activate new SW immediately and take control of all open tabs.
-// skipWaiting() bypasses the waiting phase; clients.claim() ensures the
-// new SW controls existing tabs without requiring a second navigation.
-// Combined with autoUpdate registration mode, this triggers a page reload
-// via the controllerchange event so users always get the latest deploy.
-self.skipWaiting()
+// The new SW stays in the waiting state until the page sends SKIP_WAITING,
+// which the in-app "Update" banner triggers via vite-plugin-pwa's
+// updateServiceWorker(). clients.claim() on activate lets the new SW take
+// over open tabs immediately so the post-update reload renders the new build.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting()
+  }
+})
 self.addEventListener('activate', () => self.clients.claim())
