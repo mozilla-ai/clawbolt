@@ -16,6 +16,7 @@ const mockProfile = {
   channel_identifier: '',
   heartbeat_opt_in: true,
   heartbeat_frequency: 'daily',
+  heartbeat_max_daily: 0,
   onboarding_complete: true,
   is_active: true,
   created_at: '2025-01-01T00:00:00Z',
@@ -48,6 +49,7 @@ const mockApi = vi.mocked(api);
 beforeEach(() => {
   vi.clearAllMocks();
   mockApi.getProfile.mockResolvedValue(mockProfile as never);
+  mockApi.updateProfile.mockResolvedValue(mockProfile as never);
 });
 
 describe('HeartbeatPage', () => {
@@ -60,12 +62,10 @@ describe('HeartbeatPage', () => {
 
     // Should show Edit button, not Save
     expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
   });
 
   it('switches to textarea on Edit click and saves on Save click', async () => {
-    mockApi.updateProfile.mockResolvedValue(mockProfile as never);
-
     renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
 
     await waitFor(() => {
@@ -81,7 +81,7 @@ describe('HeartbeatPage', () => {
 
     // Modify and save
     fireEvent.change(textarea, { target: { value: 'Updated notes' } });
-    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
     await waitFor(() => {
       expect(mockApi.updateProfile).toHaveBeenCalled();
@@ -110,5 +110,37 @@ describe('HeartbeatPage', () => {
       expect(screen.getByRole('listitem')).toHaveTextContent('Follow up with new leads');
     });
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  it('renders check-in settings on the Priorities page', async () => {
+    renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/enable proactive check-ins/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/max daily check-ins/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save check-in settings/i })).toBeInTheDocument();
+  });
+
+  it('saves the current check-in settings when Save is clicked', async () => {
+    renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save check-in settings/i })).toBeInTheDocument();
+    });
+
+    const maxDailyInput = screen.getByPlaceholderText('0') as HTMLInputElement;
+    fireEvent.change(maxDailyInput, { target: { value: '5' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /save check-in settings/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateProfile).toHaveBeenCalled();
+      expect(mockApi.updateProfile.mock.calls[0]?.[0]).toEqual({
+        heartbeat_opt_in: true,
+        heartbeat_frequency: 'daily',
+        heartbeat_max_daily: 5,
+      });
+    });
   });
 });
