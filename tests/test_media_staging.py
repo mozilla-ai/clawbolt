@@ -297,6 +297,79 @@ async def test_upload_record_or_keyed_lookup_does_not_crash_on_multi_match(
 
 
 @pytest.mark.asyncio()
+async def test_cap_evicts_receipts_before_raw_bytes(
+    test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Receipts evict first; raw photo bytes are protected.
+
+    A receipt (``upload_status IS NOT NULL``) only records that bytes
+    already shipped to an external service that itself dedupes on
+    content. Losing one costs at most one wasted retry. A non-receipt
+    row is the only copy of bytes the agent has not yet acted on; if
+    we evict it, the agent never sees that photo again. So the
+    eviction priority is receipts first, raw bytes last.
+
+    Scenario: cap=3, two receipts already pinned, contractor sends a
+    third photo (non-receipt). All three slots now full. A fourth
+    photo lands and the oldest receipt -- not the fresh bytes --
+    rolls off.
+    """
+    monkeypatch.setattr(media_staging, "STAGING_MAX_PER_USER", 3)
+    await media_staging.stage(test_user.id, "url_old_receipt", b"old", "image/jpeg")
+    await media_staging.mark_uploaded(
+        test_user.id,
+        "url_old_receipt",
+        service="companycam",
+        external_id="cc-old",
+        url="",
+        target="",
+        status="uploaded",
+    )
+    await media_staging.stage(test_user.id, "url_new_receipt", b"new", "image/jpeg")
+    await media_staging.mark_uploaded(
+        test_user.id,
+        "url_new_receipt",
+        service="companycam",
+        external_id="cc-new",
+        url="",
+        target="",
+        status="uploaded",
+    )
+    await media_staging.stage(test_user.id, "url_fresh", b"fresh", "image/jpeg")
+    await media_staging.stage(test_user.id, "url_fresher", b"fresher", "image/jpeg")
+
+    remaining = await media_staging.get_all_for_user(test_user.id)
+    # The oldest receipt rolls off first.
+    assert "url_old_receipt" not in remaining
+    # The newer receipt and both fresh non-receipts survive.
+    assert "url_new_receipt" in remaining
+    assert "url_fresh" in remaining
+    assert "url_fresher" in remaining
+
+
+@pytest.mark.asyncio()
+async def test_cap_falls_through_to_non_receipts_when_no_receipts_left(
+    test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When every row is a non-receipt, the oldest non-receipt evicts.
+
+    Receipts are evicted first, so once there are none left to evict,
+    the cap falls through to non-receipt rows in ``expires_at asc``
+    order. Without this fallback the cap could be exceeded forever.
+    """
+    monkeypatch.setattr(media_staging, "STAGING_MAX_PER_USER", 2)
+    await media_staging.stage(test_user.id, "url_a", b"a", "image/jpeg")
+    await media_staging.stage(test_user.id, "url_b", b"b", "image/jpeg")
+    # url_a has the earliest expires_at; url_c just arrived.
+    await media_staging.stage(test_user.id, "url_c", b"c", "image/jpeg")
+
+    remaining = await media_staging.get_all_for_user(test_user.id)
+    assert "url_a" not in remaining
+    assert "url_b" in remaining
+    assert "url_c" in remaining
+
+
+@pytest.mark.asyncio()
 async def test_upload_record_returns_none_for_unstaged_handle(test_user: User) -> None:
     """A ``mark_uploaded`` call for a never-staged URL is a no-op."""
     await media_staging.mark_uploaded(
