@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import Button from '@/components/ui/button';
 import ConfirmModal from '@/components/ui/confirm-modal';
@@ -10,6 +11,7 @@ import { toast } from '@/lib/toast';
 import { useConversation, useConversationSystemPrompt } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
 import { useChatActivity } from '@/contexts/ChatActivityContext';
+import type { AppShellContext } from '@/layouts/AppShell';
 import type { ToolInteraction } from '@/types';
 
 interface FileAttachment {
@@ -32,6 +34,15 @@ const ACCEPTED_FILE_TYPES = 'image/*,audio/*,application/pdf';
 
 export default function ChatPage() {
   const queryClient = useQueryClient();
+  // The system prompt panel exposes the operator's preamble and tool wiring,
+  // so on multi-tenant premium deployments it is admin-only. OSS standalone
+  // (single-tenant) has no admin/user split, so the panel is visible there.
+  // useOutletContext is undefined under MemoryRouter in tests; default both
+  // flags to false so the OSS standalone branch (panel visible) is taken.
+  const outletCtx = useOutletContext<AppShellContext | undefined>();
+  const isPremium = outletCtx?.isPremium ?? false;
+  const isAdmin = outletCtx?.isAdmin ?? false;
+  const canSeeSystemPrompt = !isPremium || isAdmin;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
@@ -96,7 +107,7 @@ export default function ChatPage() {
     data: systemPromptData,
     isFetching: systemPromptFetching,
     isError: systemPromptError,
-  } = useConversationSystemPrompt({ enabled: systemPromptOpen && hasConversation });
+  } = useConversationSystemPrompt({ enabled: canSeeSystemPrompt && systemPromptOpen && hasConversation });
 
   // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
   // bug that occurs when scrollIntoView fires during keyboard dismissal.
@@ -385,7 +396,7 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {hasConversation && (
+            {hasConversation && canSeeSystemPrompt && (
               <div className="border border-border rounded-lg overflow-hidden">
                 <button
                   type="button"

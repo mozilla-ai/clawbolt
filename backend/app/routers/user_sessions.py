@@ -50,7 +50,6 @@ def _empty_conversation(user_id: str) -> SessionDetailResponse:
         created_at="",
         last_message_at="",
         channel="",
-        initial_system_prompt="",
         messages=[],
     )
 
@@ -103,7 +102,6 @@ async def get_conversation(
         created_at=session.created_at,
         last_message_at=session.last_message_at,
         channel=session.channel,
-        initial_system_prompt=session.initial_system_prompt,
         messages=messages,
     )
 

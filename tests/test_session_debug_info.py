@@ -1,4 +1,11 @@
-"""Tests for session debug info: initial_system_prompt."""
+"""Tests for the ``initial_system_prompt`` capture column.
+
+The column is written by ``persist_system_prompt_step`` for forensics
+and intentionally **not** exposed via the public conversation API,
+since it reveals the operator preamble and tool wiring. The store
+behaviour is exercised below; the API-level negative assertion lives
+alongside the conversation endpoint tests.
+"""
 
 from datetime import UTC, datetime
 
@@ -93,8 +100,15 @@ async def test_system_prompt_not_overwritten(test_user: User) -> None:
     assert loaded.initial_system_prompt == "Original prompt"
 
 
-async def test_api_includes_system_prompt(client: TestClient, test_user: User) -> None:
-    """GET /api/user/conversation includes initial_system_prompt."""
+async def test_api_does_not_leak_initial_system_prompt(client: TestClient, test_user: User) -> None:
+    """GET /api/user/conversation must not expose the frozen system prompt.
+
+    The capture column stores the operator's preamble and tool wiring at
+    the first turn. The dedicated ``/system-prompt`` endpoint is the
+    sanctioned read path (premium gates that one behind admin auth). The
+    conversation endpoint, which is callable by every authenticated user,
+    must not return the field on the wire.
+    """
     await _create_session_with_prompt(
         test_user,
         "debug-sess-1",
@@ -107,20 +121,7 @@ async def test_api_includes_system_prompt(client: TestClient, test_user: User) -
     resp = client.get("/api/user/conversation")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["initial_system_prompt"] == "You are a trades assistant."
-
-
-async def test_api_empty_prompt_for_new_session(client: TestClient, test_user: User) -> None:
-    """Sessions without a system prompt return empty string."""
-    await _create_session_with_prompt(
-        test_user,
-        "debug-sess-2",
-        messages=[
-            {"direction": "inbound", "body": "Hey", "timestamp": "2025-01-15T10:01:00", "seq": 1},
-        ],
-    )
-
-    resp = client.get("/api/user/conversation")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["initial_system_prompt"] == ""
+    assert "initial_system_prompt" not in data
+    # Belt-and-suspenders: even if the field name is ever re-introduced
+    # by accident, make sure the value isn't echoing the stored prompt.
+    assert "You are a trades assistant." not in resp.text
