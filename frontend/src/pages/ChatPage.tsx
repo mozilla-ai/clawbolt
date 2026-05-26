@@ -220,6 +220,12 @@ export default function ChatPage() {
       if (!mountedRef.current) return;
       const msg = err instanceof Error ? err.message : 'Failed to send message';
       toast.error(msg);
+      // Drop the optimistic user message so it does not linger in the chat
+      // and then silently vanish on the next successful send (which
+      // invalidates the conversation query and replaces local state with
+      // what the server has, which never includes a message whose POST
+      // failed). #1368.
+      setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
     } finally {
       if (!mountedRef.current) return;
       pendingRef.current--;

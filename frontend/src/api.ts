@@ -25,7 +25,14 @@ import type {
   ToolConfigResponse,
   ToolConfigUpdateEntry,
 } from '@/types';
-import client, { getAccessToken, setAccessToken, setRefreshToken } from '@/lib/api-client';
+import client, {
+  _getAccessTokenExp,
+  _shouldProactivelyRefresh,
+  getAccessToken,
+  setAccessToken,
+  setRefreshToken,
+  tryRefresh,
+} from '@/lib/api-client';
 import { tryRestoreSession as _tryRestoreSession } from '@/extensions';
 
 // --- Shared helpers ---
@@ -36,6 +43,36 @@ function _getAuthHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${token}` };
   }
   return {};
+}
+
+/**
+ * fetch() wrapper that mirrors the openapi-fetch auth middleware:
+ *   - Proactively refreshes the access token when it is within 30s of expiry,
+ *     so the request goes out with a fresh credential.
+ *   - On a 401 response, refreshes once and retries the original request.
+ *
+ * Use this for endpoints that have to bypass the typed openapi-fetch client
+ * (multipart/form-data uploads, SSE streams). Without it, those endpoints
+ * skip the auth-retry path entirely and a token expiring mid-session
+ * surfaces as a user-visible error instead of a silent refresh-and-retry.
+ * #1368.
+ */
+export async function _authedFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const buildInit = (): RequestInit => ({
+    ...init,
+    headers: { ...(init.headers as Record<string, string> | undefined), ..._getAuthHeaders() },
+  });
+
+  if (getAccessToken() && _shouldProactivelyRefresh(_getAccessTokenExp())) {
+    await tryRefresh();
+  }
+
+  const res = await fetch(input, buildInit());
+  if (res.status !== 401) return res;
+
+  const refreshed = await tryRefresh();
+  if (!refreshed) return res;
+  return fetch(input, buildInit());
 }
 
 /** Error with an HTTP status attached, so callers can distinguish 404 from other failures. */
@@ -451,10 +488,11 @@ const api = {
       }
     }
 
-    // Step 1: Submit message to bus (raw fetch for multipart/form-data)
-    const submitRes = await fetch('/api/user/chat', {
+    // Step 1: Submit message to bus. multipart/form-data has to bypass the
+    // typed openapi-fetch client, so route through _authedFetch to keep the
+    // proactive-refresh + 401-retry behaviour.
+    const submitRes = await _authedFetch('/api/user/chat', {
       method: 'POST',
-      headers: _getAuthHeaders(),
       body: formData,
     });
     if (!submitRes.ok) {
@@ -467,13 +505,12 @@ const api = {
 
     // Step 2: Open SSE connection to receive the reply
     return new Promise<ChatResponse>((resolve, reject) => {
-      const token = getAccessToken();
       const url = `/api/user/chat/events/${encodeURIComponent(accepted.request_id)}`;
 
-      // EventSource does not support custom headers, so we use fetch + ReadableStream
-      fetch(url, {
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      })
+      // EventSource does not support custom headers, so we use fetch + ReadableStream.
+      // Route through _authedFetch so an expired access token refreshes once
+      // and retries instead of surfacing as a 401 to the user.
+      _authedFetch(url)
         .then((res) => {
           if (!res.ok) {
             reject(new Error(`SSE request failed: ${res.status}`));
