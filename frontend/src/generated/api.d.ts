@@ -1304,11 +1304,6 @@ export interface components {
              * @default
              */
             channel: string;
-            /**
-             * Initial System Prompt
-             * @default
-             */
-            initial_system_prompt: string;
             /** Messages */
             messages: components["schemas"]["SessionMessage"][];
         };
@@ -1335,11 +1330,11 @@ export interface components {
          * @description Live system prompt that would be sent to the LLM on the next turn.
          *
          *     Reconstructed on demand from current user state (memory, profile,
-         *     onboarding status, available tools) rather than pulled from the
-         *     session's frozen ``initial_system_prompt`` column. Use this when
-         *     the UI needs the current prompt; use ``initial_system_prompt`` on
-         *     ``SessionDetailResponse`` when the historical first-turn prompt is
-         *     what's wanted.
+         *     onboarding status, available tools). The historical first-turn
+         *     snapshot lives on the ``ChatSession.initial_system_prompt`` column
+         *     for forensics but is intentionally not exposed via the public API,
+         *     since it reveals the operator's preamble and tool wiring. Premium
+         *     deployments additionally gate this endpoint behind an admin guard.
          */
         SessionSystemPromptResponse: {
             /** Session Id */

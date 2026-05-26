@@ -49,7 +49,6 @@ describe('ChatPage tool interactions', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -90,7 +89,6 @@ describe('ChatPage tool interactions', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -130,7 +128,6 @@ describe('ChatPage tool interaction expand/collapse', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -296,7 +293,6 @@ describe('ChatPage message body wrapping', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -330,7 +326,6 @@ describe('ChatPage conversation auto-load', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -368,7 +363,6 @@ describe('ChatPage conversation auto-load', () => {
       created_at: '',
       last_message_at: '',
       channel: '',
-      initial_system_prompt: '',
       messages: [],
     });
 
@@ -425,7 +419,6 @@ describe('ChatPage current system prompt panel', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: 'STALE FIRST-TURN PROMPT',
       messages: [
         {
           seq: 1,
@@ -464,10 +457,6 @@ describe('ChatPage current system prompt panel', () => {
     expect(toggle).toBeInTheDocument();
     expect(mockApi.getConversationSystemPrompt).not.toHaveBeenCalled();
 
-    // We must NOT show the stale frozen snapshot. Even before opening
-    // the panel, the old initial_system_prompt text should be absent.
-    expect(screen.queryByText('STALE FIRST-TURN PROMPT')).not.toBeInTheDocument();
-
     // Expanding triggers a single fetch with the active session id and
     // renders the live prompt body.
     const user = userEvent.setup();
@@ -487,7 +476,6 @@ describe('ChatPage current system prompt panel', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -539,7 +527,6 @@ describe('ChatPage failed-send cleanup (issue #1368)', () => {
       created_at: '',
       last_message_at: '',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [],
     });
     mockApi.sendChatMessage.mockRejectedValue(new Error('Request failed: 403'));
@@ -567,7 +554,6 @@ describe('ChatPage system prompt panel visibility', () => {
     created_at: '2025-01-01T00:00:00Z',
     last_message_at: '2025-01-01T00:01:00Z',
     channel: 'webchat' as const,
-    initial_system_prompt: '',
     messages: [
       {
         seq: 1,
