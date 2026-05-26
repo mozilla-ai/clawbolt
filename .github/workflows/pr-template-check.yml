@@ -4,8 +4,15 @@ on:
   # Use pull_request_target to have write access for PRs from forks.
   # This is safe because we only read the PR body from the event payload
   # and don't checkout or execute any code from the fork.
+  #
+  # ``synchronize`` is required so the check re-runs on every push to
+  # an open PR. Without it, the ruleset's required ``check-template``
+  # status stays pinned to the initial commit; any PR that grows
+  # additional commits after creation has no ``check-template`` on its
+  # latest SHA and is blocked from merging until a maintainer manually
+  # edits the body or title to fire an ``edited`` event.
   pull_request_target:
-    types: [opened, edited]
+    types: [opened, edited, synchronize]
   schedule:
     # Run daily at midnight UTC to close stale PRs missing the template
     - cron: '0 0 * * *'

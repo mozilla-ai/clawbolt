@@ -97,15 +97,76 @@ async def test_is_from_me_ignored(bluebubbles_client: httpx.AsyncClient) -> None
     mock_pub.assert_not_called()
 
 
-async def test_non_new_message_event_ignored(bluebubbles_client: httpx.AsyncClient) -> None:
-    """Non-new-message events should return 200 without publishing."""
+async def test_unhandled_event_types_ignored(bluebubbles_client: httpx.AsyncClient) -> None:
+    """Events other than new-message / updated-message return 200 silently."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
-        for event in ("typing-indicator", "chat-read-status-changed", "updated-message"):
+        for event in ("typing-indicator", "chat-read-status-changed"):
             payload = make_bluebubbles_webhook_payload(text="Hi", event_type=event)
             resp = await _post_webhook(bluebubbles_client, payload)
             assert resp.status_code == 200
 
     mock_pub.assert_not_called()
+
+
+async def test_updated_message_with_no_attachments_ignored(
+    bluebubbles_client: httpx.AsyncClient,
+) -> None:
+    """``updated-message`` without attachments is a delivered/read tick we skip.
+
+    BlueBubbles fires ``updated-entry`` on every delivery/read/edit delta.
+    Only the flavor that carries previously-missing attachments is
+    payload-bearing for our pipeline.
+    """
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        payload = make_bluebubbles_webhook_payload(text="Hi", event_type="updated-message")
+        resp = await _post_webhook(bluebubbles_client, payload)
+        assert resp.status_code == 200
+
+    mock_pub.assert_not_called()
+
+
+async def test_updated_message_with_attachments_publishes(
+    bluebubbles_client: httpx.AsyncClient,
+) -> None:
+    """``updated-message`` with attachments delivers the late attachments.
+
+    iMessage often writes a text+image message in two passes: text body
+    first, then attachments. BlueBubbles fires ``new-message`` then
+    ``updated-message`` for the same GUID. Dropping the second event
+    silently loses the photo.
+    """
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        # First: text-only new-message (already persisted by an earlier turn)
+        first = make_bluebubbles_webhook_payload(
+            text="Add to companycam project",
+            event_type="new-message",
+            message_guid="msg-late-att-001",
+        )
+        await _post_webhook(bluebubbles_client, first)
+
+        # Then: the attachment-bearing updated-message for the same GUID
+        second = make_bluebubbles_webhook_payload(
+            text="Add to companycam project",
+            event_type="updated-message",
+            message_guid="msg-late-att-001",
+            attachments=[{"guid": "att-photo-1", "mimeType": "image/jpeg"}],
+        )
+        await _post_webhook(bluebubbles_client, second)
+
+    # Both events published: ``MessageBatcher`` will coalesce them and
+    # merge media before dispatching the agent pipeline.
+    assert mock_pub.call_count == 2
+    second_inbound = mock_pub.call_args_list[1].args[0]
+    assert len(second_inbound.media_refs) == 1
+    assert second_inbound.media_refs[0][0] == "att-photo-1"
+    # The follow-up event suppresses the text so the batcher doesn't
+    # see two copies of the caption.
+    assert second_inbound.text == ""
+    # Distinct external_id keeps idempotency rows separate so the second
+    # event isn't dedup-dropped against the first.
+    first_inbound = mock_pub.call_args_list[0].args[0]
+    assert first_inbound.external_message_id == "bb_msg-late-att-001"
+    assert second_inbound.external_message_id == "bb_msg-late-att-001_att"
 
 
 async def test_invalid_json_returns_200(bluebubbles_client: httpx.AsyncClient) -> None:

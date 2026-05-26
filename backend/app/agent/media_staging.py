@@ -210,6 +210,16 @@ async def _enforce_per_user_cap(user_id: str) -> None:
     Prevents unbounded growth when a single contractor sends hundreds
     of photos within the TTL window. Eviction is silent at the API
     level but logs a warning so we notice if it happens routinely.
+
+    Rows with a recorded ``upload_status`` are receipts: the bytes
+    already shipped to an external service (CompanyCam, Drive). Losing
+    a receipt at most costs one wasted retry roundtrip because the
+    external service dedupes server-side. Losing a non-receipt row
+    deletes raw photo bytes the agent still has not acted on. So we
+    evict receipts first; non-receipt bytes only roll off once every
+    receipt is gone. Within each partition we keep the
+    ``expires_at asc`` order from the underlying query, which is what
+    "oldest first" means at the SQL level.
     """
     async with db_session_async() as db:
         rows = list(
@@ -225,14 +235,18 @@ async def _enforce_per_user_cap(user_id: str) -> None:
         )
         if len(rows) <= STAGING_MAX_PER_USER:
             return
-        overflow = rows[: len(rows) - STAGING_MAX_PER_USER]
+        receipts = [r for r in rows if r.upload_status is not None]
+        non_receipts = [r for r in rows if r.upload_status is None]
+        ordered = receipts + non_receipts
+        overflow = ordered[: len(ordered) - STAGING_MAX_PER_USER]
         for row in overflow:
             _unlink_quiet(_resolve_disk_path(row.disk_path))
             logger.warning(
-                "media_staging cap reached for user %s, evicted %s (handle=%s)",
+                "media_staging cap reached for user %s, evicted %s (handle=%s, was_receipt=%s)",
                 user_id,
                 row.original_url,
                 row.handle,
+                row.upload_status is not None,
             )
             await db.delete(row)
         await db.commit()

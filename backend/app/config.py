@@ -186,6 +186,22 @@ class Settings(BaseSettings):
     # 0 disables the sweep entirely. Tune up for tolerance of longer
     # outages, down for stricter "no replies to stale messages" behavior.
     bluebubbles_backfill_lookback_minutes: int = Field(default=30, ge=0)
+    # Re-run the backfill on this cadence (in addition to the one-shot at
+    # startup) so a webhook lost mid-flight is recovered without waiting
+    # for a deploy. BlueBubbles' webhook delivery is fire-and-forget with
+    # no retry, so a transient receiver hiccup is otherwise unrecoverable
+    # until the next restart. 0 disables the recurring sweep; the boot-time
+    # sweep still runs. Default 5 minutes is well under what a contractor
+    # would notice and short enough that ``_BACKFILL_QUERY_LIMIT=200`` is
+    # never close to saturating.
+    bluebubbles_backfill_interval_seconds: int = Field(default=300, ge=0)
+    # Re-check ``/api/v1/server/info`` on this cadence so the dashboard
+    # reachability light reflects current state rather than a snapshot
+    # taken at boot. Matters more on premium where many tenants share one
+    # Mac in someone's basement: when that Mac sleeps every tenant goes
+    # silent and we want the signal surfaced immediately. 0 disables the
+    # periodic check; the boot-time check still runs.
+    bluebubbles_health_check_interval_seconds: int = Field(default=120, ge=0)
 
     # Twilio (RCS via Messaging Service, with SMS/MMS fallback). Register
     # an RCS Agent in the Twilio console and attach it to a Messaging

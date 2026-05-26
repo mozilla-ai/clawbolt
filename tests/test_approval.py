@@ -1249,6 +1249,64 @@ class TestIngestionIntercept:
         assert not gate.has_pending(test_user.id)
 
     @pytest.mark.asyncio()
+    async def test_message_with_attachments_is_not_eaten_as_approval(self, test_user: User) -> None:
+        """A message with media attachments bypasses approval-eating.
+
+        A photo with caption "yes" carries payload the agent must act
+        on. Resolving the gate as APPROVED and dropping the body
+        silently loses the photo from session history. A bulk photo
+        send with a caption like "yes" or "ok" that arrives during a
+        pending approval would otherwise vanish. The fix: media-bearing
+        messages fall through to the normal pipeline, which resolves
+        any pending gate as INTERRUPTED rather than consuming the body.
+        """
+        gate = get_approval_gate()
+        mock_publish = AsyncMock()
+
+        async def _start_approval() -> ApprovalDecision:
+            return await gate.request_approval(
+                user_id=test_user.id,
+                tool_name="test_tool",
+                description="test",
+                publish_outbound=mock_publish,
+                channel="bluebubbles",
+                chat_id="+15555550100",
+                timeout=5.0,
+            )
+
+        approval_task = asyncio.create_task(_start_approval())
+        await _await_pending(gate, test_user.id)
+        assert gate.has_pending(test_user.id)
+
+        # Caption is literally "yes" but the inbound carries 11 photos --
+        # so it must NOT be treated as a bare approval reply.
+        inbound = InboundMessage(
+            channel="bluebubbles",
+            sender_id=str(test_user.id),
+            text="yes",
+            media_refs=[(f"att_{i}", "image/jpeg") for i in range(11)],
+            external_message_id="bb_test_with_media",
+        )
+
+        mock_batcher = AsyncMock()
+        with (
+            patch(
+                "backend.app.agent.ingestion._get_or_create_user",
+                new_callable=AsyncMock,
+                return_value=test_user,
+            ),
+            patch(
+                "backend.app.agent.ingestion.message_batcher",
+                mock_batcher,
+            ),
+        ):
+            await process_inbound_from_bus(inbound)
+
+        await approval_task
+        # The media-bearing message went to the pipeline, not the gate.
+        mock_batcher.enqueue.assert_called_once()
+
+    @pytest.mark.asyncio()
     async def test_interrupted_message_dispatched_to_pipeline(self, test_user: User) -> None:
         """Unrelated message during approval is dispatched to the pipeline."""
         gate = get_approval_gate()
