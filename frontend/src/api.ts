@@ -26,12 +26,9 @@ import type {
   ToolConfigUpdateEntry,
 } from '@/types';
 import client, {
-  _getAccessTokenExp,
-  _shouldProactivelyRefresh,
   getAccessToken,
   setAccessToken,
   setRefreshToken,
-  tryRefresh,
 } from '@/lib/api-client';
 import { tryRestoreSession as _tryRestoreSession } from '@/extensions';
 
@@ -46,49 +43,12 @@ function _getAuthHeaders(): Record<string, string> {
 }
 
 /**
- * fetch() wrapper that mirrors the openapi-fetch auth middleware:
- *   - Proactively refreshes the access token when it is within 30s of expiry,
- *     so the request goes out with a fresh credential.
- *   - On a 401 response, refreshes once and retries the original request.
- *
- * Use this for endpoints that have to bypass the typed openapi-fetch client
- * (multipart/form-data uploads, SSE streams). Without it, those endpoints
- * skip the auth-retry path entirely and a token expiring mid-session
- * surfaces as a user-visible error instead of a silent refresh-and-retry.
- * #1368.
- */
-export async function _authedFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  const buildInit = (): RequestInit => ({
-    ...init,
-    headers: { ...(init.headers as Record<string, string> | undefined), ..._getAuthHeaders() },
-  });
-
-  if (getAccessToken() && _shouldProactivelyRefresh(_getAccessTokenExp())) {
-    await tryRefresh();
-  }
-
-  const res = await fetch(input, buildInit());
-  if (res.status !== 401) return res;
-
-  const refreshed = await tryRefresh();
-  if (!refreshed) return res;
-  return fetch(input, buildInit());
-}
-
-/**
  * XHR-based upload helper. fetch() with FormData cannot report upload-side
- * progress (you only get download progress via the response stream); for the
- * chat POST the user wants to watch their image bytes go up, so this routes
- * through XMLHttpRequest where ``xhr.upload.onprogress`` is available.
- *
- * Mirrors the auth behaviour of _authedFetch: proactive refresh near token
- * expiry, and one retry after a refresh on a 401 response. Honours an
- * AbortSignal and a timeout. The retry path re-sends the same FormData under
- * the assumption that File parts can be re-read; for our use that's true
- * because the File comes straight from the browser file picker.
- *
- * Returns a real Response so the existing call site can call ``.json()`` and
- * ``.status`` without knowing it's XHR underneath. #1368.
+ * progress; for the chat POST the user wants to watch their image bytes go
+ * up, so this routes through XMLHttpRequest where ``xhr.upload.onprogress``
+ * is available. Honours an AbortSignal and a timeout. Returns a real
+ * Response so the existing call site can call ``.json()`` and ``.status``
+ * without knowing it's XHR underneath. #1368.
  */
 interface UploadOptions {
   signal?: AbortSignal;
@@ -96,64 +56,49 @@ interface UploadOptions {
   timeoutMs?: number;
 }
 
-async function _uploadFormData(
+function _uploadFormData(
   url: string,
   formData: FormData,
   options: UploadOptions = {},
 ): Promise<Response> {
-  const doOnce = (): Promise<Response> =>
-    new Promise<Response>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', url);
-      const headers = _getAuthHeaders();
-      for (const [name, value] of Object.entries(headers)) {
-        xhr.setRequestHeader(name, value);
-      }
-      if (options.timeoutMs) {
-        xhr.timeout = options.timeoutMs;
-      }
-      if (options.onProgress) {
-        xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
-          if (e.lengthComputable) {
-            options.onProgress!(e.loaded, e.total);
-          }
-        });
-      }
-      xhr.addEventListener('load', () => {
-        // Wrap the XHR response in a real Response so callers don't care
-        // about the impl. responseText is the body we need; XHR's other
-        // response types stay unused.
-        resolve(new Response(xhr.responseText, { status: xhr.status }));
-      });
-      xhr.addEventListener('error', () => {
-        reject(new TypeError('Network error'));
-      });
-      xhr.addEventListener('abort', () => {
-        reject(new DOMException('Upload aborted', 'AbortError'));
-      });
-      xhr.addEventListener('timeout', () => {
-        reject(new DOMException('Upload timed out', 'TimeoutError'));
-      });
-      if (options.signal) {
-        if (options.signal.aborted) {
-          xhr.abort();
-          return;
+  return new Promise<Response>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    const headers = _getAuthHeaders();
+    for (const [name, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(name, value);
+    }
+    if (options.timeoutMs) {
+      xhr.timeout = options.timeoutMs;
+    }
+    if (options.onProgress) {
+      xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+        if (e.lengthComputable) {
+          options.onProgress!(e.loaded, e.total);
         }
-        options.signal.addEventListener('abort', () => xhr.abort(), { once: true });
-      }
-      xhr.send(formData);
+      });
+    }
+    xhr.addEventListener('load', () => {
+      resolve(new Response(xhr.responseText, { status: xhr.status }));
     });
-
-  if (getAccessToken() && _shouldProactivelyRefresh(_getAccessTokenExp())) {
-    await tryRefresh();
-  }
-
-  const res = await doOnce();
-  if (res.status !== 401) return res;
-
-  const refreshed = await tryRefresh();
-  if (!refreshed) return res;
-  return doOnce();
+    xhr.addEventListener('error', () => {
+      reject(new TypeError('Network error'));
+    });
+    xhr.addEventListener('abort', () => {
+      reject(new DOMException('Upload aborted', 'AbortError'));
+    });
+    xhr.addEventListener('timeout', () => {
+      reject(new DOMException('Upload timed out', 'TimeoutError'));
+    });
+    if (options.signal) {
+      if (options.signal.aborted) {
+        xhr.abort();
+        return;
+      }
+      options.signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
+    xhr.send(formData);
+  });
 }
 
 /** Error with an HTTP status attached, so callers can distinguish 404 from other failures. */
@@ -488,12 +433,12 @@ const api = {
 
     const connect = (): void => {
       if (controller.signal.aborted) return;
+      const token = getAccessToken();
 
-      // _authedFetch refreshes once on 401 and retries, so a token that ages
-      // out mid-stream no longer terminates the activity feed; only a
-      // refresh-also-fails 401 (or a real 403) still trips the auth-stop
-      // branch below.
-      _authedFetch('/api/user/chat/activity', { signal: controller.signal })
+      fetch('/api/user/chat/activity', {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        signal: controller.signal,
+      })
         .then((res) => {
           if (!res.ok || !res.body) {
             if (res.status === 401 || res.status === 403) {
@@ -572,10 +517,9 @@ const api = {
 
     // Step 1: Submit message to bus via XHR (vs. fetch) so we can surface
     // upload-byte progress to the caller and let them abort mid-flight.
-    // _uploadFormData also runs the same proactive-refresh + 401-retry path
-    // _authedFetch has. The 2 minute timeout caps how long a stuck POST can
-    // leave the spinner up; once it fires the catch in ChatPage marks the
-    // optimistic message as failed so the user can retry. #1368.
+    // The 2 minute timeout caps how long a stuck POST can leave the
+    // spinner up; once it fires the catch in ChatPage marks the optimistic
+    // message as failed so the user can retry. #1368.
     let submitRes: Response;
     try {
       submitRes = await _uploadFormData('/api/user/chat', formData, {
@@ -602,12 +546,13 @@ const api = {
 
     // Step 2: Open SSE connection to receive the reply
     return new Promise<ChatResponse>((resolve, reject) => {
+      const token = getAccessToken();
       const url = `/api/user/chat/events/${encodeURIComponent(accepted.request_id)}`;
 
-      // EventSource does not support custom headers, so we use fetch + ReadableStream.
-      // Route through _authedFetch so an expired access token refreshes once
-      // and retries instead of surfacing as a 401 to the user.
-      _authedFetch(url)
+      // EventSource does not support custom headers, so use fetch + ReadableStream.
+      fetch(url, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      })
         .then((res) => {
           if (!res.ok) {
             reject(new Error(`SSE request failed: ${res.status}`));

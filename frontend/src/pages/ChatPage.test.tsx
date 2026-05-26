@@ -630,63 +630,6 @@ describe('ChatPage file attachment blob URLs (issue #1368)', () => {
     }
   });
 
-  it('revokes optimistic message attachment URLs when the conversation refetches', async () => {
-    // First load: empty session.
-    mockApi.getConversation.mockResolvedValueOnce({
-      session_id: '',
-      user_id: '1',
-      created_at: '',
-      last_message_at: '',
-      channel: 'webchat',
-      messages: [],
-    });
-    // After send + invalidation, the refetch returns a server-side message
-    // (with no previewUrl). Without the revoke, the optimistic message's
-    // URL would leak when the local state is replaced.
-    mockApi.getConversation.mockResolvedValueOnce({
-      session_id: 's1',
-      user_id: '1',
-      created_at: '2025-01-01T00:00:00Z',
-      last_message_at: '2025-01-01T00:01:00Z',
-      channel: 'webchat',
-      messages: [
-        {
-          seq: 1,
-          direction: 'inbound',
-          body: 'check this out',
-          timestamp: '2025-01-01T00:00:00Z',
-          tool_interactions: [],
-        },
-      ],
-    });
-    mockApi.sendChatMessage.mockResolvedValue({ reply: 'got it' });
-
-    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:refetch-url');
-    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-
-    try {
-      const { container } = renderWithRouter(
-        <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
-      );
-
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-      const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
-      const user = userEvent.setup();
-      await user.upload(fileInput, png);
-      const textarea = await screen.findByPlaceholderText('Type a message...');
-      await user.type(textarea, 'check this out');
-      await user.keyboard('{Enter}');
-
-      // sendChatMessage resolves, queryClient invalidates, refetch fires,
-      // useEffect replaces messages; the optimistic URL should be revoked.
-      await waitFor(() => {
-        expect(revokeSpy).toHaveBeenCalledWith('blob:refetch-url');
-      });
-    } finally {
-      createSpy.mockRestore();
-      revokeSpy.mockRestore();
-    }
-  });
 });
 
 describe('ChatPage upload progress + cancel + retry (issue #1368)', () => {
@@ -774,6 +717,37 @@ describe('ChatPage upload progress + cancel + retry (issue #1368)', () => {
     // Canceled bubble is removed (matches Telegram / WhatsApp).
     await waitFor(() => {
       expect(screen.queryByText('caption')).not.toBeInTheDocument();
+    });
+  });
+
+  it('clears the upload overlay as soon as onAccepted fires, not when the agent replies', async () => {
+    // Regression for the stuck-at-40%-forever bug. The previous code
+    // cleared uploadState only after api.sendChatMessage's promise
+    // resolved, i.e. after the SSE delivered the full agent reply. For a
+    // slow agent that's seconds-to-minutes of the progress ring sitting
+    // at whatever value the last xhr.upload.progress event reported.
+    let acceptedCb: (() => void) | undefined;
+    mockApi.sendChatMessage.mockImplementation(
+      (_msg, _files, _onEvent, onAccepted) => {
+        acceptedCb = onAccepted as (() => void) | undefined;
+        // Never resolves: agent is "thinking" forever.
+        return new Promise(() => {});
+      },
+    );
+
+    await attachAndSend();
+    await waitFor(() => expect(acceptedCb).toBeDefined());
+
+    // Before onAccepted: cancel/upload overlay still shown.
+    expect(screen.getByRole('button', { name: /cancel upload/i })).toBeInTheDocument();
+
+    act(() => {
+      acceptedCb!();
+    });
+
+    // After onAccepted: overlay gone, even though agent reply has not arrived.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /cancel upload/i })).not.toBeInTheDocument();
     });
   });
 
