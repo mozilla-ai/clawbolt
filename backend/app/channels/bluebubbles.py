@@ -226,6 +226,11 @@ class BlueBubblesChannel(BaseChannel):
         self._chat_cache: dict[str, str] = {}
         # Set to True once the BlueBubbles server is confirmed reachable.
         self.server_reachable: bool = False
+        # Background tasks owned by this channel: periodic health check
+        # and recurring backfill. Started in ``start()`` and cancelled in
+        # ``stop()`` so the lifespan shutdown is clean.
+        self._health_task: asyncio.Task[None] | None = None
+        self._backfill_task: asyncio.Task[None] | None = None
 
     @property
     def _http(self) -> httpx.AsyncClient:
@@ -274,6 +279,11 @@ class BlueBubblesChannel(BaseChannel):
         # Mac is actually up and reachable; the dashboard still needs the
         # reachability signal so it doesn't gray out a working channel.
         self.server_reachable = await self._check_server_reachable()
+        # Start the periodic health + backfill loops regardless of the
+        # boot-time reachability result. A Mac that is asleep right now
+        # may wake up in five minutes, and we want the loops to detect
+        # that without requiring a deploy.
+        self._start_background_tasks()
         if not self.server_reachable:
             logger.warning(
                 "BlueBubbles server not reachable at %s",
@@ -311,6 +321,76 @@ class BlueBubblesChannel(BaseChannel):
         else:
             logger.warning("Failed to auto-register BlueBubbles webhook")
 
+    def _start_background_tasks(self) -> None:
+        """Spawn the periodic health and backfill loops.
+
+        Both loops are best-effort: they swallow per-iteration exceptions
+        so a transient BB-server failure does not kill the loop. The
+        tasks are stored on the instance so ``stop()`` can cancel them
+        cleanly on shutdown. Each loop is gated by its own interval
+        setting and skips itself entirely when the interval is 0.
+        """
+        if self._health_task is None and settings.bluebubbles_health_check_interval_seconds > 0:
+            self._health_task = asyncio.create_task(self._health_loop())
+        if self._backfill_task is None and settings.bluebubbles_backfill_interval_seconds > 0:
+            self._backfill_task = asyncio.create_task(self._backfill_loop())
+
+    async def _health_loop(self) -> None:
+        """Re-poll ``/api/v1/server/info`` so reachability stays current.
+
+        At deploy boot we set ``server_reachable`` once and the dashboard
+        keeps showing that result until the next restart. That hides
+        intermittent failures: when the basement Mac sleeps or restarts,
+        every tenant on that BlueBubbles server goes silent and the
+        dashboard light stays green for hours until someone notices.
+        Running the same probe on a timer surfaces the failure within
+        ``bluebubbles_health_check_interval_seconds``.
+        """
+        interval = settings.bluebubbles_health_check_interval_seconds
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    reachable = await self._check_server_reachable()
+                except Exception:
+                    logger.exception("BlueBubbles periodic health check failed")
+                    continue
+                if reachable != self.server_reachable:
+                    if reachable:
+                        logger.info(
+                            "BlueBubbles server reachable again at %s",
+                            settings.bluebubbles_server_url,
+                        )
+                    else:
+                        logger.warning(
+                            "BlueBubbles server went unreachable at %s",
+                            settings.bluebubbles_server_url,
+                        )
+                    self.server_reachable = reachable
+        except asyncio.CancelledError:
+            return
+
+    async def _backfill_loop(self) -> None:
+        """Re-run ``run_startup_backfill`` on a timer.
+
+        BlueBubbles' webhook delivery is fire-and-forget with no retry,
+        so a webhook lost mid-flight (transient receiver hiccup, lambda
+        cold start past the BB request timeout, brief network blip)
+        leaves the message stranded on the Mac. Without a recurring
+        sweep, that message only surfaces on the next restart. The boot
+        path is unchanged; this loop is purely additive.
+        """
+        interval = settings.bluebubbles_backfill_interval_seconds
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    await self.run_startup_backfill()
+                except Exception:
+                    logger.exception("BlueBubbles periodic backfill failed")
+        except asyncio.CancelledError:
+            return
+
     async def register_paas_webhook(self, base_url: str) -> bool | None:
         """Register BlueBubbles webhook using a stable PaaS base URL."""
         if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
@@ -320,7 +400,12 @@ class BlueBubblesChannel(BaseChannel):
         return await register_bluebubbles_webhook(settings.bluebubbles_server_url, webhook_url)
 
     async def stop(self) -> None:
-        """Close the httpx client on shutdown."""
+        """Close the httpx client and cancel background tasks on shutdown."""
+        for task in (self._health_task, self._backfill_task):
+            if task is not None and not task.done():
+                task.cancel()
+        self._health_task = None
+        self._backfill_task = None
         if self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -341,9 +426,26 @@ class BlueBubblesChannel(BaseChannel):
     def parse_webhook(payload: BBWebhookPayload) -> InboundMessage | None:
         """Parse a BlueBubbles webhook payload into an InboundMessage.
 
-        Returns None if the payload should be ignored.
+        Returns ``None`` if the payload should be ignored.
+
+        Accepts both ``new-message`` and ``updated-message`` events.
+        The BlueBubbles server fires multiple webhooks for one Apple
+        Message when iMessage writes the row incrementally: the text
+        body lands first as ``new-message`` with no/incomplete
+        attachments, then ~350 ms later the attachments land as an
+        ``updated-message`` with the same GUID. Dropping
+        ``updated-message`` entirely silently loses the attachment on
+        every text+image send. We let both event types through here;
+        ``handle_webhook_inbound`` and ``handle_late_attachments``
+        handle dedup such that the *original* ``new-message`` still
+        wins for plain-text content, but an ``updated-message`` whose
+        only delta is "now there are attachments" is allowed to merge
+        attachments onto the persisted message before it dispatches.
+
+        ``updated-message`` events for other deltas (delivered, read,
+        edited) are returned as ``None`` so they don't churn the bus.
         """
-        if payload.type != "new-message":
+        if payload.type not in ("new-message", "updated-message"):
             return None
 
         data = payload.data
@@ -365,7 +467,31 @@ class BlueBubblesChannel(BaseChannel):
             if att.guid
         ]
 
-        external_id = f"bb_{data.guid}" if data.guid else ""
+        # Ignore ``updated-message`` events that bring no new attachment
+        # information. BlueBubbles fires ``updated-entry`` on every
+        # delivered/read/edited delta; only the attachment-arrival flavor
+        # is worth processing for our pipeline. The first webhook for a
+        # text+image message has zero attachments; the follow-up has the
+        # attachments. So ``len(media_refs) > 0`` is a sufficient
+        # discriminator without parsing event subtype heuristics.
+        if payload.type == "updated-message":
+            if not media_refs:
+                return None
+            # The original ``new-message`` already persisted the text
+            # body; suppress it on the follow-up so the batcher doesn't
+            # see two copies of the caption when it coalesces.
+            text = ""
+
+        # ``new-message`` uses the bare GUID; ``updated-message`` suffixes
+        # ``_att`` so the two events get distinct idempotency rows. They
+        # are coalesced downstream by ``MessageBatcher`` (whose default
+        # 1.5 s window comfortably covers the ~350 ms BB-server gap),
+        # which merges media from all batched entries before dispatch.
+        external_id = ""
+        if data.guid:
+            external_id = (
+                f"bb_{data.guid}" if payload.type == "new-message" else f"bb_{data.guid}_att"
+            )
 
         return InboundMessage(
             channel="bluebubbles",
