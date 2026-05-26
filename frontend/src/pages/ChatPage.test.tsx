@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { Outlet, Route, Routes } from 'react-router-dom';
@@ -686,6 +686,125 @@ describe('ChatPage file attachment blob URLs (issue #1368)', () => {
       createSpy.mockRestore();
       revokeSpy.mockRestore();
     }
+  });
+});
+
+describe('ChatPage upload progress + cancel + retry (issue #1368)', () => {
+  beforeEach(() => {
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+  });
+
+  async function attachAndSend(): Promise<{ user: ReturnType<typeof userEvent.setup> }> {
+    const { container } = renderWithRouter(
+      <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+    );
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
+    const user = userEvent.setup();
+    await user.upload(fileInput, png);
+    const textarea = await screen.findByPlaceholderText('Type a message...');
+    await user.type(textarea, 'caption');
+    await user.keyboard('{Enter}');
+    return { user };
+  }
+
+  it('shows a Cancel upload button while the POST is in flight', async () => {
+    // sendChatMessage never resolves so the message stays in `uploading`.
+    mockApi.sendChatMessage.mockReturnValue(new Promise(() => {}));
+
+    await attachAndSend();
+
+    // The overlay cancel button shows up; aria-label includes the progress.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cancel upload/i })).toBeInTheDocument();
+    });
+  });
+
+  it('drives the progress ring from the onProgress callback', async () => {
+    // Capture the uploadOpts so we can fire onProgress on demand.
+    let progressCb: ((loaded: number, total: number) => void) | undefined;
+    mockApi.sendChatMessage.mockImplementation(
+      (_msg, _files, _onEvent, _onAccepted, uploadOpts) => {
+        progressCb = uploadOpts?.onProgress;
+        return new Promise(() => {});
+      },
+    );
+
+    await attachAndSend();
+
+    await waitFor(() => {
+      expect(progressCb).toBeDefined();
+    });
+    act(() => {
+      progressCb!(42, 100);
+    });
+
+    // aria-label reflects the live percentage.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cancel upload \(42%\)/i })).toBeInTheDocument();
+    });
+  });
+
+  it('cancel button aborts the upload signal and removes the bubble', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    mockApi.sendChatMessage.mockImplementation(
+      (_msg, _files, _onEvent, _onAccepted, uploadOpts) => {
+        capturedSignal = uploadOpts?.signal;
+        return new Promise((_resolve, reject) => {
+          uploadOpts?.signal?.addEventListener('abort', () => {
+            reject(new Error('Upload canceled.'));
+          });
+        });
+      },
+    );
+
+    const { user } = await attachAndSend();
+
+    const cancelBtn = await screen.findByRole('button', { name: /cancel upload/i });
+    await user.click(cancelBtn);
+
+    expect(capturedSignal?.aborted).toBe(true);
+    // Canceled bubble is removed (matches Telegram / WhatsApp).
+    await waitFor(() => {
+      expect(screen.queryByText('caption')).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps the failed bubble and shows a Retry button when the POST rejects', async () => {
+    mockApi.sendChatMessage.mockRejectedValueOnce(new Error('Network error'));
+
+    await attachAndSend();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /retry upload/i })).toBeInTheDocument();
+    });
+    // Bubble (text body) is still in the DOM.
+    expect(screen.getByText('caption')).toBeInTheDocument();
+  });
+
+  it('retry re-invokes sendChatMessage with the same files', async () => {
+    mockApi.sendChatMessage.mockRejectedValueOnce(new Error('Network error'));
+    // Second call hangs; we only care that it fired.
+    mockApi.sendChatMessage.mockReturnValueOnce(new Promise(() => {}));
+
+    const { user } = await attachAndSend();
+
+    const retryBtn = await screen.findByRole('button', { name: /retry upload/i });
+    await user.click(retryBtn);
+
+    await waitFor(() => {
+      expect(mockApi.sendChatMessage).toHaveBeenCalledTimes(2);
+    });
+    const secondCallFiles = mockApi.sendChatMessage.mock.calls[1]?.[1] as File[];
+    expect(secondCallFiles).toHaveLength(1);
+    expect(secondCallFiles[0]?.name).toBe('photo.png');
   });
 });
 
