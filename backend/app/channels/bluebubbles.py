@@ -429,27 +429,33 @@ class BlueBubblesChannel(BaseChannel):
         Returns ``None`` if the payload should be ignored.
 
         Accepts both ``new-message`` and ``updated-message`` events.
-        The BlueBubbles server fires multiple webhooks for one Apple
-        Message when iMessage writes the row incrementally: the text
-        body lands first as ``new-message`` with no/incomplete
-        attachments, then a follow-up ``updated-message`` for the same
-        GUID once the attachment rows materialise (typical lag is a
-        few hundred milliseconds, but the upper bound is whatever the
-        BB file-watcher's 500 ms debounce plus iMessage's own write
-        cadence comes to; treat anything inside the
-        ``MessageBatcher`` window as safe to coalesce).
+        BlueBubbles re-fires the webhook for the same iMessage GUID
+        whenever a tracked state field on the message row changes
+        (``dateDelivered``, ``isDelivered``, ``dateRead``,
+        ``dateEdited``, ``dateRetracted``, ``didNotifyRecipient``,
+        ``hasUnsentParts`` -- see ``getMessageEvent`` in the BB
+        server's ``pollers/index.ts``). Each emission serializes the
+        message row's CURRENT joined state, including its current
+        attachment list. For an inbound iMessage that ships text
+        before its attachments are joined into the ``chat.db`` row,
+        the first ``new-message`` may carry zero attachments and a
+        subsequent ``updated-message`` (typically the
+        ``dateDelivered`` transition) carries the now-complete list.
+        Dropping ``updated-message`` silently loses those attachments.
+        Note: attachment count is *not* itself a tracked delta, so a
+        message that gains attachments with no other state change
+        will never trigger a follow-up event; the periodic backfill
+        loop is the safety net for that case.
 
-        Dropping ``updated-message`` entirely silently loses the
-        attachment on every text+image send. Instead we accept both
-        event types and assign them distinct ``external_message_id``
-        values (``bb_<guid>`` vs ``bb_<guid>_att``) so each gets its
-        own idempotency row and rides through the bus as a separate
-        inbound. ``MessageBatcher`` (default window 1500 ms) coalesces
-        the two into one pipeline dispatch and merges media from both.
-
-        ``updated-message`` events for non-attachment deltas
-        (delivered, read, edited) return ``None`` so they don't churn
-        the bus.
+        Both event types are kept under distinct
+        ``external_message_id`` values (``bb_<guid>`` vs
+        ``bb_<guid>_att``) so each gets its own idempotency row and
+        rides the bus as a separate inbound. ``MessageBatcher``
+        (default window 1500 ms) coalesces the two into one pipeline
+        dispatch and merges media from both. ``updated-message``
+        events that bring no attachments return ``None`` -- their
+        only payload would be a delivered/read tick the agent has
+        nothing to do with.
         """
         if payload.type not in ("new-message", "updated-message"):
             return None
