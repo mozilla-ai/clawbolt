@@ -547,6 +547,148 @@ describe('ChatPage failed-send cleanup (issue #1368)', () => {
   });
 });
 
+describe('ChatPage file attachment blob URLs (issue #1368)', () => {
+  it('creates each preview blob URL once, not on every keystroke', async () => {
+    // Before the fix, the chip rendering called URL.createObjectURL(file)
+    // inline on every render. Typing in the textarea re-renders ChatPage,
+    // so each keystroke leaked a new blob URL. For phone-sized photos that
+    // showed up as visible typing lag.
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test-url');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    try {
+      const { container } = renderWithRouter(
+        <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+      );
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
+      const user = userEvent.setup();
+      await user.upload(fileInput, png);
+
+      // One URL for the freshly attached image.
+      expect(createSpy).toHaveBeenCalledTimes(1);
+
+      // Typing should NOT allocate any new blob URLs.
+      const textarea = await screen.findByPlaceholderText('Type a message...');
+      await user.type(textarea, 'caption text');
+      expect(createSpy).toHaveBeenCalledTimes(1);
+
+      // Removing the chip revokes the URL exactly once.
+      const removeButton = screen.getByRole('button', { name: /remove photo\.png/i });
+      await user.click(removeButton);
+      expect(revokeSpy).toHaveBeenCalledWith('blob:test-url');
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+
+  it('revokes a staged chip URL on unmount if the user never sends', async () => {
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:unmount-url');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    try {
+      const { container, unmount } = renderWithRouter(
+        <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+      );
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
+      const user = userEvent.setup();
+      await user.upload(fileInput, png);
+
+      // Sanity: the URL was created and NOT yet revoked.
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      unmount();
+
+      // Navigating away with a staged file should revoke the URL.
+      expect(revokeSpy).toHaveBeenCalledWith('blob:unmount-url');
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+
+  it('revokes optimistic message attachment URLs when the conversation refetches', async () => {
+    // First load: empty session.
+    mockApi.getConversation.mockResolvedValueOnce({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+    // After send + invalidation, the refetch returns a server-side message
+    // (with no previewUrl). Without the revoke, the optimistic message's
+    // URL would leak when the local state is replaced.
+    mockApi.getConversation.mockResolvedValueOnce({
+      session_id: 's1',
+      user_id: '1',
+      created_at: '2025-01-01T00:00:00Z',
+      last_message_at: '2025-01-01T00:01:00Z',
+      channel: 'webchat',
+      messages: [
+        {
+          seq: 1,
+          direction: 'inbound',
+          body: 'check this out',
+          timestamp: '2025-01-01T00:00:00Z',
+          tool_interactions: [],
+        },
+      ],
+    });
+    mockApi.sendChatMessage.mockResolvedValue({ reply: 'got it' });
+
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:refetch-url');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    try {
+      const { container } = renderWithRouter(
+        <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+      );
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
+      const user = userEvent.setup();
+      await user.upload(fileInput, png);
+      const textarea = await screen.findByPlaceholderText('Type a message...');
+      await user.type(textarea, 'check this out');
+      await user.keyboard('{Enter}');
+
+      // sendChatMessage resolves, queryClient invalidates, refetch fires,
+      // useEffect replaces messages; the optimistic URL should be revoked.
+      await waitFor(() => {
+        expect(revokeSpy).toHaveBeenCalledWith('blob:refetch-url');
+      });
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+});
+
 describe('ChatPage system prompt panel visibility', () => {
   const sessionWithMessages = (sessionId: string) => ({
     session_id: sessionId,

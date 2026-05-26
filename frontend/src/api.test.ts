@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { _authedFetch } from './api';
+import api, { _authedFetch } from './api';
 import { setAccessToken, setRefreshToken } from './lib/api-client';
 
 function makeJwt(exp: number): string {
@@ -147,5 +147,31 @@ describe('_authedFetch', () => {
     const retryInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
     expect(firstInit.signal).toBe(controller.signal);
     expect(retryInit.signal).toBe(controller.signal);
+  });
+});
+
+describe('sendChatMessage upload timeout (issue #1368)', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const NOW_S = Math.floor(Date.now() / 1000);
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    setAccessToken(makeJwt(NOW_S + 3600));
+  });
+
+  afterEach(() => {
+    setAccessToken(null);
+    setRefreshToken(null);
+    vi.restoreAllMocks();
+  });
+
+  it('converts a POST AbortSignal.timeout abort into a friendly error', async () => {
+    // Simulate what AbortSignal.timeout throws when its deadline fires.
+    fetchMock.mockImplementation(() => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    });
+
+    await expect(api.sendChatMessage('hi')).rejects.toThrow(/upload timed out/i);
   });
 });

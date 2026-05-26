@@ -490,11 +490,23 @@ const api = {
 
     // Step 1: Submit message to bus. multipart/form-data has to bypass the
     // typed openapi-fetch client, so route through _authedFetch to keep the
-    // proactive-refresh + 401-retry behaviour.
-    const submitRes = await _authedFetch('/api/user/chat', {
-      method: 'POST',
-      body: formData,
-    });
+    // proactive-refresh + 401-retry behaviour. The 2 minute timeout caps how
+    // long a stuck POST can leave the spinner up; once it fires, the catch
+    // block in ChatPage drops the optimistic message so the user sees a
+    // clear failure instead of a hung send. #1368.
+    let submitRes: Response;
+    try {
+      submitRes = await _authedFetch('/api/user/chat', {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'TimeoutError') {
+        throw new Error('Upload timed out. Please try again.');
+      }
+      throw err;
+    }
     if (!submitRes.ok) {
       const body = await submitRes.json().catch(() => ({}));
       const b = body as { detail?: string };
