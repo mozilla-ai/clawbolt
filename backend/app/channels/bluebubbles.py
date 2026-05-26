@@ -432,18 +432,24 @@ class BlueBubblesChannel(BaseChannel):
         The BlueBubbles server fires multiple webhooks for one Apple
         Message when iMessage writes the row incrementally: the text
         body lands first as ``new-message`` with no/incomplete
-        attachments, then ~350 ms later the attachments land as an
-        ``updated-message`` with the same GUID. Dropping
-        ``updated-message`` entirely silently loses the attachment on
-        every text+image send. We let both event types through here;
-        ``handle_webhook_inbound`` and ``handle_late_attachments``
-        handle dedup such that the *original* ``new-message`` still
-        wins for plain-text content, but an ``updated-message`` whose
-        only delta is "now there are attachments" is allowed to merge
-        attachments onto the persisted message before it dispatches.
+        attachments, then a follow-up ``updated-message`` for the same
+        GUID once the attachment rows materialise (typical lag is a
+        few hundred milliseconds, but the upper bound is whatever the
+        BB file-watcher's 500 ms debounce plus iMessage's own write
+        cadence comes to; treat anything inside the
+        ``MessageBatcher`` window as safe to coalesce).
 
-        ``updated-message`` events for other deltas (delivered, read,
-        edited) are returned as ``None`` so they don't churn the bus.
+        Dropping ``updated-message`` entirely silently loses the
+        attachment on every text+image send. Instead we accept both
+        event types and assign them distinct ``external_message_id``
+        values (``bb_<guid>`` vs ``bb_<guid>_att``) so each gets its
+        own idempotency row and rides through the bus as a separate
+        inbound. ``MessageBatcher`` (default window 1500 ms) coalesces
+        the two into one pipeline dispatch and merges media from both.
+
+        ``updated-message`` events for non-attachment deltas
+        (delivered, read, edited) return ``None`` so they don't churn
+        the bus.
         """
         if payload.type not in ("new-message", "updated-message"):
             return None
