@@ -7,6 +7,7 @@ import { Checkbox } from '@heroui/checkbox';
 import { Tooltip } from '@heroui/tooltip';
 import { Spinner } from '@heroui/spinner';
 import api from '@/api';
+import { compressImageIfNeeded, shouldCompressImage } from '@/lib/imageCompression';
 import { toast } from '@/lib/toast';
 import { useConversation, useConversationSystemPrompt } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
@@ -32,6 +33,11 @@ interface FileAttachment {
 interface SelectedFile {
   file: File;
   previewUrl?: string;
+  // True while a background compression pass is replacing `file` with a
+  // smaller JPEG re-encoding. The chip stays in the row throughout; on
+  // submit we await any in-flight compressions so the upload uses the
+  // shrunken bytes. #1368.
+  compressing?: boolean;
 }
 
 interface ChatMessage {
@@ -71,6 +77,12 @@ export default function ChatPage() {
   const [pendingCount, setPendingCount] = useState(0);
   const pendingRef = useRef(0);
   const sending = pendingCount > 0;
+  // Separate from `pendingCount`: only counts messages whose POST already
+  // landed (onAccepted fired) and that are now waiting on the agent's
+  // reply. Drives the "Thinking..." spinner so it doesn't appear while the
+  // user is still watching their image bytes go up. #1368.
+  const [thinkingCount, setThinkingCount] = useState(0);
+  const thinking = thinkingCount > 0;
   // Mirror of selectedFiles. The unmount cleanup reads this ref so it can
   // revoke chip preview URLs without resubscribing on every render (which
   // would race against removeFile's own revoke). #1368.
@@ -107,6 +119,11 @@ export default function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nextId = useRef(1);
   const mountedRef = useRef(true);
+  // In-flight image compressions kicked off from handleFileSelect. Awaited
+  // in handleSubmit so the upload always uses the shrunken bytes, even if
+  // the user hits send within the ~few-hundred-ms compression window for a
+  // phone-sized photo. #1368.
+  const compressionPromisesRef = useRef<Set<Promise<unknown>>>(new Set());
 
   // Track mounted state to prevent state updates after unmount
   useEffect(() => {
@@ -205,15 +222,41 @@ export default function ChatPage() {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newFiles = Array.from(e.target.files || []);
-    if (newFiles.length > 0) {
-      setSelectedFiles((prev) => [
-        ...prev,
-        ...newFiles.map((file) => ({
-          file,
-          previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
-        })),
-      ]);
+    if (newFiles.length === 0) {
+      e.target.value = '';
+      return;
     }
+
+    const newEntries: SelectedFile[] = newFiles.map((file) => {
+      const willCompress = shouldCompressImage(file);
+      return {
+        file,
+        previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+        compressing: willCompress,
+      };
+    });
+    setSelectedFiles((prev) => [...prev, ...newEntries]);
+
+    // Kick off compression in the background. Each promise lands in the
+    // ref so handleSubmit can await any still in flight at submit time.
+    newEntries.forEach((entry) => {
+      if (!entry.compressing) return;
+      const original = entry.file;
+      const promise = (async () => {
+        const compressed = await compressImageIfNeeded(original);
+        if (!mountedRef.current) return;
+        setSelectedFiles((prev) =>
+          prev.map((e) =>
+            e.file === original ? { ...e, file: compressed, compressing: false } : e,
+          ),
+        );
+      })();
+      compressionPromisesRef.current.add(promise);
+      promise.finally(() => {
+        compressionPromisesRef.current.delete(promise);
+      });
+    });
+
     // Reset so the same file can be re-selected
     e.target.value = '';
   };
@@ -279,6 +322,10 @@ export default function ChatPage() {
 
       pendingRef.current++;
       setPendingCount((c) => c + 1);
+      // Tracks whether onAccepted fired for this call, so the finally
+      // block knows whether to decrement thinkingCount (which was only
+      // incremented in onAccepted, not on send-click).
+      let thinkingIncremented = false;
 
       try {
         const toolNames: string[] = [];
@@ -306,7 +353,16 @@ export default function ChatPage() {
               setWaitingForApproval(true);
             }
           },
-          undefined,
+          () => {
+            // POST succeeded with a request_id, i.e. the upload bytes are
+            // safely on the server and the agent is now the bottleneck.
+            // Flip the spinner on here, not at send-click, so users
+            // watching an upload aren't told "Thinking..." until thinking
+            // actually starts.
+            if (!mountedRef.current) return;
+            thinkingIncremented = true;
+            setThinkingCount((c) => c + 1);
+          },
           hasFiles
             ? {
                 signal: abort.signal,
@@ -384,6 +440,9 @@ export default function ChatPage() {
         if (!mountedRef.current) return;
         pendingRef.current--;
         setPendingCount((c) => c - 1);
+        if (thinkingIncremented) {
+          setThinkingCount((c) => Math.max(0, c - 1));
+        }
         // Only clear indicators when all pending requests are done
         if (pendingRef.current === 0) {
           setCurrentTool(null);
@@ -398,8 +457,18 @@ export default function ChatPage() {
     e.preventDefault();
     const text = input.trim();
     if (!text && selectedFiles.length === 0) return;
+
+    // Wait for any still-running compressions before sampling File handles,
+    // so the upload always uses the compressed bytes.
+    if (compressionPromisesRef.current.size > 0) {
+      await Promise.all([...compressionPromisesRef.current]);
+      if (!mountedRef.current) return;
+    }
+
     const files =
-      selectedFiles.length > 0 ? selectedFiles.map((entry) => entry.file) : undefined;
+      selectedFilesRef.current.length > 0
+        ? selectedFilesRef.current.map((entry) => entry.file)
+        : undefined;
     setInput('');
     setSelectedFiles([]);
     await sendChatMessage(text, files);
@@ -799,10 +868,10 @@ export default function ChatPage() {
               );
             })}
 
-            {sending && !waitingForApproval && (
+            {thinking && !waitingForApproval && (
               <ToolUseIndicator toolName={currentTool ?? undefined} />
             )}
-            {!sending && agentBusy && (
+            {!thinking && agentBusy && (
               <ToolUseIndicator toolName={activityTool ?? undefined} />
             )}
           </div>

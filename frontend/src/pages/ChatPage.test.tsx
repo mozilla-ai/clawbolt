@@ -806,6 +806,45 @@ describe('ChatPage upload progress + cancel + retry (issue #1368)', () => {
     expect(secondCallFiles).toHaveLength(1);
     expect(secondCallFiles[0]?.name).toBe('photo.png');
   });
+
+  it('does not show Thinking... until onAccepted fires (upload finished)', async () => {
+    // Hang sendChatMessage indefinitely without calling onAccepted: the
+    // POST is still in flight from the caller's perspective.
+    mockApi.sendChatMessage.mockImplementation(() => new Promise(() => {}));
+
+    await attachAndSend();
+
+    // The chip + upload overlay show up, but no "Thinking..." yet.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cancel upload/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/thinking/i)).not.toBeInTheDocument();
+  });
+
+  it('shows Thinking... once the upload completes (onAccepted fires)', async () => {
+    let acceptedCb: (() => void) | undefined;
+    mockApi.sendChatMessage.mockImplementation(
+      (_msg, _files, _onEvent, onAccepted) => {
+        acceptedCb = onAccepted as (() => void) | undefined;
+        // Promise that resolves only after a manual trigger; in this test
+        // we never trigger it, so the agent stays in the "thinking"
+        // window for the assertion.
+        return new Promise(() => {});
+      },
+    );
+
+    await attachAndSend();
+    await waitFor(() => expect(acceptedCb).toBeDefined());
+
+    // Simulate the POST returning a request_id.
+    act(() => {
+      acceptedCb!();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/thinking/i)).toBeInTheDocument();
+    });
+  });
 });
 
 describe('ChatPage system prompt panel visibility', () => {
