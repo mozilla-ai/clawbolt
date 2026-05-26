@@ -2,23 +2,37 @@ import { useState, useCallback, useMemo } from 'react';
 import { Spinner } from '@heroui/spinner';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
-import { useToolConfig, usePermissions, useUpdatePermissions } from '@/hooks/queries';
-import { displayName, subToolDisplayName } from '@/lib/tool-utils';
+import {
+  useToolConfig,
+  usePermissions,
+  useUpdatePermissions,
+  useOAuthStatus,
+} from '@/hooks/queries';
+import { displayName, subToolDisplayName, getToolOAuthStatus } from '@/lib/tool-utils';
 import PermissionSelector, {
   PERM_OPTIONS,
   PERM_ACTIVE_STYLES,
   type PermLevel,
 } from '@/components/PermissionSelector';
-import type { ToolConfigEntryResponse, SubToolEntryResponse } from '@/types';
+import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
 export default function PermissionsPage() {
   const { data: toolData, isPending: toolsPending, isError } = useToolConfig();
   const { data: permData, isPending: permsPending } = usePermissions();
+  const { data: oauthData } = useOAuthStatus();
   const updateMutation = useUpdatePermissions();
   const [collapsedTools, setCollapsedTools] = useState<Set<string>>(new Set());
 
   const tools = toolData?.tools ?? [];
   const rawContent = permData?.content ?? '';
+
+  const oauthMap = useMemo<Record<string, OAuthStatusEntry>>(() => {
+    const map: Record<string, OAuthStatusEntry> = {};
+    for (const entry of oauthData?.integrations ?? []) {
+      map[entry.integration] = entry;
+    }
+    return map;
+  }, [oauthData]);
 
   const resourcesByTool = useMemo<Record<string, Record<string, PermLevel>>>(() => {
     try {
@@ -42,14 +56,21 @@ export default function PermissionsPage() {
 
   const visibleTools = useMemo(() => {
     // Exclude sub-tools flagged hidden_in_permissions (e.g. send_reply) and
-    // then drop any tool group left without visible sub-tools.
+    // then drop any tool group left without visible sub-tools. Also hide
+    // integrations the user has not connected: OAuth-backed tools without
+    // an active grant, and non-OAuth tools whose backend reports
+    // configured=false (e.g. missing API key). Mirrors the Tools page logic.
     return tools
       .map((t) => ({
         ...t,
         sub_tools: (t.sub_tools ?? []).filter((st) => !st.hidden_in_permissions),
       }))
-      .filter((t) => t.sub_tools.length > 0);
-  }, [tools]);
+      .filter((t) => t.sub_tools.length > 0)
+      .filter((t) => {
+        const { isConnected } = getToolOAuthStatus(t.oauth_name ?? '', oauthMap, t.configured);
+        return isConnected;
+      });
+  }, [tools, oauthMap]);
   const coreTools = useMemo(
     () => visibleTools.filter((t) => t.category === 'core'),
     [visibleTools],
