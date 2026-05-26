@@ -36,7 +36,7 @@ CompanyCam is a photo documentation platform for the trades. Projects, photos, c
 ## Entity vocabulary
 
 - **Project**: a job site or property. Has `id`, `name`, `address`, `status`, `notepad`, primary contact. Photos, documents, checklists, and comments hang off the project.
-- **Photo**: an uploaded image. Has `id`, optional `description`, tags, and a CompanyCam-side `processing_status` (`pending`, `processed`, `duplicate`, `processing_error`).
+- **Photo**: an uploaded image. Has `id`, optional `description`, tags, and a CompanyCam-side `processing_status` (`pending`, `processing`, `processed`, `duplicate`, `processing_error`).
 - **Checklist**: a task list bound to a project, instantiated from a template. Sections contain tasks; each task carries a `completed_at` timestamp when done.
 
 ## Photo handles
