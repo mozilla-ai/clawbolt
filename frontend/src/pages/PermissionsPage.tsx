@@ -19,7 +19,7 @@ import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } 
 export default function PermissionsPage() {
   const { data: toolData, isPending: toolsPending, isError } = useToolConfig();
   const { data: permData, isPending: permsPending } = usePermissions();
-  const { data: oauthData } = useOAuthStatus();
+  const { data: oauthData, isPending: oauthPending } = useOAuthStatus();
   const updateMutation = useUpdatePermissions();
   const [collapsedTools, setCollapsedTools] = useState<Set<string>>(new Set());
 
@@ -59,7 +59,11 @@ export default function PermissionsPage() {
     // then drop any tool group left without visible sub-tools. Also hide
     // integrations the user has not connected: OAuth-backed tools without
     // an active grant, and non-OAuth tools whose backend reports
-    // configured=false (e.g. missing API key). Mirrors the Tools page logic.
+    // configured=false (e.g. missing API key). Mirrors the Tools page logic
+    // for the "connected" check, but diverges intentionally on the rendering
+    // choice: Tools page dims disconnected cards to surface "Connect" CTAs,
+    // while Approvals page hides them outright because there are no approval
+    // settings to manage for a tool that cannot run yet (issue #521).
     return tools
       .map((t) => ({
         ...t,
@@ -160,7 +164,9 @@ export default function PermissionsPage() {
     [rawContent, updateMutation],
   );
 
-  if (toolsPending && !toolData) {
+  // Wait for both queries so OAuth-backed tools do not briefly render
+  // hidden before the OAuth status arrives.
+  if ((toolsPending && !toolData) || (oauthPending && !oauthData)) {
     return (
       <div className="flex justify-center py-12">
         <Spinner color="primary" size="md" aria-label="Loading" />

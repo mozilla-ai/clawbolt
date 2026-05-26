@@ -126,7 +126,7 @@ describe('PermissionsPage', () => {
     renderWithRouter(<PermissionsPage />);
 
     await waitFor(() => {
-      expect(mockGetToolConfig).toHaveBeenCalled();
+      expect(screen.getByText(/Control which actions/i)).toBeInTheDocument();
     });
     expect(screen.queryByText('Pricing Tools')).not.toBeInTheDocument();
   });
@@ -152,7 +152,7 @@ describe('PermissionsPage', () => {
     renderWithRouter(<PermissionsPage />);
 
     await waitFor(() => {
-      expect(mockGetToolConfig).toHaveBeenCalled();
+      expect(screen.getByText(/Control which actions/i)).toBeInTheDocument();
     });
     expect(screen.queryByText('Google Drive')).not.toBeInTheDocument();
   });
