@@ -12,7 +12,11 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
-      registerType: 'autoUpdate',
+      // 'prompt' (instead of 'autoUpdate') keeps the new SW in the waiting
+      // state until the user taps the in-app "Update" banner, so we never
+      // reload mid-conversation and cancel an in-flight chat send.
+      // See src/components/UpdateAvailableBanner.tsx.
+      registerType: 'prompt',
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         globIgnores: [
