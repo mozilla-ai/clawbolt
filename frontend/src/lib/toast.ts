@@ -16,8 +16,7 @@ function dedupKey(title: string, color: ToastColor): string {
 
 // HeroUI's default toast styles apply `truncate` to the title slot, which
 // silently clips longer error messages with no way to expand. Override the
-// title slot so the text wraps onto multiple lines instead. (issue #554 in
-// clawbolt-premium)
+// title slot so the text wraps onto multiple lines instead.
 const TITLE_CLASS_NAMES = { title: 'whitespace-normal break-words' } as const;
 
 function showToast(title: string, color: ToastColor): void {
