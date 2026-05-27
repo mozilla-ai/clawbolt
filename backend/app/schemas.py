@@ -8,6 +8,12 @@ class HealthResponse(BaseModel):
     database: str = "ok"
 
 
+class AppConfigResponse(BaseModel):
+    """Deployment-level feature flags the frontend reads on app load."""
+
+    chat_web_attachments_enabled: bool
+
+
 class MemoryResponse(BaseModel):
     content: str
 

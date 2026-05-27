@@ -10,6 +10,7 @@ import ChatPage from './ChatPage';
 // Mock the api module
 vi.mock('@/api', () => ({
   default: {
+    getAppConfig: vi.fn().mockResolvedValue({ chat_web_attachments_enabled: true }),
     getConversation: vi.fn(),
     getConversationSystemPrompt: vi.fn(),
     sendChatMessage: vi.fn(),
@@ -407,6 +408,33 @@ describe('ChatPage concurrent messaging', () => {
     // Attach files button should also remain enabled
     const attachButton = screen.getByLabelText('Attach files');
     expect(attachButton).not.toBeDisabled();
+  });
+});
+
+describe('ChatPage attachment affordance gating', () => {
+  it('hides the paperclip and file input when chat_web_attachments_enabled is false', async () => {
+    mockApi.getAppConfig.mockResolvedValueOnce({ chat_web_attachments_enabled: false });
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+
+    const { container } = renderWithRouter(
+      <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+    );
+
+    // Wait for the page to settle on the disabled-attachments config.
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Attach files')).not.toBeInTheDocument();
+    });
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+
+    // Send button still renders so the user can submit text-only messages.
+    expect(screen.getByLabelText('Send message')).toBeInTheDocument();
   });
 });
 

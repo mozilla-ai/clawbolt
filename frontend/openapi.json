@@ -43,6 +43,24 @@
         }
       }
     },
+    "/api/app/config": {
+      "get": {
+        "summary": "App Config",
+        "operationId": "app_config_api_app_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/config": {
       "get": {
         "summary": "Auth Config",
@@ -1333,6 +1351,20 @@
   },
   "components": {
     "schemas": {
+      "AppConfigResponse": {
+        "properties": {
+          "chat_web_attachments_enabled": {
+            "type": "boolean",
+            "title": "Chat Web Attachments Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chat_web_attachments_enabled"
+        ],
+        "title": "AppConfigResponse",
+        "description": "Deployment-level feature flags the frontend reads on app load."
+      },
       "BatchDeleteRequest": {
         "properties": {
           "seqs": {

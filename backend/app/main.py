@@ -34,6 +34,7 @@ from backend.app.database import db_session_async, get_async_engine
 from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
 from backend.app.routers import (
+    app_config,
     auth,
     health,
     media_temp,
@@ -381,6 +382,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api")
+app.include_router(app_config.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(oauth.router, prefix="/api")
 app.include_router(media_temp.router, prefix="/api")

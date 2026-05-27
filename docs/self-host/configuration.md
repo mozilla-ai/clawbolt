@@ -195,6 +195,12 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 |----------|---------|-------------|
 | `LOG_REQUEST_TIMING` | `false` | Log method, path, status code, and duration for every HTTP request |
 
+## Web chat UI
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHAT_WEB_ATTACHMENTS_ENABLED` | `true` | Show the paperclip / file-input affordance on the chat page. Set to `false` behind proxies or CDNs that cap request body size below the typical photo upload (e.g. CloudFront's 1 MB default) so users do not see an attach button that silently 413s. Premium flips this off automatically. |
+
 ## OAuth
 
 | Variable | Default | Description |

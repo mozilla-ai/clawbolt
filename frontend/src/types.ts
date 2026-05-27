@@ -2,6 +2,7 @@ import type { components } from '@/generated/api';
 
 // --- Backend types (derived from OpenAPI spec, single source of truth) ---
 
+export type AppConfigResponse = components['schemas']['AppConfigResponse'];
 export type UserProfileResponse = components['schemas']['UserProfileResponse'];
 export type UserProfileUpdate = components['schemas']['UserProfileUpdate'];
 export type DataSharingConsentRequest = components['schemas']['DataSharingConsentRequest'];
