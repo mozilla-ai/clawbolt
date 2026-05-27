@@ -1,4 +1,5 @@
 export const queryKeys = {
+  appConfig: ['appConfig'] as const,
   profile: ['profile'] as const,
   dataSharingConsent: ['dataSharingConsent'] as const,
   conversation: {

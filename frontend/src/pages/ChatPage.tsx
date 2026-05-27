@@ -9,7 +9,7 @@ import { Spinner } from '@heroui/spinner';
 import api from '@/api';
 import { compressImageIfNeeded, shouldCompressImage } from '@/lib/imageCompression';
 import { toast } from '@/lib/toast';
-import { useConversation, useConversationSystemPrompt } from '@/hooks/queries';
+import { useAppConfig, useConversation, useConversationSystemPrompt } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
 import { useChatActivity } from '@/contexts/ChatActivityContext';
 import type { AppShellContext } from '@/layouts/AppShell';
@@ -72,6 +72,12 @@ export default function ChatPage() {
   const isPremium = outletCtx?.isPremium ?? false;
   const isAdmin = outletCtx?.isAdmin ?? false;
   const canSeeSystemPrompt = !isPremium || isAdmin;
+  // Default to enabled while the deployment config is loading so OSS users
+  // (and the test harness that doesn't mock useAppConfig) see the affordance
+  // immediately. Premium flips this off via CHAT_WEB_ATTACHMENTS_ENABLED=false
+  // while CloudFront's body-size cap keeps uploads from reaching the worker.
+  const { data: appConfig } = useAppConfig();
+  const chatAttachmentsEnabled = appConfig?.chat_web_attachments_enabled ?? true;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
@@ -927,14 +933,16 @@ export default function ChatPage() {
       {/* Input area */}
       <div className="pt-3 pb-4 sm:pb-6">
         <form onSubmit={handleSubmit}>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={ACCEPTED_FILE_TYPES}
-            onChange={handleFileSelect}
-            className="hidden"
-          />
+          {chatAttachmentsEnabled && (
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ACCEPTED_FILE_TYPES}
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+          )}
           <div className="flex flex-col gap-2 p-2 bg-panel border border-border rounded-lg">
             <textarea
               ref={inputRef}
@@ -995,17 +1003,21 @@ export default function ChatPage() {
 
             {/* Toolbar row */}
             <div className="flex items-center justify-between">
-              <Tooltip content="Attach files" delay={400} closeDelay={0}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label="Attach files"
-                >
-                  <PaperclipIcon />
-                </Button>
-              </Tooltip>
+              {chatAttachmentsEnabled ? (
+                <Tooltip content="Attach files" delay={400} closeDelay={0}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Attach files"
+                  >
+                    <PaperclipIcon />
+                  </Button>
+                </Tooltip>
+              ) : (
+                <span />
+              )}
               <Tooltip content="Send message" delay={400} closeDelay={0}>
                 <Button
                   type="submit"

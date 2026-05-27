@@ -322,6 +322,14 @@ class Settings(BaseSettings):
     # Observability
     log_request_timing: bool = False  # Set True (or LOG_REQUEST_TIMING=1) to log per-request timing
 
+    # Web chat UI: whether the chat page shows the file attachment affordance
+    # (paperclip button + hidden file input). Defaults to True for OSS, where
+    # uploads land directly on the FastAPI worker. Deployments behind a proxy
+    # or CDN that caps request body size (e.g. CloudFront's 1 MB default on
+    # premium) set this to False until the upload path is fixed, so users do
+    # not see an affordance that silently fails.
+    chat_web_attachments_enabled: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
