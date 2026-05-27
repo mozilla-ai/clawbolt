@@ -202,7 +202,7 @@ The agent's capabilities are extended by adding tools. Tools follow a factory/re
 
 7. **Write tests** at `tests/test_<name>_tools.py`. Call the factory function directly (e.g., `_create_calculator_tools()`) and invoke the tool function. No database needed for stateless tools.
 
-8. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is injected into the conversation when the LLM activates the category via `list_capabilities`. Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose.
+8. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is injected into the conversation when the LLM activates the category via `list_capabilities`. Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose. See "SKILL.md structure for specialist tools" below for the expected skeleton.
 
 ### Key files
 
@@ -224,6 +224,22 @@ The agent's capabilities are extended by adding tools. Tools follow a factory/re
 - **Cut padding.** Phrases like "Use this whenever ...", "If a field is listed here, the entity has it ...", "It is important to ..." are framing the structure already implies. Delete the sentence; if the meaning is intact, it was redundant.
 
 After editing, read the diff and ask: did I add a new fact, or restate an old one? Restated facts double the prompt without doubling agent behavior.
+
+### SKILL.md structure for specialist tools
+
+A specialist SKILL.md is injected only when the agent calls `list_capabilities("<name>")`, so it pays its cost in one place. Aim for 60-150 lines covering what tool descriptions and `usage_hint` strings cannot carry on their own.
+
+Use this skeleton; drop sections that do not apply:
+
+1. **Lead paragraph.** Name the platform, the entities that live in it, and the scope of this integration's coverage.
+2. **Available Tools table.** Group by domain when the surface is wide (e.g. Projects / Photos / Checklists). Columns: tool name in backticks, purpose, approval (`Auto` or `Ask`). Every registered tool gets a row.
+3. **Entity vocabulary.** Bullets defining each first-class entity (id, key fields, relationships). Include enum literals (status values, type codes) verbatim; the agent has no other way to know them.
+4. **Failure-mode rules.** Per-topic sections (e.g. `## Photo handles`, `## Dates`) stating non-obvious constraints at the place they apply, plus the consequence of breaking them.
+5. **Common Workflows.** `### Named workflow` subsections with numbered steps, one tool call or one decision per step. Cover the multi-tool recipes the agent cannot infer from individual tool descriptions.
+6. **Companion integrations.** Bullets pointing to other integrations the agent may compose with (e.g. "X customer ids are not Y project ids"). Reciprocate when another SKILL.md cross-references this one.
+7. **Connecting.** OAuth flow, paste-token, or magic-link steps. Note what happens if the connection lapses.
+
+Reference implementations: `backend/app/integrations/servicetitan/SKILL.md` (clean, mid-sized) and `backend/app/integrations/companycam/SKILL.md` (wider tool surface).
 
 ## Definition of Done
 
