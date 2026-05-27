@@ -46,6 +46,17 @@ export default function GetStartedPage() {
   const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
   const [linkDataMap, setLinkDataMap] = useState<Partial<Record<ChannelKey, PremiumLinkData | null>>>({});
 
+  // Tracks per-channel welcome-text outcome from Step 2's save+send. When
+  // Step 2 fires the welcome successfully, the timestamp here drives Step
+  // 3's DesktopWelcomeStep to remount in its 'sent' state with the resend
+  // cooldown ticking. ``failedAt`` flips Step 3 into the legacy
+  // "text us yourself" fallback so a delivery error does not leave the
+  // user stranded.
+  const [welcomeSentAt, setWelcomeSentAt] = useState<Partial<Record<ChannelKey, number>>>({});
+  const [welcomeFailedAt, setWelcomeFailedAt] = useState<Partial<Record<ChannelKey, number>>>({});
+
+
+
   useEffect(() => {
     if (isPremium) {
       api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
@@ -271,6 +282,14 @@ export default function GetStartedPage() {
                     telegramLinkData={telegramLinkData}
                     premiumLinkData={linkDataMap[selectedChannel] ?? null}
                     onSaved={() => handleConfigSaved(selectedChannel)}
+                    triggerWelcome={isPremium && isWelcomeChannel(selectedChannel)}
+                    onWelcomeSent={(ch) => {
+                      setWelcomeSentAt((prev) => ({ ...prev, [ch]: Date.now() }));
+                      setWelcomeFailedAt((prev) => ({ ...prev, [ch]: undefined }));
+                    }}
+                    onWelcomeFailed={(ch) =>
+                      setWelcomeFailedAt((prev) => ({ ...prev, [ch]: Date.now() }))
+                    }
                   />
                 </div>
               ) : (
@@ -293,20 +312,23 @@ export default function GetStartedPage() {
                 <span className="text-xs font-medium text-muted-foreground">Step 3</span>
               </div>
               <h3 className="text-sm font-semibold font-display">
-                {isPremium && isWelcomeChannel(selectedChannel) && linkDataMap[selectedChannel]?.connected
+                {isPremium && isWelcomeChannel(selectedChannel)
                   ? 'Get your first text'
                   : 'Send a message'}
               </h3>
-              {isPremium && isWelcomeChannel(selectedChannel) && linkDataMap[selectedChannel]?.connected ? (
-                // ``key={selectedChannel}`` forces a remount when the user
-                // switches channels in Step 1. Without it, React reuses the
-                // same component instance and its ``status='sent'`` state
-                // carries over to the new channel, rendering "We just
-                // texted you" at the prior channel's destination.
+              {isPremium && isWelcomeChannel(selectedChannel) ? (
+                // ``key`` includes ``welcomeSentAt`` so a successful Step 2
+                // save+send remounts this with ``startInSentState=true``
+                // and the cooldown ticking from zero. Switching channels
+                // in Step 1 also remounts (key includes channel), which
+                // resets a prior channel's 'sent' state.
                 <DesktopWelcomeStep
-                  key={selectedChannel}
+                  key={`${selectedChannel}-${welcomeSentAt[selectedChannel] ?? 0}-${welcomeFailedAt[selectedChannel] ?? 0}`}
                   channel={selectedChannel}
                   destination={linkDataMap[selectedChannel]?.identifier ?? ''}
+                  isConnected={linkDataMap[selectedChannel]?.connected ?? false}
+                  startInSentState={Boolean(welcomeSentAt[selectedChannel])}
+                  startInFailedState={Boolean(welcomeFailedAt[selectedChannel])}
                   fallbackAddress={
                     selectedChannel === 'linq'
                       ? fromNumber
@@ -441,21 +463,34 @@ export default function GetStartedPage() {
 function DesktopWelcomeStep({
   channel,
   destination,
+  isConnected,
+  startInSentState,
+  startInFailedState,
   fallbackAddress,
 }: {
   channel: WelcomeChannel;
   destination: string;
+  isConnected: boolean;
+  startInSentState: boolean;
+  startInFailedState: boolean;
   fallbackAddress: string;
 }) {
   type Status = 'idle' | 'sent' | 'failed';
-  const [status, setStatus] = useState<Status>('idle');
-  const [sending, setSending] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
-
   // Mirrors the backend WELCOME_COOLDOWN_SECONDS. Surfaced in the UI so
   // a user clicking "Resend" before the backend would accept it sees a
   // disabled button instead of a 429 toast.
   const COOLDOWN_SECONDS = 60;
+
+  const initialStatus: Status = startInFailedState
+    ? 'failed'
+    : startInSentState
+      ? 'sent'
+      : 'idle';
+  const [status, setStatus] = useState<Status>(initialStatus);
+  const [sending, setSending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(
+    startInSentState ? COOLDOWN_SECONDS : 0,
+  );
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -480,6 +515,21 @@ function DesktopWelcomeStep({
       setSending(false);
     }
   };
+
+  // Not linked yet: Step 2 is the trigger, so Step 3 just describes
+  // what's about to happen. Discoverability fix: previously this branch
+  // fell through to the legacy QR card, making the new flow invisible
+  // until after a save.
+  if (!isConnected) {
+    return (
+      <div className="mt-3 grid gap-2">
+        <p className="text-sm text-muted-foreground">
+          Enter your phone number above and click "Save and text me to start".
+          We'll text you right away and you reply from there.
+        </p>
+      </div>
+    );
+  }
 
   if (status === 'sent') {
     return (
@@ -523,6 +573,8 @@ function DesktopWelcomeStep({
     );
   }
 
+  // Linked but no welcome has been sent (e.g. user revisits Get Started
+  // after onboarding, or Step 2 saved without firing welcome).
   return (
     <div className="mt-3 grid gap-2">
       <p className="text-sm text-muted-foreground">
