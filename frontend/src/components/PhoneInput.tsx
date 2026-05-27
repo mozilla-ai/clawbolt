@@ -59,10 +59,11 @@ function deriveFromValue(value: string): { country: Country; national: string } 
 /** Compose a canonical E.164-shaped value from picker + national input. */
 function compose(country: Country, national: string): string {
   if (country.code === 'OTHER') {
-    const trimmed = national.trim();
-    if (!trimmed) return '';
-    const stripped = trimmed.replace(/[\s\-().]/g, '');
-    return stripped.startsWith('+') ? stripped : `+${stripped.replace(/^\+*/, '')}`;
+    const stripped = national.trim().replace(/[\s\-().]/g, '');
+    if (!stripped || stripped === '+') return '';
+    // Normalize leading "+"s (none, one, or many) to exactly one. Anything
+    // else falls through to isValidE164 in the caller.
+    return `+${stripped.replace(/^\+*/, '')}`;
   }
   const digits = national.replace(/\D/g, '');
   if (!digits) return '';
@@ -127,6 +128,29 @@ export default function PhoneInput({
 
   const handleCountryChange = (newCode: string): void => {
     const next = findCountry(newCode);
+    // Switching to Other: surface the current full E.164 in the field so
+    // the user can edit it (and so we don't silently drop the prior dial
+    // code).
+    if (next.code === 'OTHER' && country.code !== 'OTHER') {
+      const full = compose(country, national);
+      setCountry(next);
+      setNational(full);
+      emit(next, full);
+      return;
+    }
+    // Switching from Other to a known country: if the typed value carried
+    // the new country's dial code, strip it; otherwise keep the bare digits
+    // (the new country's prefix will be added by compose).
+    if (next.code !== 'OTHER' && country.code === 'OTHER') {
+      const trimmed = national.trim();
+      const stripped = trimmed.startsWith(next.dialCode)
+        ? trimmed.slice(next.dialCode.length)
+        : trimmed.replace(/^\+\d+/, '');
+      setCountry(next);
+      setNational(stripped);
+      emit(next, stripped);
+      return;
+    }
     setCountry(next);
     emit(next, national);
   };

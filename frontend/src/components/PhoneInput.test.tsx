@@ -78,4 +78,41 @@ describe('PhoneInput', () => {
     );
     expect(screen.getByText('Pick a country')).toBeInTheDocument();
   });
+
+  it('preserves the full E.164 when switching from a known country to Other', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const national = screen.getByRole('textbox');
+    await user.type(national, '5551234567');
+    expect(screen.getByTestId('emitted')).toHaveTextContent('+15551234567');
+
+    // Open the country picker and pick Other.
+    const picker = screen.getByRole('button', { name: /country code/i });
+    await user.click(picker);
+    await user.click(await screen.findByRole('option', { name: /other/i }));
+
+    // The +1 dial code must not be dropped on the switch.
+    expect(screen.getByTestId('emitted')).toHaveTextContent('+15551234567');
+    // And the field is now showing the full E.164 so the user can edit.
+    expect(screen.getByRole('textbox')).toHaveValue('+15551234567');
+  });
+
+  it('strips the dial code when switching from Other back to a matching country', async () => {
+    const user = userEvent.setup();
+    render(<Harness initial="+15551234567" />);
+    // Existing US value: picker shows United States, field shows national digits.
+    expect(screen.getByRole('textbox')).toHaveValue('5551234567');
+
+    const picker = screen.getByRole('button', { name: /country code/i });
+    await user.click(picker);
+    await user.click(await screen.findByRole('option', { name: /other/i }));
+    // Now in Other mode showing full E.164.
+    expect(screen.getByRole('textbox')).toHaveValue('+15551234567');
+
+    // Switch back to United States.
+    await user.click(picker);
+    await user.click(await screen.findByRole('option', { name: /united states/i }));
+    expect(screen.getByRole('textbox')).toHaveValue('5551234567');
+    expect(screen.getByTestId('emitted')).toHaveTextContent('+15551234567');
+  });
 });
