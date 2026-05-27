@@ -582,4 +582,43 @@ describe('DashboardPage', () => {
     expect(screen.queryByText('AI model and provider configuration.')).not.toBeInTheDocument();
     expect(mockGetModelConfig).not.toHaveBeenCalled();
   });
+
+  it('sorts integration tools alphabetically by display name', async () => {
+    // Regression: tools from different providers should appear grouped
+    // together rather than scattered by factory name order.
+    setupMocks({
+      tools: {
+        tools: [
+          { name: 'file', description: 'Google Drive storage', category: 'core', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_drive', always_enabled: true },
+          { name: 'calendar', description: 'Google Calendar integration', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'google_calendar', always_enabled: false },
+          { name: 'gmail', description: 'Gmail integration', category: 'domain', enabled: true, domain_group: 'Integrations', domain_group_order: 2, oauth_name: 'gmail', always_enabled: false },
+          { name: 'servicetitan', description: 'ServiceTitan integration', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: '', always_enabled: false },
+          { name: 'quickbooks', description: 'QuickBooks integration', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0, oauth_name: 'quickbooks', always_enabled: false },
+        ],
+      },
+      oauth: {
+        integrations: [
+          { integration: 'google_drive', connected: true, configured: true },
+          { integration: 'google_calendar', connected: true, configured: true },
+          { integration: 'gmail', connected: true, configured: true },
+          { integration: 'quickbooks', connected: true, configured: true },
+        ],
+      },
+    });
+    renderWithRouter(<DashboardPage />);
+
+    await waitFor(() => {
+      // Collect all spans in DOM order, filter to the known display names.
+      const spans = document.querySelectorAll('span');
+      const toolNames: string[] = [];
+      for (const span of spans) {
+        const text = span.textContent ?? '';
+        if (['Gmail', 'Google Calendar', 'Google Drive', 'QuickBooks', 'ServiceTitan'].includes(text)) {
+          toolNames.push(text);
+        }
+      }
+
+      expect(toolNames).toEqual(['Gmail', 'Google Calendar', 'Google Drive', 'QuickBooks', 'ServiceTitan']);
+    });
+  });
 });

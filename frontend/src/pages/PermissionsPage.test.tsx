@@ -156,4 +156,48 @@ describe('PermissionsPage', () => {
     });
     expect(screen.queryByText('Google Drive')).not.toBeInTheDocument();
   });
+
+  it('sorts domain tools alphabetically by display name', async () => {
+    // Regression: domain tools should appear in alphabetical display-name
+    // order rather than factory-name order.
+    mockGetToolConfig.mockResolvedValue({
+      tools: [
+        tool({ name: 'quickbooks', category: 'domain', oauth_name: 'quickbooks', sub_tools: [
+          { name: 'qb_query', permission_level: 'ask', hidden_in_permissions: false },
+        ] }),
+        tool({ name: 'calendar', category: 'domain', oauth_name: 'google_calendar', sub_tools: [
+          { name: 'calendar_list_events', permission_level: 'ask', hidden_in_permissions: false },
+        ] }),
+        tool({ name: 'gmail', category: 'domain', oauth_name: 'gmail', sub_tools: [
+          { name: 'gmail_send', permission_level: 'ask', hidden_in_permissions: false },
+        ] }),
+        tool({ name: 'servicetitan', category: 'domain', sub_tools: [
+          { name: 'st_action', permission_level: 'ask', hidden_in_permissions: false },
+        ] }),
+      ],
+    });
+    mockGetOAuthStatus.mockResolvedValue({
+      integrations: [
+        { integration: 'quickbooks', connected: true, configured: true },
+        { integration: 'google_calendar', connected: true, configured: true },
+        { integration: 'gmail', connected: true, configured: true },
+      ],
+    });
+
+    renderWithRouter(<PermissionsPage />);
+
+    await waitFor(() => {
+      // Collect font-medium spans (the tool display names) in DOM order.
+      const spans = document.querySelectorAll('span.font-medium');
+      const toolNames: string[] = [];
+      for (const span of spans) {
+        const text = span.textContent ?? '';
+        if (['Gmail', 'Google Calendar', 'QuickBooks', 'ServiceTitan'].includes(text)) {
+          toolNames.push(text);
+        }
+      }
+
+      expect(toolNames).toEqual(['Gmail', 'Google Calendar', 'QuickBooks', 'ServiceTitan']);
+    });
+  });
 });

@@ -80,7 +80,7 @@ export default function PermissionsPage() {
     [visibleTools],
   );
   const domainTools = useMemo(
-    () => visibleTools.filter((t) => t.category === 'domain'),
+    () => visibleTools.filter((t) => t.category === 'domain').sort((a, b) => displayName(a.name).localeCompare(displayName(b.name))),
     [visibleTools],
   );
 

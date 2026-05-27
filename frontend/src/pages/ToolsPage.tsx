@@ -117,9 +117,11 @@ export default function ToolsPage() {
   // (``category === 'domain'``) plus any OAuth-backed tool that is rendered
   // as always-on in Settings (e.g. Google Drive). The latter has no toggle
   // but still needs Connect / Disconnect.
-  const integrationTools = tools.filter(
-    (t: ToolConfigEntryResponse) => t.category === 'domain' || !!t.oauth_name,
-  );
+  // Sort alphabetically by display name so integrations from the same
+  // provider (e.g. Google Calendar, Google Drive, Gmail) appear together.
+  const integrationTools = tools
+    .filter((t: ToolConfigEntryResponse) => t.category === 'domain' || !!t.oauth_name)
+    .sort((a, b) => displayName(a.name).localeCompare(displayName(b.name)));
 
   return (
     <div>
