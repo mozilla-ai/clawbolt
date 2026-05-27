@@ -298,7 +298,13 @@ export default function GetStartedPage() {
                   : 'Send a message'}
               </h3>
               {isPremium && isWelcomeChannel(selectedChannel) && linkDataMap[selectedChannel]?.connected ? (
+                // ``key={selectedChannel}`` forces a remount when the user
+                // switches channels in Step 1. Without it, React reuses the
+                // same component instance and its ``status='sent'`` state
+                // carries over to the new channel, rendering "We just
+                // texted you" at the prior channel's destination.
                 <DesktopWelcomeStep
+                  key={selectedChannel}
                   channel={selectedChannel}
                   destination={linkDataMap[selectedChannel]?.identifier ?? ''}
                   fallbackAddress={
@@ -679,7 +685,18 @@ function MobileImessageFlow({
   const [linked, setLinked] = useState(false);
   const [welcomeSent, setWelcomeSent] = useState(false);
   const [resending, setResending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [copied, setCopied] = useState(false);
+
+  // Mirrors backend WELCOME_COOLDOWN_SECONDS so the resend button shows a
+  // countdown instead of letting the user spam through to a 429 toast.
+  const RESEND_COOLDOWN_SECONDS = 60;
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
 
   // BlueBubbles can be configured with either a phone number or an iCloud
   // email. An ``sms:user@icloud.com`` deep-link is malformed and most OS
@@ -697,11 +714,6 @@ function MobileImessageFlow({
       // Clipboard API may be blocked; the user can long-press to copy.
     }
   };
-
-  // Premium-only: only linq/bluebubbles/twilio support the welcome flow.
-  // Telegram intentionally skipped (bots can't message a user first).
-  const supportsWelcome = (b: ChannelKey | null): b is 'linq' | 'bluebubbles' | 'twilio' =>
-    b === 'linq' || b === 'bluebubbles' || b === 'twilio';
 
   const handleStart = async () => {
     setError(null);
@@ -729,10 +741,11 @@ function MobileImessageFlow({
       setUserPhone(normalized);
       setLinked(true);
 
-      if (isPremium && supportsWelcome(imessageBackend)) {
+      if (isPremium && isWelcomeChannel(imessageBackend)) {
         try {
           await api.sendWelcomeText(imessageBackend);
           setWelcomeSent(true);
+          setResendCooldown(RESEND_COOLDOWN_SECONDS);
         } catch (e) {
           // Fall back to the deep-link / copy-address UX so the user can
           // still kick the conversation off themselves.
@@ -757,11 +770,12 @@ function MobileImessageFlow({
   };
 
   const handleResend = async () => {
-    if (!isPremium || !supportsWelcome(imessageBackend)) return;
+    if (!isPremium || !isWelcomeChannel(imessageBackend)) return;
     setResending(true);
     try {
       await api.sendWelcomeText(imessageBackend);
       toast.success('Sent again. Check your messages.');
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not resend.');
     } finally {
@@ -780,10 +794,10 @@ function MobileImessageFlow({
           variant="secondary"
           className="w-full"
           isLoading={resending}
-          disabled={resending}
+          disabled={resending || resendCooldown > 0}
           onClick={handleResend}
         >
-          Resend
+          {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend'}
         </Button>
       </Card>
     );
@@ -856,7 +870,7 @@ function MobileImessageFlow({
         disabled={saving || !phone.trim()}
         onClick={handleStart}
       >
-        {isPremium && supportsWelcome(imessageBackend) ? 'Text me to start' : 'Text Clawbolt'}
+        {isPremium && isWelcomeChannel(imessageBackend) ? 'Text me to start' : 'Text Clawbolt'}
       </Button>
     </>
   );
