@@ -6,6 +6,7 @@ You now have access to Google Calendar tools. Here is how to use them effectivel
 
 | Tool | Purpose | Approval |
 |------|---------|----------|
+| `calendar_list_calendars` | List enabled calendars with access roles and per-tool permissions | Auto |
 | `calendar_list_events` | List events in a date range | Auto |
 | `calendar_create_event` | Create a new event | Asks user |
 | `calendar_update_event` | Update an existing event | Asks user |
@@ -45,6 +46,10 @@ Before creating an event, check for existing events in the same time range:
 1. Use `calendar_list_events` for the target date range
 2. Look for events with similar titles or times
 3. If a match exists, ask the user: "There's already an event at that time. Update it instead?"
+
+## Multi-calendar setups
+
+When `calendar_list_calendars` returns more than one row, check the target calendar's `access_role` before mutating. Read-only roles (`reader`, `freeBusyReader`) reject create, update, and delete. Pass `calendar_id` explicitly on `calendar_create_event`, `calendar_update_event`, and `calendar_delete_event` rather than letting the tool default.
 
 ## Common Workflows
 
