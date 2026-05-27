@@ -4,6 +4,7 @@ import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
 import Field from '@/components/ui/field';
+import PhoneInput from '@/components/PhoneInput';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import DataSharingConsentSection from '@/components/DataSharingConsentSection';
 import { toast } from '@/lib/toast';
@@ -17,7 +18,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { getVisibleChannels, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
 import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
-import { normalizeUsPhone, isValidE164, PHONE_FORMAT_ERROR } from '@/lib/phone';
+import { isValidE164, PHONE_FORMAT_ERROR } from '@/lib/phone';
 import api from '@/api';
 
 type Selection = ChannelKey | 'none';
@@ -770,27 +771,26 @@ function MobileImessageFlow({
   const handleStart = async () => {
     setError(null);
     if (!imessageBackend) return;
-    const normalized = normalizeUsPhone(phone);
-    if (!isValidE164(normalized)) {
+    if (!isValidE164(phone)) {
       setError(PHONE_FORMAT_ERROR);
       return;
     }
     setSaving(true);
     try {
       if (isPremium) {
-        if (imessageBackend === 'linq') await api.setLinqLink(normalized);
-        else await api.setBlueBubblesLink(normalized);
+        if (imessageBackend === 'linq') await api.setLinqLink(phone);
+        else await api.setBlueBubblesLink(phone);
       } else {
         // OSS: persist the phone to the server-level allowed list so the
         // backend will route the user's first inbound back to this account.
         const updates =
           imessageBackend === 'linq'
-            ? { linq_allowed_numbers: normalized }
-            : { bluebubbles_allowed_numbers: normalized };
+            ? { linq_allowed_numbers: phone }
+            : { bluebubbles_allowed_numbers: phone };
         await updateChannelConfig.mutateAsync(updates);
       }
       onActivateRoute(imessageBackend);
-      setUserPhone(normalized);
+      setUserPhone(phone);
       setLinked(true);
 
       if (isPremium && isWelcomeChannel(imessageBackend)) {
@@ -893,33 +893,23 @@ function MobileImessageFlow({
 
   return (
     <>
-      <Field label="Your phone number">
-        <Input
-          value={phone}
-          onChange={(e) => {
-            setPhone(e.target.value);
-            if (error) setError(null);
-          }}
-          placeholder="(555) 123-4567"
-          inputMode="tel"
-          autoComplete="tel"
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? 'mobile-phone-error' : undefined}
-        />
-        {error ? (
-          <p id="mobile-phone-error" className="text-xs text-danger mt-1">{error}</p>
-        ) : (
-          <p className="text-xs text-muted-foreground mt-1">
-            US numbers default to +1. Type a leading + for other countries.
-          </p>
-        )}
-      </Field>
+      <PhoneInput
+        label="Your phone number"
+        value={phone}
+        onChange={(v) => {
+          setPhone(v);
+          if (error) setError(null);
+        }}
+        helpText="Pick your country and enter your number. US is the default."
+        error={error}
+        errorId="mobile-phone-error"
+      />
 
       <Button
         variant="primary"
         className="w-full"
         isLoading={saving}
-        disabled={saving || !phone.trim()}
+        disabled={saving || !phone}
         onClick={handleStart}
       >
         {isPremium && isWelcomeChannel(imessageBackend) ? 'Text me to start' : 'Text Clawbolt'}

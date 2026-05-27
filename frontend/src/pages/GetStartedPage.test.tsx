@@ -369,11 +369,14 @@ describe('GetStartedPage (mobile flow)', () => {
     expect(screen.getByRole('button', { name: 'Text Clawbolt' })).toBeInTheDocument();
   });
 
-  it('shows phone validation error when format is bad', async () => {
+  it('shows phone validation error when too few digits are entered', async () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
     const input = await screen.findByPlaceholderText('(555) 123-4567');
-    await user.type(input, 'abc');
+    // The picker strips non-digits so "abc" yields an empty value (button
+    // stays disabled). A short but non-empty value is the only way to
+    // exercise the isValidE164 branch in the click handler.
+    await user.type(input, '123');
     await user.click(screen.getByRole('button', { name: 'Text Clawbolt' }));
     await waitFor(() => {
       expect(screen.getByText(/Use a phone number like/)).toBeInTheDocument();
