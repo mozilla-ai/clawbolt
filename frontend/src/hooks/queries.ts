@@ -11,6 +11,18 @@ import type {
   DataSharingConsentRequest,
 } from '@/types';
 
+// --- App config (deployment-level feature flags) ---
+
+export function useAppConfig() {
+  return useQuery({
+    queryKey: queryKeys.appConfig,
+    queryFn: () => api.getAppConfig(),
+    // Flags only change on redeploy. Cache aggressively so every page that
+    // gates on a flag does not re-fetch on mount.
+    staleTime: Infinity,
+  });
+}
+
 // --- Profile ---
 
 export function useProfile(opts: { enabled?: boolean } = {}) {

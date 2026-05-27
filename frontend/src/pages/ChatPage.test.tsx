@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
+import { Outlet, Route, Routes } from 'react-router-dom';
 import { renderWithRouter } from '@/test/test-utils';
 import { ChatActivityProvider } from '@/contexts/ChatActivityContext';
 import ChatPage from './ChatPage';
@@ -8,6 +10,7 @@ import ChatPage from './ChatPage';
 // Mock the api module
 vi.mock('@/api', () => ({
   default: {
+    getAppConfig: vi.fn().mockResolvedValue({ chat_web_attachments_enabled: true }),
     getConversation: vi.fn(),
     getConversationSystemPrompt: vi.fn(),
     sendChatMessage: vi.fn(),
@@ -47,7 +50,6 @@ describe('ChatPage tool interactions', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -88,7 +90,6 @@ describe('ChatPage tool interactions', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -128,7 +129,6 @@ describe('ChatPage tool interaction expand/collapse', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -283,6 +283,42 @@ describe('ChatPage tool interaction expand/collapse', () => {
   });
 });
 
+describe('ChatPage message body wrapping', () => {
+  it('wraps long unbreakable strings (e.g. URLs) inside the message bubble', async () => {
+    const sessionId = '1_3000';
+    const longUrl =
+      'https://example.com/oauth/connect?state=' + 'a'.repeat(200) + '&redirect=https://app.example.com/callback';
+    mockApi.getConversation.mockResolvedValue({
+      session_id: sessionId,
+      user_id: '1',
+      created_at: '2025-01-01T00:00:00Z',
+      last_message_at: '2025-01-01T00:01:00Z',
+      channel: 'webchat',
+      messages: [
+        {
+          seq: 1,
+          direction: 'inbound',
+          body: 'Connect my calendar',
+          timestamp: '2025-01-01T00:00:00Z',
+          tool_interactions: [],
+        },
+        {
+          seq: 2,
+          direction: 'outbound',
+          body: longUrl,
+          timestamp: '2025-01-01T00:01:00Z',
+          tool_interactions: [],
+        },
+      ],
+    });
+
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
+
+    const body = await screen.findByText(longUrl);
+    expect(body.className).toContain('break-words');
+  });
+});
+
 describe('ChatPage conversation auto-load', () => {
   it('loads the user conversation on mount', async () => {
     mockApi.getConversation.mockResolvedValue({
@@ -291,7 +327,6 @@ describe('ChatPage conversation auto-load', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -329,7 +364,6 @@ describe('ChatPage conversation auto-load', () => {
       created_at: '',
       last_message_at: '',
       channel: '',
-      initial_system_prompt: '',
       messages: [],
     });
 
@@ -377,6 +411,33 @@ describe('ChatPage concurrent messaging', () => {
   });
 });
 
+describe('ChatPage attachment affordance gating', () => {
+  it('hides the paperclip and file input when chat_web_attachments_enabled is false', async () => {
+    mockApi.getAppConfig.mockResolvedValueOnce({ chat_web_attachments_enabled: false });
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+
+    const { container } = renderWithRouter(
+      <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+    );
+
+    // Wait for the page to settle on the disabled-attachments config.
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Attach files')).not.toBeInTheDocument();
+    });
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+
+    // Send button still renders so the user can submit text-only messages.
+    expect(screen.getByLabelText('Send message')).toBeInTheDocument();
+  });
+});
+
 describe('ChatPage current system prompt panel', () => {
   it('lazy-loads the live system prompt only when the user expands the panel', async () => {
     const sessionId = '1_5000';
@@ -386,7 +447,6 @@ describe('ChatPage current system prompt panel', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: 'STALE FIRST-TURN PROMPT',
       messages: [
         {
           seq: 1,
@@ -425,10 +485,6 @@ describe('ChatPage current system prompt panel', () => {
     expect(toggle).toBeInTheDocument();
     expect(mockApi.getConversationSystemPrompt).not.toHaveBeenCalled();
 
-    // We must NOT show the stale frozen snapshot. Even before opening
-    // the panel, the old initial_system_prompt text should be absent.
-    expect(screen.queryByText('STALE FIRST-TURN PROMPT')).not.toBeInTheDocument();
-
     // Expanding triggers a single fetch with the active session id and
     // renders the live prompt body.
     const user = userEvent.setup();
@@ -448,7 +504,6 @@ describe('ChatPage current system prompt panel', () => {
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       channel: 'webchat',
-      initial_system_prompt: '',
       messages: [
         {
           seq: 1,
@@ -490,3 +545,417 @@ describe('ChatPage current system prompt panel', () => {
     expect(screen.getByText(/onboarding/i)).toBeInTheDocument();
   });
 });
+
+describe('ChatPage failed-send cleanup (issue #1368)', () => {
+  it('removes the optimistic user message when sendChatMessage rejects', async () => {
+    // Empty conversation so the only visible user message is the one we send.
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+    mockApi.sendChatMessage.mockRejectedValue(new Error('Request failed: 403'));
+
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>);
+
+    const textarea = await screen.findByPlaceholderText('Type a message...');
+    const user = userEvent.setup();
+    await user.type(textarea, 'check this out');
+    await user.keyboard('{Enter}');
+
+    // The optimistic message appears briefly, then is removed when the POST
+    // rejects. Without the cleanup it would linger until the next successful
+    // send wiped it via a conversation refetch.
+    await waitFor(() => {
+      expect(screen.queryByText('check this out')).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('ChatPage file attachment blob URLs (issue #1368)', () => {
+  it('creates each preview blob URL once, not on every keystroke', async () => {
+    // Before the fix, the chip rendering called URL.createObjectURL(file)
+    // inline on every render. Typing in the textarea re-renders ChatPage,
+    // so each keystroke leaked a new blob URL. For phone-sized photos that
+    // showed up as visible typing lag.
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test-url');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    try {
+      const { container } = renderWithRouter(
+        <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+      );
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
+      const user = userEvent.setup();
+      await user.upload(fileInput, png);
+
+      // One URL for the freshly attached image.
+      expect(createSpy).toHaveBeenCalledTimes(1);
+
+      // Typing should NOT allocate any new blob URLs.
+      const textarea = await screen.findByPlaceholderText('Type a message...');
+      await user.type(textarea, 'caption text');
+      expect(createSpy).toHaveBeenCalledTimes(1);
+
+      // Removing the chip revokes the URL exactly once.
+      const removeButton = screen.getByRole('button', { name: /remove photo\.png/i });
+      await user.click(removeButton);
+      expect(revokeSpy).toHaveBeenCalledWith('blob:test-url');
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+
+  it('revokes a staged chip URL on unmount if the user never sends', async () => {
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:unmount-url');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    try {
+      const { container, unmount } = renderWithRouter(
+        <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+      );
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
+      const user = userEvent.setup();
+      await user.upload(fileInput, png);
+
+      // Sanity: the URL was created and NOT yet revoked.
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      unmount();
+
+      // Navigating away with a staged file should revoke the URL.
+      expect(revokeSpy).toHaveBeenCalledWith('blob:unmount-url');
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+
+});
+
+describe('ChatPage upload progress + cancel + retry (issue #1368)', () => {
+  beforeEach(() => {
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: 'webchat',
+      messages: [],
+    });
+  });
+
+  async function attachAndSend(): Promise<{ user: ReturnType<typeof userEvent.setup> }> {
+    const { container } = renderWithRouter(
+      <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+    );
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const png = new File([new Uint8Array(100)], 'photo.png', { type: 'image/png' });
+    const user = userEvent.setup();
+    await user.upload(fileInput, png);
+    const textarea = await screen.findByPlaceholderText('Type a message...');
+    await user.type(textarea, 'caption');
+    await user.keyboard('{Enter}');
+    return { user };
+  }
+
+  it('shows a Cancel upload button while the POST is in flight', async () => {
+    // sendChatMessage never resolves so the message stays in `uploading`.
+    mockApi.sendChatMessage.mockReturnValue(new Promise(() => {}));
+
+    await attachAndSend();
+
+    // The overlay cancel button shows up; aria-label includes the progress.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cancel upload/i })).toBeInTheDocument();
+    });
+  });
+
+  it('drives the progress ring from the onProgress callback', async () => {
+    // Capture the uploadOpts so we can fire onProgress on demand.
+    let progressCb: ((loaded: number, total: number) => void) | undefined;
+    mockApi.sendChatMessage.mockImplementation(
+      (_msg, _files, _onEvent, _onAccepted, uploadOpts) => {
+        progressCb = uploadOpts?.onProgress;
+        return new Promise(() => {});
+      },
+    );
+
+    await attachAndSend();
+
+    await waitFor(() => {
+      expect(progressCb).toBeDefined();
+    });
+    act(() => {
+      progressCb!(42, 100);
+    });
+
+    // aria-label reflects the live percentage.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cancel upload \(42%\)/i })).toBeInTheDocument();
+    });
+  });
+
+  it('cancel button aborts the upload signal and removes the bubble', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    mockApi.sendChatMessage.mockImplementation(
+      (_msg, _files, _onEvent, _onAccepted, uploadOpts) => {
+        capturedSignal = uploadOpts?.signal;
+        return new Promise((_resolve, reject) => {
+          uploadOpts?.signal?.addEventListener('abort', () => {
+            reject(new Error('Upload canceled.'));
+          });
+        });
+      },
+    );
+
+    const { user } = await attachAndSend();
+
+    const cancelBtn = await screen.findByRole('button', { name: /cancel upload/i });
+    await user.click(cancelBtn);
+
+    expect(capturedSignal?.aborted).toBe(true);
+    // Canceled bubble is removed (matches Telegram / WhatsApp).
+    await waitFor(() => {
+      expect(screen.queryByText('caption')).not.toBeInTheDocument();
+    });
+  });
+
+  it('clears the upload overlay as soon as onAccepted fires, not when the agent replies', async () => {
+    // Regression for the stuck-at-40%-forever bug. The previous code
+    // cleared uploadState only after api.sendChatMessage's promise
+    // resolved, i.e. after the SSE delivered the full agent reply. For a
+    // slow agent that's seconds-to-minutes of the progress ring sitting
+    // at whatever value the last xhr.upload.progress event reported.
+    let acceptedCb: (() => void) | undefined;
+    mockApi.sendChatMessage.mockImplementation(
+      (_msg, _files, _onEvent, onAccepted) => {
+        acceptedCb = onAccepted as (() => void) | undefined;
+        // Never resolves: agent is "thinking" forever.
+        return new Promise(() => {});
+      },
+    );
+
+    await attachAndSend();
+    await waitFor(() => expect(acceptedCb).toBeDefined());
+
+    // Before onAccepted: cancel/upload overlay still shown.
+    expect(screen.getByRole('button', { name: /cancel upload/i })).toBeInTheDocument();
+
+    act(() => {
+      acceptedCb!();
+    });
+
+    // After onAccepted: overlay gone, even though agent reply has not arrived.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /cancel upload/i })).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps the failed bubble and shows a Retry button when the POST rejects', async () => {
+    mockApi.sendChatMessage.mockRejectedValueOnce(new Error('Network error'));
+
+    await attachAndSend();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /retry upload/i })).toBeInTheDocument();
+    });
+    // Bubble (text body) is still in the DOM.
+    expect(screen.getByText('caption')).toBeInTheDocument();
+  });
+
+  it('retry re-invokes sendChatMessage with the same files', async () => {
+    mockApi.sendChatMessage.mockRejectedValueOnce(new Error('Network error'));
+    // Second call hangs; we only care that it fired.
+    mockApi.sendChatMessage.mockReturnValueOnce(new Promise(() => {}));
+
+    const { user } = await attachAndSend();
+
+    const retryBtn = await screen.findByRole('button', { name: /retry upload/i });
+    await user.click(retryBtn);
+
+    await waitFor(() => {
+      expect(mockApi.sendChatMessage).toHaveBeenCalledTimes(2);
+    });
+    const secondCallFiles = mockApi.sendChatMessage.mock.calls[1]?.[1] as File[];
+    expect(secondCallFiles).toHaveLength(1);
+    expect(secondCallFiles[0]?.name).toBe('photo.png');
+  });
+
+  it('does not show Thinking... until onAccepted fires (upload finished)', async () => {
+    // Hang sendChatMessage indefinitely without calling onAccepted: the
+    // POST is still in flight from the caller's perspective.
+    mockApi.sendChatMessage.mockImplementation(() => new Promise(() => {}));
+
+    await attachAndSend();
+
+    // The chip + upload overlay show up, but no "Thinking..." yet.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cancel upload/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/thinking/i)).not.toBeInTheDocument();
+  });
+
+  it('shows Thinking... once the upload completes (onAccepted fires)', async () => {
+    let acceptedCb: (() => void) | undefined;
+    mockApi.sendChatMessage.mockImplementation(
+      (_msg, _files, _onEvent, onAccepted) => {
+        acceptedCb = onAccepted as (() => void) | undefined;
+        // Promise that resolves only after a manual trigger; in this test
+        // we never trigger it, so the agent stays in the "thinking"
+        // window for the assertion.
+        return new Promise(() => {});
+      },
+    );
+
+    await attachAndSend();
+    await waitFor(() => expect(acceptedCb).toBeDefined());
+
+    // Simulate the POST returning a request_id.
+    act(() => {
+      acceptedCb!();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/thinking/i)).toBeInTheDocument();
+    });
+  });
+});
+
+describe('ChatPage system prompt panel visibility', () => {
+  const sessionWithMessages = (sessionId: string) => ({
+    session_id: sessionId,
+    user_id: '1',
+    created_at: '2025-01-01T00:00:00Z',
+    last_message_at: '2025-01-01T00:01:00Z',
+    channel: 'webchat' as const,
+    messages: [
+      {
+        seq: 1,
+        direction: 'inbound' as const,
+        body: 'Hi',
+        timestamp: '2025-01-01T00:00:00Z',
+        tool_interactions: [],
+      },
+      {
+        seq: 2,
+        direction: 'outbound' as const,
+        body: 'Hello!',
+        timestamp: '2025-01-01T00:01:00Z',
+        tool_interactions: [],
+      },
+    ],
+  });
+
+  it('hides the panel for non-admin users on a premium deployment', async () => {
+    const sessionId = '1_5100';
+    mockApi.getConversation.mockResolvedValue(sessionWithMessages(sessionId));
+
+    const { unmount } = renderWithRouter(
+      <ChatActivityProvider>
+        <OutletCtxProvider value={{ isPremium: true, isAdmin: false }}>
+          <ChatPage />
+        </OutletCtxProvider>
+      </ChatActivityProvider>,
+      { route: `/app/chat?session=${sessionId}` },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /current system prompt/i })).not.toBeInTheDocument();
+    expect(mockApi.getConversationSystemPrompt).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
+  it('shows the panel for admin users on a premium deployment', async () => {
+    const sessionId = '1_5101';
+    mockApi.getConversation.mockResolvedValue(sessionWithMessages(sessionId));
+    mockApi.getConversationSystemPrompt.mockResolvedValue({
+      session_id: sessionId,
+      system_prompt: 'ADMIN-VISIBLE PROMPT',
+      is_onboarding: false,
+    });
+
+    renderWithRouter(
+      <ChatActivityProvider>
+        <OutletCtxProvider value={{ isPremium: true, isAdmin: true }}>
+          <ChatPage />
+        </OutletCtxProvider>
+      </ChatActivityProvider>,
+      { route: `/app/chat?session=${sessionId}` },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /current system prompt/i })).toBeInTheDocument();
+  });
+
+  it('shows the panel on OSS standalone (no premium auth)', async () => {
+    const sessionId = '1_5102';
+    mockApi.getConversation.mockResolvedValue(sessionWithMessages(sessionId));
+
+    renderWithRouter(
+      <ChatActivityProvider>
+        <OutletCtxProvider value={{ isPremium: false, isAdmin: false }}>
+          <ChatPage />
+        </OutletCtxProvider>
+      </ChatActivityProvider>,
+      { route: `/app/chat?session=${sessionId}` },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /current system prompt/i })).toBeInTheDocument();
+  });
+});
+
+/** Test helper that injects an outlet context value into the React tree. */
+function OutletCtxProvider({
+  value,
+  children,
+}: {
+  value: { isPremium: boolean; isAdmin: boolean };
+  children: ReactNode;
+}) {
+  return (
+    <Routes>
+      <Route element={<Outlet context={value} />}>
+        <Route path="*" element={children} />
+      </Route>
+    </Routes>
+  );
+}

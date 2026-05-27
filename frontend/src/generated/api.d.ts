@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/app/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** App Config */
+        get: operations["app_config_api_app_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/config": {
         parameters: {
             query?: never;
@@ -875,6 +892,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AppConfigResponse
+         * @description Deployment-level feature flags the frontend reads on app load.
+         */
+        AppConfigResponse: {
+            /** Chat Web Attachments Enabled */
+            chat_web_attachments_enabled: boolean;
+        };
         /** BatchDeleteRequest */
         BatchDeleteRequest: {
             /** Seqs */
@@ -1304,11 +1329,6 @@ export interface components {
              * @default
              */
             channel: string;
-            /**
-             * Initial System Prompt
-             * @default
-             */
-            initial_system_prompt: string;
             /** Messages */
             messages: components["schemas"]["SessionMessage"][];
         };
@@ -1335,11 +1355,11 @@ export interface components {
          * @description Live system prompt that would be sent to the LLM on the next turn.
          *
          *     Reconstructed on demand from current user state (memory, profile,
-         *     onboarding status, available tools) rather than pulled from the
-         *     session's frozen ``initial_system_prompt`` column. Use this when
-         *     the UI needs the current prompt; use ``initial_system_prompt`` on
-         *     ``SessionDetailResponse`` when the historical first-turn prompt is
-         *     what's wanted.
+         *     onboarding status, available tools). The historical first-turn
+         *     snapshot lives on the ``ChatSession.initial_system_prompt`` column
+         *     for forensics but is intentionally not exposed via the public API,
+         *     since it reveals the operator's preamble and tool wiring. Premium
+         *     deployments additionally gate this endpoint behind an admin guard.
          */
         SessionSystemPromptResponse: {
             /** Session Id */
@@ -1596,6 +1616,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    app_config_api_app_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConfigResponse"];
                 };
             };
         };

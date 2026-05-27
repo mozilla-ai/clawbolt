@@ -43,6 +43,24 @@
         }
       }
     },
+    "/api/app/config": {
+      "get": {
+        "summary": "App Config",
+        "operationId": "app_config_api_app_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/config": {
       "get": {
         "summary": "Auth Config",
@@ -1333,6 +1351,20 @@
   },
   "components": {
     "schemas": {
+      "AppConfigResponse": {
+        "properties": {
+          "chat_web_attachments_enabled": {
+            "type": "boolean",
+            "title": "Chat Web Attachments Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chat_web_attachments_enabled"
+        ],
+        "title": "AppConfigResponse",
+        "description": "Deployment-level feature flags the frontend reads on app load."
+      },
       "BatchDeleteRequest": {
         "properties": {
           "seqs": {
@@ -2427,11 +2459,6 @@
             "title": "Channel",
             "default": ""
           },
-          "initial_system_prompt": {
-            "type": "string",
-            "title": "Initial System Prompt",
-            "default": ""
-          },
           "messages": {
             "items": {
               "$ref": "#/components/schemas/SessionMessage"
@@ -2508,7 +2535,7 @@
           "is_onboarding"
         ],
         "title": "SessionSystemPromptResponse",
-        "description": "Live system prompt that would be sent to the LLM on the next turn.\n\nReconstructed on demand from current user state (memory, profile,\nonboarding status, available tools) rather than pulled from the\nsession's frozen ``initial_system_prompt`` column. Use this when\nthe UI needs the current prompt; use ``initial_system_prompt`` on\n``SessionDetailResponse`` when the historical first-turn prompt is\nwhat's wanted."
+        "description": "Live system prompt that would be sent to the LLM on the next turn.\n\nReconstructed on demand from current user state (memory, profile,\nonboarding status, available tools). The historical first-turn\nsnapshot lives on the ``ChatSession.initial_system_prompt`` column\nfor forensics but is intentionally not exposed via the public API,\nsince it reveals the operator's preamble and tool wiring. Premium\ndeployments additionally gate this endpoint behind an admin guard."
       },
       "SubToolEntryResponse": {
         "properties": {

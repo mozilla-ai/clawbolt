@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import Button from '@/components/ui/button';
 import ConfirmModal from '@/components/ui/confirm-modal';
@@ -6,16 +7,37 @@ import { Checkbox } from '@heroui/checkbox';
 import { Tooltip } from '@heroui/tooltip';
 import { Spinner } from '@heroui/spinner';
 import api from '@/api';
+import { compressImageIfNeeded, shouldCompressImage } from '@/lib/imageCompression';
 import { toast } from '@/lib/toast';
-import { useConversation, useConversationSystemPrompt } from '@/hooks/queries';
+import { useAppConfig, useConversation, useConversationSystemPrompt } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
 import { useChatActivity } from '@/contexts/ChatActivityContext';
+import type { AppShellContext } from '@/layouts/AppShell';
 import type { ToolInteraction } from '@/types';
 
 interface FileAttachment {
   name: string;
   type: string;
   previewUrl?: string;
+}
+
+/**
+ * A staged file plus its blob preview URL. The URL is created once when the
+ * file is selected and lives until the file is either removed from the chip
+ * row or transferred onto a sent message. Critically, the URL is NOT
+ * regenerated on render; the previous implementation called
+ * URL.createObjectURL() inside the chip JSX, which produced a new blob URL
+ * on every keystroke (since typing re-renders ChatPage) and caused noticeable
+ * input lag for phone-sized photos. #1368.
+ */
+interface SelectedFile {
+  file: File;
+  previewUrl?: string;
+  // True while a background compression pass is replacing `file` with a
+  // smaller JPEG re-encoding. The chip stays in the row throughout; on
+  // submit we await any in-flight compressions so the upload uses the
+  // shrunken bytes. #1368.
+  compressing?: boolean;
 }
 
 interface ChatMessage {
@@ -26,18 +48,61 @@ interface ChatMessage {
   seq?: number;
   attachments?: FileAttachment[];
   toolInteractions?: ToolInteraction[];
+  // Upload tracking for optimistic outbound messages that include files.
+  // `undefined` means the message is either already sent or has nothing to
+  // upload (text-only). #1368.
+  uploadState?: 'uploading' | 'failed';
+  uploadProgress?: number; // 0..1, only meaningful while `uploading`.
+  uploadAbort?: AbortController;
+  // What to resend on retry: the original text and the original File handles
+  // (NOT the displayed FileAttachment, which carries only metadata + blob URL).
+  uploadOriginals?: { text: string; files: File[] };
 }
 
 const ACCEPTED_FILE_TYPES = 'image/*,audio/*,application/pdf';
 
 export default function ChatPage() {
   const queryClient = useQueryClient();
+  // The system prompt panel exposes the operator's preamble and tool wiring,
+  // so on multi-tenant premium deployments it is admin-only. OSS standalone
+  // (single-tenant) has no admin/user split, so the panel is visible there.
+  // useOutletContext is undefined under MemoryRouter in tests; default both
+  // flags to false so the OSS standalone branch (panel visible) is taken.
+  const outletCtx = useOutletContext<AppShellContext | undefined>();
+  const isPremium = outletCtx?.isPremium ?? false;
+  const isAdmin = outletCtx?.isAdmin ?? false;
+  const canSeeSystemPrompt = !isPremium || isAdmin;
+  // Default to enabled while the deployment config is loading so OSS users
+  // (and the test harness that doesn't mock useAppConfig) see the affordance
+  // immediately. Premium flips this off via CHAT_WEB_ATTACHMENTS_ENABLED=false
+  // while CloudFront's body-size cap keeps uploads from reaching the worker.
+  const { data: appConfig } = useAppConfig();
+  const chatAttachmentsEnabled = appConfig?.chat_web_attachments_enabled ?? true;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
   const pendingRef = useRef(0);
   const sending = pendingCount > 0;
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  // Separate from `pendingCount`: only counts messages whose POST already
+  // landed (onAccepted fired) and that are now waiting on the agent's
+  // reply. Drives the "Thinking..." spinner so it doesn't appear while the
+  // user is still watching their image bytes go up. #1368.
+  const [thinkingCount, setThinkingCount] = useState(0);
+  const thinking = thinkingCount > 0;
+  // Mirror of selectedFiles. The unmount cleanup reads this ref so it can
+  // revoke chip preview URLs without resubscribing on every render (which
+  // would race against removeFile's own revoke). #1368.
+  const selectedFilesRef = useRef<SelectedFile[]>([]);
+  const [selectedFiles, _setSelectedFiles] = useState<SelectedFile[]>([]);
+  // Wrap setSelectedFiles so selectedFilesRef stays in lockstep with state.
+  // A missed sync would let a staged chip URL leak past navigation.
+  const setSelectedFiles: typeof _setSelectedFiles = useCallback((value) => {
+    _setSelectedFiles((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value;
+      selectedFilesRef.current = next;
+      return next;
+    });
+  }, []);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const { agentBusy, activityTool, doneTick } = useChatActivity();
@@ -60,11 +125,30 @@ export default function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nextId = useRef(1);
   const mountedRef = useRef(true);
+  // In-flight image compressions kicked off from handleFileSelect. Awaited
+  // in handleSubmit so the upload always uses the shrunken bytes, even if
+  // the user hits send within the ~few-hundred-ms compression window for a
+  // phone-sized photo. #1368.
+  const compressionPromisesRef = useRef<Set<Promise<unknown>>>(new Set());
 
   // Track mounted state to prevent state updates after unmount
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
+  }, []);
+
+  // Revoke any staged chip preview URLs when the user navigates away with
+  // an attachment still selected (otherwise those blob URLs leak until page
+  // reload). URLs already transferred to a sent message are owned by the
+  // message and revoked separately on conversation refetch / failed send.
+  // Uses selectedFilesRef so the cleanup sees the latest selection at unmount
+  // time without resubscribing on every render.
+  useEffect(() => {
+    return () => {
+      selectedFilesRef.current.forEach((entry) => {
+        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      });
+    };
   }, []);
 
   // Refresh conversation data when the agent finishes, so replies produced while
@@ -96,7 +180,7 @@ export default function ChatPage() {
     data: systemPromptData,
     isFetching: systemPromptFetching,
     isError: systemPromptError,
-  } = useConversationSystemPrompt({ enabled: systemPromptOpen && hasConversation });
+  } = useConversationSystemPrompt({ enabled: canSeeSystemPrompt && systemPromptOpen && hasConversation });
 
   // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
   // bug that occurs when scrollIntoView fires during keyboard dismissal.
@@ -116,7 +200,7 @@ export default function ChatPage() {
     inputRef.current?.focus();
   }, []);
 
-  // Populate messages from conversation history when it loads
+  // Populate messages from conversation history when it loads.
   useEffect(() => {
     if (!sessionDetail) return;
     const loaded: ChatMessage[] = sessionDetail.messages.map((m) => ({
@@ -132,104 +216,274 @@ export default function ChatPage() {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newFiles = Array.from(e.target.files || []);
-    if (newFiles.length > 0) {
-      setSelectedFiles((prev) => [...prev, ...newFiles]);
+    if (newFiles.length === 0) {
+      e.target.value = '';
+      return;
     }
+
+    const newEntries: SelectedFile[] = newFiles.map((file) => {
+      const willCompress = shouldCompressImage(file);
+      return {
+        file,
+        previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+        compressing: willCompress,
+      };
+    });
+    setSelectedFiles((prev) => [...prev, ...newEntries]);
+
+    // Kick off compression in the background. Each promise lands in the
+    // ref so handleSubmit can await any still in flight at submit time.
+    newEntries.forEach((entry) => {
+      if (!entry.compressing) return;
+      const original = entry.file;
+      const promise = (async () => {
+        const compressed = await compressImageIfNeeded(original);
+        if (!mountedRef.current) return;
+        setSelectedFiles((prev) =>
+          prev.map((e) =>
+            e.file === original ? { ...e, file: compressed, compressing: false } : e,
+          ),
+        );
+      })();
+      compressionPromisesRef.current.add(promise);
+      promise.finally(() => {
+        compressionPromisesRef.current.delete(promise);
+      });
+    });
+
     // Reset so the same file can be re-selected
     e.target.value = '';
   };
 
   const removeFile = (index: number) => {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setSelectedFiles((prev) => {
+      const entry = prev[index];
+      if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
   };
+
+  // Core send loop, shared by handleSubmit (fresh send) and handleRetry
+  // (re-attempt of a failed-upload message). When *retryMsgId* is set, the
+  // existing message keeps its bubble + attachments and only the upload
+  // state is reset; on a fresh send we build a new optimistic ChatMessage.
+  // #1368.
+  const sendChatMessage = useCallback(
+    async (text: string, files: File[] | undefined, retryMsgId?: number) => {
+      const hasFiles = !!files && files.length > 0;
+      const abort = new AbortController();
+
+      // -- Build or revive the optimistic user bubble ---------------------
+      let msgId: number;
+      if (retryMsgId !== undefined) {
+        msgId = retryMsgId;
+        setMessages((prev) => prev.map((m) =>
+          m.id === retryMsgId
+            ? {
+                ...m,
+                uploadState: hasFiles ? 'uploading' : undefined,
+                uploadProgress: hasFiles ? 0 : undefined,
+                uploadAbort: hasFiles ? abort : undefined,
+              }
+            : m,
+        ));
+      } else {
+        const attachments: FileAttachment[] = (files ?? []).map((file) => ({
+          name: file.name,
+          type: file.type,
+          // Reuse the blob URLs created at file-select time so we don't
+          // allocate twice. After this call the URLs are owned by the
+          // rendered message; the chip row was cleared in handleSubmit
+          // without revoking.
+          previewUrl: file.type.startsWith('image/')
+            ? selectedFilesRef.current.find((e) => e.file === file)?.previewUrl
+            : undefined,
+        }));
+        msgId = nextId.current++;
+        const userMsg: ChatMessage = {
+          id: msgId,
+          role: 'user',
+          body: text,
+          timestamp: new Date(),
+          attachments: attachments.length > 0 ? attachments : undefined,
+          uploadState: hasFiles ? 'uploading' : undefined,
+          uploadProgress: hasFiles ? 0 : undefined,
+          uploadAbort: hasFiles ? abort : undefined,
+          uploadOriginals: hasFiles ? { text, files: files! } : undefined,
+        };
+        setMessages((prev) => [...prev, userMsg]);
+      }
+
+      pendingRef.current++;
+      setPendingCount((c) => c + 1);
+      // Tracks whether onAccepted fired for this call, so the finally
+      // block knows whether to decrement thinkingCount (which was only
+      // incremented in onAccepted, not on send-click).
+      let thinkingIncremented = false;
+
+      try {
+        const toolNames: string[] = [];
+        const res = await api.sendChatMessage(
+          text,
+          files,
+          (event) => {
+            if (!mountedRef.current) return;
+            if (event.type === 'tool_call') {
+              setCurrentTool(event.tool_name ?? null);
+              if (event.tool_name) {
+                toolNames.push(event.tool_name);
+              }
+            } else if (event.type === 'approval_request') {
+              // Display approval requests as regular assistant messages
+              // so the user replies by typing (like Telegram/iMessage)
+              const approvalMsg: ChatMessage = {
+                id: nextId.current++,
+                role: 'assistant',
+                body: event.content ?? '',
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, approvalMsg]);
+              setCurrentTool(null);
+              setWaitingForApproval(true);
+            }
+          },
+          () => {
+            // POST succeeded with a request_id, i.e. the upload bytes are
+            // safely on the server and the agent is now the bottleneck.
+            // Two transitions land at this exact moment:
+            //   1. Clear the upload overlay on the bubble. The previous
+            //      version cleared it only after api.sendChatMessage
+            //      resolved (i.e. after the agent's full reply), so the
+            //      progress ring would stick at whatever value the final
+            //      xhr.upload.progress event reported until the agent
+            //      finished -- typically seconds to minutes. That's the
+            //      "stuck at 40%" symptom from #1368.
+            //   2. Flip on the "Thinking..." spinner, since the agent is
+            //      now the bottleneck.
+            if (!mountedRef.current) return;
+            setMessages((prev) => prev.map((m) =>
+              m.id === msgId
+                ? {
+                    ...m,
+                    uploadState: undefined,
+                    uploadProgress: undefined,
+                    uploadAbort: undefined,
+                  }
+                : m,
+            ));
+            thinkingIncremented = true;
+            setThinkingCount((c) => c + 1);
+          },
+          hasFiles
+            ? {
+                signal: abort.signal,
+                onProgress: (loaded, total) => {
+                  if (!mountedRef.current) return;
+                  const pct = total > 0 ? loaded / total : 0;
+                  setMessages((prev) => prev.map((m) =>
+                    m.id === msgId ? { ...m, uploadProgress: pct } : m,
+                  ));
+                },
+              }
+            : undefined,
+        );
+        if (!mountedRef.current) return;
+        // The upload overlay was already cleared by the onAccepted
+        // callback above; we just need to drop the agent reply in.
+
+        // Skip adding an assistant message when the reply is empty
+        // (the agent chose not to respond, e.g. user asked for silence).
+        if (res.reply) {
+          const assistantMsg: ChatMessage = {
+            id: nextId.current++,
+            role: 'assistant',
+            body: res.reply,
+            timestamp: new Date(),
+            toolInteractions: toolNames.length > 0
+              ? toolNames.map((name) => ({ name }))
+              : undefined,
+          };
+          setMessages((prev) => [...prev, assistantMsg]);
+        }
+
+        // Refresh conversation data so full tool interactions from the DB replace
+        // the partial names collected from SSE events
+        void queryClient.invalidateQueries({ queryKey: queryKeys.conversation.all });
+      } catch (err: unknown) {
+        if (!mountedRef.current) return;
+        const errMsg = err instanceof Error ? err.message : 'Failed to send message';
+        // A user-initiated cancel removes the bubble outright (matching
+        // Telegram / WhatsApp). Other upload failures keep the bubble so the
+        // user can retry without losing context. Text-only sends still drop
+        // on failure since there is nothing to retry that the user can't
+        // just retype.
+        const wasCanceled = err instanceof Error && err.message === 'Upload canceled.';
+        if (wasCanceled || !hasFiles) {
+          setMessages((prev) => {
+            const removed = prev.find((m) => m.id === msgId);
+            removed?.attachments?.forEach((att) => {
+              if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+            });
+            return prev.filter((m) => m.id !== msgId);
+          });
+          if (!wasCanceled) toast.error(errMsg);
+        } else {
+          setMessages((prev) => prev.map((m) =>
+            m.id === msgId
+              ? { ...m, uploadState: 'failed', uploadAbort: undefined }
+              : m,
+          ));
+          toast.error(errMsg);
+        }
+      } finally {
+        if (!mountedRef.current) return;
+        pendingRef.current--;
+        setPendingCount((c) => c - 1);
+        if (thinkingIncremented) {
+          setThinkingCount((c) => Math.max(0, c - 1));
+        }
+        // Only clear indicators when all pending requests are done
+        if (pendingRef.current === 0) {
+          setCurrentTool(null);
+          setWaitingForApproval(false);
+        }
+      }
+    },
+    [queryClient],
+  );
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = input.trim();
     if (!text && selectedFiles.length === 0) return;
 
-    // Build attachments for display
-    const attachments: FileAttachment[] = selectedFiles.map((f) => ({
-      name: f.name,
-      type: f.type,
-      previewUrl: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined,
-    }));
+    // Wait for any still-running compressions before sampling File handles,
+    // so the upload always uses the compressed bytes.
+    if (compressionPromisesRef.current.size > 0) {
+      await Promise.all([...compressionPromisesRef.current]);
+      if (!mountedRef.current) return;
+    }
 
-    const userMsg: ChatMessage = {
-      id: nextId.current++,
-      role: 'user',
-      body: text,
-      timestamp: new Date(),
-      attachments: attachments.length > 0 ? attachments : undefined,
-    };
-    setMessages((prev) => [...prev, userMsg]);
-
-    const filesToSend = selectedFiles.length > 0 ? [...selectedFiles] : undefined;
+    const files =
+      selectedFilesRef.current.length > 0
+        ? selectedFilesRef.current.map((entry) => entry.file)
+        : undefined;
     setInput('');
     setSelectedFiles([]);
-    pendingRef.current++;
-    setPendingCount((c) => c + 1);
+    await sendChatMessage(text, files);
+  };
 
-    try {
-      const toolNames: string[] = [];
-      const res = await api.sendChatMessage(
-        text,
-        filesToSend,
-        (event) => {
-          if (!mountedRef.current) return;
-          if (event.type === 'tool_call') {
-            setCurrentTool(event.tool_name ?? null);
-            if (event.tool_name) {
-              toolNames.push(event.tool_name);
-            }
-          } else if (event.type === 'approval_request') {
-            // Display approval requests as regular assistant messages
-            // so the user replies by typing (like Telegram/iMessage)
-            const approvalMsg: ChatMessage = {
-              id: nextId.current++,
-              role: 'assistant',
-              body: event.content ?? '',
-              timestamp: new Date(),
-            };
-            setMessages((prev) => [...prev, approvalMsg]);
-            setCurrentTool(null);
-            setWaitingForApproval(true);
-          }
-        },
-      );
-      if (!mountedRef.current) return;
-      // Skip adding an assistant message when the reply is empty
-      // (the agent chose not to respond, e.g. user asked for silence).
-      if (res.reply) {
-        const assistantMsg: ChatMessage = {
-          id: nextId.current++,
-          role: 'assistant',
-          body: res.reply,
-          timestamp: new Date(),
-          toolInteractions: toolNames.length > 0
-            ? toolNames.map((name) => ({ name }))
-            : undefined,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-      }
+  const handleCancelUpload = (msg: ChatMessage) => {
+    msg.uploadAbort?.abort();
+  };
 
-      // Refresh conversation data so full tool interactions from the DB replace
-      // the partial names collected from SSE events
-      void queryClient.invalidateQueries({ queryKey: queryKeys.conversation.all });
-    } catch (err: unknown) {
-      if (!mountedRef.current) return;
-      const msg = err instanceof Error ? err.message : 'Failed to send message';
-      toast.error(msg);
-    } finally {
-      if (!mountedRef.current) return;
-      pendingRef.current--;
-      setPendingCount((c) => c - 1);
-      // Only clear indicators when all pending requests are done
-      if (pendingRef.current === 0) {
-        setCurrentTool(null);
-        setWaitingForApproval(false);
-      }
-    }
+  const handleRetryUpload = (msg: ChatMessage) => {
+    if (!msg.uploadOriginals) return;
+    void sendChatMessage(
+      msg.uploadOriginals.text,
+      msg.uploadOriginals.files,
+      msg.id,
+    );
   };
 
   const toggleToolExpand = (key: string) => {
@@ -379,7 +633,7 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {hasConversation && (
+            {hasConversation && canSeeSystemPrompt && (
               <div className="border border-border rounded-lg overflow-hidden">
                 <button
                   type="button"
@@ -448,32 +702,54 @@ export default function ChatPage() {
                   {/* Attachments */}
                   {msg.attachments && msg.attachments.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
-                      {msg.attachments.map((att, i) => (
-                        att.previewUrl ? (
-                          <img
-                            key={i}
-                            src={att.previewUrl}
-                            alt={att.name}
-                            className="max-w-[200px] max-h-[150px] rounded object-cover"
-                          />
-                        ) : (
-                          <div
-                            key={i}
-                            className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded ${
-                              msg.role === 'user'
-                                ? 'bg-white/20'
-                                : 'bg-muted'
-                            }`}
-                          >
-                            <FileIcon />
-                            <span className="truncate max-w-[120px]">{att.name}</span>
+                      {msg.attachments.map((att, i) => {
+                        const showOverlay = msg.uploadState !== undefined;
+                        const dimmed = showOverlay ? 'opacity-60' : '';
+                        if (att.previewUrl) {
+                          return (
+                            <div key={i} className="relative">
+                              <img
+                                src={att.previewUrl}
+                                alt={att.name}
+                                className={`max-w-[200px] max-h-[150px] rounded object-cover transition-opacity ${dimmed}`}
+                              />
+                              {showOverlay && (
+                                <UploadOverlay
+                                  state={msg.uploadState!}
+                                  progress={msg.uploadProgress ?? 0}
+                                  onCancel={() => handleCancelUpload(msg)}
+                                  onRetry={() => handleRetryUpload(msg)}
+                                />
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div key={i} className="relative">
+                            <div
+                              className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-opacity ${
+                                msg.role === 'user' ? 'bg-white/20' : 'bg-muted'
+                              } ${dimmed}`}
+                            >
+                              <FileIcon />
+                              <span className="truncate max-w-[120px]">{att.name}</span>
+                            </div>
+                            {showOverlay && (
+                              <UploadOverlay
+                                state={msg.uploadState!}
+                                progress={msg.uploadProgress ?? 0}
+                                onCancel={() => handleCancelUpload(msg)}
+                                onRetry={() => handleRetryUpload(msg)}
+                                compact
+                              />
+                            )}
                           </div>
-                        )
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                   {msg.body && (
-                    <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
+                    <p className="text-sm whitespace-pre-wrap break-words">{msg.body}</p>
                   )}
 
                   {msg.toolInteractions && msg.toolInteractions.length > 0 && (
@@ -541,7 +817,7 @@ export default function ChatPage() {
                             </button>
                             {isExpanded && (
                               <div className="px-2 pb-2 space-y-2">
-                                <div className="font-mono text-[14px] whitespace-pre-wrap max-h-60 overflow-y-auto bg-panel/50 rounded px-2 py-1.5">
+                                <div className="font-mono text-[14px] whitespace-pre-wrap break-words max-h-60 overflow-y-auto bg-panel/50 rounded px-2 py-1.5">
                                   {result || 'No result'}
                                 </div>
                                 {hasArgs && (
@@ -549,7 +825,7 @@ export default function ChatPage() {
                                     <span className="text-xs font-medium opacity-70">
                                       Args
                                     </span>
-                                    <pre className="font-mono text-[14px] whitespace-pre-wrap max-h-40 overflow-y-auto bg-panel/50 rounded px-2 py-1.5 mt-0.5">
+                                    <pre className="font-mono text-[14px] whitespace-pre-wrap break-words max-h-40 overflow-y-auto bg-panel/50 rounded px-2 py-1.5 mt-0.5">
                                       {(() => { try { return JSON.stringify(args, null, 2); } catch { return String(args); } })()}
                                     </pre>
                                   </div>
@@ -591,10 +867,10 @@ export default function ChatPage() {
               );
             })}
 
-            {sending && !waitingForApproval && (
+            {thinking && !waitingForApproval && (
               <ToolUseIndicator toolName={currentTool ?? undefined} />
             )}
-            {!sending && agentBusy && (
+            {!thinking && agentBusy && (
               <ToolUseIndicator toolName={activityTool ?? undefined} />
             )}
           </div>
@@ -657,14 +933,16 @@ export default function ChatPage() {
       {/* Input area */}
       <div className="pt-3 pb-4 sm:pb-6">
         <form onSubmit={handleSubmit}>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={ACCEPTED_FILE_TYPES}
-            onChange={handleFileSelect}
-            className="hidden"
-          />
+          {chatAttachmentsEnabled && (
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ACCEPTED_FILE_TYPES}
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+          )}
           <div className="flex flex-col gap-2 p-2 bg-panel border border-border rounded-lg">
             <textarea
               ref={inputRef}
@@ -692,28 +970,28 @@ export default function ChatPage() {
             {/* File preview chips */}
             {selectedFiles.length > 0 && (
               <div className="flex flex-wrap gap-1.5 px-1">
-                {selectedFiles.map((file, i) => (
+                {selectedFiles.map((entry, i) => (
                   <div
                     key={i}
                     className="flex items-center gap-1.5 bg-card border border-border text-foreground text-xs px-2 py-1 rounded-md"
                   >
-                    {file.type.startsWith('image/') ? (
+                    {entry.previewUrl ? (
                       <img
-                        src={URL.createObjectURL(file)}
-                        alt={file.name}
+                        src={entry.previewUrl}
+                        alt={entry.file.name}
                         className="w-5 h-5 rounded object-cover"
                       />
                     ) : (
                       <FileIcon />
                     )}
-                    <span className="truncate max-w-[100px]">{file.name}</span>
-                    <Tooltip content={`Remove ${file.name}`} delay={400} closeDelay={0}>
+                    <span className="truncate max-w-[100px]">{entry.file.name}</span>
+                    <Tooltip content={`Remove ${entry.file.name}`} delay={400} closeDelay={0}>
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => removeFile(i)}
                         className="ml-0.5 text-muted-foreground hover:text-foreground"
-                        aria-label={`Remove ${file.name}`}
+                        aria-label={`Remove ${entry.file.name}`}
                       >
                         <CloseIcon />
                       </Button>
@@ -725,17 +1003,21 @@ export default function ChatPage() {
 
             {/* Toolbar row */}
             <div className="flex items-center justify-between">
-              <Tooltip content="Attach files" delay={400} closeDelay={0}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label="Attach files"
-                >
-                  <PaperclipIcon />
-                </Button>
-              </Tooltip>
+              {chatAttachmentsEnabled ? (
+                <Tooltip content="Attach files" delay={400} closeDelay={0}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Attach files"
+                  >
+                    <PaperclipIcon />
+                  </Button>
+                </Tooltip>
+              ) : (
+                <span />
+              )}
               <Tooltip content="Send message" delay={400} closeDelay={0}>
                 <Button
                   type="submit"
@@ -751,6 +1033,135 @@ export default function ChatPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+/**
+ * Telegram / WhatsApp-style upload status overlay shown on a sending or
+ * failed attachment. While `uploading`, a circular progress ring sits at the
+ * center of the image with a clickable X to cancel. On `failed`, the ring is
+ * replaced by a retry icon and the user clicks anywhere on the overlay to
+ * re-attempt. `compact` strips the absolute-fill positioning for the
+ * non-image file chip variant where the overlay sits in the corner. #1368.
+ */
+function UploadOverlay({
+  state,
+  progress,
+  onCancel,
+  onRetry,
+  compact = false,
+}: {
+  state: 'uploading' | 'failed';
+  progress: number;
+  onCancel: () => void;
+  onRetry: () => void;
+  compact?: boolean;
+}) {
+  const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+  if (compact) {
+    return (
+      <div className="absolute -top-1 -right-1">
+        {state === 'uploading' ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-black/85"
+            aria-label="Cancel upload"
+          >
+            <CloseIcon />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="w-5 h-5 rounded-full bg-danger text-white flex items-center justify-center hover:bg-danger/85"
+            aria-label="Retry upload"
+          >
+            <RetryIcon />
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="absolute inset-0 flex items-center justify-center rounded">
+      {state === 'uploading' ? (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="relative w-12 h-12 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/75 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          aria-label={`Cancel upload (${pct}%)`}
+        >
+          <ProgressRing percent={pct} />
+          <CloseIcon />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="px-3 py-2 rounded-full bg-danger text-white text-xs font-medium flex items-center gap-1.5 hover:bg-danger/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          aria-label="Retry upload"
+        >
+          <RetryIcon />
+          <span>Retry</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Concentric SVG ring whose stroke length tracks `percent` (0-100). */
+function ProgressRing({ percent }: { percent: number }) {
+  const r = 20;
+  const c = 2 * Math.PI * r;
+  const offset = c - (Math.max(0, Math.min(100, percent)) / 100) * c;
+  return (
+    <svg
+      className="absolute inset-0 -rotate-90"
+      width="100%"
+      height="100%"
+      viewBox="0 0 48 48"
+      aria-hidden="true"
+    >
+      <circle
+        cx="24"
+        cy="24"
+        r={r}
+        fill="none"
+        stroke="rgba(255,255,255,0.25)"
+        strokeWidth="3"
+      />
+      <circle
+        cx="24"
+        cy="24"
+        r={r}
+        fill="none"
+        stroke="white"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={offset}
+        style={{ transition: 'stroke-dashoffset 120ms linear' }}
+      />
+    </svg>
+  );
+}
+
+function RetryIcon() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M4 4v6h6M20 20v-6h-6M5.5 9A7 7 0 0119 9M18.5 15A7 7 0 015 15"
+      />
+    </svg>
   );
 }
 

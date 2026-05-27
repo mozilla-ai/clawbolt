@@ -1,4 +1,5 @@
 import type {
+  AppConfigResponse,
   AuthConfig,
   AuthUser,
   ChatAccepted,
@@ -25,7 +26,11 @@ import type {
   ToolConfigResponse,
   ToolConfigUpdateEntry,
 } from '@/types';
-import client, { getAccessToken, setAccessToken, setRefreshToken } from '@/lib/api-client';
+import client, {
+  getAccessToken,
+  setAccessToken,
+  setRefreshToken,
+} from '@/lib/api-client';
 import { tryRestoreSession as _tryRestoreSession } from '@/extensions';
 
 // --- Shared helpers ---
@@ -36,6 +41,65 @@ function _getAuthHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${token}` };
   }
   return {};
+}
+
+/**
+ * XHR-based upload helper. fetch() with FormData cannot report upload-side
+ * progress; for the chat POST the user wants to watch their image bytes go
+ * up, so this routes through XMLHttpRequest where ``xhr.upload.onprogress``
+ * is available. Honours an AbortSignal and a timeout. Returns a real
+ * Response so the existing call site can call ``.json()`` and ``.status``
+ * without knowing it's XHR underneath. #1368.
+ */
+interface UploadOptions {
+  signal?: AbortSignal;
+  onProgress?: (loaded: number, total: number) => void;
+  timeoutMs?: number;
+}
+
+function _uploadFormData(
+  url: string,
+  formData: FormData,
+  options: UploadOptions = {},
+): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    const headers = _getAuthHeaders();
+    for (const [name, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(name, value);
+    }
+    if (options.timeoutMs) {
+      xhr.timeout = options.timeoutMs;
+    }
+    if (options.onProgress) {
+      xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+        if (e.lengthComputable) {
+          options.onProgress!(e.loaded, e.total);
+        }
+      });
+    }
+    xhr.addEventListener('load', () => {
+      resolve(new Response(xhr.responseText, { status: xhr.status }));
+    });
+    xhr.addEventListener('error', () => {
+      reject(new TypeError('Network error'));
+    });
+    xhr.addEventListener('abort', () => {
+      reject(new DOMException('Upload aborted', 'AbortError'));
+    });
+    xhr.addEventListener('timeout', () => {
+      reject(new DOMException('Upload timed out', 'TimeoutError'));
+    });
+    if (options.signal) {
+      if (options.signal.aborted) {
+        xhr.abort();
+        return;
+      }
+      options.signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
+    xhr.send(formData);
+  });
 }
 
 /** Error with an HTTP status attached, so callers can distinguish 404 from other failures. */
@@ -68,6 +132,11 @@ function logout(): void {
 
 const api = {
   getAuthConfig,
+  getAppConfig: async (): Promise<AppConfigResponse> => {
+    const { data, error } = await client.GET('/api/app/config');
+    if (error) _throwApiError(error, 'Failed to get app config');
+    return data as AppConfigResponse;
+  },
   logout,
   tryRestoreSession: _tryRestoreSession as () => Promise<AuthUser | null>,
 
@@ -442,6 +511,7 @@ const api = {
     files?: File[],
     onEvent?: (event: { type: string; tool_name?: string; content?: string }) => void,
     onAccepted?: (accepted: ChatAccepted) => void,
+    uploadOpts?: { onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal },
   ): Promise<ChatResponse> => {
     const formData = new FormData();
     formData.append('message', message);
@@ -451,12 +521,27 @@ const api = {
       }
     }
 
-    // Step 1: Submit message to bus (raw fetch for multipart/form-data)
-    const submitRes = await fetch('/api/user/chat', {
-      method: 'POST',
-      headers: _getAuthHeaders(),
-      body: formData,
-    });
+    // Step 1: Submit message to bus via XHR (vs. fetch) so we can surface
+    // upload-byte progress to the caller and let them abort mid-flight.
+    // The 2 minute timeout caps how long a stuck POST can leave the
+    // spinner up; once it fires the catch in ChatPage marks the optimistic
+    // message as failed so the user can retry. #1368.
+    let submitRes: Response;
+    try {
+      submitRes = await _uploadFormData('/api/user/chat', formData, {
+        signal: uploadOpts?.signal,
+        onProgress: uploadOpts?.onProgress,
+        timeoutMs: 120_000,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'TimeoutError') {
+        throw new Error('Upload timed out. Please try again.');
+      }
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new Error('Upload canceled.');
+      }
+      throw err;
+    }
     if (!submitRes.ok) {
       const body = await submitRes.json().catch(() => ({}));
       const b = body as { detail?: string };
@@ -470,7 +555,7 @@ const api = {
       const token = getAccessToken();
       const url = `/api/user/chat/events/${encodeURIComponent(accepted.request_id)}`;
 
-      // EventSource does not support custom headers, so we use fetch + ReadableStream
+      // EventSource does not support custom headers, so use fetch + ReadableStream.
       fetch(url, {
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       })
