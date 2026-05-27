@@ -25,11 +25,8 @@ Confirm with the user when uncertain rather than guessing.
 
 ## Photos and documents
 
-`appfolio_add_note`, `appfolio_update_note`, `appfolio_create_invoice`,
-and `appfolio_upload_invoice_pdf` all accept media references. Each
-entry is either an `original_url` from a sent image or a media handle
-(e.g. `media_xxxx`) returned by `analyze_photo`. AppFolio receives
-them inline as base64 in the JSON body.
+See the ``analyze_photo`` tool description for the ``media_XXXXXX`` handle
+convention. AppFolio receives photo bytes inline as base64 in the JSON body.
 
 ## Connecting
 

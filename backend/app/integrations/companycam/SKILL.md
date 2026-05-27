@@ -41,9 +41,7 @@ CompanyCam is a photo documentation platform for the trades. Projects, photos, c
 
 ## Photo handles
 
-`companycam_upload_photo` requires an `original_url` handle. Pass the value exactly as it appears in the conversation context (`handle=media_XXXXXX`). A blank handle is rejected; do not call the tool without one.
-
-The handle is idempotent within the staging TTL: a retry with the same handle returns the prior receipt rather than re-uploading. If the user actually wants a fresh upload, they need to send the photo again to get a new handle.
+See the ``analyze_photo`` tool description for the ``media_XXXXXX`` handle convention.
 
 CompanyCam may report two non-success outcomes:
 - `duplicate`: the same image bytes (MD5) already exist on the project. Surface this so the user knows a re-send was a no-op.

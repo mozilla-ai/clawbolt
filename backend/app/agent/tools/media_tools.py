@@ -144,7 +144,14 @@ def create_media_tools(
                 "Use only when the user has asked you to look at the image, or "
                 "you have a clear need to see its contents to help. Results "
                 "are cached per-handle within the session so calling twice on "
-                "the same handle is cheap."
+                "the same handle is cheap. "
+                "The handle is a ``media_XXXXXX`` token that appears in the "
+                "conversation context; pass it exactly as shown. Calling "
+                "twice with the same handle is idempotent: the cached "
+                "result is returned. To analyze a different photo the user "
+                "must send it again to obtain a new handle. Other "
+                "integrations (CompanyCam, AppFolio) accept the same handle "
+                "for cross-tool flows."
             ),
             function=analyze_photo,
             params_model=AnalyzePhotoParams,
