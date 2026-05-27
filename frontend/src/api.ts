@@ -1,4 +1,5 @@
 import type {
+  AppConfigResponse,
   AuthConfig,
   AuthUser,
   ChatAccepted,
@@ -131,6 +132,11 @@ function logout(): void {
 
 const api = {
   getAuthConfig,
+  getAppConfig: async (): Promise<AppConfigResponse> => {
+    const { data, error } = await client.GET('/api/app/config');
+    if (error) _throwApiError(error, 'Failed to get app config');
+    return data as AppConfigResponse;
+  },
   logout,
   tryRestoreSession: _tryRestoreSession as () => Promise<AuthUser | null>,
 
