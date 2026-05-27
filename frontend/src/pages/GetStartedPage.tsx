@@ -22,6 +22,15 @@ import api from '@/api';
 
 type Selection = ChannelKey | 'none';
 
+// Channels with phone-based outbound that can deliver the onboarding
+// welcome text. Telegram is excluded: its bots cannot initiate a
+// conversation with a user who hasn't /start-ed them first.
+type WelcomeChannel = 'linq' | 'twilio' | 'bluebubbles';
+
+function isWelcomeChannel(channel: Selection | null): channel is WelcomeChannel {
+  return channel === 'linq' || channel === 'twilio' || channel === 'bluebubbles';
+}
+
 export default function GetStartedPage() {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
@@ -283,8 +292,24 @@ export default function GetStartedPage() {
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-medium text-muted-foreground">Step 3</span>
               </div>
-              <h3 className="text-sm font-semibold font-display">Send a message</h3>
-              {selectedChannel === 'linq' && linqConfigured && fromNumber ? (
+              <h3 className="text-sm font-semibold font-display">
+                {isPremium && isWelcomeChannel(selectedChannel) && linkDataMap[selectedChannel]?.connected
+                  ? 'Get your first text'
+                  : 'Send a message'}
+              </h3>
+              {isPremium && isWelcomeChannel(selectedChannel) && linkDataMap[selectedChannel]?.connected ? (
+                <DesktopWelcomeStep
+                  channel={selectedChannel}
+                  destination={linkDataMap[selectedChannel]?.identifier ?? ''}
+                  fallbackAddress={
+                    selectedChannel === 'linq'
+                      ? fromNumber
+                      : selectedChannel === 'bluebubbles'
+                        ? bbAddress
+                        : twilioAddress
+                  }
+                />
+              ) : selectedChannel === 'linq' && linqConfigured && fromNumber ? (
                 <div className="mt-2 grid gap-2">
                   <TextAssistantCard
                     fromNumber={fromNumber}
@@ -404,6 +429,111 @@ export default function GetStartedPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Desktop Step 3: "Text me to start" + success / resend / fallback states
+// ---------------------------------------------------------------------------
+
+function DesktopWelcomeStep({
+  channel,
+  destination,
+  fallbackAddress,
+}: {
+  channel: WelcomeChannel;
+  destination: string;
+  fallbackAddress: string;
+}) {
+  type Status = 'idle' | 'sent' | 'failed';
+  const [status, setStatus] = useState<Status>('idle');
+  const [sending, setSending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Mirrors the backend WELCOME_COOLDOWN_SECONDS. Surfaced in the UI so
+  // a user clicking "Resend" before the backend would accept it sees a
+  // disabled button instead of a 429 toast.
+  const COOLDOWN_SECONDS = 60;
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
+
+  const handleSend = async () => {
+    setSending(true);
+    try {
+      await api.sendWelcomeText(channel);
+      setStatus('sent');
+      setResendCooldown(COOLDOWN_SECONDS);
+    } catch (e) {
+      setStatus('failed');
+      toast.error(
+        e instanceof Error
+          ? `${e.message} You can still text us yourself.`
+          : 'Could not send the welcome text. You can still text us yourself.',
+      );
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (status === 'sent') {
+    return (
+      <div className="mt-3 grid gap-3">
+        <p className="text-sm">
+          We just texted you at <span className="font-mono">{destination}</span>.
+          Reply to that message and Clawbolt will take it from there.
+        </p>
+        <div>
+          <Button
+            variant="secondary"
+            onClick={handleSend}
+            isLoading={sending}
+            disabled={sending || resendCooldown > 0}
+          >
+            {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'failed' && fallbackAddress) {
+    return (
+      <div className="mt-3 grid gap-2">
+        <p className="text-sm text-muted-foreground">
+          We couldn't send the welcome text. Send a message to the assistant
+          yourself to get started:
+        </p>
+        <TextAssistantCard
+          fromNumber={fallbackAddress}
+          subtitle="Text this address to chat with your assistant."
+          qrSize={120}
+        />
+        <div>
+          <Button variant="secondary" onClick={handleSend} isLoading={sending} disabled={sending}>
+            Try sending again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 grid gap-2">
+      <p className="text-sm text-muted-foreground">
+        Click the button and Clawbolt will text{' '}
+        <span className="font-mono">{destination}</span> to start the conversation.
+        Reply to that message to begin.
+      </p>
+      <div>
+        <Button variant="primary" onClick={handleSend} isLoading={sending} disabled={sending}>
+          Text me to start
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Mobile single-screen layout
 // ---------------------------------------------------------------------------
 
@@ -476,7 +606,7 @@ function MobileGetStarted(props: MobileProps) {
         <h2 className="text-xl font-semibold font-display">Hey, I'm Clawbolt</h2>
         <p className="text-sm text-muted-foreground mt-1">
           {activeChannel === 'imessage'
-            ? "Text me to get started. I'm an AI assistant for tradespeople. Tell me your phone number so I know it's you when you message me."
+            ? "I'm an AI assistant for tradespeople. Enter your phone number and I'll text you to get the conversation started."
             : "I'm an AI assistant for tradespeople. Open Telegram to start chatting with me."}
         </p>
       </div>
@@ -543,15 +673,19 @@ function MobileImessageFlow({
 }: MobileProps) {
   const updateChannelConfig = useUpdateChannelConfig();
   const [phone, setPhone] = useState('');
+  const [userPhone, setUserPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [linked, setLinked] = useState(false);
+  const [welcomeSent, setWelcomeSent] = useState(false);
+  const [resending, setResending] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // BlueBubbles can be configured with either a phone number or an iCloud
   // email. An ``sms:user@icloud.com`` deep-link is malformed and most OS
   // handlers reject it, so the email shape gets a copy-the-address UX
-  // instead.
+  // instead. (Welcome-text uses the same identifier shape; the destination
+  // text is delivered to the user's iCloud account either way.)
   const imessageIsEmail = imessageNumber.includes('@');
 
   const onCopy = async () => {
@@ -563,6 +697,11 @@ function MobileImessageFlow({
       // Clipboard API may be blocked; the user can long-press to copy.
     }
   };
+
+  // Premium-only: only linq/bluebubbles/twilio support the welcome flow.
+  // Telegram intentionally skipped (bots can't message a user first).
+  const supportsWelcome = (b: ChannelKey | null): b is 'linq' | 'bluebubbles' | 'twilio' =>
+    b === 'linq' || b === 'bluebubbles' || b === 'twilio';
 
   const handleStart = async () => {
     setError(null);
@@ -587,15 +726,68 @@ function MobileImessageFlow({
         await updateChannelConfig.mutateAsync(updates);
       }
       onActivateRoute(imessageBackend);
+      setUserPhone(normalized);
       setLinked(true);
-      if (!imessageIsEmail) {
+
+      if (isPremium && supportsWelcome(imessageBackend)) {
+        try {
+          await api.sendWelcomeText(imessageBackend);
+          setWelcomeSent(true);
+        } catch (e) {
+          // Fall back to the deep-link / copy-address UX so the user can
+          // still kick the conversation off themselves.
+          toast.error(
+            e instanceof Error
+              ? `${e.message} You can still text us yourself.`
+              : 'Could not send the welcome text. You can still text us yourself.',
+          );
+          if (!imessageIsEmail) {
+            window.location.href = `sms:${imessageNumber}`;
+          }
+        }
+      } else if (!imessageIsEmail) {
+        // Non-premium / unsupported backend: keep the legacy deep-link.
         window.location.href = `sms:${imessageNumber}`;
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save');
+    } finally {
       setSaving(false);
     }
   };
+
+  const handleResend = async () => {
+    if (!isPremium || !supportsWelcome(imessageBackend)) return;
+    setResending(true);
+    try {
+      await api.sendWelcomeText(imessageBackend);
+      toast.success('Sent again. Check your messages.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not resend.');
+    } finally {
+      setResending(false);
+    }
+  };
+
+  if (welcomeSent) {
+    return (
+      <Card className="p-4 grid gap-3">
+        <div className="text-sm">
+          We just texted you at <span className="font-mono">{userPhone}</span>.
+          Reply to that message to start chatting with Clawbolt.
+        </div>
+        <Button
+          variant="secondary"
+          className="w-full"
+          isLoading={resending}
+          disabled={resending}
+          onClick={handleResend}
+        >
+          Resend
+        </Button>
+      </Card>
+    );
+  }
 
   if (linked) {
     return (
@@ -664,7 +856,7 @@ function MobileImessageFlow({
         disabled={saving || !phone.trim()}
         onClick={handleStart}
       >
-        Text Clawbolt
+        {isPremium && supportsWelcome(imessageBackend) ? 'Text me to start' : 'Text Clawbolt'}
       </Button>
     </>
   );
