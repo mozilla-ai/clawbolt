@@ -23,6 +23,7 @@ describe('toast deduplication', () => {
       title: 'Saved',
       color: 'success',
       timeout: 4000,
+      classNames: { title: 'whitespace-normal break-words' },
     });
   });
 
@@ -32,7 +33,22 @@ describe('toast deduplication', () => {
       title: 'Network error',
       color: 'danger',
       timeout: 8000,
+      classNames: { title: 'whitespace-normal break-words' },
     });
+  });
+
+  it('passes a wrapping classNames override so long titles are not truncated', () => {
+    // Regression for clawbolt-premium#554: HeroUI's default toast title slot
+    // applies `truncate`, hiding most of long error messages with no expand
+    // affordance. The wrapper must override that with wrapping classes.
+    const longMessage =
+      'Failed to send message: the server returned an unexpectedly long error '
+      + 'that previously got clipped after roughly 40 characters with no way to '
+      + 'expand it.';
+    toast.error(longMessage);
+    const call = mockAddToast.mock.calls[0]?.[0] as { classNames?: { title?: string } };
+    expect(call.classNames?.title).toContain('whitespace-normal');
+    expect(call.classNames?.title).toContain('break-words');
   });
 
   it('suppresses duplicate success toasts', () => {
