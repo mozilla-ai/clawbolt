@@ -127,7 +127,11 @@ export default function DashboardPage() {
   // Mirror the ToolsPage filter: integrations group plus OAuth-backed
   // always-on tools (Google Drive). Keeps the dashboard card in sync with
   // what the Settings page actually renders.
-  const integrationTools = allTools.filter((t) => t.category === 'domain' || !!t.oauth_name);
+  // Sort alphabetically by display name so integrations from the same
+  // provider (e.g. Google Calendar, Google Drive, Gmail) appear together.
+  const integrationTools = allTools
+    .filter((t) => t.category === 'domain' || !!t.oauth_name)
+    .sort((a, b) => toolDisplayName(a.name).localeCompare(toolDisplayName(b.name)));
   const integrations = oauth.data?.integrations ?? [];
   const oauthMap = Object.fromEntries(integrations.map((i) => [i.integration, i]));
   const enabledCalendars = calendarConfig.data?.calendars ?? [];
