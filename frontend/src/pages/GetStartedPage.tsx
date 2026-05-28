@@ -655,6 +655,9 @@ function MobileGetStarted(props: MobileProps) {
         <Button variant="primary" className="w-full" onClick={() => navigate('/app/chat')}>
           Open web chat
         </Button>
+        <Card>
+          <DataSharingConsentSection variant="compact" />
+        </Card>
       </div>
     );
   }
@@ -679,6 +682,10 @@ function MobileGetStarted(props: MobileProps) {
       ) : (
         <MobileTelegramFlow {...props} />
       )}
+
+      <Card>
+        <DataSharingConsentSection variant="compact" />
+      </Card>
 
       <button
         type="button"
