@@ -100,17 +100,6 @@ export default function GetStartedPage() {
     (ch) => routes.some((r) => r.channel === ch.key && r.enabled),
   )?.key ?? null;
 
-  // Pre-populate selection from active route on initial data load
-  const prePopulated = useRef(false);
-  useEffect(() => {
-    if (prePopulated.current || !channelConfig || !routesData) return;
-    prePopulated.current = true;
-    if (activeChannelKey) {
-      setSelectedChannel(activeChannelKey);
-      setConfirmedChannel(activeChannelKey);
-    }
-  }, [channelConfig, routesData, activeChannelKey]);
-
   const handleSelectChannel = useCallback((channel: Selection) => {
     setSelectedChannel(channel);
 
@@ -135,6 +124,20 @@ export default function GetStartedPage() {
       return;
     }
 
+    // Already the confirmed channel? Nothing to mutate.
+    if (confirmedChannel === channel) return;
+
+    // Switching to a new channel: disable the previously-enabled one so the
+    // user does not end up with two messaging channels routed to their
+    // account at once. ``_enforce_single_channel`` covers any stragglers,
+    // but doing it client-side keeps the UI honest.
+    if (confirmedChannel && confirmedChannel !== 'none') {
+      toggleChannelRoute.mutate(
+        { channel: confirmedChannel, enabled: false },
+        { onError: (e) => toast.error(e.message) },
+      );
+    }
+
     toggleChannelRoute.mutate(
       { channel, enabled: true },
       {
@@ -147,7 +150,34 @@ export default function GetStartedPage() {
     );
   }, [activeChannelKey, confirmedChannel, toggleChannelRoute]);
 
+  // Pre-populate selection from active route on initial data load. The
+  // desktop one-card flow also auto-picks the first visible channel when
+  // nothing is enabled yet so the setup form is in front of the user
+  // immediately, mirroring how mobile drops the user straight into the
+  // phone-number input. Auto-pick only updates display state; the actual
+  // ``toggleChannelRoute`` mutation fires from ``handleConfigSaved`` so a
+  // user who lands here and bails via "Use web chat instead" does not
+  // silently enable a channel route they never committed to.
+  const prePopulated = useRef(false);
+  useEffect(() => {
+    if (prePopulated.current || !channelConfig || !routesData) return;
+    prePopulated.current = true;
+    if (activeChannelKey) {
+      setSelectedChannel(activeChannelKey);
+      setConfirmedChannel(activeChannelKey);
+    } else if (!isMobile) {
+      const first = visibleChannels[0];
+      if (first) setSelectedChannel(first.key);
+    }
+  }, [channelConfig, routesData, activeChannelKey, isMobile, visibleChannels]);
+
   const handleConfigSaved = (key: ChannelKey) => {
+    // The form save is the user's commitment to this channel: now enable
+    // its route (and disable any prior one). ``handleSelectChannel``
+    // no-ops when ``confirmedChannel`` already matches, so resaving an
+    // existing channel does not fire a redundant toggle.
+    handleSelectChannel(key);
+
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
       const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
@@ -187,13 +217,6 @@ export default function GetStartedPage() {
     );
   }
 
-  // Determine Step 2 heading based on selection
-  const step2Label = selectedChannel === 'none'
-    ? 'No setup needed'
-    : selectedChannel
-      ? `Configure ${visibleChannels.find((c) => c.key === selectedChannel)?.label ?? selectedChannel}`
-      : 'Configure your channel';
-
   return (
     <div className="max-w-2xl mx-auto">
       <div className="mb-8">
@@ -205,248 +228,126 @@ export default function GetStartedPage() {
       </div>
 
       <div className="grid gap-4">
-        {/* Step 1: Choose messaging channel */}
-        <Card>
-          <div className="flex items-start gap-4">
-            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
-              <ChannelIcon />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-muted-foreground">Step 1</span>
-              </div>
-              <h3 className="text-sm font-semibold font-display">Choose your messaging channel</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Pick how you want to talk to Clawbolt. You can change this later.
-              </p>
-              <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Messaging channel">
+        {visibleChannels.length === 0 ? (
+          <Card>
+            <p className="text-sm text-muted-foreground">
+              No messaging channels are configured on the server yet.
+              Use web chat for now, or ask your admin to enable iMessage or Telegram.
+            </p>
+          </Card>
+        ) : (
+          <Card>
+            {visibleChannels.length > 1 && (
+              <div
+                role="tablist"
+                aria-label="Messaging channel"
+                className="flex gap-1 p-1 bg-panel rounded-xl mb-4"
+              >
                 {visibleChannels.map(({ key, label }) => (
-                  <ChannelRadioItem
+                  <button
                     key={key}
-                    value={key}
-                    label={label}
-                    isSelected={selectedChannel === key}
-                    isConfirmed={confirmedChannel === key}
-                    isSwitching={toggleChannelRoute.isPending && selectedChannel === key && confirmedChannel !== key}
-                    isMutating={toggleChannelRoute.isPending}
-                    onSelect={() => handleSelectChannel(key)}
-                  />
-                ))}
-
-                <ChannelRadioItem
-                  value="none"
-                  label="None"
-                  description="Web chat only, no external messaging channel"
-                  isSelected={selectedChannel === 'none'}
-                  isConfirmed={confirmedChannel === 'none'}
-                  isSwitching={toggleChannelRoute.isPending && selectedChannel === 'none' && confirmedChannel !== 'none'}
-                  isMutating={toggleChannelRoute.isPending}
-                  onSelect={() => handleSelectChannel('none')}
-                />
-                {visibleChannels.length === 0 && (
-                  <p className="text-xs text-muted-foreground italic px-3 py-2">
-                    No messaging channels are configured on the server yet.
-                    Use web chat for now, or ask your admin to enable iMessage or Telegram.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Step 2: Channel-specific setup */}
-        <Card>
-          <div className="flex items-start gap-4">
-            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
-              <SettingsIcon />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-muted-foreground">Step 2</span>
-              </div>
-              <h3 className="text-sm font-semibold font-display">{step2Label}</h3>
-              {selectedChannel === 'none' ? (
-                <p className="text-sm text-muted-foreground mt-1">
-                  You can always add a messaging channel later from the{' '}
-                  <button type="button" className="text-primary hover:underline font-medium" onClick={() => navigate('/app/settings/channels')}>
-                    Channels page
+                    type="button"
+                    role="tab"
+                    aria-selected={selectedChannel === key}
+                    onClick={() => setSelectedChannel(key)}
+                    className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                      selectedChannel === key
+                        ? 'bg-card text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {label}
                   </button>
-                  .
-                </p>
-              ) : selectedChannel ? (
-                <div className="mt-3">
-                  <ChannelConfigForm
-                    channelKey={selectedChannel}
-                    isPremium={isPremium}
-                    channelConfig={channelConfig}
-                    telegramLinkData={telegramLinkData}
-                    premiumLinkData={linkDataMap[selectedChannel] ?? null}
-                    onSaved={() => handleConfigSaved(selectedChannel)}
-                    triggerWelcome={isPremium && isWelcomeChannel(selectedChannel)}
-                    onWelcomeSent={(ch) => {
-                      setWelcomeSentAt((prev) => ({ ...prev, [ch]: Date.now() }));
-                      setWelcomeFailedAt((prev) => ({ ...prev, [ch]: undefined }));
-                    }}
-                    onWelcomeFailed={(ch) =>
-                      setWelcomeFailedAt((prev) => ({ ...prev, [ch]: Date.now() }))
-                    }
-                  />
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground mt-1">
-                  Select a channel above to configure it.
-                </p>
-              )}
-            </div>
-          </div>
-        </Card>
-
-        {/* Step 3: Send a message */}
-        <Card>
-          <div className="flex items-start gap-4">
-            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
-              <ChatIcon />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-muted-foreground">Step 3</span>
+                ))}
               </div>
-              <h3 className="text-sm font-semibold font-display">
-                {isPremium && isWelcomeChannel(selectedChannel)
-                  ? 'Get your first text'
-                  : 'Send a message'}
-              </h3>
-              {isPremium && isWelcomeChannel(selectedChannel) ? (
-                // ``key`` includes ``welcomeSentAt`` so a successful Step 2
-                // save+send remounts this with ``startInSentState=true``
-                // and the cooldown ticking from zero. Switching channels
-                // in Step 1 also remounts (key includes channel), which
-                // resets a prior channel's 'sent' state.
-                <DesktopWelcomeStep
-                  key={`${selectedChannel}-${welcomeSentAt[selectedChannel] ?? 0}-${welcomeFailedAt[selectedChannel] ?? 0}`}
-                  channel={selectedChannel}
-                  destination={linkDataMap[selectedChannel]?.identifier ?? ''}
-                  isConnected={linkDataMap[selectedChannel]?.connected ?? false}
-                  startInSentState={Boolean(welcomeSentAt[selectedChannel])}
-                  startInFailedState={Boolean(welcomeFailedAt[selectedChannel])}
-                  fallbackAddress={
-                    selectedChannel === 'linq'
-                      ? fromNumber
-                      : selectedChannel === 'bluebubbles'
-                        ? bbAddress
-                        : twilioAddress
+            )}
+
+            {selectedChannel && selectedChannel !== 'none' && (
+              <div className="grid gap-4">
+                <ChannelConfigForm
+                  channelKey={selectedChannel}
+                  isPremium={isPremium}
+                  channelConfig={channelConfig}
+                  telegramLinkData={telegramLinkData}
+                  premiumLinkData={linkDataMap[selectedChannel] ?? null}
+                  onSaved={() => handleConfigSaved(selectedChannel)}
+                  triggerWelcome={isPremium && isWelcomeChannel(selectedChannel)}
+                  onWelcomeSent={(ch) => {
+                    setWelcomeSentAt((prev) => ({ ...prev, [ch]: Date.now() }));
+                    setWelcomeFailedAt((prev) => ({ ...prev, [ch]: undefined }));
+                  }}
+                  onWelcomeFailed={(ch) =>
+                    setWelcomeFailedAt((prev) => ({ ...prev, [ch]: Date.now() }))
                   }
                 />
-              ) : selectedChannel === 'linq' && linqConfigured && fromNumber ? (
-                <div className="mt-2 grid gap-2">
+
+                {isPremium && isWelcomeChannel(selectedChannel) ? (
+                  // ``key`` includes ``welcomeSentAt`` so a successful save
+                  // remounts this with ``startInSentState=true`` and the
+                  // cooldown ticking from zero. Switching channels via the
+                  // toggle also remounts (key includes channel), which
+                  // resets a prior channel's 'sent' state.
+                  <DesktopWelcomeStep
+                    key={`${selectedChannel}-${welcomeSentAt[selectedChannel] ?? 0}-${welcomeFailedAt[selectedChannel] ?? 0}`}
+                    channel={selectedChannel}
+                    destination={linkDataMap[selectedChannel]?.identifier ?? ''}
+                    isConnected={linkDataMap[selectedChannel]?.connected ?? false}
+                    startInSentState={Boolean(welcomeSentAt[selectedChannel])}
+                    startInFailedState={Boolean(welcomeFailedAt[selectedChannel])}
+                    fallbackAddress={
+                      selectedChannel === 'linq'
+                        ? fromNumber
+                        : selectedChannel === 'bluebubbles'
+                          ? bbAddress
+                          : twilioAddress
+                    }
+                  />
+                ) : selectedChannel === 'linq' && linqConfigured && fromNumber ? (
                   <TextAssistantCard
                     fromNumber={fromNumber}
                     subtitle="Send an iMessage to this address to get started."
                     qrSize={120}
                   />
-                </div>
-              ) : selectedChannel === 'bluebubbles' && bbConfigured && bbAddress ? (
-                <div className="mt-2 grid gap-2">
+                ) : selectedChannel === 'bluebubbles' && bbConfigured && bbAddress ? (
                   <TextAssistantCard
                     fromNumber={bbAddress}
                     subtitle="Send an iMessage to this address to get started."
                     qrSize={120}
                   />
-                </div>
-              ) : selectedChannel === 'twilio' && twilioAddress ? (
-                <div className="mt-2 grid gap-2">
+                ) : selectedChannel === 'twilio' && twilioAddress ? (
                   <TextAssistantCard
                     fromNumber={twilioAddress}
                     subtitle="Text this number to chat with your assistant."
                     qrSize={120}
                   />
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground mt-1">
-                  {selectedChannel === 'none'
-                    ? 'Use the chat in the sidebar to talk to your assistant.'
-                    : selectedChannel === 'telegram'
-                      ? 'Open Telegram and send a message to your bot to get started.'
-                      : selectedChannel === 'linq' || selectedChannel === 'bluebubbles'
-                        ? 'Send an iMessage to your assistant to get started.'
-                        : selectedChannel === 'twilio'
-                          ? 'Text your Twilio number from your personal phone to get started.'
-                          : (
-                            <>
-                              No messaging channel is configured yet. You can also{' '}
-                              <button
-                                type="button"
-                                className="text-primary hover:underline font-medium"
-                                onClick={() => navigate('/app/chat')}
-                              >
-                                chat from the web
-                              </button>
-                              {' '}or{' '}
-                              <button
-                                type="button"
-                                className="text-primary hover:underline font-medium"
-                                onClick={() => navigate('/app/settings/channels')}
-                              >
-                                set up a channel
-                              </button>
-                              .
-                            </>
-                          )}
-                </p>
-              )}
-            </div>
-          </div>
-        </Card>
-
-        {/* Step 4: You're off to the races */}
-        <Card>
-          <div className="flex items-start gap-4">
-            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
-              <RocketIcon />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-muted-foreground">Step 4</span>
+                ) : selectedChannel === 'telegram' ? (
+                  <p className="text-sm text-muted-foreground">
+                    Once saved, open Telegram and send a message to your bot to get started.
+                  </p>
+                ) : null}
               </div>
-              <h3 className="text-sm font-semibold font-display">You're off to the races</h3>
-              {selectedChannel && selectedChannel !== 'none' ? (
-                <p className="text-sm text-muted-foreground mt-1">
-                  That's it. From here, just text your assistant directly.
-                  Clawbolt learns about you and your business as you chat,
-                  and you can set up integrations, approve tool access, and
-                  adjust settings all from the conversation.
-                </p>
-              ) : (
-                <p className="text-sm text-muted-foreground mt-1">
-                  That's it. Clawbolt learns about you and your business as you chat.
-                  You can always fine-tune settings later from the sidebar.
-                </p>
-              )}
-            </div>
-          </div>
-        </Card>
+            )}
+          </Card>
+        )}
 
-        {/* Privacy: optional opt-in. Not numbered, not blocking — first-run is the natural
-            moment to ask, but the same toggle lives on the User page so people can change
-            their mind any time. Default off; the API stamps a timestamp on every flip so
-            consent history is reconstructable from data_sharing_consent_at. */}
+        {/* Privacy: optional opt-in. First-run is the natural moment to ask;
+            the same toggle lives on the User page so people can change their
+            mind any time. Default off; the API stamps a timestamp on every
+            flip so consent history is reconstructable. */}
         <Card>
-          <div className="flex items-start gap-4">
-            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
-              <ShieldIcon />
-            </div>
-            <div className="flex-1 min-w-0">
-              <DataSharingConsentSection variant="compact" />
-            </div>
-          </div>
+          <DataSharingConsentSection variant="compact" />
         </Card>
       </div>
 
-      <div className="mt-8 flex justify-center">
-        <Button
-          variant="primary"
-          onClick={handleDismiss}
+      <div className="mt-8 flex items-center justify-between gap-4">
+        <button
+          type="button"
+          className="text-sm text-primary hover:underline"
+          onClick={() => navigate('/app/chat')}
         >
+          Use web chat instead
+        </button>
+        <Button variant="primary" onClick={handleDismiss}>
           {selectedChannel && selectedChannel !== 'none'
             ? 'Got it, take me to the dashboard'
             : 'Got it, take me to chat'}
@@ -1041,106 +942,3 @@ function MobileTelegramFlow({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Shared bits
-// ---------------------------------------------------------------------------
-
-function ChannelRadioItem({
-  value,
-  label,
-  description,
-  isSelected,
-  isConfirmed,
-  isSwitching,
-  isMutating,
-  onSelect,
-}: {
-  value: string;
-  label: string;
-  description?: string;
-  isSelected: boolean;
-  isConfirmed: boolean;
-  isSwitching: boolean;
-  isMutating: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <label
-      className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
-        isSelected
-          ? 'border-primary bg-primary-light cursor-pointer'
-          : 'border-border hover:border-primary/40 cursor-pointer'
-      }`}
-    >
-      {isSwitching ? (
-        <span className="w-4 h-4 shrink-0 flex items-center justify-center" aria-busy="true">
-          <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-        </span>
-      ) : (
-        <input
-          type="radio"
-          name="onboarding-channel"
-          value={value}
-          checked={isSelected}
-          onChange={onSelect}
-          disabled={isMutating}
-          className="accent-primary w-4 h-4 shrink-0"
-        />
-      )}
-      <div className="flex-1">
-        <span className="text-sm font-medium">{label}</span>
-        {description && <p className="text-xs text-muted-foreground">{description}</p>}
-      </div>
-      {isConfirmed && (
-        <span className="text-xs text-success flex items-center gap-1" aria-label="Confirmed">
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-          </svg>
-        </span>
-      )}
-    </label>
-  );
-}
-
-// --- Step icons (inline SVG) ---
-
-function ChannelIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-    </svg>
-  );
-}
-
-function ChatIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-    </svg>
-  );
-}
-
-function RocketIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.63 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.841M3.75 21h.008v.008H3.75V21z" />
-    </svg>
-  );
-}
-
-function ShieldIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12.75 11.25 15 15 9.75M21 12c0 4.97-3.582 9-8 9s-8-4.03-8-9c0-1.07.166-2.097.473-3.06A11.95 11.95 0 0 0 12 5.25a11.95 11.95 0 0 0 7.527-1.31A9.954 9.954 0 0 1 21 12Z" />
-    </svg>
-  );
-}
