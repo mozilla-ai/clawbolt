@@ -29,3 +29,4 @@ export type {
 export { QuotaBanner, OnboardingBanner, isQuotaError } from './quota';
 export { renderSidebarFooter } from './sidebar-footer';
 export type { SidebarFooterProps } from './sidebar-footer';
+export { renderHeaderBadge } from './header-badge';
