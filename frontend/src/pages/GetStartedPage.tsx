@@ -124,6 +124,20 @@ export default function GetStartedPage() {
       return;
     }
 
+    // Already the confirmed channel? Nothing to mutate.
+    if (confirmedChannel === channel) return;
+
+    // Switching to a new channel: disable the previously-enabled one so the
+    // user does not end up with two messaging channels routed to their
+    // account at once. ``_enforce_single_channel`` covers any stragglers,
+    // but doing it client-side keeps the UI honest.
+    if (confirmedChannel && confirmedChannel !== 'none') {
+      toggleChannelRoute.mutate(
+        { channel: confirmedChannel, enabled: false },
+        { onError: (e) => toast.error(e.message) },
+      );
+    }
+
     toggleChannelRoute.mutate(
       { channel, enabled: true },
       {
@@ -140,7 +154,10 @@ export default function GetStartedPage() {
   // desktop one-card flow also auto-picks the first visible channel when
   // nothing is enabled yet so the setup form is in front of the user
   // immediately, mirroring how mobile drops the user straight into the
-  // phone-number input.
+  // phone-number input. Auto-pick only updates display state; the actual
+  // ``toggleChannelRoute`` mutation fires from ``handleConfigSaved`` so a
+  // user who lands here and bails via "Use web chat instead" does not
+  // silently enable a channel route they never committed to.
   const prePopulated = useRef(false);
   useEffect(() => {
     if (prePopulated.current || !channelConfig || !routesData) return;
@@ -150,11 +167,17 @@ export default function GetStartedPage() {
       setConfirmedChannel(activeChannelKey);
     } else if (!isMobile) {
       const first = visibleChannels[0];
-      if (first) handleSelectChannel(first.key);
+      if (first) setSelectedChannel(first.key);
     }
-  }, [channelConfig, routesData, activeChannelKey, isMobile, visibleChannels, handleSelectChannel]);
+  }, [channelConfig, routesData, activeChannelKey, isMobile, visibleChannels]);
 
   const handleConfigSaved = (key: ChannelKey) => {
+    // The form save is the user's commitment to this channel: now enable
+    // its route (and disable any prior one). ``handleSelectChannel``
+    // no-ops when ``confirmedChannel`` already matches, so resaving an
+    // existing channel does not fire a redundant toggle.
+    handleSelectChannel(key);
+
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
       const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
@@ -226,8 +249,7 @@ export default function GetStartedPage() {
                     type="button"
                     role="tab"
                     aria-selected={selectedChannel === key}
-                    onClick={() => handleSelectChannel(key)}
-                    disabled={toggleChannelRoute.isPending}
+                    onClick={() => setSelectedChannel(key)}
                     className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
                       selectedChannel === key
                         ? 'bg-card text-foreground shadow-sm'

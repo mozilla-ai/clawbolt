@@ -219,6 +219,102 @@ describe('GetStartedPage', () => {
     });
   });
 
+  it('does NOT enable the route on mount; defers to form save', async () => {
+    // Auto-pick only sets display state. The channel route stays disabled
+    // until the user commits via Save, so a user who lands on the page
+    // and bails via "Use web chat instead" never silently flips a route.
+    renderWithRouter(<GetStartedPage />);
+
+    await screen.findByPlaceholderText('e.g. +15551234567');
+    // Settle any pending microtasks just to be sure.
+    await waitFor(() => {
+      expect(mockGetChannelConfig).toHaveBeenCalled();
+    });
+    expect(mockToggleChannelRoute).not.toHaveBeenCalled();
+  });
+
+  it('enables the channel route when the user saves the form', async () => {
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const input = await screen.findByPlaceholderText('e.g. +15551234567');
+    await user.type(input, '+15551234567');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(mockToggleChannelRoute).toHaveBeenCalledWith('linq', true);
+    });
+  });
+
+  it('disables the previously enabled channel when the user saves a different one', async () => {
+    // Land with Telegram already enabled; switch to iMessage via the tab
+    // toggle; save the iMessage form. The save should both disable Telegram
+    // and enable Linq, leaving exactly one active messaging route.
+    mockGetChannelConfig.mockResolvedValue({
+      ...defaultChannelConfig,
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '123',
+    });
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [{ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' }],
+    });
+
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const imessageTab = await screen.findByRole('tab', { name: 'iMessage' });
+    await user.click(imessageTab);
+
+    const input = await screen.findByPlaceholderText('e.g. +15551234567');
+    await user.type(input, '+15551234567');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(mockToggleChannelRoute).toHaveBeenCalledWith('telegram', false);
+    });
+    expect(mockToggleChannelRoute).toHaveBeenCalledWith('linq', true);
+  });
+
+  it('does not re-toggle when saving the already-active channel', async () => {
+    // ``pre-populates the toggle selection`` confirms the form pre-fills
+    // for the active route. Re-saving that same channel should not fire a
+    // redundant enable on a route that is already enabled.
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [{ channel: 'linq', channel_identifier: '+15551234567', enabled: true, created_at: '' }],
+    });
+
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const input = await screen.findByPlaceholderText('e.g. +15551234567');
+    await user.type(input, '+15551234567');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(mockUpdateChannelConfig).toHaveBeenCalled();
+    });
+    expect(mockToggleChannelRoute).not.toHaveBeenCalled();
+  });
+
+  it('does not fire any route mutation when the user just switches tabs', async () => {
+    // Clicking between tabs is a display-only action; nothing hits the
+    // backend until the user commits via Save.
+    mockGetChannelConfig.mockResolvedValue({
+      ...defaultChannelConfig,
+      telegram_bot_token_set: true,
+    });
+
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const telegramTab = await screen.findByRole('tab', { name: 'Telegram' });
+    await user.click(telegramTab);
+    const imessageTab = screen.getByRole('tab', { name: 'iMessage' });
+    await user.click(imessageTab);
+
+    expect(mockToggleChannelRoute).not.toHaveBeenCalled();
+  });
+
   it('shows QR code and from-number when linq is configured', async () => {
     renderWithRouter(<GetStartedPage />);
 
@@ -254,17 +350,6 @@ describe('GetStartedPage', () => {
     expect(screen.queryByPlaceholderText('e.g. +15551234567')).not.toBeInTheDocument();
     // Dismiss button stays on the chat-oriented copy because no channel is selected.
     expect(screen.getByText('Got it, take me to chat')).toBeInTheDocument();
-  });
-
-  it('auto-selects the first visible channel and enables its route', async () => {
-    // Sanity check: the one-card flow fires toggleChannelRoute for the
-    // auto-picked channel so the user does not have to click anything to
-    // start filling out the form.
-    renderWithRouter(<GetStartedPage />);
-
-    await waitFor(() => {
-      expect(mockToggleChannelRoute).toHaveBeenCalledWith('linq', true);
-    });
   });
 
   it('keeps the data-sharing consent card visible on desktop', async () => {
