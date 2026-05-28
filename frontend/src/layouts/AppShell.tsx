@@ -10,7 +10,7 @@ import { ChatActivityProvider } from '@/contexts/ChatActivityContext';
 import { Tooltip } from '@heroui/tooltip';
 import { Link } from '@heroui/link';
 import { Divider } from '@heroui/divider';
-import { getFeatureRequestUrl, getReportIssueUrl, getDocsUrl, getExtraNavItems, renderSidebarFooter } from '@/extensions';
+import { getFeatureRequestUrl, getReportIssueUrl, getDocsUrl, getExtraNavItems, renderSidebarFooter, renderHeaderBadge } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import { useProfile } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
@@ -135,6 +135,7 @@ export default function AppShell() {
           <div className="flex items-center gap-2">
             <img src="/clawbolt.png" alt="" className="w-7 h-7" />
             <h1 className="text-lg font-bold font-display text-foreground">Clawbolt</h1>
+            {renderHeaderBadge()}
           </div>
         </div>
 
@@ -324,6 +325,7 @@ export default function AppShell() {
           </Tooltip>
           <img src="/clawbolt.png" alt="" className="w-6 h-6" />
           <h1 className="text-lg font-bold font-display text-foreground">Clawbolt</h1>
+          {renderHeaderBadge()}
         </header>
 
         <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 max-w-7xl w-full mx-auto">
