@@ -369,6 +369,19 @@ describe('GetStartedPage (mobile flow)', () => {
     expect(screen.getByRole('button', { name: 'Text Clawbolt' })).toBeInTheDocument();
   });
 
+  it('shows the data-sharing consent checkbox on mobile onboarding', async () => {
+    renderWithRouter(<GetStartedPage />);
+    await waitFor(() => {
+      expect(screen.getByText("Hey, I'm Clawbolt")).toBeInTheDocument();
+    });
+    // Heading + interactive checkbox both have to be present, otherwise we've
+    // dropped the share-usage opt-in from the mobile flow.
+    expect(screen.getByText('Help improve Clawbolt')).toBeInTheDocument();
+    expect(
+      screen.getByRole('checkbox', { name: /share my chat history/i }),
+    ).toBeInTheDocument();
+  });
+
   it('shows phone validation error when format is bad', async () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();

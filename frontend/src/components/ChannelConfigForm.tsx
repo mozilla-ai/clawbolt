@@ -3,6 +3,7 @@ import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
 import Field from '@/components/ui/field';
 import Select from '@/components/ui/select';
+import PhoneInput from '@/components/PhoneInput';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useUpdateChannelConfig } from '@/hooks/queries';
@@ -197,24 +198,38 @@ function PremiumChannelLinkForm({
 
   return (
     <div className="grid gap-4">
-      <Field label={config.label}>
-        <Input
+      {isPhoneInput ? (
+        <PhoneInput
+          label={config.label}
           value={displayedValue}
-          onChange={(e) => {
-            setIdentifier(e.target.value);
+          onChange={(v) => {
+            setIdentifier(v);
             if (error) setError(null);
           }}
-          placeholder={config.placeholder}
-          inputMode={config.inputMode}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? 'channel-link-error' : undefined}
+          helpText={config.helpText}
+          error={error}
+          errorId="channel-link-error"
         />
-        {error ? (
-          <p id="channel-link-error" className="text-xs text-danger mt-1">{error}</p>
-        ) : (
-          <p className="text-xs text-muted-foreground mt-1">{config.helpText}</p>
-        )}
-      </Field>
+      ) : (
+        <Field label={config.label}>
+          <Input
+            value={displayedValue}
+            onChange={(e) => {
+              setIdentifier(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder={config.placeholder}
+            inputMode={config.inputMode}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'channel-link-error' : undefined}
+          />
+          {error ? (
+            <p id="channel-link-error" className="text-xs text-danger mt-1">{error}</p>
+          ) : (
+            <p className="text-xs text-muted-foreground mt-1">{config.helpText}</p>
+          )}
+        </Field>
+      )}
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving || premiumLinkData === null} isLoading={saving}>
           {buttonLabel}
