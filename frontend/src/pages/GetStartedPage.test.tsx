@@ -86,93 +86,103 @@ vi.mock('@/api', () => ({
   },
 }));
 
+// Default channel config used by every test unless explicitly overridden.
+// Encapsulated so beforeEach can re-pin it: ``mockResolvedValue`` overrides
+// inside individual tests are otherwise sticky and bleed into the next test.
+const defaultChannelConfig = {
+  telegram_bot_token_set: false,
+  telegram_allowed_chat_id: '',
+  linq_api_token_set: true,
+  linq_from_number: '+15559876543',
+  linq_allowed_numbers: '',
+  linq_preferred_service: 'iMessage',
+  bluebubbles_configured: false,
+  bluebubbles_allowed_numbers: '',
+  imessage_backend: 'linq',
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsPremium = false;
+  mockGetChannelConfig.mockResolvedValue(defaultChannelConfig);
+  mockGetChannelRoutes.mockResolvedValue({ routes: [] });
+  mockToggleChannelRoute.mockResolvedValue({
+    channel: 'linq', channel_identifier: '', enabled: true, created_at: '',
+  });
 });
 
 describe('GetStartedPage', () => {
-  it('renders the get started heading and channel selection step', () => {
+  it('renders the get started heading and intro copy', () => {
     renderWithRouter(<GetStartedPage />);
 
     expect(screen.getByText('Get Started')).toBeInTheDocument();
-    expect(screen.getByText('Choose your messaging channel')).toBeInTheDocument();
-    expect(screen.getByText('Send a message')).toBeInTheDocument();
-    expect(screen.getByText("You're off to the races")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Clawbolt is your AI assistant for the trades/),
+    ).toBeInTheDocument();
   });
 
-  it('renders channel selection radio options for configured channels only', async () => {
-    // Default fixture has telegram_bot_token_set=false and imessage_backend=linq.
-    // After issues #1029 and #1040, Telegram is hidden when not configured.
+  it('does not show the legacy four-step wizard copy', async () => {
+    // The collapsed one-card layout drops the Step 1-4 framing. If any of
+    // these reappear, the wizard regressed.
     renderWithRouter(<GetStartedPage />);
 
     await waitFor(() => {
-      expect(screen.getAllByText('iMessage')).toHaveLength(1);
+      expect(screen.getByPlaceholderText('e.g. +15551234567')).toBeInTheDocument();
     });
-    expect(screen.queryByText('Telegram')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Text Messaging/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/BlueBubbles/)).not.toBeInTheDocument();
-    expect(screen.getByText('None')).toBeInTheDocument();
+    expect(screen.queryByText('Choose your messaging channel')).not.toBeInTheDocument();
+    expect(screen.queryByText('Send a message')).not.toBeInTheDocument();
+    expect(screen.queryByText("You're off to the races")).not.toBeInTheDocument();
+    // No "None" radio either; the bottom-of-page "Use web chat instead" link
+    // covers users who want to skip messaging setup.
+    expect(screen.queryByDisplayValue('none')).not.toBeInTheDocument();
   });
 
-  it('shows Telegram as a radio option when the bot token is set', async () => {
-    mockGetChannelConfig.mockResolvedValueOnce({
+  it('auto-renders the sole configured channel form without a chooser', async () => {
+    // Default fixture has only Linq configured. With one channel visible,
+    // the toggle is skipped and the form is rendered directly.
+    renderWithRouter(<GetStartedPage />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('e.g. +15551234567')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('tab', { name: 'iMessage' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Telegram' })).not.toBeInTheDocument();
+  });
+
+  it('shows a channel toggle when iMessage and Telegram are both configured', async () => {
+    // ``mockResolvedValue`` (sticky) instead of ``mockResolvedValueOnce`` so
+    // the auto-select mutation's ``invalidateQueries(channels)`` refetch sees
+    // the same multi-channel config. ``beforeEach`` resets it next test.
+    mockGetChannelConfig.mockResolvedValue({
+      ...defaultChannelConfig,
       telegram_bot_token_set: true,
-      telegram_allowed_chat_id: '',
-      linq_api_token_set: true,
-      linq_from_number: '+15559876543',
-      linq_allowed_numbers: '',
-      linq_preferred_service: 'iMessage',
-      bluebubbles_configured: false,
-      bluebubbles_allowed_numbers: '',
-      imessage_backend: 'linq',
     });
 
     renderWithRouter(<GetStartedPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Telegram')).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'iMessage' })).toBeInTheDocument();
     });
+    expect(screen.getByRole('tab', { name: 'Telegram' })).toBeInTheDocument();
   });
 
-  it('renders the dismiss button defaulting to chat when no channel selected', () => {
+  it('shows the dashboard dismiss button once a channel is auto-selected', async () => {
     renderWithRouter(<GetStartedPage />);
-    expect(screen.getByText('Got it, take me to chat')).toBeInTheDocument();
-  });
-
-  it('shows dashboard dismiss button when a messaging channel is selected', async () => {
-    renderWithRouter(<GetStartedPage />);
-    const user = userEvent.setup();
-
-    const linqRadio = await screen.findByDisplayValue('linq');
-    await user.click(linqRadio);
 
     await waitFor(() => {
       expect(screen.getByText('Got it, take me to the dashboard')).toBeInTheDocument();
     });
   });
 
-  it('shows "Configure your channel" placeholder when no channel is selected', () => {
+  it('renders the OSS linq config form when only Linq is configured', async () => {
     renderWithRouter(<GetStartedPage />);
-    expect(screen.getByText('Configure your channel')).toBeInTheDocument();
-    expect(screen.getByText('Select a channel above to configure it.')).toBeInTheDocument();
-  });
-
-  it('shows the shared OSS linq config form when text messaging is selected', async () => {
-    renderWithRouter(<GetStartedPage />);
-    const user = userEvent.setup();
-
-    const linqRadio = await screen.findByDisplayValue('linq');
-    await user.click(linqRadio);
 
     await waitFor(() => {
-      expect(screen.getByText(/Configure iMessage/)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('e.g. +15551234567')).toBeInTheDocument();
     });
-    // The shared OssLinqForm shows "Allowed Phone Number" field
-    expect(screen.getByPlaceholderText('e.g. +15551234567')).toBeInTheDocument();
   });
 
-  it('shows the shared telegram config form when telegram is selected', async () => {
+  it('swaps to the telegram form when the user picks Telegram in the toggle', async () => {
     mockGetChannelConfig.mockResolvedValue({
       telegram_bot_token_set: true,
       telegram_allowed_chat_id: '',
@@ -188,31 +198,19 @@ describe('GetStartedPage', () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    await waitFor(() => {
-      expect(screen.getByDisplayValue('telegram')).not.toBeDisabled();
-    });
-
-    await user.click(screen.getByDisplayValue('telegram'));
+    const telegramTab = await screen.findByRole('tab', { name: 'Telegram' });
+    await user.click(telegramTab);
 
     await waitFor(() => {
-      expect(screen.getByText(/Configure Telegram/)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('e.g. 123456789')).toBeInTheDocument();
     });
-    // The shared OssTelegramForm shows "Your Telegram User ID" field
-    expect(screen.getByPlaceholderText('e.g. 123456789')).toBeInTheDocument();
   });
 
   it('saves linq config via the shared form (updateChannelConfig)', async () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    const linqRadio = await screen.findByDisplayValue('linq');
-    await user.click(linqRadio);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('e.g. +15551234567')).toBeInTheDocument();
-    });
-
-    const input = screen.getByPlaceholderText('e.g. +15551234567');
+    const input = await screen.findByPlaceholderText('e.g. +15551234567');
     await user.type(input, '+15551234567');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -221,22 +219,18 @@ describe('GetStartedPage', () => {
     });
   });
 
-  it('shows QR code and from-number when linq is configured and text messaging selected', async () => {
+  it('shows QR code and from-number when linq is configured', async () => {
     renderWithRouter(<GetStartedPage />);
-    const user = userEvent.setup();
-
-    const linqRadio = await screen.findByDisplayValue('linq');
-    await user.click(linqRadio);
 
     await waitFor(() => {
-      // From-number appears in both the config form and Step 3
+      // From-number appears in both the config form and the QR card
       const matches = screen.getAllByText('+15559876543');
       expect(matches.length).toBeGreaterThanOrEqual(1);
     });
     expect(screen.getByText(/Send an iMessage to this address to get started/)).toBeInTheDocument();
   });
 
-  it('shows fallback messaging when no iMessage backend is configured', async () => {
+  it('shows the empty-state card when no channels are configured', async () => {
     mockGetChannelConfig.mockResolvedValueOnce({
       telegram_bot_token_set: false,
       telegram_allowed_chat_id: '',
@@ -252,56 +246,50 @@ describe('GetStartedPage', () => {
     renderWithRouter(<GetStartedPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/No messaging channel is configured yet/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/No messaging channels are configured on the server yet/),
+      ).toBeInTheDocument();
     });
-  });
-
-  it('calls toggleChannelRoute when selecting a channel', async () => {
-    mockGetChannelConfig.mockResolvedValue({
-      telegram_bot_token_set: true,
-      telegram_allowed_chat_id: '',
-      linq_api_token_set: true,
-      linq_from_number: '+15559876543',
-      linq_allowed_numbers: '',
-      linq_preferred_service: 'iMessage',
-      bluebubbles_configured: false,
-      bluebubbles_allowed_numbers: '',
-      imessage_backend: 'linq',
-    });
-
-    renderWithRouter(<GetStartedPage />);
-    const user = userEvent.setup();
-
-    await waitFor(() => {
-      expect(screen.getByDisplayValue('telegram')).not.toBeDisabled();
-    });
-
-    await user.click(screen.getByDisplayValue('telegram'));
-
-    await waitFor(() => {
-      expect(mockToggleChannelRoute).toHaveBeenCalledWith('telegram', true);
-    });
-  });
-
-  it('renders a clickable "None" option for web chat only', async () => {
-    renderWithRouter(<GetStartedPage />);
-    const user = userEvent.setup();
-
-    const noneRadio = screen.getByDisplayValue('none');
-    expect(noneRadio).toBeInTheDocument();
-    expect(noneRadio).not.toBeDisabled();
-
-    await user.click(noneRadio);
-
-    await waitFor(() => {
-      expect(screen.getByText('No setup needed')).toBeInTheDocument();
-    });
-    expect(screen.getByText('Use the chat in the sidebar to talk to your assistant.')).toBeInTheDocument();
-    // "None" keeps the chat-oriented dismiss button
+    // No channel form rendered.
+    expect(screen.queryByPlaceholderText('e.g. +15551234567')).not.toBeInTheDocument();
+    // Dismiss button stays on the chat-oriented copy because no channel is selected.
     expect(screen.getByText('Got it, take me to chat')).toBeInTheDocument();
   });
 
-  it('pre-populates selection from active channel route', async () => {
+  it('auto-selects the first visible channel and enables its route', async () => {
+    // Sanity check: the one-card flow fires toggleChannelRoute for the
+    // auto-picked channel so the user does not have to click anything to
+    // start filling out the form.
+    renderWithRouter(<GetStartedPage />);
+
+    await waitFor(() => {
+      expect(mockToggleChannelRoute).toHaveBeenCalledWith('linq', true);
+    });
+  });
+
+  it('keeps the data-sharing consent card visible on desktop', async () => {
+    renderWithRouter(<GetStartedPage />);
+
+    // ``findByRole`` waits for the consent query to resolve. ``getByText``
+    // on "Help improve Clawbolt" alone passes during the loading state and
+    // races the checkbox check.
+    expect(
+      await screen.findByRole('checkbox', { name: /share my chat history/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Help improve Clawbolt')).toBeInTheDocument();
+  });
+
+  it('renders a "Use web chat instead" link that navigates to chat', async () => {
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const link = await screen.findByRole('button', { name: 'Use web chat instead' });
+    await user.click(link);
+
+    expect(mockNavigate).toHaveBeenCalledWith('/app/chat');
+  });
+
+  it('pre-populates the toggle selection from an active channel route', async () => {
     mockGetChannelConfig.mockResolvedValue({
       telegram_bot_token_set: true,
       telegram_allowed_chat_id: '123',
@@ -320,11 +308,11 @@ describe('GetStartedPage', () => {
     renderWithRouter(<GetStartedPage />);
 
     await waitFor(() => {
-      const telegramRadio = screen.getByDisplayValue('telegram') as HTMLInputElement;
-      expect(telegramRadio.checked).toBe(true);
+      expect(
+        screen.getByRole('tab', { name: 'Telegram', selected: true }),
+      ).toBeInTheDocument();
     });
-    // Should show the telegram config form since it's pre-selected
-    expect(screen.getByText(/Configure Telegram/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('e.g. 123456789')).toBeInTheDocument();
   });
 });
 
