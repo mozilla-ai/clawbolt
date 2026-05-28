@@ -3,6 +3,7 @@ import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
 import Field from '@/components/ui/field';
 import Select from '@/components/ui/select';
+import PhoneInput from '@/components/PhoneInput';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useUpdateChannelConfig } from '@/hooks/queries';
@@ -24,16 +25,39 @@ interface ChannelConfigFormProps {
   telegramLinkData: TelegramLinkData | null;
   premiumLinkData: PremiumLinkData | null;
   onSaved: () => void;
+  // When true and the channel supports outbound welcome texts (linq /
+  // twilio / bluebubbles), saving also fires ``POST /channels/{x}/welcome``
+  // in the same handler so a brand-new user gets texted with one click
+  // instead of two. Opt-in: the settings page leaves it off so updating
+  // a stored number does not re-send a welcome on every save.
+  triggerWelcome?: boolean;
+  onWelcomeSent?: (channel: ChannelKey) => void;
+  onWelcomeFailed?: (channel: ChannelKey) => void;
 }
 
-export function ChannelConfigForm({ channelKey, isPremium, ...rest }: ChannelConfigFormProps) {
+export function ChannelConfigForm({
+  channelKey,
+  isPremium,
+  triggerWelcome,
+  onWelcomeSent,
+  onWelcomeFailed,
+  ...rest
+}: ChannelConfigFormProps) {
   if (channelKey === 'telegram') {
     return isPremium ? <PremiumTelegramForm {...rest} /> : <OssTelegramForm {...rest} />;
   }
   if (isPremium) {
     const config = PREMIUM_LINK_CONFIGS[channelKey];
     if (config) {
-      return <PremiumChannelLinkForm config={config} {...rest} />;
+      return (
+        <PremiumChannelLinkForm
+          config={config}
+          triggerWelcome={triggerWelcome}
+          onWelcomeSent={onWelcomeSent}
+          onWelcomeFailed={onWelcomeFailed}
+          {...rest}
+        />
+      );
     }
   }
   if (channelKey === 'twilio') {
@@ -47,6 +71,11 @@ export function ChannelConfigForm({ channelKey, isPremium, ...rest }: ChannelCon
   }
   return null;
 }
+
+// Channels that can deliver a welcome text on save. Mirrors the backend
+// ``POST /api/channels/{x}/welcome`` route set. Telegram is excluded
+// because bots cannot message a user who has not /start-ed them first.
+const WELCOME_CHANNELS = new Set<ChannelKey>(['linq', 'twilio', 'bluebubbles']);
 
 // ---------------------------------------------------------------------------
 // Generic premium link form (data-driven)
@@ -95,13 +124,22 @@ function PremiumChannelLinkForm({
   config,
   premiumLinkData,
   onSaved,
-}: { config: PremiumLinkConfig } & Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
+  triggerWelcome,
+  onWelcomeSent,
+  onWelcomeFailed,
+}: {
+  config: PremiumLinkConfig;
+  triggerWelcome?: boolean;
+  onWelcomeSent?: (channel: ChannelKey) => void;
+  onWelcomeFailed?: (channel: ChannelKey) => void;
+} & Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium' | 'triggerWelcome' | 'onWelcomeSent' | 'onWelcomeFailed'>) {
   const [identifier, setIdentifier] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const displayedValue = identifier ?? premiumLinkData?.identifier ?? '';
   const isPhoneInput = config.inputMode === 'tel';
+  const supportsWelcome = Boolean(triggerWelcome) && WELCOME_CHANNELS.has(config.channelKey);
 
   const handleSave = async () => {
     setError(null);
@@ -110,15 +148,44 @@ function PremiumChannelLinkForm({
       setError(PHONE_FORMAT_ERROR);
       return;
     }
-    if (premiumLinkData && normalized === (premiumLinkData.identifier ?? '')) {
+    const valueUnchanged =
+      premiumLinkData !== null && normalized === (premiumLinkData.identifier ?? '');
+    // When triggerWelcome is on, allow re-clicking after a successful
+    // link to fire just the welcome text. Without this, a user whose
+    // value is already saved (e.g. they refreshed mid-flow) would be
+    // stuck on "No changes to save".
+    if (valueUnchanged && !supportsWelcome) {
       toast.error('No changes to save');
       return;
     }
     setSaving(true);
     try {
-      await config.setLink(normalized);
-      setIdentifier(null);
-      toast.success(`${config.displayName} settings updated`);
+      if (!valueUnchanged) {
+        await config.setLink(normalized);
+        setIdentifier(null);
+      }
+      if (supportsWelcome) {
+        try {
+          await api.sendWelcomeText(
+            config.channelKey as 'linq' | 'twilio' | 'bluebubbles',
+          );
+          toast.success(`Saved. We just texted ${normalized}.`);
+          onWelcomeSent?.(config.channelKey);
+        } catch (e) {
+          // Save succeeded (or wasn't needed); only the text delivery
+          // failed. Keep onSaved so the parent refreshes link data,
+          // and surface a fallback signal so Step 3 can render the
+          // "text us yourself" affordance.
+          toast.error(
+            e instanceof Error
+              ? `${e.message} You can still text us yourself.`
+              : 'Saved, but the welcome text could not be sent. You can still text us yourself.',
+          );
+          onWelcomeFailed?.(config.channelKey);
+        }
+      } else {
+        toast.success(`${config.displayName} settings updated`);
+      }
       onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save');
@@ -127,29 +194,45 @@ function PremiumChannelLinkForm({
     }
   };
 
+  const buttonLabel = supportsWelcome ? 'Save and text me to start' : 'Save';
+
   return (
     <div className="grid gap-4">
-      <Field label={config.label}>
-        <Input
+      {isPhoneInput ? (
+        <PhoneInput
+          label={config.label}
           value={displayedValue}
-          onChange={(e) => {
-            setIdentifier(e.target.value);
+          onChange={(v) => {
+            setIdentifier(v);
             if (error) setError(null);
           }}
-          placeholder={config.placeholder}
-          inputMode={config.inputMode}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? 'channel-link-error' : undefined}
+          helpText={config.helpText}
+          error={error}
+          errorId="channel-link-error"
         />
-        {error ? (
-          <p id="channel-link-error" className="text-xs text-danger mt-1">{error}</p>
-        ) : (
-          <p className="text-xs text-muted-foreground mt-1">{config.helpText}</p>
-        )}
-      </Field>
+      ) : (
+        <Field label={config.label}>
+          <Input
+            value={displayedValue}
+            onChange={(e) => {
+              setIdentifier(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder={config.placeholder}
+            inputMode={config.inputMode}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'channel-link-error' : undefined}
+          />
+          {error ? (
+            <p id="channel-link-error" className="text-xs text-danger mt-1">{error}</p>
+          ) : (
+            <p className="text-xs text-muted-foreground mt-1">{config.helpText}</p>
+          )}
+        </Field>
+      )}
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving || premiumLinkData === null} isLoading={saving}>
-          Save
+          {buttonLabel}
         </Button>
       </div>
     </div>

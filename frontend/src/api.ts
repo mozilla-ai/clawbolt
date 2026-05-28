@@ -417,6 +417,25 @@ const api = {
     return res.json() as Promise<{ phone_number: string | null; connected: boolean }>;
   },
 
+  // Trigger the onboarding welcome text. The server sends a one-shot
+  // SMS/iMessage to the user's already-linked identifier; their reply is
+  // what triggers the agent loop (the inbound webhook resolves to this
+  // user via their ChannelRoute and BOOTSTRAP.md drives the rest).
+  // Only valid for the phone-based channels: linq, twilio, bluebubbles.
+  // Telegram has no equivalent (bots can't message a user who hasn't
+  // /start-ed them first).
+  sendWelcomeText: async (channel: 'linq' | 'twilio' | 'bluebubbles') => {
+    const res = await fetch(`/api/channels/${channel}/welcome`, {
+      method: 'POST',
+      headers: _getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(body.detail || `Failed to send welcome text: ${res.status}`);
+    }
+    return res.json() as Promise<{ sent: boolean; channel: string; channel_identifier: string }>;
+  },
+
   // Activity stream: real-time agent status from any channel.
   // Auto-reconnects on disconnect so transient drops (proxy timeout,
   // network glitch) don't permanently kill the spinner updates.
