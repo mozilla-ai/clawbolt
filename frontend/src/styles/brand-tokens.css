@@ -38,37 +38,41 @@
 
 :root {
   /* Core semantic tokens -- light mode */
-  --brand-color-background: #F6F5F3;
-  --brand-color-card: #FEFEFE;
-  --brand-color-panel: #F0EEEB;
+  --brand-color-background: #F6F3EC;
+  --brand-color-card: #FFFEFB;
+  --brand-color-panel: #F1ECE2;
   --brand-color-foreground: #2D2A26;
-  --brand-color-muted-foreground: #7A746C;
-  --brand-color-primary: #B8720E;
-  --brand-color-primary-hover: #9A5F0B;
+  --brand-color-muted: #ECE5DA;
+  --brand-color-muted-foreground: #67625A;
+  --brand-color-primary: #9A5F0B;
+  --brand-color-primary-hover: #7D4D09;
+  --brand-color-primary-foreground: #ffffff;
   --brand-color-primary-light: #FDF3E3;
-  --brand-color-border: #E3DFD9;
+  --brand-color-border: #E8E1D5;
   --brand-color-danger: #C93B37;
   --brand-color-danger-light: #FCE8E8;
   --brand-color-danger-hover: #f5d0d0;
+  --brand-color-warning: #8c6a06;
   --brand-color-warning-bg: #fdf4d6;
   --brand-color-warning-border: #e8c438;
   --brand-color-warning-text: #7a5a09;
   --brand-color-error-bg: #FCE8E8;
   --brand-color-error-border: #eba8a8;
   --brand-color-error-text: #872020;
-  --brand-color-success: #1b8f46;
+  --brand-color-success: #177a3c;
   --brand-color-success-bg: #E5F5EC;
   --brand-color-success-text: #0d5a33;
+  --brand-color-info: #2E6BB5;
   --brand-color-info-bg: #E3EDF7;
   --brand-color-info-border: #88b6dc;
   --brand-color-info-text: #1f4a7e;
-  --brand-color-header-bg-from: #FEFEFE;
-  --brand-color-header-bg-to: #F6F5F3;
+  --brand-color-header-bg-from: #FFFEFB;
+  --brand-color-header-bg-to: #F6F3EC;
   --brand-color-header-text: #2D2A26;
-  --brand-color-header-border: #E3DFD9;
-  --brand-color-secondary-hover: #EDEAE6;
-  --brand-color-selected-bg: #FDF3E3;
-  --brand-color-focus-bg: #F6F5F3;
+  --brand-color-header-border: #E8E1D5;
+  --brand-color-secondary-hover: #EEE8DD;
+  --brand-color-selected-bg: #FBEFDC;
+  --brand-color-focus-bg: #F6F3EC;
 
   /* Extended primary scale */
   --brand-color-primary-50: #FDF8F0;
@@ -151,21 +155,28 @@
   --brand-shadow-inner: inset 0 2px 4px rgba(45, 42, 38, 0.04);
 }
 
-/* Dark mode -- scoped to html.dark to match OSS frontend convention.
- * Tokens not overridden here intentionally inherit their light-mode value. */
-html:where(.dark, .dark *) {
+/* Dark mode -- activated by the `dark` class on <html> (or any ancestor).
+ * Selector is `.dark` (specificity 0,1,0) rather than `html:where(.dark, ...)`
+ * (0,0,1): the latter LOSES to `:root` (0,1,0), which silently disabled the
+ * entire dark theme. `.dark` ties `:root` and wins on source order. Custom
+ * properties inherit, so setting them on the root `.dark` element cascades to
+ * all descendants. Tokens not overridden here inherit their light-mode value. */
+.dark {
   --brand-color-background: #1A1816;
   --brand-color-card: #262320;
   --brand-color-panel: #1E1C19;
   --brand-color-foreground: #E8E4DE;
-  --brand-color-muted-foreground: #9A948C;
+  --brand-color-muted: #3A3630;
+  --brand-color-muted-foreground: #A6A099;
   --brand-color-primary: #D4940F;
   --brand-color-primary-hover: #E5A82A;
+  --brand-color-primary-foreground: #1A1816;
   --brand-color-primary-light: #332810;
   --brand-color-border: #3A3630;
-  --brand-color-danger: #e85450;
+  --brand-color-danger: #ef6b67;
   --brand-color-danger-light: #351a1a;
   --brand-color-danger-hover: #422020;
+  --brand-color-warning: #f0d456;
   --brand-color-warning-bg: #362008;
   --brand-color-warning-border: #a67e14;
   --brand-color-warning-text: #f0d456;
@@ -175,6 +186,7 @@ html:where(.dark, .dark *) {
   --brand-color-success: #3cc978;
   --brand-color-success-bg: #0c3626;
   --brand-color-success-text: #6ae0a0;
+  --brand-color-info: #5498D8;
   --brand-color-info-bg: #1a2e48;
   --brand-color-info-border: #2e6bb5;
   --brand-color-info-text: #88b6dc;

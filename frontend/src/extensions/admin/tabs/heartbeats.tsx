@@ -37,7 +37,7 @@ export function HeartbeatEntry({ log }: { log: HeartbeatLogItem }) {
         <span className={`text-[10px] px-1.5 py-0.5 rounded-[--radius-full] font-medium ${
           log.action_type === 'send'
             ? 'bg-success-bg text-success-text'
-            : 'bg-secondary text-muted-foreground'
+            : 'bg-muted text-muted-foreground'
         }`}>
           {log.action_type === 'send' ? 'Sent' : 'Skipped'}
         </span>

@@ -32,22 +32,26 @@
 ## Color
 
 ### Approach
-Restrained with warmth. Amber primary is the signature. Warm gray neutrals reinforce the trades/workshop identity. Semantic colors (success, danger, warning) stay conventional for instant recognition.
+Restrained with warmth. Amber primary is the signature. Warm gray neutrals reinforce the trades/workshop identity. Semantic colors (success, danger, warning) stay conventional for instant recognition. Values are tuned so every semantic text-on-surface pairing meets WCAG AA in both themes.
+
+> **Implementation:** these values are defined once as design tokens and consumed by both Tailwind utilities and HeroUI components at runtime. To change a color, edit the token, do not touch components. See `frontend/src/styles/README.md` for the token architecture, the single-source workflow, and the test guardrails.
 
 ### Light Mode
 
 | Token | Hex | Usage |
 |-------|-----|-------|
-| primary | #B8720E | Buttons, links, active nav, focus rings |
-| primary-hover | #9A5F0B | Button hover, link hover |
+| primary | #9A5F0B | Buttons, links, active nav, focus rings (deepened from #B8720E for AA text contrast) |
+| primary-hover | #7D4D09 | Button hover, link hover |
+| primary-foreground | #FFFFFF | Text/icons on a primary fill |
 | primary-light | #FDF3E3 | Selected backgrounds, primary badges |
-| background | #F6F5F3 | Page background |
-| card | #FEFEFE | Card surfaces, sidebar, modals |
-| panel | #F0EEEB | Secondary surfaces, code blocks |
+| background | #F6F3EC | Page background (subtle warm cream; warmed from #F6F5F3 so white cards separate) |
+| card | #FFFEFB | Card surfaces, sidebar, modals (warm white) |
+| panel | #F1ECE2 | Secondary surfaces, code blocks |
+| muted | #ECE5DA | Neutral chip/well fill (status pills, inline code) |
 | foreground | #2D2A26 | Primary text |
-| muted-foreground | #7A746C | Secondary text, placeholders |
-| border | #E3DFD9 | Borders, dividers |
-| success | #1B8F46 | Success states |
+| muted-foreground | #67625A | Secondary text, placeholders (darkened from #7A746C for AA) |
+| border | #E8E1D5 | Borders, dividers |
+| success | #177A3C | Success states (deepened from #1B8F46 for AA) |
 | success-bg | #E5F5EC | Success backgrounds |
 | danger | #C93B37 | Error states, destructive actions |
 | danger-bg | #FCE8E8 | Error backgrounds |
@@ -93,16 +97,18 @@ Warm charcoal base. Amber brightens slightly for contrast on dark surfaces. Redu
 |-------|-----|
 | primary | #D4940F |
 | primary-hover | #E5A82A |
+| primary-foreground | #1A1816 | (near-black: white fails AA on bright dark-mode accents) |
 | primary-light | #332810 |
 | background | #1A1816 |
 | card | #262320 |
 | panel | #1E1C19 |
+| muted | #3A3630 |
 | foreground | #E8E4DE |
-| muted-foreground | #9A948C |
+| muted-foreground | #A6A099 |
 | border | #3A3630 |
 | success | #3CC978 |
 | success-bg | #0C3626 |
-| danger | #E85450 |
+| danger | #EF6B67 |
 | danger-bg | #351A1A |
 | warning | #F0D456 |
 | warning-bg | #362008 |
@@ -258,3 +264,6 @@ Optional: subtle geometric or tool-inspired patterns at very low opacity for bra
 |------|----------|-----------|
 | 2026-03-20 | Initial design system: Amber Workshop | Created by /design-consultation. Competitive research across Housecall Pro, ServiceTitan, ContractorPlus showed convergence on dark themes + warm accents. Amber primary differentiates from blue-dominated space while mapping to trades visual language (hard hats, tools, construction). Warm neutrals reinforce identity. Outfit + DM Sans replace Inter for personality. Text sizes bumped for field use. |
 | 2026-03-20 | Added visual effects: glassmorphism, gradients, grain | Inspired by octonous.ai (sibling mozilla.ai project). Frosted glass cards for auth/splash pages, gradient brand theme with warm amber glow, subtle grain texture for depth. Decoration level upgraded from "intentional" to "expressive." |
+| 2026-05-29 | Tokens are the single runtime source of truth; HeroUI rebound to them | Eliminated the dual palette (hardcoded hex in the HeroUI plugin vs CSS tokens). `palette.ts` feeds the HeroUI plugin; a generator rebinds `--heroui-*` to `var(--brand-h-*)` so HeroUI components follow our tokens at runtime. Verified channel-for-channel identical (zero visual regression). See `frontend/src/styles/README.md`. |
+| 2026-05-29 | Warmer light surfaces + ambient depth | Light theme read flat/bland (all surfaces near-white cool grays with no separation). Warmed and lightly deepened the surface tokens to a "sand/paper" workshop feel (background #F6F5F3->#F6F3EC, card #FEFEFE->#FFFEFB, panel/muted/border warmed) so white cards pop, and added a fixed amber-glow + grain layer behind content. All pairings still pass AA. |
+| 2026-05-29 | Accessibility-tuned palette (WCAG AA, both themes) | A contrast audit found multiple sub-AA pairings and three undefined tokens (`muted`, `info`, plain `warning`) rendering as no-ops. Deepened light `primary` #B8720E→#9A5F0B, `success` #1B8F46→#177A3C, `muted-foreground` #7A746C→#67625A; lightened dark `muted-foreground`→#A6A099 and `danger`→#EF6B67; added `muted`, `info`, `warning`, `primary-foreground` tokens. Dark-mode accent button text switched to near-black (white fails on bright amber/green). All semantic text-on-surface pairings now pass AA (`node scripts/audit-contrast.mjs`). |
