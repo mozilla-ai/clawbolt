@@ -291,7 +291,11 @@ async def test_connect_returns_oauth_url(test_user: User) -> None:
 
         result = await _call(test_user, "connect", "google_calendar")
         assert not result.is_error
-        assert "https://accounts.google.com" in result.content
+        # The URL is delivered via the ToolReceipt (rendered server-side),
+        # never echoed in content, so the LLM can neither drop nor duplicate it.
+        assert result.receipt is not None
+        assert result.receipt.url == "https://accounts.google.com/o/oauth2/auth?client_id=test"
+        assert "https://accounts.google.com" not in result.content
         mock_oauth.get_authorization_url.assert_called_once_with(
             mock_config, test_user.id, source="chat"
         )
@@ -320,7 +324,77 @@ async def test_connect_via_tool_group_name(test_user: User) -> None:
 
         result = await _call(test_user, "connect", "calendar")
         assert not result.is_error
-        assert "https://example.com/auth" in result.content
+        assert result.receipt is not None
+        assert result.receipt.url == "https://example.com/auth"
+        assert "https://example.com/auth" not in result.content
+
+
+@pytest.mark.asyncio()
+async def test_connect_link_survives_llm_dropping_it(test_user: User) -> None:
+    """Regression: the OAuth connect URL reaches the user even when the LLM's
+    prose omits it.
+
+    The original bug: a user asked to connect Gmail, the tool returned the
+    URL inside ``content``, and the model paraphrased the tool result into
+    "Tap the link, approve access, then message me back" -- with no link.
+    The fix moves the URL into a ToolReceipt so ``append_receipts`` renders
+    it server-side, independent of whatever the model wrote. This test
+    reproduces the model dropping the URL and asserts the user still gets it.
+    """
+    from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
+    from backend.app.agent.tool_summary import append_receipts
+
+    mock_config = OAuthConfig(
+        integration="gmail",
+        client_id="test-id",
+        client_secret="test-secret",
+        authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
+        token_url="https://oauth2.googleapis.com/token",
+        scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+    )
+    full_url = (
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc.apps."
+        "googleusercontent.com&redirect_uri=https%3A%2F%2Fclawbolt.ai%2Fapi"
+        "%2Foauth%2Fcallback&response_type=code&scope=gmail.readonly&state=xyz"
+    )
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.get_oauth_config",
+            return_value=mock_config,
+        ),
+        patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth,
+    ):
+        mock_oauth.is_connected = AsyncMock(return_value=False)
+        mock_oauth.get_authorization_url.return_value = full_url
+
+        result = await _call(test_user, "connect", "gmail")
+
+    # The tool hands the URL off via the receipt, not the LLM-facing content.
+    assert not result.is_error
+    assert result.receipt is not None
+    assert result.receipt.url == full_url
+    assert full_url not in result.content
+
+    # Now simulate the model dropping the link in its prose, exactly like the
+    # original incident. append_receipts must still surface the URL.
+    stored = StoredToolInteraction(
+        name=ToolName.MANAGE_INTEGRATION,
+        result=result.content,
+        is_error=False,
+        receipt=StoredToolReceipt(
+            action=result.receipt.action,
+            target=result.receipt.target,
+            url=result.receipt.url,
+        ),
+    )
+    llm_prose = "Tap the link, approve access, then message me back."
+    outbound = append_receipts(llm_prose, [stored])
+
+    # The full URL (sans https://, the receipt renderer's compact form) is in
+    # the message the user actually receives, and only once.
+    assert "accounts.google.com/o/oauth2/v2/auth?client_id=abc" in outbound
+    assert outbound.count("accounts.google.com/o/oauth2/v2/auth?client_id=abc") == 1
+    assert "Tap the link" in outbound
 
 
 @pytest.mark.asyncio()
