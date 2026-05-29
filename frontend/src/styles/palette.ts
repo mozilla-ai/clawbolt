@@ -57,14 +57,14 @@ interface ThemeColors {
 }
 
 export const lightColors: ThemeColors = {
-  background: '#F6F0E7',
+  background: '#F6F3EC',
   foreground: '#2D2A26',
-  divider: '#E6DECF',
+  divider: '#E8E1D5',
   focus: '#9A5F0B',
   content1: '#FFFEFB',
-  content2: '#EFE8DC',
-  content3: '#EAE2D5',
-  content4: '#E6DECF',
+  content2: '#F1ECE2',
+  content3: '#ECE5DA',
+  content4: '#E8E1D5',
   default: {
     50: '#FAF9F7',
     100: '#F6F5F3',

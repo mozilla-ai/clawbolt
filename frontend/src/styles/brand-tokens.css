@@ -38,17 +38,17 @@
 
 :root {
   /* Core semantic tokens -- light mode */
-  --brand-color-background: #F6F0E7;
+  --brand-color-background: #F6F3EC;
   --brand-color-card: #FFFEFB;
-  --brand-color-panel: #EFE8DC;
+  --brand-color-panel: #F1ECE2;
   --brand-color-foreground: #2D2A26;
-  --brand-color-muted: #EAE2D5;
+  --brand-color-muted: #ECE5DA;
   --brand-color-muted-foreground: #67625A;
   --brand-color-primary: #9A5F0B;
   --brand-color-primary-hover: #7D4D09;
   --brand-color-primary-foreground: #ffffff;
   --brand-color-primary-light: #FDF3E3;
-  --brand-color-border: #E6DECF;
+  --brand-color-border: #E8E1D5;
   --brand-color-danger: #C93B37;
   --brand-color-danger-light: #FCE8E8;
   --brand-color-danger-hover: #f5d0d0;
@@ -67,12 +67,12 @@
   --brand-color-info-border: #88b6dc;
   --brand-color-info-text: #1f4a7e;
   --brand-color-header-bg-from: #FFFEFB;
-  --brand-color-header-bg-to: #F6F0E7;
+  --brand-color-header-bg-to: #F6F3EC;
   --brand-color-header-text: #2D2A26;
-  --brand-color-header-border: #E6DECF;
-  --brand-color-secondary-hover: #ECE5D8;
+  --brand-color-header-border: #E8E1D5;
+  --brand-color-secondary-hover: #EEE8DD;
   --brand-color-selected-bg: #FBEFDC;
-  --brand-color-focus-bg: #F6F0E7;
+  --brand-color-focus-bg: #F6F3EC;
 
   /* Extended primary scale */
   --brand-color-primary-50: #FDF8F0;

@@ -10,14 +10,14 @@
 :root,
 [data-theme="light"],
 .light {
-  --brand-h-background: 36 45.45% 93.53%;
+  --brand-h-background: 42 35.71% 94.51%;
   --brand-h-foreground: 34.29 8.43% 16.27%;
-  --brand-h-divider: 39.13 31.51% 85.69%;
+  --brand-h-divider: 37.89 29.23% 87.25%;
   --brand-h-focus: 35.24 86.67% 32.35%;
   --brand-h-content1: 45 100% 99.22%;
-  --brand-h-content2: 37.89 37.25% 90%;
-  --brand-h-content3: 37.14 33.33% 87.65%;
-  --brand-h-content4: 39.13 31.51% 85.69%;
+  --brand-h-content2: 40 34.88% 91.57%;
+  --brand-h-content3: 36.67 32.14% 89.02%;
+  --brand-h-content4: 37.89 29.23% 87.25%;
   --brand-h-default-50: 40 23.08% 97.45%;
   --brand-h-default-100: 40 14.29% 95.88%;
   --brand-h-default-200: 34.29 16.28% 91.57%;
