@@ -9,10 +9,11 @@ interface CardProps {
 
 const Card = forwardRef<HTMLDivElement, CardProps>(
   ({ className, children, onClick, ...props }, ref) => {
-    // Pressable cards get a clear interactive affordance: hover lift + border
-    // accent. Tokens only, hover gated to pointer devices.
+    // A hairline border defines the card against near-equal-luminance surfaces
+    // (light mode). Pressable cards add a hover lift + amber border accent.
+    const base = 'border border-border';
     const interactive = onClick
-      ? 'border border-transparent transition-all duration-150 can-hover:hover:-translate-y-0.5 can-hover:hover:shadow-md can-hover:hover:border-primary/30'
+      ? 'transition-all duration-150 can-hover:hover:-translate-y-0.5 can-hover:hover:shadow-md can-hover:hover:border-primary/40'
       : '';
     return (
       <HeroCard
@@ -21,7 +22,7 @@ const Card = forwardRef<HTMLDivElement, CardProps>(
         radius="lg"
         isPressable={!!onClick}
         onPress={onClick}
-        className={[interactive, className].filter(Boolean).join(' ')}
+        className={[base, interactive, className].filter(Boolean).join(' ')}
         {...props}
       >
         <CardBody className="p-5">{children}</CardBody>

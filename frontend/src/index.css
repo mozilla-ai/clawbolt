@@ -204,6 +204,38 @@
     overflow-x: hidden;
   }
 
+  /* Ambient depth: a warm amber glow + fine grain behind all content. Fixed,
+   * non-interactive, token-driven so it adapts to light/dark. Gives the flat
+   * surfaces the "expressive, tactile workshop" feel DESIGN.md calls for. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(115% 75% at 50% -15%,
+        color-mix(in oklab, var(--color-primary) 9%, transparent) 0%,
+        transparent 55%),
+      radial-gradient(90% 60% at 100% 0%,
+        color-mix(in oklab, var(--color-primary) 5%, transparent) 0%,
+        transparent 50%);
+  }
+
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  html:where(.dark) body::after {
+    opacity: 0.04;
+  }
+
   /* Prevent iOS Safari auto-zoom on input focus (triggers when font-size < 16px) */
   @media screen and (max-width: 767px) {
     input,
