@@ -39,6 +39,10 @@ CompanyCam is a photo documentation platform for the trades. Projects, photos, c
 - **Photo**: an uploaded image. Has `id`, optional `description`, tags, and a CompanyCam-side `processing_status` (`pending`, `processing`, `processed`, `duplicate`, `processing_error`).
 - **Checklist**: a task list bound to a project, instantiated from a template. Sections contain tasks; each task carries a `completed_at` timestamp when done.
 
+## Finding a project
+
+A project you have not searched this session is unknown, not absent. Never tell the user a project does not exist, and never offer `companycam_create_project`, until `companycam_search_projects` has returned no match for the name they gave. Search the bare name first; adding a guessed token (an address you are not sure of) can narrow a name match to zero. A project ID you already resolved this session can be reused without re-searching.
+
 ## Photo handles
 
 See the ``analyze_photo`` tool description for the ``media_XXXXXX`` handle convention.
@@ -63,8 +67,8 @@ Tags are trimmed at 50 chars and capped at 10 per call.
 ## Common Workflows
 
 ### Upload a photo with job context
-1. `companycam_search_projects(query="<address or client>")`.
-2. If no match, `companycam_create_project(name="<Client - Address>", address="<address>")`.
+1. `companycam_search_projects(query="<address or client>")`. Required even when the user names a project you do not recognize: see "Finding a project".
+2. If the search returns no match, `companycam_create_project(name="<Client - Address>", address="<address>")`.
 3. `companycam_upload_photo(project_id="...", original_url="media_XXXXXX", tags=[...], description="...")`. One call per photo, one handle per call.
 4. Summarize what you assumed (project, tags) in one line so the user can amend.
 
