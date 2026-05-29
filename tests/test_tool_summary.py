@@ -11,6 +11,7 @@ from __future__ import annotations
 from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
 from backend.app.agent.tool_summary import (
     _MAX_RECEIPTS_CHARS,
+    _display_url,
     append_receipts,
     format_receipts_block,
 )
@@ -778,3 +779,64 @@ def test_grouped_receipt_strips_https_prefix() -> None:
     )
     assert "app.companycam.com/projects/42/photos" in block
     assert "https://" not in block
+
+
+# ---------------------------------------------------------------------------
+# Scheme stripping vs. embedded-URL links (iMessage auto-link fragmentation)
+# ---------------------------------------------------------------------------
+
+
+def test_display_url_strips_scheme_for_plain_links() -> None:
+    """Plain deep links keep the compact, scheme-stripped form."""
+    assert _display_url("https://companycam.com/p/abc123") == "companycam.com/p/abc123"
+    # A query string with a non-URL value is still safe to strip: there is no
+    # embedded domain for iMessage to latch onto.
+    assert (
+        _display_url("https://app.qbo.intuit.com/app/invoice?txnId=4782")
+        == "app.qbo.intuit.com/app/invoice?txnId=4782"
+    )
+
+
+def test_display_url_keeps_scheme_when_url_embeds_another_url() -> None:
+    """OAuth authorize links carry redirect_uri/scope values that embed a
+    second URL. Stripping the outer scheme makes iMessage split the link at
+    the embedded domain, truncating the tail params (the connect-link bug).
+    Keep the scheme so the whole URL stays one tappable token.
+    """
+    oauth = (
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc.apps."
+        "googleusercontent.com&redirect_uri=https%3A%2F%2Fclawbolt.ai%2Fapi"
+        "%2Foauth%2Fcallback&response_type=code&scope=https%3A%2F%2Fwww."
+        "googleapis.com%2Fauth%2Fgmail.readonly&state=xyz"
+    )
+    # Unchanged: scheme retained, no truncation.
+    assert _display_url(oauth) == oauth
+
+
+def test_connect_link_receipt_renders_full_tappable_url() -> None:
+    """Regression for the iMessage truncation bug: the rendered receipt for an
+    OAuth connect link must contain the entire URL, scheme included, with the
+    tail params (response_type, state) intact and on one unbroken token.
+    """
+    oauth = (
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc.apps."
+        "googleusercontent.com&redirect_uri=https%3A%2F%2Fclawbolt.ai%2Fapi"
+        "%2Foauth%2Fcallback&response_type=code&scope=https%3A%2F%2Fwww."
+        "googleapis.com%2Fauth%2Fgmail.readonly&state=xyz"
+    )
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "manage_integration",
+                action="Tap to connect",
+                target="Gmail",
+                url=oauth,
+            )
+        ]
+    )
+    # Whole URL present verbatim, including the params that came after the
+    # embedded redirect_uri domain. The original bug dropped everything from
+    # response_type onward.
+    assert oauth in block
+    assert "response_type=code" in block
+    assert "state=xyz" in block
