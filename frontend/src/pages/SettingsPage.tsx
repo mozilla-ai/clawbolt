@@ -67,6 +67,15 @@ export default function SettingsPage() {
         selectedKey={activeTab}
         onSelectionChange={(key) => handleTabChange(String(key))}
         variant="underlined"
+        color="primary"
+        classNames={{
+          cursor: 'bg-primary',
+          // Inactive tabs read as muted; hover darkens to full foreground
+          // (HeroUI's default fades to ~80% opacity, which was low-contrast).
+          tab: 'data-[hover-unselected=true]:opacity-100',
+          tabContent:
+            'text-muted-foreground transition-colors group-data-[hover-unselected=true]:text-foreground group-data-[selected=true]:text-primary',
+        }}
       >
         {allTabs.map((t) => (
           <Tab key={t.key} title={t.label} />

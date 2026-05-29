@@ -61,10 +61,10 @@ function DashboardCard({ title, description, configured, icon, onClick, isLoadin
   return (
     <Card onClick={onClick} className="bg-card">
       <div className="flex items-start gap-3">
-        <div className="text-muted-foreground shrink-0 mt-0.5">{icon}</div>
+        <div className="shrink-0 size-9 rounded-lg bg-panel text-primary grid place-items-center">{icon}</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-medium font-body">{title}</h3>
+            <h3 className="text-sm font-semibold font-body">{title}</h3>
             {!isLoading && !isError && (
               <span
                 className={`size-2 rounded-full shrink-0 ${configured ? 'bg-success' : 'bg-warning'}`}
@@ -185,7 +185,7 @@ export default function DashboardPage() {
     <div>
       <div className="mb-6">
         <h2 className="text-xl font-semibold font-display">Dashboard</h2>
-        <p className="text-sm text-muted-foreground mt-1">
+        <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
           Setup, integrations, and admin live here. For day-to-day, just chat
           with your assistant from your phone. No need to come back to the web
           app for most things.
@@ -257,7 +257,7 @@ export default function DashboardPage() {
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                            <span className="size-1.5 rounded-full bg-default-300" />
+                            <span className="size-1.5 rounded-full bg-neutral-300" />
                             Not configured
                           </span>
                         )}

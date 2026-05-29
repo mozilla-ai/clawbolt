@@ -16,10 +16,13 @@ export const PERM_OPTIONS: { value: PermLevel; label: string }[] = [
   { value: 'never', label: 'Off' },
 ];
 
+// Active states use the tinted badge token pairs (bg + matching text), which
+// are tuned for WCAG AA contrast in both themes. Inactive options fall back to
+// muted-foreground (also AA-compliant against the chip surfaces).
 export const PERM_ACTIVE_STYLES: Record<PermLevel, string> = {
-  always: 'bg-muted text-success font-medium',
-  ask: 'bg-muted text-warning font-medium',
-  never: 'bg-muted text-danger font-medium',
+  always: 'bg-success-bg text-success-text font-medium',
+  ask: 'bg-warning-bg text-warning-text font-medium',
+  never: 'bg-error-bg text-error-text font-medium',
 };
 
 export default function PermissionSelector({

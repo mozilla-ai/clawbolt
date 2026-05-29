@@ -28,7 +28,7 @@ export default function UpdateAvailableBanner() {
     <div
       role="alert"
       aria-live="polite"
-      className="fixed top-0 inset-x-0 z-[100] flex items-center justify-center gap-3 bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm"
+      className="fixed top-0 inset-x-0 z-[100] flex items-center justify-center gap-3 bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm"
     >
       <span>A new version of Clawbolt is available.</span>
       <button
@@ -36,7 +36,7 @@ export default function UpdateAvailableBanner() {
         onClick={() => {
           void updateServiceWorker(true);
         }}
-        className="rounded-md bg-white/95 px-3 py-1 text-xs font-semibold text-primary shadow-sm transition-colors can-hover:hover:bg-white"
+        className="rounded-md bg-card px-3 py-1 text-xs font-semibold text-primary shadow-sm transition-colors can-hover:hover:bg-card/90"
       >
         Update
       </button>
@@ -44,7 +44,7 @@ export default function UpdateAvailableBanner() {
         type="button"
         onClick={() => setNeedRefresh(false)}
         aria-label="Dismiss update notification"
-        className="rounded-md px-2 py-1 text-xs font-medium text-white/80 transition-colors can-hover:hover:text-white"
+        className="rounded-md px-2 py-1 text-xs font-medium text-primary-foreground/80 transition-colors can-hover:hover:text-primary-foreground"
       >
         Later
       </button>

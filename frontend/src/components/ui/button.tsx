@@ -34,6 +34,10 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', isLoading, disabled, onClick, type, children, title, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, ...rest }, ref) => {
     const mapped = mapVariant(variant);
     const isIconOnly = size === 'icon' || size === 'icon-sm';
+    // Subtle elevation on filled buttons for a more premium feel; flat variants
+    // (bordered/light) stay flat. Token-driven shadow.
+    const elevation = mapped.variant === 'solid' ? 'shadow-sm' : '';
+    const mergedClassName = [elevation, className].filter(Boolean).join(' ') || undefined;
     // Avoid passing rest to prevent incompatible HTML attribute types
     void rest;
 
@@ -48,7 +52,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         isDisabled={disabled}
         onPress={onClick as unknown as undefined}
         type={type}
-        className={className}
+        className={mergedClassName}
         title={title}
         aria-label={ariaLabel}
         aria-expanded={ariaExpanded}

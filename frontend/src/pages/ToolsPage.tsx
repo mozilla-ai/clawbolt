@@ -151,7 +151,7 @@ export default function ToolsPage() {
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <span className="size-1.5 rounded-full inline-block shrink-0 bg-default-300" />
+                              <span className="size-1.5 rounded-full inline-block shrink-0 bg-neutral-300" />
                               Not connected
                             </span>
                           )}

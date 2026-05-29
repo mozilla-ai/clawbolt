@@ -26,7 +26,7 @@ export default function OfflineIndicator() {
   return (
     <div
       role="status"
-      className="fixed top-0 inset-x-0 z-[100] flex items-center justify-center gap-2 bg-warning/90 text-warning-foreground px-4 py-2 text-sm font-medium shadow-sm"
+      className="fixed top-0 inset-x-0 z-[100] flex items-center justify-center gap-2 bg-warning-bg text-warning-text border-b border-warning-border px-4 py-2 text-sm font-medium shadow-sm"
     >
       <svg
         className="w-4 h-4 shrink-0"

@@ -310,3 +310,12 @@ Always read DESIGN.md before making any visual or UI decisions.
 All font choices, colors, spacing, and aesthetic direction are defined there.
 Do not deviate without explicit user approval.
 In QA mode, flag any code that doesn't match DESIGN.md.
+
+### Frontend tokens (single source of truth)
+The frontend is token-driven; `frontend/src/styles/README.md` is the engineering reference. Rules:
+
+- **Never hard-code colors in components.** Use semantic Tailwind utilities backed by tokens (`bg-card`, `text-muted-foreground`, `text-primary`, `border-border`, the `*-bg`/`*-text` state pairs). No raw palette colors (`bg-gray-200`), no hex literals, no `text-white` on a colored fill (use the fill's `*-foreground` token). Brand/3rd-party icons are the only exception.
+- **Colors live in two source files**: `brand-tokens.css` (`--brand-color-*`, drives app utilities) and `palette.ts` (drives HeroUI components). To change a color, edit the token there, not components. If it is a HeroUI-used color, also edit `palette.ts` and run `npm run generate:tokens` (regenerates `heroui-tokens.generated.css`, which is committed and never hand-edited).
+- **HeroUI is themed through the same tokens** at runtime; customize HeroUI via props / `classNames` with token utilities, not by overriding internals.
+- **`src/styles/tokens.test.ts` guards** undefined-token usage, palette/brand-tokens drift, and generated-file freshness. `node scripts/audit-contrast.mjs` checks WCAG AA for every semantic pairing. Keep all semantic pairings AA in both themes.
+- Mobile-first responsive utilities; wrap tables in `overflow-x-auto`; prefer CSS state over JS layout swaps to avoid layout shift.
