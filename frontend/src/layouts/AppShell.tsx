@@ -3,6 +3,7 @@ import { Outlet, NavLink, Navigate } from 'react-router-dom';
 import { ToastProvider } from '@heroui/toast';
 import { useQueryClient } from '@tanstack/react-query';
 import Button from '@/components/ui/button';
+import ThemeToggle from '@/components/ui/ThemeToggle';
 import OfflineIndicator from '@/components/ui/OfflineIndicator';
 import { Spinner } from '@heroui/spinner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -251,6 +252,10 @@ export default function AppShell() {
         {renderSidebarFooter({ isPremium, handleLogout, closeSidebar }) ?? (
           <div className="p-2 text-xs text-muted-foreground space-y-1">
             <Divider className="mb-1" />
+            <div className="flex items-center justify-between px-3 py-1">
+              <span>Theme</span>
+              <ThemeToggle />
+            </div>
             <NavLink
               to="/app/get-started"
               onClick={closeSidebar}
