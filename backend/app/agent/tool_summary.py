@@ -44,7 +44,31 @@ def _display_url(url: str) -> str:
     Telegram, webchat) still render a tappable link while the visible text
     is eight characters shorter. Bare or non-https URLs pass through so
     an unusual scheme stays visible as a signal.
+
+    Exception: keep the scheme when the URL embeds another URL in its query
+    string (a literal ``://`` or a percent-encoded ``%2F%2F``), e.g. an OAuth
+    authorize link carrying ``redirect_uri=https%3A%2F%2F...`` and
+    ``scope=https%3A%2F%2F...``. Without the leading scheme, iMessage's data
+    detector falls back to loose domain detection, latches onto the embedded
+    domain (``clawbolt.ai`` inside the redirect_uri) partway through the query,
+    and splits the link there. The user taps a truncated URL missing every
+    param after the embedded domain, including ``response_type`` -- Google then
+    rejects it with "Required parameter is missing: response_type". A schemed
+    URL is detected as one contiguous token up to the next whitespace, so the
+    whole link stays tappable. The 8-char saving is not worth a broken link.
+
+    Plain deep links without an embedded URL (CompanyCam ``companycam.com/p/x``,
+    QuickBooks ``app.qbo.intuit.com/app/invoice?txnId=4782``) have no second
+    domain to latch onto, so they keep the compact stripped form.
     """
+    if not url.startswith("https://"):
+        return url
+    lowered = url.lower()
+    # Two markers of an embedded URL: a second literal scheme separator, or a
+    # percent-encoded one in a query value. ``%3a%2f%2f`` is a subset of
+    # ``%2f%2f``, so the latter check covers both encodings.
+    if lowered.count("://") > 1 or "%2f%2f" in lowered:
+        return url
     return url.removeprefix("https://")
 
 
