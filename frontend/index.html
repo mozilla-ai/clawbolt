@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#F6F5F3" />
   <meta name="description" content="AI assistant for the trades" />
+  <!-- Apply the saved/system color theme before first paint to avoid a flash.
+       Mirrors src/lib/theme.ts; keep the storage key and logic in sync. -->
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('clawbolt-theme');
+        var pref = stored === 'light' || stored === 'dark' ? stored : 'system';
+        var dark = pref === 'dark' || (pref === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.toggle('dark', dark);
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute('content', dark ? '#1A1816' : '#F6F5F3');
+      } catch (e) {}
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />

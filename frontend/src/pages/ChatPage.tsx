@@ -643,7 +643,7 @@ export default function ChatPage() {
                   <ChevronIcon open={systemPromptOpen} />
                   <span className="font-medium">Current system prompt</span>
                   {systemPromptData?.is_onboarding && (
-                    <span className="ml-auto rounded bg-warning/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-warning-foreground">
+                    <span className="ml-auto rounded bg-warning-bg px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-warning-text">
                       Onboarding
                     </span>
                   )}
@@ -695,7 +695,7 @@ export default function ChatPage() {
                 <div
                   className={`max-w-[80%] px-4 py-2.5 animate-message-in ${
                     msg.role === 'user'
-                      ? 'bg-primary text-white rounded-[12px_12px_4px_12px]'
+                      ? 'bg-primary text-primary-foreground rounded-[12px_12px_4px_12px]'
                       : 'bg-card border border-border rounded-[12px_12px_12px_4px]'
                   }`}
                 >
@@ -728,7 +728,7 @@ export default function ChatPage() {
                           <div key={i} className="relative">
                             <div
                               className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-opacity ${
-                                msg.role === 'user' ? 'bg-white/20' : 'bg-muted'
+                                msg.role === 'user' ? 'bg-primary-foreground/15' : 'bg-muted'
                               } ${dimmed}`}
                             >
                               <FileIcon />
@@ -770,7 +770,7 @@ export default function ChatPage() {
                             key={i}
                             className={`rounded text-[13px] ${
                               msg.role === 'user'
-                                ? 'bg-white/10'
+                                ? 'bg-primary-foreground/10'
                                 : isError
                                   ? 'bg-danger/5'
                                   : 'bg-panel'
@@ -845,7 +845,7 @@ export default function ChatPage() {
 
                   <p
                     className={`text-[10px] mt-1 ${
-                      msg.role === 'user' ? 'text-white/60' : 'text-muted-foreground'
+                      msg.role === 'user' ? 'text-primary-foreground/70' : 'text-muted-foreground'
                     }`}
                   >
                     {msg.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
