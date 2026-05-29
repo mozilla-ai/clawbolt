@@ -150,8 +150,8 @@ export default function AppShell() {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
-                    ? 'bg-primary text-primary-foreground font-medium shadow-sm'
-                    : 'text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
                 }`
               }
             >
@@ -169,8 +169,8 @@ export default function AppShell() {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
-                    ? 'bg-primary text-primary-foreground font-medium shadow-sm'
-                    : 'text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
                 }`
               }
             >
@@ -189,8 +189,8 @@ export default function AppShell() {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
-                    ? 'bg-primary text-primary-foreground font-medium shadow-sm'
-                    : 'text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
                 }`
               }
             >
@@ -202,7 +202,7 @@ export default function AppShell() {
             type="button"
             onClick={() => setPersonalizeOpen((v) => !v)}
             aria-expanded={personalizeOpen}
-            className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground transition-all duration-150 w-full"
+            className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground transition-all duration-150 w-full"
           >
             <ChevronIcon open={personalizeOpen} />
             Personalize
@@ -217,8 +217,8 @@ export default function AppShell() {
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-3 py-2 pl-6 rounded-md text-sm transition-all duration-150 ${
                     isActive
-                      ? 'bg-primary text-primary-foreground font-medium shadow-sm'
-                      : 'text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                      ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                      : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
                   }`
                 }
               >
@@ -236,8 +236,8 @@ export default function AppShell() {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
-                    ? 'bg-primary text-primary-foreground font-medium shadow-sm'
-                    : 'text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
                 }`
               }
             >
