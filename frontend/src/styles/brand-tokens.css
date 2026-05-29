@@ -74,6 +74,19 @@
   --brand-color-selected-bg: #FBEFDC;
   --brand-color-focus-bg: #F6F3EC;
 
+  /* Brand gradient stops -- the "gradient brand theme" for auth/marketing/docs
+   * splash pages (see DESIGN.md). Always-dark surfaces, so these are FIXED
+   * (not overridden in .dark): a warm-black base with a warm amber glow.
+   * Consumed by clawbolt-premium's MarketingLayout / LoginPage / DocsLayout. */
+  --brand-gradient-glow-1: #D4940F;
+  --brand-gradient-glow-2: #B8720E;
+  --brand-gradient-glow-3: #9A5F0B;
+  --brand-gradient-warm-1: #6B5A40;
+  --brand-gradient-warm-2: #504B44;
+  --brand-gradient-warm-3: #4A4540;
+  --brand-gradient-base: #43403A;
+  --brand-gradient-base-deep: #3A3630;
+
   /* Extended primary scale */
   --brand-color-primary-50: #FDF8F0;
   --brand-color-primary-100: #FDF3E3;
