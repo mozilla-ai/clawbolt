@@ -4,6 +4,11 @@
 @plugin "./hero.ts";
 @source "../node_modules/@heroui/theme/dist/**/*.{js,ts}";
 
+/* Rebind HeroUI's --heroui-* variables to --brand-h-* design tokens (generated
+ * from src/styles/palette.ts). Imported after the plugin so it wins, making
+ * HeroUI components follow our tokens at runtime. Regenerate: npm run generate:tokens */
+@import "./styles/heroui-tokens.generated.css";
+
 @custom-variant dark (&:where(.dark, .dark *));
 @custom-variant can-hover (@media (hover: hover));
 
@@ -26,14 +31,17 @@
   --color-card: var(--brand-color-card);
   --color-panel: var(--brand-color-panel);
   --color-foreground: var(--brand-color-foreground);
+  --color-muted: var(--brand-color-muted);
   --color-muted-foreground: var(--brand-color-muted-foreground);
   --color-primary: var(--brand-color-primary);
   --color-primary-hover: var(--brand-color-primary-hover);
+  --color-primary-foreground: var(--brand-color-primary-foreground);
   --color-primary-light: var(--brand-color-primary-light);
   --color-border: var(--brand-color-border);
   --color-danger: var(--brand-color-danger);
   --color-danger-light: var(--brand-color-danger-light);
   --color-danger-hover: var(--brand-color-danger-hover);
+  --color-warning: var(--brand-color-warning);
   --color-warning-bg: var(--brand-color-warning-bg);
   --color-warning-border: var(--brand-color-warning-border);
   --color-warning-text: var(--brand-color-warning-text);
@@ -43,6 +51,7 @@
   --color-success: var(--brand-color-success);
   --color-success-bg: var(--brand-color-success-bg);
   --color-success-text: var(--brand-color-success-text);
+  --color-info: var(--brand-color-info);
   --color-info-bg: var(--brand-color-info-bg);
   --color-info-border: var(--brand-color-info-border);
   --color-info-text: var(--brand-color-info-text);

@@ -1,0 +1,227 @@
+/**
+ * Canonical HeroUI color palette: the single source of truth for the colors
+ * HeroUI components render with.
+ *
+ * Why this file exists
+ * --------------------
+ * HeroUI's Tailwind plugin (see ../hero.ts) needs raw color values at build
+ * time, which it compiles into `--heroui-*` HSL-channel CSS variables. We also
+ * maintain `--brand-color-*` tokens in ./brand-tokens.css for app-level Tailwind
+ * utilities. Historically the same colors were hardcoded in both places, so a
+ * palette change meant editing two files in two formats and hoping they stayed
+ * in sync.
+ *
+ * Now the values live here once. `hero.ts` imports this object, and
+ * `scripts/gen-tokens.mjs` reads it to generate ./heroui-tokens.generated.css,
+ * which rebinds every `--heroui-*` variable to a `var(--brand-h-*)` token so
+ * HeroUI components follow our design tokens at runtime (light/dark switch, or
+ * live overrides) instead of build-frozen hex.
+ *
+ * A guard test (tokens.test.ts) asserts the semantic values here match the
+ * corresponding `--brand-color-*` hex in brand-tokens.css, so the two token
+ * families cannot drift.
+ *
+ * Source of values: DESIGN.md (canonical spec).
+ */
+
+interface ColorScale {
+  50: string;
+  100: string;
+  200: string;
+  300: string;
+  400: string;
+  500: string;
+  600?: string;
+  700?: string;
+  800?: string;
+  900?: string;
+  foreground: string;
+  DEFAULT: string;
+}
+
+interface ThemeColors {
+  background: string;
+  foreground: string;
+  divider: string;
+  focus: string;
+  content1: string;
+  content2: string;
+  content3: string;
+  content4: string;
+  default: ColorScale;
+  primary: ColorScale;
+  secondary: ColorScale;
+  success: ColorScale;
+  warning: ColorScale;
+  danger: ColorScale;
+}
+
+export const lightColors: ThemeColors = {
+  background: '#F6F5F3',
+  foreground: '#2D2A26',
+  divider: '#E3DFD9',
+  focus: '#B8720E',
+  content1: '#FEFEFE',
+  content2: '#F0EEEB',
+  content3: '#EDEAE6',
+  content4: '#E3DFD9',
+  default: {
+    50: '#FAF9F7',
+    100: '#F6F5F3',
+    200: '#EDEAE6',
+    300: '#E3DFD9',
+    400: '#C4BEB5',
+    500: '#94908A',
+    600: '#7A746C',
+    700: '#5A544D',
+    800: '#3E3A35',
+    900: '#2D2A26',
+    foreground: '#2D2A26',
+    DEFAULT: '#E3DFD9',
+  },
+  primary: {
+    50: '#FDF8F0',
+    100: '#FDF3E3',
+    200: '#F5DDB4',
+    300: '#E8C07A',
+    400: '#D4A030',
+    500: '#C4860E',
+    600: '#B8720E',
+    700: '#9A5F0B',
+    800: '#7D4D09',
+    900: '#613C07',
+    foreground: '#ffffff',
+    DEFAULT: '#9A5F0B',
+  },
+  secondary: {
+    50: '#FAF9F7',
+    100: '#F6F5F3',
+    200: '#EDEAE6',
+    300: '#E3DFD9',
+    400: '#C4BEB5',
+    500: '#94908A',
+    foreground: '#2D2A26',
+    DEFAULT: '#F0EEEB',
+  },
+  success: {
+    50: '#edf8f1',
+    100: '#E5F5EC',
+    200: '#a8e4c0',
+    300: '#6bcf94',
+    400: '#36b468',
+    500: '#1b8f46',
+    600: '#17793c',
+    700: '#136332',
+    800: '#104d28',
+    900: '#0d3a1e',
+    foreground: '#ffffff',
+    DEFAULT: '#177a3c',
+  },
+  warning: {
+    50: '#fefaf0',
+    100: '#fdf4d6',
+    200: '#fae6a2',
+    300: '#f2d264',
+    400: '#e8c438',
+    500: '#d4a510',
+    600: '#b08508',
+    700: '#8c6a06',
+    800: '#7a5a09',
+    900: '#5c420a',
+    foreground: '#2D2A26',
+    DEFAULT: '#d4a510',
+  },
+  danger: {
+    50: '#fdf0f0',
+    100: '#fce8e8',
+    200: '#f5d0d0',
+    300: '#eba8a8',
+    400: '#e06464',
+    500: '#C93B37',
+    600: '#b82724',
+    700: '#961f1d',
+    800: '#7a1918',
+    900: '#5e1413',
+    foreground: '#ffffff',
+    DEFAULT: '#C93B37',
+  },
+};
+
+export const darkColors: ThemeColors = {
+  background: '#1A1816',
+  foreground: '#E8E4DE',
+  divider: '#3A3630',
+  focus: '#D4940F',
+  content1: '#262320',
+  content2: '#1E1C19',
+  content3: '#332810',
+  content4: '#3A3630',
+  default: {
+    50: '#1A1816',
+    100: '#262320',
+    200: '#3A3630',
+    300: '#524D46',
+    400: '#6E6860',
+    500: '#9A948C',
+    600: '#C4BEB5',
+    700: '#E8E4DE',
+    800: '#F0EEEB',
+    900: '#FAF9F7',
+    foreground: '#E8E4DE',
+    DEFAULT: '#3A3630',
+  },
+  primary: {
+    50: '#1E1A10',
+    100: '#332810',
+    200: '#4A3A18',
+    300: '#7D4D09',
+    400: '#B8720E',
+    500: '#D4940F',
+    600: '#E5A82A',
+    700: '#F5DDB4',
+    800: '#FDF3E3',
+    900: '#FDF8F0',
+    foreground: '#1A1816',
+    DEFAULT: '#D4940F',
+  },
+  secondary: {
+    50: '#1A1816',
+    100: '#262320',
+    200: '#3A3630',
+    300: '#524D46',
+    400: '#6E6860',
+    500: '#9A948C',
+    foreground: '#E8E4DE',
+    DEFAULT: '#262320',
+  },
+  success: {
+    50: '#0c3626',
+    100: '#0d4630',
+    200: '#136332',
+    300: '#1b8f46',
+    400: '#3cc978',
+    500: '#6ae0a0',
+    foreground: '#1A1816',
+    DEFAULT: '#3cc978',
+  },
+  warning: {
+    50: '#362008',
+    100: '#3e2406',
+    200: '#5c420a',
+    300: '#8c6a06',
+    400: '#d4a510',
+    500: '#f0d456',
+    foreground: '#2D2A26',
+    DEFAULT: '#d4a510',
+  },
+  danger: {
+    50: '#351a1a',
+    100: '#422020',
+    200: '#702020',
+    300: '#961f1d',
+    400: '#e85450',
+    500: '#eba8a8',
+    foreground: '#1A1816',
+    DEFAULT: '#ef6b67',
+  },
+};
