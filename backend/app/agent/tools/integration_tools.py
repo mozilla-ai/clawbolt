@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, Field
 
 from backend.app.agent.stores import ToolConfigStore
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.appfolio_vendor import auth as appfolio_auth
 from backend.app.services.oauth import get_oauth_config, list_oauth_integrations, oauth_service
@@ -393,12 +393,22 @@ async def _handle_connect(user_id: str, target: str, registry: ToolRegistry) -> 
 
     url = oauth_service.get_authorization_url(config, user_id, source="chat")
     logger.info("User %s requested OAuth connect link for '%s' via chat", user_id, oauth_name)
+    # The URL lives ONLY in the ToolReceipt, never in ``content``. The receipt
+    # is rendered server-side by ``tool_summary.append_receipts`` and appended
+    # to the outbound verbatim, so the link reaches the user deterministically
+    # instead of depending on the LLM to echo a 400-char OAuth URL it tends to
+    # paraphrase away ("Tap the link" with no link -- the original bug). Keeping
+    # the URL out of ``content`` also closes the duplication trap the calendar /
+    # qb receipts hit: when the rich value is echoed to the LLM too, the model
+    # restates it and the user sees the link twice. Same pattern as
+    # ``calendar/factory.py`` create_event.
     return ToolResult(
         content=(
-            f"To connect {display}, open this link:\n\n{url}\n\n"
-            "After you approve access, the connection will be ready "
-            "the next time you message me."
+            f"Connect link for {display} generated. It is shown to the user as a "
+            "tappable link below your reply, so just tell them to tap it, approve "
+            "access, then message you back. Do not write out or repeat the URL."
         ),
+        receipt=ToolReceipt(action="Tap to connect", target=display, url=url),
     )
 
 
