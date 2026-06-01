@@ -485,7 +485,9 @@ async def build_context_step(ctx: PipelineContext) -> PipelineContext:
 
 async def load_history_step(ctx: PipelineContext) -> PipelineContext:
     """Load conversation history and set up onboarding."""
-    ctx.conversation_history = await load_conversation_history(ctx.session)
+    ctx.conversation_history = await load_conversation_history(
+        ctx.session, tz_name=ctx.user.timezone
+    )
     ctx.is_onboarding = is_onboarding_needed(ctx.user)
     # Pass user (inbound) message count so the onboarding subscriber's
     # heuristic fallback can require a minimum number of user turns before
