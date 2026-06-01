@@ -35,6 +35,13 @@ SELECT <fields> FROM <Entity> [WHERE <conditions>] [ORDERBY <field> DESC] [MAXRE
 - Not all fields support all operators. For example, Estimate TxnStatus does not support IN or LIKE. If a query returns a 400 error, simplify the WHERE clause and filter results yourself.
 - String comparisons are case-sensitive in QBO queries.
 
+## Finding a customer, invoice, or estimate
+
+An entity you have not queried this session is unknown, not absent. Never tell
+the user a customer, invoice, or estimate does not exist, and never create a
+new one, until `qb_query` has returned no match for the identifier they gave.
+An ID you already resolved this session can be reused without re-querying.
+
 ## Creating Entities (qb_create)
 
 Pass `entity_type` (Customer, Estimate, or Invoice) and `data` (the QBO API payload).
@@ -155,8 +162,9 @@ This is the primary workflow for users who dictate job details from the field:
 9. When user says it's ready: `qb_send` Estimate to the client's email
 
 ### New customer job
-1. `qb_create` Customer
-2. `qb_create` Estimate with the new customer's Id
+1. `qb_query` Customer to check if the client exists (see "Finding a customer, invoice, or estimate")
+2. If new client: `qb_create` Customer
+3. `qb_create` Estimate with the new customer's Id
 3. User approves the estimate
 4. Convert estimate to invoice (see below)
 5. `qb_send` the invoice
