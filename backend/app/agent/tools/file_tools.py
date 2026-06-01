@@ -1036,7 +1036,7 @@ def _register() -> None:
         "file",
         _file_factory,
         core=False,
-        summary="Upload, retrieve, and organize files in the user's Google Drive",
+        summary="Upload, retrieve, organize, and edit files in the user's Google Drive, including creating and editing text files from chat",
         display_name="Google Drive",
         oauth_name="google_drive",
         dashboard_description="Upload, retrieve, and organize files in the user's Google Drive",
