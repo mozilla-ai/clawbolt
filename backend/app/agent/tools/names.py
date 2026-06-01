@@ -19,6 +19,9 @@ class ToolName:
     MOVE_FILE = "move_file"
     FIND_SAVED_FILES = "find_saved_files"
     ANALYZE_SAVED_FILE = "analyze_saved_file"
+    WRITE_TO_STORAGE = "write_to_storage"
+    EDIT_STORAGE_FILE = "edit_storage_file"
+    READ_FROM_STORAGE = "read_from_storage"
 
     # Media (agent-native storage)
     ANALYZE_PHOTO = "analyze_photo"

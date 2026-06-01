@@ -126,6 +126,31 @@ class MockStorageBackend(StorageBackend):
             web_view_link=f"https://mock-storage.example.com{normalized}",
         )
 
+    async def update_file_content(
+        self,
+        path: str,
+        file_bytes: bytes,
+        *,
+        mime_type: str = "text/plain",
+    ) -> SavedFile:
+        legacy = path.lstrip("/")
+        if legacy not in self.files:
+            msg = f"File not found: {path}"
+            raise FileNotFoundError(msg)
+        self.files[legacy] = file_bytes
+        meta = self.metadata.get(path)
+        if meta is None:
+            name = legacy.rsplit("/", 1)[-1]
+            meta = self._make_metadata(
+                path.rsplit("/", 1)[0] if "/" in path.lstrip("/") else "",
+                name,
+                mime_type,
+                description="",
+            )
+        else:
+            meta.mime_type = mime_type
+        return meta
+
     async def search_files(self, query: str = "", limit: int = 10) -> list[SavedFile]:
         tokens = [t.lower() for t in re.split(r"\W+", query.strip()) if t]
         results: list[SavedFile] = []
