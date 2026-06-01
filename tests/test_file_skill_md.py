@@ -33,12 +33,8 @@ def test_skill_md_has_writing_vs_uploading_section() -> None:
 def test_skill_md_mentions_both_write_and_upload_tools() -> None:
     """Both write_to_storage and upload_to_storage must be documented."""
     content = SKILL_MD_PATH.read_text()
-    assert "write_to_storage" in content, (
-        "SKILL.md must mention write_to_storage."
-    )
-    assert "upload_to_storage" in content, (
-        "SKILL.md must mention upload_to_storage."
-    )
+    assert "write_to_storage" in content, "SKILL.md must mention write_to_storage."
+    assert "upload_to_storage" in content, "SKILL.md must mention upload_to_storage."
 
 
 def test_skill_md_has_storage_vs_workspace_section() -> None:
@@ -53,12 +49,8 @@ def test_skill_md_has_storage_vs_workspace_section() -> None:
 def test_skill_md_mentions_workspace_tools() -> None:
     """Workspace tools should be referenced so the LLM knows the boundary."""
     content = SKILL_MD_PATH.read_text()
-    assert "read_file" in content, (
-        "SKILL.md must mention read_file (workspace) for comparison."
-    )
-    assert "write_file" in content, (
-        "SKILL.md must mention write_file (workspace) for comparison."
-    )
+    assert "read_file" in content, "SKILL.md must mention read_file (workspace) for comparison."
+    assert "write_file" in content, "SKILL.md must mention write_file (workspace) for comparison."
     assert "MEMORY.md" in content or "USER.md" in content or "SOUL.md" in content, (
         "SKILL.md must reference at least one of MEMORY.md/USER.md/SOUL.md."
     )
@@ -67,23 +59,17 @@ def test_skill_md_mentions_workspace_tools() -> None:
 def test_skill_md_describes_edit_workflow() -> None:
     """SKILL.md must tell the LLM to read before editing."""
     content = SKILL_MD_PATH.read_text()
-    assert "## Editing a file" in content, (
-        "SKILL.md should have an 'Editing a file' section."
-    )
+    assert "## Editing a file" in content, "SKILL.md should have an 'Editing a file' section."
     assert "read_from_storage" in content, (
         "SKILL.md must mention read_from_storage in the edit workflow."
     )
-    assert "old_text" in content, (
-        "SKILL.md must mention old_text to explain the edit mechanism."
-    )
+    assert "old_text" in content, "SKILL.md must mention old_text to explain the edit mechanism."
 
 
 def test_skill_md_has_connecting_section() -> None:
     """SKILL.md must tell the LLM how Google Drive gets connected."""
     content = SKILL_MD_PATH.read_text()
-    assert "## Connecting" in content, (
-        "SKILL.md should have a 'Connecting' section."
-    )
+    assert "## Connecting" in content, "SKILL.md should have a 'Connecting' section."
     assert "manage_integration" in content, (
         "SKILL.md must mention manage_integration for Drive OAuth flow."
     )
