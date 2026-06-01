@@ -974,6 +974,20 @@ class _FakeStorage(StorageBackend):
             return self._files[path][0]
         return None
 
+    async def update_file_content(
+        self,
+        path: str,
+        file_bytes: bytes,
+        *,
+        mime_type: str = "text/plain",
+    ) -> SavedFile:
+        if path not in self._files:
+            msg = f"File not found: {path}"
+            raise FileNotFoundError(msg)
+        saved, _ = self._files[path]
+        self._files[path] = (saved, file_bytes)
+        return saved
+
     async def search_files(self, query: str = "", limit: int = 10) -> list[SavedFile]:
         if not query.strip():
             return [saved for saved, _ in self._files.values()][:limit]
