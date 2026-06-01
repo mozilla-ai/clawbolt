@@ -5,15 +5,22 @@ mechanism: tools for authenticated integrations are loaded on the schema
 from turn 1 (see ``create_ready_specialist_tools``).
 """
 
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from pydantic import BaseModel
 
+from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.messages import ToolCallRequest
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import (
+    SubToolInfo,
     ToolContext,
     ToolRegistry,
     create_list_capabilities_tool,
+    default_registry,
     ensure_tool_modules_imported,
 )
 from backend.app.models import User
@@ -109,8 +116,6 @@ class TestAvailableSpecialistSummaries:
 
     @pytest.mark.asyncio()
     async def test_returns_all_specialists_when_deps_met(self) -> None:
-        from unittest.mock import MagicMock
-
         registry = _build_test_registry()
         ctx = ToolContext(
             user=User(id="1"),
@@ -211,16 +216,12 @@ class TestDefaultRegistryCoreSpecialistSplit:
     """The default registry correctly classifies built-in factories."""
 
     def test_core_factories(self) -> None:
-        from backend.app.agent.tools.registry import default_registry
-
         core = default_registry.core_factory_names
         assert "messaging" in core
         assert "workspace" in core
         assert "heartbeat" in core
 
     def test_specialist_factories(self) -> None:
-        from backend.app.agent.tools.registry import default_registry
-
         specialist = default_registry.specialist_factory_names
         assert "quickbooks" in specialist
         assert "calendar" in specialist
@@ -228,8 +229,6 @@ class TestDefaultRegistryCoreSpecialistSplit:
         assert "heartbeat" not in specialist
 
     def test_no_overlap(self) -> None:
-        from backend.app.agent.tools.registry import default_registry
-
         core = default_registry.core_factory_names
         specialist = default_registry.specialist_factory_names
         assert not core & specialist
@@ -240,8 +239,6 @@ class TestGetSpecialistFactoryForTool:
 
     def _reg_with_subtools(self) -> ToolRegistry:
         """Build a registry where specialist factories declare sub_tools."""
-        from backend.app.agent.tools.registry import SubToolInfo
-
         reg = ToolRegistry()
         reg.register(
             "estimate",
@@ -295,8 +292,6 @@ class TestListCapabilitiesTelemetry:
     async def test_logs_lookup_when_category_provided(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        import logging
-
         caplog.set_level(logging.INFO)
         summaries = {"estimate": "Generate estimates"}
         tool = create_list_capabilities_tool(summaries)
@@ -309,8 +304,6 @@ class TestListCapabilitiesTelemetry:
     async def test_does_not_log_when_category_is_none(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        import logging
-
         caplog.set_level(logging.INFO)
         summaries = {"estimate": "Generate estimates"}
         tool = create_list_capabilities_tool(summaries)
@@ -320,8 +313,6 @@ class TestListCapabilitiesTelemetry:
 
     @pytest.mark.asyncio
     async def test_logs_unknown_category_as_lookup(self, caplog: pytest.LogCaptureFixture) -> None:
-        import logging
-
         caplog.set_level(logging.INFO)
         summaries = {"estimate": "Generate estimates"}
         tool = create_list_capabilities_tool(summaries)
@@ -338,12 +329,6 @@ class TestSpecialistToolInvocationTelemetry:
     @pytest.mark.asyncio
     async def test_logs_specialist_tool_invocation(self) -> None:
         """When a specialist tool is executed, the logger fires with tool and category."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from pydantic import BaseModel
-
-        from backend.app.agent.core import ClawboltAgent
-        from backend.app.agent.tools.registry import SubToolInfo
 
         class _Params(BaseModel):
             pass
@@ -380,8 +365,6 @@ class TestSpecialistToolInvocationTelemetry:
             agent = ClawboltAgent(user=MagicMock(), registry=reg)
             agent.register_tools(tools)
             # Directly invoke _execute_single_tool to trigger the logging
-            from backend.app.agent.messages import ToolCallRequest
-
             tc_req = ToolCallRequest(id="call_1", name="test_tool", arguments={})
             validated_args = {}
             parsed_calls = [tc_req]
@@ -397,12 +380,6 @@ class TestSpecialistToolInvocationTelemetry:
     @pytest.mark.asyncio
     async def test_does_not_log_core_tool_invocation(self) -> None:
         """Core tools do not trigger the specialist telemetry log."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from pydantic import BaseModel
-
-        from backend.app.agent.core import ClawboltAgent
-        from backend.app.agent.tools.registry import SubToolInfo
 
         class _Params(BaseModel):
             pass
@@ -431,8 +408,6 @@ class TestSpecialistToolInvocationTelemetry:
         )
         tools = await reg.create_core_tools(ctx)
         assert len(tools) == 1
-
-        from backend.app.agent.messages import ToolCallRequest
 
         tc_req = ToolCallRequest(id="call_1", name="core_tool", arguments={})
         validated_args = {}
