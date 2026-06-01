@@ -20,6 +20,7 @@ from backend.app.agent.messages import (
     UserMessage,
 )
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.system_prompt import to_local_time
 from backend.app.config import settings
 from backend.app.database import db_session_async
 from backend.app.enums import MessageDirection
@@ -299,7 +300,52 @@ def _expand_outbound_with_tools(
     return messages
 
 
-def _stored_messages_to_agent_messages(messages: list[Any]) -> list[AgentMessage]:
+# Minimum elapsed time between two consecutive visible messages before we
+# annotate the later one with a timestamp. Below this, consecutive turns are
+# treated as a continuous exchange and left unmarked to keep history terse.
+_TIMESTAMP_GAP_THRESHOLD = datetime.timedelta(minutes=30)
+
+
+def _time_marker(prev_iso: str, cur_iso: str, tz_name: str) -> str | None:
+    """Return a localized timestamp marker for a message, or ``None`` to skip.
+
+    A marker is emitted only when the message is the first in the slice
+    (``prev_iso`` empty), is separated from the previous visible message by
+    more than ``_TIMESTAMP_GAP_THRESHOLD``, or crosses a local-day boundary.
+    This surfaces the useful signal (a conversation resumed after a break)
+    without prefixing every turn.
+
+    Markers are *absolute* (not relative like "3 hours ago") so a given
+    historical message always renders the same string and never busts the
+    system/history prompt cache. The current time is injected separately into
+    the live user message, so the LLM can compute "how long ago" itself.
+    """
+    try:
+        cur = datetime.datetime.fromisoformat(cur_iso)
+    except (ValueError, TypeError):
+        return None
+    prev: datetime.datetime | None = None
+    if prev_iso:
+        try:
+            prev = datetime.datetime.fromisoformat(prev_iso)
+        except (ValueError, TypeError):
+            prev = None
+    if prev is not None:
+        same_day = to_local_time(prev, tz_name).date() == to_local_time(cur, tz_name).date()
+        if same_day and (cur - prev) < _TIMESTAMP_GAP_THRESHOLD:
+            return None
+    local = to_local_time(cur, tz_name)
+    return f"[{local.strftime('%A, %Y-%m-%d %I:%M %p').strip()}]"
+
+
+def _with_marker(marker: str | None, text: str) -> str:
+    """Prepend a timestamp *marker* to *text* on its own line, if present."""
+    return f"{marker}\n{text}" if marker else text
+
+
+def _stored_messages_to_agent_messages(
+    messages: list[Any], tz_name: str = ""
+) -> list[AgentMessage]:
     """Convert ``StoredMessage`` rows to typed ``AgentMessage`` objects.
 
     Mirrors the conversion logic of ``load_conversation_history`` so any
@@ -313,6 +359,10 @@ def _stored_messages_to_agent_messages(messages: list[Any]) -> list[AgentMessage
     """
     history: list[AgentMessage] = []
     last_was_approval_prompt = False
+    # Timestamp of the previous *visible* message (dropped approval prompts and
+    # blank rows do not advance it), so gaps are measured between turns the LLM
+    # actually sees.
+    prev_iso = ""
     for msg in messages:
         if msg.direction == MessageDirection.OUTBOUND:
             # Feed the LLM its pre-receipt prose, not the dispatched body.
@@ -347,13 +397,21 @@ def _stored_messages_to_agent_messages(messages: list[Any]) -> list[AgentMessage
                 last_was_approval_prompt = False
                 continue
             last_was_approval_prompt = False
-            history.append(UserMessage(content=content, seq=msg.seq))
+            marker = _time_marker(prev_iso, msg.timestamp, tz_name)
+            history.append(UserMessage(content=_with_marker(marker, content), seq=msg.seq))
+            prev_iso = msg.timestamp
         else:
             # Check for stored tool interactions
             tool_interactions = _parse_tool_interactions(msg.tool_interactions_json)
             if tool_interactions:
-                history.extend(_expand_outbound_with_tools(tool_interactions, content, seq=msg.seq))
+                marker = _time_marker(prev_iso, msg.timestamp, tz_name)
+                history.extend(
+                    _expand_outbound_with_tools(
+                        tool_interactions, _with_marker(marker, content), seq=msg.seq
+                    )
+                )
                 last_was_approval_prompt = False
+                prev_iso = msg.timestamp
             elif _is_approval_prompt(content):
                 # Skip approval prompts (real ones persisted by older code,
                 # plus any LLM-generated fake prompts that mimic the format).
@@ -363,19 +421,26 @@ def _stored_messages_to_agent_messages(messages: list[Any]) -> list[AgentMessage
                 # already-poisoned sessions without a DB migration.
                 last_was_approval_prompt = True
             else:
-                history.append(AssistantMessage(content=content, seq=msg.seq))
+                marker = _time_marker(prev_iso, msg.timestamp, tz_name)
+                history.append(AssistantMessage(content=_with_marker(marker, content), seq=msg.seq))
                 last_was_approval_prompt = False
+                prev_iso = msg.timestamp
     return history
 
 
 async def load_conversation_history(
     session: SessionState,
     limit: int = DEFAULT_HISTORY_LIMIT,
+    tz_name: str = "",
 ) -> list[AgentMessage]:
     """Load recent messages as typed message objects for LLM context.
 
     Returns a list of typed messages in chronological order, excluding the
     most recent (which is the current message being processed).
+
+    *tz_name* is the user's IANA timezone, used to localize the timestamp
+    markers prepended to messages separated by a significant time gap (see
+    :func:`_time_marker`). Empty string falls back to UTC.
 
     For outbound messages that have ``tool_interactions_json``, the full
     tool call/result sequence is reconstructed so the LLM can see its
@@ -403,7 +468,7 @@ async def load_conversation_history(
     else:
         messages = []
 
-    history = _stored_messages_to_agent_messages(messages)
+    history = _stored_messages_to_agent_messages(messages, tz_name=tz_name)
     logger.debug(
         "Loaded %d history messages for session %s",
         len(history),

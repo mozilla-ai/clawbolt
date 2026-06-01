@@ -1446,7 +1446,9 @@ async def test_load_conversation_history_respects_last_trim_seq(test_user: User)
 
     # Excludes the most recent (current message). Filtered to seq > 10.
     # So we keep seqs 11..19 (the last one, seq=20, is the "current" excluded).
-    contents = {getattr(m, "content", None) for m in history}
+    # The first kept message carries a leading timestamp marker, so compare the
+    # message body (last line) rather than the full content.
+    contents = {(getattr(m, "content", None) or "").rsplit("\n", 1)[-1] for m in history}
     assert "msg 1" not in contents
     assert "msg 10" not in contents
     assert "msg 11" in contents
@@ -1462,7 +1464,9 @@ async def test_load_conversation_history_null_watermark_no_filter(test_user: Use
     assert session.last_trim_seq is None
 
     history = await load_conversation_history(session)
-    contents = {getattr(m, "content", None) for m in history}
+    # The first kept message carries a leading timestamp marker, so compare the
+    # message body (last line) rather than the full content.
+    contents = {(getattr(m, "content", None) or "").rsplit("\n", 1)[-1] for m in history}
     # All non-current messages present.
     assert "msg 1" in contents
     assert "msg 9" in contents

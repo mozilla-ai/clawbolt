@@ -46,7 +46,8 @@ async def test_load_history_chronological_order(
     history = await load_conversation_history(conversation)
     # Should exclude the current (most recent) message
     assert len(history) == 3
-    assert history[0].content == "Message 0"
+    # history[0] carries a leading timestamp anchor (first message in the slice).
+    assert (history[0].content or "").endswith("Message 0")
     assert history[1].content == "Message 1"
     assert history[2].content == "Message 2"
 
@@ -128,7 +129,7 @@ async def test_load_history_outbound_uses_llm_reply_text_when_set(
 
     history = await load_conversation_history(conversation)
     assert len(history) == 1
-    assert history[0].content == "Sent."
+    assert (history[0].content or "").endswith("Sent.")
 
 
 @pytest.mark.asyncio()
@@ -150,7 +151,7 @@ async def test_load_history_outbound_falls_back_to_body_for_legacy_rows(
 
     history = await load_conversation_history(conversation)
     assert len(history) == 1
-    assert history[0].content == "Got it."
+    assert (history[0].content or "").endswith("Got it.")
 
 
 @pytest.mark.asyncio()
@@ -319,7 +320,7 @@ async def test_load_history_reconstructs_tool_interactions(
     # Should be: UserMessage, AssistantMessage(tool_calls), ToolResultMessage, AssistantMessage
     assert len(history) == 4
     assert isinstance(history[0], UserMessage)
-    assert history[0].content == "Save my rate"
+    assert history[0].content.endswith("Save my rate")
 
     assert isinstance(history[1], AssistantMessage)
     assert len(history[1].tool_calls) == 1
@@ -468,7 +469,7 @@ async def test_load_history_filters_persisted_approval_prompts(
     history = await load_conversation_history(conversation)
     assert len(history) == 1
     assert isinstance(history[0], UserMessage)
-    assert history[0].content == "Create that estimate"
+    assert history[0].content.endswith("Create that estimate")
     assert all(
         "deny and remember" not in (m.content or "")
         for m in history
@@ -495,7 +496,7 @@ async def test_load_history_filters_legacy_approval_prompt_wording(
     history = await load_conversation_history(conversation)
     assert len(history) == 1
     assert isinstance(history[0], UserMessage)
-    assert history[0].content == "Create that estimate"
+    assert history[0].content.endswith("Create that estimate")
 
 
 @pytest.mark.asyncio()
@@ -517,7 +518,7 @@ async def test_load_history_filters_orphan_approval_reply_following_prompt(
     # Only the original "Create that estimate" inbound survives.
     assert len(history) == 1
     assert isinstance(history[0], UserMessage)
-    assert history[0].content == "Create that estimate"
+    assert history[0].content.endswith("Create that estimate")
 
 
 @pytest.mark.asyncio()
@@ -594,4 +595,4 @@ async def test_load_history_filters_llm_generated_fake_approval_prompt(
     # orphan "Yes" reply are both stripped.
     assert len(history) == 1
     assert isinstance(history[0], UserMessage)
-    assert history[0].content == "estimate?"
+    assert history[0].content.endswith("estimate?")
