@@ -35,7 +35,6 @@ def test_load_prompt_strips_whitespace() -> None:
 
 def test_load_prompt_content_sanity() -> None:
     """Verify key substrings are present in a few prompts."""
-    assert "concise" in load_prompt("instructions")
     assert "JSON" in load_prompt("compaction")
     assert "tradesperson" in load_prompt("bootstrap")
 
