@@ -5,15 +5,22 @@ mechanism: tools for authenticated integrations are loaded on the schema
 from turn 1 (see ``create_ready_specialist_tools``).
 """
 
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from pydantic import BaseModel
 
+from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.messages import ToolCallRequest
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import (
+    SubToolInfo,
     ToolContext,
     ToolRegistry,
     create_list_capabilities_tool,
+    default_registry,
     ensure_tool_modules_imported,
 )
 from backend.app.models import User
@@ -109,8 +116,6 @@ class TestAvailableSpecialistSummaries:
 
     @pytest.mark.asyncio()
     async def test_returns_all_specialists_when_deps_met(self) -> None:
-        from unittest.mock import MagicMock
-
         registry = _build_test_registry()
         ctx = ToolContext(
             user=User(id="1"),
@@ -211,16 +216,12 @@ class TestDefaultRegistryCoreSpecialistSplit:
     """The default registry correctly classifies built-in factories."""
 
     def test_core_factories(self) -> None:
-        from backend.app.agent.tools.registry import default_registry
-
         core = default_registry.core_factory_names
         assert "messaging" in core
         assert "workspace" in core
         assert "heartbeat" in core
 
     def test_specialist_factories(self) -> None:
-        from backend.app.agent.tools.registry import default_registry
-
         specialist = default_registry.specialist_factory_names
         assert "quickbooks" in specialist
         assert "calendar" in specialist
@@ -228,8 +229,193 @@ class TestDefaultRegistryCoreSpecialistSplit:
         assert "heartbeat" not in specialist
 
     def test_no_overlap(self) -> None:
-        from backend.app.agent.tools.registry import default_registry
-
         core = default_registry.core_factory_names
         specialist = default_registry.specialist_factory_names
         assert not core & specialist
+
+
+class TestGetSpecialistFactoryForTool:
+    """get_specialist_factory_for_tool maps specialist tool names to their factory."""
+
+    def _reg_with_subtools(self) -> ToolRegistry:
+        """Build a registry where specialist factories declare sub_tools."""
+        reg = ToolRegistry()
+        reg.register(
+            "estimate",
+            lambda ctx: [_make_tool("generate_estimate")],
+            core=False,
+            summary="Generate estimates",
+            sub_tools=[SubToolInfo("generate_estimate", "Generate estimates")],
+        )
+        reg.register(
+            "heartbeat",
+            lambda ctx: [_make_tool("get_heartbeat")],
+            core=False,
+            summary="Heartbeat",
+            sub_tools=[SubToolInfo("get_heartbeat", "Get heartbeat")],
+        )
+        reg.register(
+            "messaging",
+            lambda ctx: [_make_tool("send_media_reply")],
+            sub_tools=[SubToolInfo("send_media_reply", "Send reply")],
+        )
+        return reg
+
+    def test_returns_factory_name_for_specialist_tool(self) -> None:
+        registry = self._reg_with_subtools()
+        factory = registry.get_specialist_factory_for_tool("generate_estimate")
+        assert factory == "estimate"
+
+    def test_returns_none_for_core_tool(self) -> None:
+        registry = self._reg_with_subtools()
+        factory = registry.get_specialist_factory_for_tool("send_media_reply")
+        assert factory is None
+
+    def test_returns_none_for_unknown_tool(self) -> None:
+        registry = self._reg_with_subtools()
+        factory = registry.get_specialist_factory_for_tool("no_such_tool")
+        assert factory is None
+
+    def test_caches_after_first_lookup(self) -> None:
+        registry = self._reg_with_subtools()
+        factory1 = registry.get_specialist_factory_for_tool("generate_estimate")
+        assert factory1 == "estimate"
+        assert registry._specialist_tool_to_factory is not None
+        factory2 = registry.get_specialist_factory_for_tool("get_heartbeat")
+        assert factory2 == "heartbeat"
+
+
+class TestListCapabilitiesTelemetry:
+    """list_capabilities with a non-null category logs a structured event."""
+
+    @pytest.mark.asyncio
+    async def test_logs_lookup_when_category_provided(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        summaries = {"estimate": "Generate estimates"}
+        tool = create_list_capabilities_tool(summaries)
+        result = await tool.function(category="estimate")
+        assert not result.is_error
+        assert "list_capabilities_lookup" in caplog.text
+        assert "category=estimate" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_does_not_log_when_category_is_none(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        summaries = {"estimate": "Generate estimates"}
+        tool = create_list_capabilities_tool(summaries)
+        result = await tool.function(category=None)
+        assert not result.is_error
+        assert "list_capabilities_lookup" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_logs_unknown_category_as_lookup(self, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.INFO)
+        summaries = {"estimate": "Generate estimates"}
+        tool = create_list_capabilities_tool(summaries)
+        result = await tool.function(category="nonexistent")
+        assert result.is_error
+        # Even though the category is unknown, the lookup event should still fire
+        assert "list_capabilities_lookup" in caplog.text
+        assert "category=nonexistent" in caplog.text
+
+
+class TestSpecialistToolInvocationTelemetry:
+    """Specialist tool invocations log a structured event with the category."""
+
+    @pytest.mark.asyncio
+    async def test_logs_specialist_tool_invocation(self) -> None:
+        """When a specialist tool is executed, the logger fires with tool and category."""
+
+        class _Params(BaseModel):
+            pass
+
+        async def _tool_fn(**_: object) -> ToolResult:
+            return ToolResult(content="done")
+
+        reg = ToolRegistry()
+        reg.register(
+            "test_specialist",
+            lambda ctx: [
+                Tool(
+                    name="test_tool",
+                    description="test specialist tool",
+                    function=_tool_fn,
+                    params_model=_Params,
+                )
+            ],
+            core=False,
+            summary="Test specialist",
+            sub_tools=[SubToolInfo("test_tool", "Test tool")],
+        )
+
+        ctx = ToolContext(
+            user=MagicMock(),
+            storage=MagicMock(),
+            publish_outbound=AsyncMock(),
+        )
+        tools = await reg.create_ready_specialist_tools(ctx)
+        assert len(tools) == 1
+
+        # Patch the logger to verify the call, bypassing the full agent loop
+        with patch("backend.app.agent.core.logger") as mock_logger:
+            agent = ClawboltAgent(user=MagicMock(), registry=reg)
+            agent.register_tools(tools)
+            # Directly invoke _execute_single_tool to trigger the logging
+            tc_req = ToolCallRequest(id="call_1", name="test_tool", arguments={})
+            validated_args = {}
+            parsed_calls = [tc_req]
+
+            await agent._execute_single_tool(0, tools[0], validated_args, parsed_calls)
+
+            mock_logger.info.assert_called_once()
+            args = mock_logger.info.call_args[0]
+            assert "specialist_tool_invocation" in args[0]
+            assert "test_tool" in str(args)
+            assert "test_specialist" in str(args)
+
+    @pytest.mark.asyncio
+    async def test_does_not_log_core_tool_invocation(self) -> None:
+        """Core tools do not trigger the specialist telemetry log."""
+
+        class _Params(BaseModel):
+            pass
+
+        async def _tool_fn(**_: object) -> ToolResult:
+            return ToolResult(content="done")
+
+        reg = ToolRegistry()
+        reg.register(
+            "core_factory",
+            lambda ctx: [
+                Tool(
+                    name="core_tool",
+                    description="core tool",
+                    function=_tool_fn,
+                    params_model=_Params,
+                )
+            ],
+            sub_tools=[SubToolInfo("core_tool", "Core tool")],
+        )
+
+        ctx = ToolContext(
+            user=MagicMock(),
+            storage=MagicMock(),
+            publish_outbound=AsyncMock(),
+        )
+        tools = await reg.create_core_tools(ctx)
+        assert len(tools) == 1
+
+        tc_req = ToolCallRequest(id="call_1", name="core_tool", arguments={})
+        validated_args = {}
+        parsed_calls = [tc_req]
+
+        with patch("backend.app.agent.core.logger") as mock_logger:
+            agent = ClawboltAgent(user=MagicMock(), registry=reg)
+            agent.register_tools(tools)
+            await agent._execute_single_tool(0, tools[0], validated_args, parsed_calls)
+
+            mock_logger.info.assert_not_called()

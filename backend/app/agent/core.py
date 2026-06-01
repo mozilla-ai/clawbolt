@@ -654,6 +654,16 @@ class ClawboltAgent:
         tool_name = tc_req.name
         tool_tags = self._get_tool_tags(tool_name)
 
+        # Telemetry: log specialist tool invocations with their category.
+        if self._registry is not None:
+            factory = self._registry.get_specialist_factory_for_tool(tool_name)
+            if factory is not None:
+                logger.info(
+                    "specialist_tool_invocation tool=%s category=%s",
+                    tool_name,
+                    factory,
+                )
+
         await self._emit(ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args))
         tool_start = time.monotonic()
         result_str = ""

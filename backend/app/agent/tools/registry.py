@@ -187,6 +187,13 @@ def create_list_capabilities_tool(
                     lines.append(f"- {name}: {reason}")
             return ToolResult(content="\n".join(lines))
 
+        # Telemetry: log every list_capabilities lookup with a non-null
+        # category, regardless of whether the category is valid or connected.
+        logger.info(
+            "list_capabilities_lookup category=%s",
+            category,
+        )
+
         if category in _unauthenticated:
             return ToolResult(
                 content=_unauthenticated[category],
@@ -267,6 +274,8 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._factories: dict[str, ToolFactory] = {}
+        # Lazy-built reverse mapping: tool name -> specialist factory name
+        self._specialist_tool_to_factory: dict[str, str] | None = None
 
     def register(
         self,
@@ -588,6 +597,26 @@ class ToolRegistry:
             if disabled:
                 result[name] = disabled
         return result
+
+    def get_specialist_factory_for_tool(self, tool_name: str) -> str | None:
+        """Return the specialist factory name that owns *tool_name*, or ``None``.
+
+        Builds a reverse mapping from tool name to factory name for all
+        specialist (non-core) factories. Core tools return ``None`` since
+        they have no associated SKILL.md category.
+
+        The mapping is lazily built on first call and cached so repeated
+        lookups in the same agent turn are O(1) after the initial scan.
+        """
+        if self._specialist_tool_to_factory is None:
+            mapping: dict[str, str] = {}
+            for fname, factory in self._factories.items():
+                if factory.core:
+                    continue
+                for st in factory.sub_tools:
+                    mapping[st.name] = fname
+            self._specialist_tool_to_factory = mapping
+        return self._specialist_tool_to_factory.get(tool_name)
 
     @property
     def specialist_summaries(self) -> dict[str, str]:
