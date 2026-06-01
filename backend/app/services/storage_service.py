@@ -99,6 +99,21 @@ class StorageBackend(ABC):
         """Fetch metadata for a single file by storage path. Returns None if missing."""
 
     @abstractmethod
+    async def update_file_content(
+        self,
+        path: str,
+        file_bytes: bytes,
+        *,
+        mime_type: str = "text/plain",
+    ) -> SavedFile:
+        """Replace the content of an existing file at *path*.
+
+        The file must already exist (created by :meth:`upload_file` or
+        placed by :meth:`move_file`). Returns updated metadata for the
+        file.
+        """
+
+    @abstractmethod
     async def search_files(self, query: str = "", limit: int = 10) -> list[SavedFile]:
         """Return up to *limit* files matching *query*.
 
@@ -407,6 +422,68 @@ class GoogleDriveStorage(StorageBackend):
             "Google Drive upload complete: %s -> %s",
             saved.path,
             saved.web_view_link or saved.metadata.get("id", ""),
+        )
+        return saved
+
+    async def update_file_content(
+        self,
+        path: str,
+        file_bytes: bytes,
+        *,
+        mime_type: str = "text/plain",
+    ) -> SavedFile:
+        """Replace the content of an existing file at *path*.
+
+        Uses the canonical ``clawbolt_path`` appProperty to locate the
+        file, then issues a Drive ``files.update`` with the new content
+        media. Raises ``FileNotFoundError`` when no file is tagged with
+        that path.
+        """
+        from googleapiclient.errors import HttpError
+        from googleapiclient.http import MediaIoBaseUpload
+
+        canonical = path if path.startswith("/") else "/" + path.strip("/")
+        payload = await self._find_by_app_path(canonical)
+        if payload is None:
+            msg = f"File not found in Google Drive: {path}"
+            raise FileNotFoundError(msg)
+
+        file_id = payload["id"]
+        logger.info(
+            "Updating Google Drive file content: %s (%s, %d bytes)",
+            canonical,
+            payload.get("name", ""),
+            len(file_bytes),
+        )
+        service = self._get_service()
+
+        def _build() -> Any:
+            media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
+            return service.files().update(
+                fileId=file_id,
+                media_body=media,
+                fields=_DRIVE_FILE_FIELDS,
+            )
+
+        try:
+            result = await self._execute_with_retry(_build, op="update_file_content")
+        except HttpError as exc:
+            logger.exception("Google Drive content update failed: %s", canonical)
+            msg = f"Google Drive content update failed for {canonical}: {exc}"
+            raise RuntimeError(msg) from exc
+        except _TRANSIENT_RETRY_EXCEPTIONS as exc:
+            logger.exception(
+                "Google Drive content update failed after %d transient retries: %s",
+                _TRANSIENT_RETRY_ATTEMPTS,
+                canonical,
+            )
+            msg = f"Google Drive content update failed for {canonical}: {exc}"
+            raise RuntimeError(msg) from exc
+
+        saved = self._from_drive_file(result, fallback_path=canonical)
+        logger.info(
+            "Google Drive content update complete: %s",
+            saved.path,
         )
         return saved
 

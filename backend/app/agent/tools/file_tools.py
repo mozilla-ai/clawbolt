@@ -133,6 +133,68 @@ class AnalyzeSavedFileParams(BaseModel):
     )
 
 
+class WriteToStorageParams(BaseModel):
+    """Parameters for the write_to_storage tool."""
+
+    folder_path: str | None = Field(
+        default=None,
+        description=(
+            "Destination folder, leading slash required (e.g. '/Inbox', "
+            "'/Acme - 123 Main/docs'). Defaults to /Inbox when omitted."
+        ),
+    )
+    filename: str = Field(
+        description=(
+            "Filename to create (e.g. 'hi.txt', 'notes.md'). The file is "
+            "created as a new file; if a file with the same name already "
+            "exists in the destination folder, a numeric suffix is added "
+            "to avoid overwriting."
+        ),
+    )
+    content: str = Field(
+        description=(
+            "Text content to write to the file. The agent generates this "
+            "content from the conversation."
+        ),
+    )
+    mime_type: str = Field(
+        default="text/plain",
+        description="MIME type of the file (default: text/plain).",
+    )
+
+
+class EditStorageFileParams(BaseModel):
+    """Parameters for the edit_storage_file tool."""
+
+    file_path: str = Field(
+        description=(
+            "Storage path of the file to edit, as quoted by find_saved_files"
+            " (e.g. /Inbox/notes.txt)."
+        ),
+    )
+    old_text: str = Field(
+        description=(
+            "Exact text to find and replace in the file. Must match "
+            "uniquely; read the file first via read_from_storage to see "
+            "current contents."
+        ),
+    )
+    new_text: str = Field(
+        description="Replacement text for the matched old_text.",
+    )
+
+
+class ReadFromStorageParams(BaseModel):
+    """Parameters for the read_from_storage tool."""
+
+    file_path: str = Field(
+        description=(
+            "Storage path of the file to read, as quoted by find_saved_files"
+            " (e.g. /Inbox/notes.txt)."
+        ),
+    )
+
+
 def _normalize_folder_path(raw: str | None) -> tuple[str | None, str | None]:
     """Validate and normalize a caller-supplied folder path.
 
@@ -605,6 +667,192 @@ def create_file_tools(
         )
         return ToolResult(content=description)
 
+    async def write_to_storage(
+        folder_path: str | None = None,
+        filename: str = "",
+        content: str = "",
+        mime_type: str = "text/plain",
+    ) -> ToolResult:
+        """Create a new text file in cloud storage from AI-generated content."""
+        if not filename.strip():
+            return ToolResult(
+                content="filename is required.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        if not content.strip():
+            return ToolResult(
+                content="content is required.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        normalized_folder, path_error = _normalize_folder_path(folder_path)
+        if normalized_folder is None:
+            return ToolResult(
+                content=path_error or "Invalid folder_path.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        # Validate filename for control characters and embedded slashes.
+        if _INVALID_SEGMENT_RE.search(filename):
+            return ToolResult(
+                content=f"filename {filename!r} contains unsupported characters.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        if "/" in filename:
+            return ToolResult(
+                content="filename must not contain slashes.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        # Ensure the destination folder exists and pick a unique filename.
+        await storage.create_folder(normalized_folder)
+        existing = await storage.list_folder(normalized_folder)
+        recent_for_folder = recent_uploads_by_folder.setdefault(normalized_folder, set())
+        taken_names = {f.name for f in existing} | recent_for_folder
+        target_filename = filename
+        if target_filename in taken_names:
+            stem, dot, ext = target_filename.rpartition(".")
+            base = stem if dot else target_filename
+            ext_suffix = f".{ext}" if dot else ""
+            n = 2
+            while f"{base}_{n:03d}{ext_suffix}" in taken_names:
+                n += 1
+            target_filename = f"{base}_{n:03d}{ext_suffix}"
+
+        file_bytes = content.encode("utf-8")
+        saved = await storage.upload_file(
+            file_bytes,
+            normalized_folder,
+            target_filename,
+            mime_type=mime_type,
+            description=f"Created by Clawbolt: {filename}",
+        )
+        recent_for_folder.add(target_filename)
+
+        logger.info("Text file created in Drive: %s", saved.path)
+        return ToolResult(
+            content=f"Created {saved.path}",
+            receipt=ToolReceipt(
+                action="Created file in Drive",
+                target=saved.path,
+                url=saved.web_view_link or None,
+            ),
+        )
+
+    async def edit_storage_file(
+        file_path: str = "",
+        old_text: str = "",
+        new_text: str = "",
+    ) -> ToolResult:
+        """Edit an existing text file in cloud storage by replacing exact text."""
+        if not file_path.strip():
+            return ToolResult(
+                content="file_path is required.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        if not old_text:
+            return ToolResult(
+                content="old_text is required.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        # Download current file content.
+        try:
+            file_bytes = await storage.download_file(file_path)
+        except FileNotFoundError:
+            return ToolResult(
+                content=f"File not found: {file_path}",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        except Exception as exc:
+            logger.exception("Failed to download %s for edit", file_path)
+            return ToolResult(
+                content=f"Couldn't load {file_path}: {exc}",
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+            )
+
+        text = file_bytes.decode("utf-8", errors="replace")
+        if old_text not in text:
+            return ToolResult(
+                content=(
+                    f"Text not found in {file_path}. "
+                    "Read the file first via read_from_storage to see current contents."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        count = text.count(old_text)
+        if count > 1:
+            return ToolResult(
+                content=(
+                    f"Found {count} matches in {file_path}. Provide more context to match uniquely."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        updated = text.replace(old_text, new_text, 1)
+        updated_bytes = updated.encode("utf-8")
+
+        # Update the file content in-place.
+        try:
+            await storage.update_file_content(file_path, updated_bytes, mime_type="text/plain")
+        except FileNotFoundError:
+            return ToolResult(
+                content=f"File not found at time of edit: {file_path}",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        except Exception as exc:
+            logger.exception("Failed to update %s", file_path)
+            return ToolResult(
+                content=f"Couldn't update {file_path}: {exc}",
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+            )
+
+        logger.info("Edited file in Drive: %s", file_path)
+        return ToolResult(content=f"Updated {file_path}")
+
+    async def read_from_storage(
+        file_path: str = "",
+    ) -> ToolResult:
+        """Read a text file from cloud storage and return its content."""
+        if not file_path.strip():
+            return ToolResult(
+                content="file_path is required.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        try:
+            file_bytes = await storage.download_file(file_path)
+        except FileNotFoundError:
+            return ToolResult(
+                content=f"File not found: {file_path}",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        except Exception as exc:
+            logger.exception("Failed to download %s", file_path)
+            return ToolResult(
+                content=f"Couldn't load {file_path}: {exc}",
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+            )
+
+        text = file_bytes.decode("utf-8", errors="replace")
+        return ToolResult(content=text)
+
     return [
         Tool(
             name=ToolName.UPLOAD_TO_STORAGE,
@@ -686,6 +934,59 @@ def create_file_tools(
                 description_builder=lambda args: f"Analyze saved file {args['file_ref']}",
             ),
         ),
+        Tool(
+            name=ToolName.WRITE_TO_STORAGE,
+            description=(
+                "Create a new text file in cloud storage with AI-generated content. "
+                "Use this when the user asks you to write a file from text you generate "
+                "(notes, summaries, documents, etc.). The file lands in the specified "
+                "folder; if a file with the same name already exists, a numeric suffix "
+                "is added to avoid overwriting."
+            ),
+            function=write_to_storage,
+            params_model=WriteToStorageParams,
+            usage_hint="Create a text file in the user's Drive from AI-generated content.",
+            concurrency_group="user_storage",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Write file {args.get('filename', '')} to {args.get('folder_path') or '/Inbox'}"
+                ),
+            ),
+        ),
+        Tool(
+            name=ToolName.EDIT_STORAGE_FILE,
+            description=(
+                "Edit an existing text file in cloud storage by replacing exact text. "
+                "Use this for targeted updates to notes, documents, or config files "
+                "in the user's Drive. Read the file first via read_from_storage to see "
+                "current contents."
+            ),
+            function=edit_storage_file,
+            params_model=EditStorageFileParams,
+            usage_hint="Edit a text file in the user's Drive by replacing specific text.",
+            concurrency_group="user_storage",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: f"Edit file {args.get('file_path', '')}",
+            ),
+        ),
+        Tool(
+            name=ToolName.READ_FROM_STORAGE,
+            description=(
+                "Read a text file from cloud storage and return its contents. "
+                "Use this to view notes, documents, or config files that were "
+                "previously saved to the user's Drive. Only works on text files "
+                "created by write_to_storage or uploaded via upload_to_storage."
+            ),
+            function=read_from_storage,
+            params_model=ReadFromStorageParams,
+            usage_hint="Read a text file from the user's Drive.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: f"Read file {args.get('file_path', '')}",
+            ),
+        ),
     ]
 
 
@@ -735,7 +1036,7 @@ def _register() -> None:
         "file",
         _file_factory,
         core=False,
-        summary="Upload, retrieve, and organize files in the user's Google Drive",
+        summary="Upload, retrieve, organize, and edit files in the user's Google Drive, including creating and editing text files from chat",
         display_name="Google Drive",
         oauth_name="google_drive",
         dashboard_description="Upload, retrieve, and organize files in the user's Google Drive",
@@ -762,6 +1063,21 @@ def _register() -> None:
             SubToolInfo(
                 ToolName.ANALYZE_SAVED_FILE,
                 "Analyze a previously saved image",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.WRITE_TO_STORAGE,
+                "Create text files in Drive from AI-generated content",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.EDIT_STORAGE_FILE,
+                "Edit text files in Drive by replacing exact text",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.READ_FROM_STORAGE,
+                "Read text files from Drive",
                 default_permission="ask",
             ),
         ],

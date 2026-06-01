@@ -719,3 +719,297 @@ async def test_analyze_saved_file_rejects_non_image(
 
     assert result.is_error is True
     assert "not an image" in result.content
+
+
+# ---------------------------------------------------------------------------
+# write_to_storage tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_write_to_storage_creates_text_file(
+    test_user: User,
+) -> None:
+    """write_to_storage should create a text file in Drive from AI-generated content."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    write_fn = next(t for t in tools if t.name == ToolName.WRITE_TO_STORAGE).function
+
+    result = await write_fn(
+        folder_path="/Inbox",
+        filename="hi.txt",
+        content="this is a test",
+    )
+
+    assert result.is_error is False
+    assert "Created" in result.content
+    assert "hi.txt" in result.content
+    # Verify bytes are stored
+    stored = await storage.download_file("/Inbox/hi.txt")
+    assert stored == b"this is a test"
+
+
+@pytest.mark.asyncio()
+async def test_write_to_storage_defaults_to_inbox(
+    test_user: User,
+) -> None:
+    """write_to_storage should default to /Inbox when folder_path is omitted."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    write_fn = next(t for t in tools if t.name == ToolName.WRITE_TO_STORAGE).function
+
+    result = await write_fn(
+        filename="notes.txt",
+        content="some notes",
+    )
+
+    assert result.is_error is False
+    stored = await storage.download_file("/Inbox/notes.txt")
+    assert stored == b"some notes"
+
+
+@pytest.mark.asyncio()
+async def test_write_to_storage_creates_file_in_specified_folder(
+    test_user: User,
+) -> None:
+    """write_to_storage should create a file in the specified folder."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    write_fn = next(t for t in tools if t.name == ToolName.WRITE_TO_STORAGE).function
+
+    result = await write_fn(
+        folder_path="/Client/docs",
+        filename="report.md",
+        content="# Report\n\nSome content",
+    )
+
+    assert result.is_error is False
+    stored = await storage.download_file("/Client/docs/report.md")
+    assert stored == b"# Report\n\nSome content"
+
+
+@pytest.mark.asyncio()
+async def test_write_to_storage_avoids_overwrite(
+    test_user: User,
+) -> None:
+    """write_to_storage should add a numeric suffix when a file with the same name exists."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"existing", "/Inbox", "doc.txt")
+    tools = create_file_tools(test_user, storage)
+    write_fn = next(t for t in tools if t.name == ToolName.WRITE_TO_STORAGE).function
+
+    result = await write_fn(
+        filename="doc.txt",
+        content="new content",
+    )
+
+    assert result.is_error is False
+    assert "doc_002.txt" in result.content or "doc_002.txt" in str(result.receipt)
+    # Original should still exist
+    orig = await storage.download_file("/Inbox/doc.txt")
+    assert orig == b"existing"
+
+
+@pytest.mark.asyncio()
+async def test_write_to_storage_rejects_empty_filename(
+    test_user: User,
+) -> None:
+    """write_to_storage should reject an empty filename."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    write_fn = next(t for t in tools if t.name == ToolName.WRITE_TO_STORAGE).function
+
+    result = await write_fn(
+        filename="",
+        content="content",
+    )
+    assert result.is_error is True
+
+
+@pytest.mark.asyncio()
+async def test_write_to_storage_rejects_empty_content(
+    test_user: User,
+) -> None:
+    """write_to_storage should reject empty content."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    write_fn = next(t for t in tools if t.name == ToolName.WRITE_TO_STORAGE).function
+
+    result = await write_fn(
+        filename="empty.txt",
+        content="",
+    )
+    assert result.is_error is True
+
+
+@pytest.mark.asyncio()
+async def test_write_to_storage_rejects_invalid_filename(
+    test_user: User,
+) -> None:
+    """write_to_storage should reject filenames with control characters."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    write_fn = next(t for t in tools if t.name == ToolName.WRITE_TO_STORAGE).function
+
+    result = await write_fn(
+        filename="bad\x00file.txt",
+        content="content",
+    )
+    assert result.is_error is True
+
+
+@pytest.mark.asyncio()
+async def test_write_to_storage_emits_receipt(
+    test_user: User,
+) -> None:
+    """write_to_storage should emit a ToolReceipt with the storage path."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    write_fn = next(t for t in tools if t.name == ToolName.WRITE_TO_STORAGE).function
+
+    result = await write_fn(
+        filename="receipt.txt",
+        content="invoice summary",
+    )
+
+    assert result.is_error is False
+    assert result.receipt is not None
+    assert "Created file in Drive" in result.receipt.action
+    assert "receipt.txt" in result.receipt.target
+
+
+# ---------------------------------------------------------------------------
+# read_from_storage tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_read_from_storage_returns_file_content(
+    test_user: User,
+) -> None:
+    """read_from_storage should return the content of a text file."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"hello world", "/Inbox", "test.txt")
+    tools = create_file_tools(test_user, storage)
+    read_fn = next(t for t in tools if t.name == ToolName.READ_FROM_STORAGE).function
+
+    result = await read_fn(file_path="/Inbox/test.txt")
+
+    assert result.is_error is False
+    assert result.content == "hello world"
+
+
+@pytest.mark.asyncio()
+async def test_read_from_storage_file_not_found(
+    test_user: User,
+) -> None:
+    """read_from_storage should error on a missing file."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    read_fn = next(t for t in tools if t.name == ToolName.READ_FROM_STORAGE).function
+
+    result = await read_fn(file_path="/nonexistent/file.txt")
+    assert result.is_error is True
+    assert "not found" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_read_from_storage_rejects_empty_path(
+    test_user: User,
+) -> None:
+    """read_from_storage should reject an empty file_path."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    read_fn = next(t for t in tools if t.name == ToolName.READ_FROM_STORAGE).function
+
+    result = await read_fn(file_path="")
+    assert result.is_error is True
+
+
+# ---------------------------------------------------------------------------
+# edit_storage_file tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_edit_storage_file_replaces_text(
+    test_user: User,
+) -> None:
+    """edit_storage_file should replace exact text in a file."""
+    storage = MockStorageBackend()
+    await storage.upload_file(
+        b"Hello, my name is John",
+        "/Inbox",
+        "note.txt",
+        mime_type="text/plain",
+    )
+    tools = create_file_tools(test_user, storage)
+    edit_fn = next(t for t in tools if t.name == ToolName.EDIT_STORAGE_FILE).function
+
+    result = await edit_fn(
+        file_path="/Inbox/note.txt",
+        old_text="John",
+        new_text="Alice",
+    )
+
+    assert result.is_error is False
+    assert "Updated" in result.content
+    # Verify the content was updated
+    updated = await storage.download_file("/Inbox/note.txt")
+    assert updated == b"Hello, my name is Alice"
+
+
+@pytest.mark.asyncio()
+async def test_edit_storage_file_text_not_found(
+    test_user: User,
+) -> None:
+    """edit_storage_file should error when old_text is not found."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"Hello, my name is John", "/Inbox", "note.txt")
+    tools = create_file_tools(test_user, storage)
+    edit_fn = next(t for t in tools if t.name == ToolName.EDIT_STORAGE_FILE).function
+
+    result = await edit_fn(
+        file_path="/Inbox/note.txt",
+        old_text="Jane",
+        new_text="Alice",
+    )
+    assert result.is_error is True
+    assert "not found" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_edit_storage_file_ambiguous_match(
+    test_user: User,
+) -> None:
+    """edit_storage_file should error when old_text matches multiple times."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"Hello John and John again", "/Inbox", "note.txt")
+    tools = create_file_tools(test_user, storage)
+    edit_fn = next(t for t in tools if t.name == ToolName.EDIT_STORAGE_FILE).function
+
+    result = await edit_fn(
+        file_path="/Inbox/note.txt",
+        old_text="John",
+        new_text="Alice",
+    )
+    assert result.is_error is True
+    assert "matches" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_edit_storage_file_file_not_found(
+    test_user: User,
+) -> None:
+    """edit_storage_file should error when the file does not exist."""
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage)
+    edit_fn = next(t for t in tools if t.name == ToolName.EDIT_STORAGE_FILE).function
+
+    result = await edit_fn(
+        file_path="/nonexistent/file.txt",
+        old_text="something",
+        new_text="else",
+    )
+    assert result.is_error is True
+    assert "not found" in result.content.lower()
