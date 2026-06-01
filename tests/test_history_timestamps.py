@@ -7,6 +7,8 @@ timestamp marker to a message when it is the first in the slice, follows a
 without touching the database (both helpers are pure functions).
 """
 
+import datetime
+
 from backend.app.agent.context import (
     _stored_messages_to_agent_messages,
     _time_marker,
@@ -19,8 +21,6 @@ _BASE = "2026-06-01T13:00:00+00:00"  # 13:00 UTC == 09:00 America/New_York (EDT)
 
 
 def _iso(hours: float = 0.0, *, base: str = _BASE) -> str:
-    import datetime
-
     dt = datetime.datetime.fromisoformat(base) + datetime.timedelta(hours=hours)
     return dt.isoformat()
 
@@ -73,6 +73,19 @@ def test_malformed_current_timestamp_returns_none() -> None:
 def test_malformed_previous_timestamp_treated_as_anchor() -> None:
     """An unparseable ``prev_iso`` falls back to anchoring the current row."""
     assert _time_marker("garbage", _BASE, "") is not None
+
+
+def test_naive_and_aware_timestamps_do_not_crash() -> None:
+    """A naive/aware timestamp mix must not raise on the gap subtraction.
+
+    Stored timestamps are UTC-aware in practice, but a naive value is
+    normalized to UTC rather than blowing up history load.
+    """
+    naive = "2026-06-01T13:00:00"  # no offset
+    aware = "2026-06-01T13:05:00+00:00"
+    # Small same-day gap once both are treated as UTC: no marker, no crash.
+    assert _time_marker(naive, aware, "") is None
+    assert _time_marker(aware, naive, "") is None
 
 
 # --- _stored_messages_to_agent_messages integration -------------------------

@@ -324,12 +324,19 @@ def _time_marker(prev_iso: str, cur_iso: str, tz_name: str) -> str | None:
         cur = datetime.datetime.fromisoformat(cur_iso)
     except (ValueError, TypeError):
         return None
+    # Stored timestamps are UTC-aware (Message.timestamp is DateTime(timezone=True)),
+    # but normalize any naive value to UTC so the gap subtraction below can never
+    # raise on a naive/aware mix. History load is on the per-message hot path.
+    if cur.tzinfo is None:
+        cur = cur.replace(tzinfo=datetime.UTC)
     prev: datetime.datetime | None = None
     if prev_iso:
         try:
             prev = datetime.datetime.fromisoformat(prev_iso)
         except (ValueError, TypeError):
             prev = None
+        if prev is not None and prev.tzinfo is None:
+            prev = prev.replace(tzinfo=datetime.UTC)
     if prev is not None:
         same_day = to_local_time(prev, tz_name).date() == to_local_time(cur, tz_name).date()
         if same_day and (cur - prev) < _TIMESTAMP_GAP_THRESHOLD:
