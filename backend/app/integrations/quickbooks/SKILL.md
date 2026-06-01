@@ -165,9 +165,9 @@ This is the primary workflow for users who dictate job details from the field:
 1. `qb_query` Customer to check if the client exists (see "Finding a customer, invoice, or estimate")
 2. If new client: `qb_create` Customer
 3. `qb_create` Estimate with the new customer's Id
-3. User approves the estimate
-4. Convert estimate to invoice (see below)
-5. `qb_send` the invoice
+4. User approves the estimate
+5. Convert estimate to invoice (see below)
+6. `qb_send` the invoice
 
 ### Recovering a customer email
 1. `qb_query`: `SELECT * FROM Customer WHERE Id = '<customer_id>'` and check `PrimaryEmailAddr.Address`. If it's set, use it.
