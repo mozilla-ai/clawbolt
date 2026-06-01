@@ -23,6 +23,14 @@ AppFolio Vendor Portal.
 Common status codes: `0` = new, `4` = in progress, `8` = completed.
 Confirm with the user when uncertain rather than guessing.
 
+## Finding a work order
+
+A work order you have not searched this session is unknown, not absent. Never
+tell the user a work order does not exist until
+`appfolio_search_work_orders` has returned no match for the address, number,
+or text they gave. A work order ID you already resolved this session can be
+reused without re-searching.
+
 ## Photos and documents
 
 See the ``analyze_photo`` tool description for the ``media_XXXXXX`` handle

@@ -33,6 +33,14 @@ Examples:
 - `Job: Smith - Kitchen Remodel` at `123 Oak St, Portland OR`
 - `Job: Jones - Roof Repair` at `456 Elm Ave, Seattle WA`
 
+## Finding an event
+
+An event you have not listed this session is unknown, not absent. Never tell
+the user an event does not exist, and never create a duplicate event, until
+`calendar_list_events` has returned no match for the time range or search
+criteria they gave. An event ID you already resolved this session can be
+reused without re-listing.
+
 ## Availability Checking
 
 Always check availability before suggesting times or creating events:

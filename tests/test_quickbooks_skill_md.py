@@ -1,10 +1,11 @@
 """Doc-lint tests for the QuickBooks SKILL.md.
 
-The agent treats any field omitted from SKILL.md's "Queryable entities and useful
-fields" section as if it does not exist on the entity. That has caused real
-regressions (issue #1131: agent claimed QuickBooks does not store the recipient
-email on past invoices, because BillEmail was not listed). These tests pin the
-field list so future drift surfaces in CI.
+Covers two related regression classes:
+- Issue #1131: agent claims a field does not exist because SKILL.md does not
+  list it (e.g. BillEmail on Invoice). The field-list pinning tests prevent
+  that drift.
+- Issue #1403: agent claims a customer, invoice, or estimate is absent
+  without calling ``qb_query`` first. The guard tests prevent that drift.
 """
 
 from __future__ import annotations
@@ -157,3 +158,48 @@ def test_skill_md_documents_email_recovery_workflow() -> None:
     # so the agent knows where to look before asking.
     assert "PrimaryEmailAddr" in content
     assert "BillEmail" in content
+
+
+# --- #1403 guard tests --------------------------------------------------------
+
+
+def test_skill_md_has_finding_entity_section() -> None:
+    """SKILL.md must carry a dedicated 'Finding a customer, invoice, or estimate' guard section."""
+    content = SKILL_MD_PATH.read_text()
+    assert "## Finding a customer, invoice, or estimate" in content, (
+        "SKILL.md should include a 'Finding a customer, invoice, or estimate' section "
+        "instructing the agent to query before claiming an entity is absent."
+    )
+
+
+def test_skill_md_requires_query_before_claiming_absence() -> None:
+    """The guard must tell the agent not to assert absence before querying.
+
+    Without this, the agent answers from its in-context entity cache: a name
+    it has not queried this session reads as 'does not exist', so it creates a
+    duplicate of a customer that is already there, or claims an invoice does
+    not exist.
+    """
+    content = SKILL_MD_PATH.read_text()
+    lowered = content.lower()
+    # The two tools the guard ties together.
+    assert "qb_query" in content
+    assert "qb_create" in content
+    # The core framing: not-queried is not the same as not-existing.
+    assert "unknown, not absent" in lowered, (
+        "The guard should state that an unqueried entity is 'unknown, not "
+        "absent' so the agent queries before claiming it does not exist."
+    )
+
+
+def test_skill_md_new_customer_job_queries_first() -> None:
+    """The 'New customer job' workflow must query Customer before creating.
+
+    The original workflow jumped straight to qb_create Customer, risking a
+    duplicate. Reinforce that the agent searches first.
+    """
+    content = SKILL_MD_PATH.read_text()
+    assert "qb_query" in content, (
+        "The New customer job workflow should include a qb_query step to "
+        "check if the customer exists before creating."
+    )

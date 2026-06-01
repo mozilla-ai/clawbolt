@@ -11,6 +11,15 @@ ServiceTitan is a field-service management platform for HVAC, plumbing, and elec
 | `st_list_appointments` | List appointments in a date window, optionally by status | Auto |
 | `st_add_job_note` | Post a plain-text note to a job, optionally pinned | Ask |
 
+## Finding a customer or job
+
+A customer or job you have not searched this session is unknown, not absent.
+Never tell the user a customer or job does not exist until
+`st_search_customers` has returned no match for the name or phone they gave.
+Search the bare name first; a guessed extra token can narrow a name match to
+zero. A customer ID you already resolved this session can be reused without
+re-searching.
+
 ## Entity vocabulary
 
 - **Customer**: the billable party. Has `id`, `name`, `type`, `address`, `contacts`, `balance`, and flags (`active`, `doNotMail`, `doNotService`).
