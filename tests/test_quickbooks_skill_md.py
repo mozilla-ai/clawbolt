@@ -162,6 +162,7 @@ def test_skill_md_documents_email_recovery_workflow() -> None:
 
 # --- #1403 guard tests --------------------------------------------------------
 
+
 def test_skill_md_has_finding_entity_section() -> None:
     """SKILL.md must carry a dedicated 'Finding a customer, invoice, or estimate' guard section."""
     content = SKILL_MD_PATH.read_text()
