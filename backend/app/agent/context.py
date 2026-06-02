@@ -12,6 +12,7 @@ from sqlalchemy import select
 from backend.app.agent.approval import _parse_approval_response
 from backend.app.agent.compaction import compact_session
 from backend.app.agent.dto import SessionState
+from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -680,3 +681,41 @@ async def _advance_trim_watermark_only(user_id: str, max_seq: int) -> None:
             if max_seq > current:
                 cs.last_trim_seq = max_seq
         await db.commit()
+
+
+async def hygiene_compact_memory(user_id: str) -> tuple[str, bool]:
+    """Re-audit the user's MEMORY.md against the Do-Not-Include list.
+
+    Runs the compaction LLM with *hygiene_only* mode so the compliance
+    audit executes even when there is no new conversation content. The
+    model reads the current MEMORY.md and removes every line that
+    violates the exclusion list, then returns the cleaned version.
+
+    This is the "clean my memory now" operation: it does not require
+    untrimmed conversation messages and does not advance any watermark.
+    Useful for scrubbing pre-existing violations that were written
+    before the compliance rule existed or under the old relevance-framed
+    prompt.
+
+    Returns:
+        A tuple of (memory_update, changed) where memory_update is the
+        new MEMORY.md content (empty string if nothing changed) and
+        changed is True when at least one exclusion-list violation was
+        removed.
+    """
+    if not settings.compaction_enabled:
+        return "", False
+
+    memory_store = get_memory_store(user_id)
+    current_memory = await memory_store.read_memory_async()
+    if not current_memory or not current_memory.strip():
+        return "", False
+
+    memory_update, _ = await compact_session(
+        user_id,
+        trimmed_messages=[],
+        hygiene_only=True,
+    )
+
+    changed = bool(memory_update)
+    return memory_update, changed

@@ -20,7 +20,27 @@ Memory exists for cross-system knowledge that lives nowhere else.
 
 ## Inputs
 
-You will receive `<current_memory>`, `<user_profile>`, `<soul>`, `<heartbeat>`, and `<conversation>`. Update the persistent files with new durable facts and prune items that no longer belong.
+You will receive `<current_memory>`, `<user_profile>`, `<soul>`, `<heartbeat>`, and optionally `<conversation>`.
+
+## Workflow
+
+Perform these steps in order.
+
+### Step 1: Compliance audit of existing MEMORY.md
+
+Audit `<current_memory>` line by line against the "Do not include" list below. Delete every line that violates the exclusion list. This is a compliance operation, not a relevance judgment: a customer ID for an active job is still excluded. Apply this audit even when `<conversation>` mentions no contradicting facts.
+
+### Step 2: Merge new durable facts from conversation (if provided)
+
+If `<conversation>` is present, extract any new durable facts and add them to the cleaned memory from Step 1. Skip this step when no `<conversation>` is provided (hygiene-only run).
+
+### Step 3: Update USER.md and SOUL.md
+
+Extract any profile or personality changes from `<conversation>`. Preserve every existing field on rewrite; only change a field the conversation contradicts. Return an empty string when nothing changed.
+
+### Step 4: Build HISTORY.md summary
+
+One terse 1 to 3 sentence breadcrumb entry per event, prefixed `[TIMESTAMP]`. Pointers over numbers. Drop deep links, draft IDs, and dollar amounts (unless the dollar is genuinely the news). Skip trivial small talk. Return an empty string when nothing noteworthy happened.
 
 ## MEMORY.md: cross-system business knowledge
 
@@ -38,7 +58,7 @@ You will receive `<current_memory>`, `<user_profile>`, `<soul>`, `<heartbeat>`, 
 
 **Explicit user save requests override these exclusion rules.** If the conversation contains a clear directive to save a fact ("remember X", "save this", "make a note that..."), preserve that fact in MEMORY.md, even when it overlaps with what an integration owns. The contractor has chosen to memorialize it; trust that. The base agent is responsible for warning the contractor about staleness risk on mutating values at save time, so by the time the conversation reaches you, an explicit save is intentional.
 
-**Prune on rewrite.** Drop excluded items even if a previous compaction wrote them. Once an estimate is sent in QBO, replace a full transcription of its contents with a one-line breadcrumb (`"<Client> estimate sent, see QBO"`) or remove the entry entirely. Drop bug notes you wrote yesterday. Drop fired reminders. Keep cross-system rules and conventions.
+**Compliance audit rule.** Delete every line that violates the "Do not include" list above. This applies even if the line was written by a previous compaction, and even if no `<conversation>` was provided. Exclusion-list violations must be removed regardless of relevance. A line that was explicitly saved by the user (see override above) is not a violation.
 
 ## USER.md: the contractor themselves
 
@@ -56,20 +76,11 @@ Client-specific pricing or billing rules belong in MEMORY.md, not here. Preserve
 
 The `<heartbeat>` section is read-only context. Do not promote already-fired heartbeat items into memory.
 
-## HISTORY.md (the `summary` field)
-
-A breadcrumb log, not a transaction log. The agent uses it to answer "did we work on this recently?" before referring back to integrations.
-
-- One terse 1 to 3 sentence entry per event, prefixed `[TIMESTAMP]`.
-- Pointers over numbers: `"Sent <Client> estimate, details in QBO"` beats `"Sent $X,XXX estimate (txnId=NNN) with N line items..."`.
-- Drop deep links, draft IDs, and dollar amounts (unless the dollar is genuinely the news).
-- Skip trivial small talk. Return an empty string.
-
 ## Response format
 
 Return only a JSON object:
 
-1. `memory_update`: full updated MEMORY.md with prune rules applied. Return existing verbatim if no change.
+1. `memory_update`: full updated MEMORY.md with compliance audit applied (Step 1) and new facts merged (Step 2). Return existing verbatim only when the existing content already contains no exclusion-list violations AND no new facts were added.
 2. `summary`: 1 to 3 sentence breadcrumb starting `[TIMESTAMP]`. Empty string for trivial conversations.
 3. `user_profile_update`: full updated USER.md, all fields preserved. Empty string if no change.
 4. `soul_update`: full updated SOUL.md. Empty string if no change.

@@ -2052,3 +2052,218 @@ async def test_compact_session_skips_memory_update_when_llm_rewrite_exceeds_budg
     assert any(
         "MEMORY.md" in r.getMessage() and "skip" in r.getMessage().lower() for r in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #1407: compliance audit removes pre-existing excluded content
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_compliance_audit_removes_excluded_content(
+    test_user: UserData,
+) -> None:
+    """A compaction over a conversation that adds no new fact must still
+    remove pre-existing excluded content from MEMORY.md. The compliance
+    audit runs independently of new-fact detection.
+
+    Regression: before #1407, pruning was coupled to "did this conversation
+    add a new durable fact." The model returned existing verbatim when the
+    conversation added nothing, so pre-existing exclusion-list violations
+    persisted indefinitely.
+    """
+    store = get_memory_store(test_user.id)
+
+    # Seed MEMORY.md with each excluded category plus one in-spec entry.
+    await store.write_memory_async(
+        "## Clients\n"
+        "- Smith: customer ID 12345\n"  # excluded: customer ID
+        "- Bob: bob@email.com\n"  # excluded: email
+        "- Alice: 555-0100\n"  # excluded: phone number
+        "## Projects\n"
+        "- 742 Evergreen Drive\n"  # excluded: address
+        "## Work Orders\n"
+        "- WO-2026-001 (AppFolio)\n"  # excluded: work-order details
+        "## Bugs\n"
+        "- Tool X appears broken\n"  # excluded: stale bug note
+        "## Reminders\n"
+        "- Call client about estimate (fired)\n"  # excluded: fired reminder
+        "## Uploads\n"
+        "- Filed receipt in Google Drive\n"  # excluded: upload confirmation
+        "## Cross-system rules\n"
+        "- Acme Plumbing is billed through SmithCo, not a direct customer\n"  # in-spec: kept
+        "- Deck pricing: $45/sqft for composite\n"  # in-spec: kept
+    )
+
+    # LLM returns the cleaned memory (excluded items removed, in-spec kept).
+    # The LLM should remove all excluded lines even though the conversation
+    # added no new facts.
+    cleaned = (
+        "## Cross-system rules\n"
+        "- Acme Plumbing is billed through SmithCo, not a direct customer\n"
+        "- Deck pricing: $45/sqft for composite\n"
+    )
+    llm_response_text = json.dumps(
+        {
+            "memory_update": cleaned,
+            "summary": "[TIMESTAMP] Compliance audit: removed stale integration-owned entries.",
+        }
+    )
+    mock_response = make_text_response(llm_response_text)
+
+    # Conversation with no new durable facts (small talk only).
+    messages: list[AgentMessage] = [
+        UserMessage(content="Good morning!"),
+        AssistantMessage(content="Morning! How can I help today?"),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        memory_update, _ = await compact_session(test_user.id, messages)
+
+    # The compliance audit ran and removed excluded content.
+    assert memory_update != "", "compliance audit should produce a memory change"
+    assert "customer ID 12345" not in memory_update
+    assert "bob@email.com" not in memory_update
+    assert "555-0100" not in memory_update
+    assert "742 Evergreen Drive" not in memory_update
+    assert "WO-2026-001" not in memory_update
+    assert "Tool X appears broken" not in memory_update
+    assert "fired" not in memory_update
+    assert "Filed receipt" not in memory_update
+
+    # In-spec content must survive.
+    assert "Acme Plumbing is billed through SmithCo" in memory_update
+    assert "Deck pricing: $45/sqft" in memory_update
+
+    # Verify MEMORY.md was actually written to the store.
+    persisted = await store.read_memory_async()
+    assert "Acme Plumbing is billed through SmithCo" in persisted
+    assert "customer ID 12345" not in persisted
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_compliance_audit_removes_excluded_that_is_still_relevant(
+    test_user: UserData,
+) -> None:
+    """An excluded entry that is still topically relevant (e.g. a customer
+    ID for an active job) must be removed, while the in-spec cross-system
+    rule about that client is kept.
+
+    Regression: before #1407, the prompt framed pruning as relevance-based,
+    not compliance-based. The model kept "still relevant" excluded content
+    because the "prune items that no longer belong" rule did not override
+    the "preserve existing fields" instinct.
+    """
+    store = get_memory_store(test_user.id)
+
+    await store.write_memory_async(
+        "## Cross-system rules\n"
+        "- Smith Construction (ID: CUST-001) is billed through SmithCo\n"
+        "- SmithCo uses QuickBooks for invoices, not AppFolio\n"
+        "## Client contacts\n"
+        "- Smith: cust_id=CUST-001, phone=555-0101, email=bob@smith.com\n"
+    )
+
+    # The LLM removes the excluded contact details but keeps the
+    # cross-system rules (which are in-spec).
+    cleaned = (
+        "## Cross-system rules\n"
+        "- Smith Construction is billed through SmithCo\n"
+        "- SmithCo uses QuickBooks for invoices, not AppFolio\n"
+    )
+    llm_response_text = json.dumps(
+        {
+            "memory_update": cleaned,
+            "summary": "[TIMESTAMP] Compliance audit: removed client contact details.",
+        }
+    )
+    mock_response = make_text_response(llm_response_text)
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="Checking in"),
+        AssistantMessage(content="All quiet."),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        memory_update, _ = await compact_session(test_user.id, messages)
+
+    # Excluded contact details removed despite being "relevant".
+    assert "cust_id=CUST-001" not in memory_update
+    assert "555-0101" not in memory_update
+    assert "bob@smith.com" not in memory_update
+
+    # Cross-system rules survive (they are in-spec).
+    assert "Smith Construction is billed through SmithCo" in memory_update
+    assert "QuickBooks for invoices" in memory_update
+
+
+@pytest.mark.asyncio()
+async def test_hygiene_only_compaction_cleans_memory_without_conversation(
+    test_user: UserData,
+) -> None:
+    """A hygiene-only run must clean a user's MEMORY.md without requiring
+    untrimmed conversation messages.
+
+    Regression: before #1407, there was no "clean my memory now" operation.
+    compact_session returned early when there were no trimmed messages, so
+    pre-existing violations could only be fixed by waiting for new
+    conversation content to trigger a trim-driven compaction.
+    """
+    store = get_memory_store(test_user.id)
+
+    await store.write_memory_async(
+        "## Clients\n"
+        "- Alice: 555-0100, alice@email.com\n"
+        "- Bob: CUST-002\n"
+        "## Pricing\n"
+        "- Standard day rate: $600\n"
+    )
+
+    cleaned = "## Pricing\n- Standard day rate: $600\n"
+    llm_response_text = json.dumps(
+        {
+            "memory_update": cleaned,
+            "summary": "[TIMESTAMP] Hygiene audit: removed stale client entries.",
+        }
+    )
+    mock_response = make_text_response(llm_response_text)
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        memory_update, _ = await compact_session(
+            test_user.id,
+            trimmed_messages=[],  # no conversation messages
+            hygiene_only=True,
+        )
+
+    # Compliance audit ran and removed excluded content.
+    assert memory_update != ""
+    assert "555-0100" not in memory_update
+    assert "alice@email.com" not in memory_update
+    assert "CUST-002" not in memory_update
+    assert "Standard day rate: $600" in memory_update
+
+    # Verify MEMORY.md was written.
+    persisted = await store.read_memory_async()
+    assert "Standard day rate: $600" in persisted
+    assert "555-0100" not in persisted
+
+
+@pytest.mark.asyncio()
+async def test_hygiene_only_compaction_skips_empty_memory(
+    test_user: UserData,
+) -> None:
+    """Hygiene-only compaction on an empty MEMORY.md should return early
+    without an LLM call."""
+    store = get_memory_store(test_user.id)
+    # Ensure memory is empty
+    await store.write_memory_async("")
+
+    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+        memory_update, _ = await compact_session(
+            test_user.id,
+            trimmed_messages=[],
+            hygiene_only=True,
+        )
+
+    assert memory_update == ""
+    mock_llm.assert_not_called()
