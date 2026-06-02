@@ -38,6 +38,8 @@ class FakeQBService(QuickBooksService):
         }
         if entity_type == "Customer":
             result["DisplayName"] = data.get("DisplayName", "")
+        elif entity_type == "Item":
+            result["Name"] = data.get("Name", "")
         else:
             result["DocNumber"] = f"10{self._next_id}"
             result["TotalAmt"] = sum(line.get("Amount", 0) for line in data.get("Line", []))
@@ -48,6 +50,8 @@ class FakeQBService(QuickBooksService):
         result: dict[str, Any] = {**data}
         if entity_type == "Customer":
             result["DisplayName"] = data.get("DisplayName", "")
+        elif entity_type == "Item":
+            result["Name"] = data.get("Name", "")
         else:
             result["DocNumber"] = data.get("DocNumber", "")
             result["TotalAmt"] = sum(line.get("Amount", 0) for line in data.get("Line", []))
@@ -227,6 +231,63 @@ async def test_qb_create_invoice_with_linked_estimate() -> None:
 
 
 # ---------------------------------------------------------------------------
+# qb_create - Item
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_item() -> None:
+    """Create a service Item in QuickBooks."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_create")
+
+    result = await fn(
+        entity_type="Item",
+        data={
+            "Name": "Materials",
+            "Type": "Service",
+            "IncomeAccountRef": {"value": "1", "name": "Services"},
+        },
+    )
+
+    assert result.is_error is False
+    assert result.content.startswith("ok")
+    assert "Name: Materials" in result.content
+    assert len(svc.created) == 1
+    entity_type, body = svc.created[0]
+    assert entity_type == "Item"
+    assert body["Name"] == "Materials"
+    assert body["Type"] == "Service"
+    assert body["IncomeAccountRef"]["value"] == "1"
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_item_inventory() -> None:
+    """Create an inventory Item with QtyOnHand."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_create")
+
+    result = await fn(
+        entity_type="Item",
+        data={
+            "Name": "Drywall Sheet 4x8",
+            "Type": "Inventory",
+            "UnitPrice": 12.50,
+            "QtyOnHand": 100,
+            "IncomeAccountRef": {"value": "1", "name": "Services"},
+        },
+    )
+
+    assert result.is_error is False
+    assert result.content.startswith("ok")
+    assert "Name: Drywall Sheet 4x8" in result.content
+    _, body = svc.created[0]
+    assert body["QtyOnHand"] == 100
+
+
+# ---------------------------------------------------------------------------
 # qb_create - validation
 # ---------------------------------------------------------------------------
 
@@ -321,6 +382,40 @@ async def test_qb_update_customer() -> None:
     assert "Name: John Smith" in result.content
     _, body = svc.updated[0]
     assert body["PrimaryPhone"]["FreeFormNumber"] == "555-9999"
+
+
+# ---------------------------------------------------------------------------
+# qb_update - Item
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_qb_update_item() -> None:
+    """Update an Item's name and price."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_update")
+
+    result = await fn(
+        entity_type="Item",
+        data={
+            "Id": "1",
+            "SyncToken": "0",
+            "Name": "Materials (updated)",
+            "Type": "Service",
+            "IncomeAccountRef": {"value": "1", "name": "Services"},
+        },
+    )
+
+    assert result.is_error is False
+    assert result.content.startswith("ok")
+    assert "Id: 1" in result.content
+    assert "Name: Materials (updated)" in result.content
+    assert len(svc.updated) == 1
+    entity_type, body = svc.updated[0]
+    assert entity_type == "Item"
+    assert body["Name"] == "Materials (updated)"
+    assert body["SyncToken"] == "0"
 
 
 @pytest.mark.asyncio()
@@ -653,6 +748,8 @@ class FakeQBOServiceWithURL(QuickBooksOnlineService):
         result: dict[str, Any] = {"Id": str(self._next_id), **data}
         if entity_type == "Customer":
             result["DisplayName"] = data.get("DisplayName", "")
+        elif entity_type == "Item":
+            result["Name"] = data.get("Name", "")
         else:
             result["DocNumber"] = f"10{self._next_id}"
             result["TotalAmt"] = sum(line.get("Amount", 0) for line in data.get("Line", []))
@@ -662,6 +759,8 @@ class FakeQBOServiceWithURL(QuickBooksOnlineService):
         result: dict[str, Any] = {**data}
         if entity_type == "Customer":
             result["DisplayName"] = data.get("DisplayName", "")
+        elif entity_type == "Item":
+            result["Name"] = data.get("Name", "")
         else:
             result["DocNumber"] = data.get("DocNumber", "10000")
             result["TotalAmt"] = sum(line.get("Amount", 0) for line in data.get("Line", []))
@@ -809,6 +908,26 @@ def test_qb_create_approval_description_customer_keeps_short_form() -> None:
     assert description == "Create Customer in QuickBooks"
 
 
+def test_qb_create_approval_description_item_keeps_short_form() -> None:
+    """Item payloads have no Line array; the prompt must stay the
+    legacy short form."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_create")
+
+    description = builder(
+        {
+            "entity_type": "Item",
+            "data": {
+                "Name": "Materials",
+                "Type": "Service",
+                "IncomeAccountRef": {"value": "1", "name": "Services"},
+            },
+        }
+    )
+    assert description == "Create Item in QuickBooks"
+
+
 def test_qb_create_approval_description_falls_back_without_sales_item_detail() -> None:
     """A line missing SalesItemLineDetail still renders, using Amount alone."""
     svc = FakeQBService()
@@ -937,6 +1056,27 @@ def test_qb_update_approval_description_customer_short_form_includes_id() -> Non
         }
     )
     assert description == "Update Customer #100 in QuickBooks"
+
+
+def test_qb_update_approval_description_item_short_form_includes_id() -> None:
+    """For non-itemized entity types (Item), the qb_update short
+    form should still reference the Id being updated."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    builder = _get_description_builder(tools, "qb_update")
+
+    description = builder(
+        {
+            "entity_type": "Item",
+            "data": {
+                "Id": "1",
+                "SyncToken": "0",
+                "Name": "Materials",
+                "Type": "Service",
+            },
+        }
+    )
+    assert description == "Update Item #1 in QuickBooks"
 
 
 def test_qb_create_approval_description_uses_thousands_separator() -> None:

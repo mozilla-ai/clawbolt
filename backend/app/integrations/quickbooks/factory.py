@@ -68,10 +68,10 @@ _ENTITY_LABELS: dict[str, str] = {
 }
 
 # Entity types that qb_create is allowed to create.
-_CREATABLE_ENTITIES = {"Customer", "Estimate", "Invoice"}
+_CREATABLE_ENTITIES = {"Customer", "Estimate", "Invoice", "Item"}
 
 # Entity types that qb_update is allowed to update.
-_UPDATABLE_ENTITIES = {"Customer", "Estimate", "Invoice"}
+_UPDATABLE_ENTITIES = {"Customer", "Estimate", "Invoice", "Item"}
 
 # Entity types that qb_send is allowed to send via email.
 _SENDABLE_ENTITIES = {"Invoice", "Estimate"}
@@ -189,7 +189,7 @@ class QBCreateParams(BaseModel):
     """Parameters for the qb_create tool."""
 
     entity_type: str = Field(
-        description="QBO entity type to create: Customer, Estimate, or Invoice"
+        description="QBO entity type to create: Customer, Estimate, Invoice, or Item"
     )
     data: dict[str, Any] = Field(
         description=(
@@ -204,7 +204,7 @@ class QBUpdateParams(BaseModel):
     """Parameters for the qb_update tool."""
 
     entity_type: str = Field(
-        description="QBO entity type to update: Customer, Estimate, or Invoice"
+        description="QBO entity type to update: Customer, Estimate, Invoice, or Item"
     )
     data: dict[str, Any] = Field(
         description=(
@@ -477,6 +477,9 @@ def _receipt_target(entity_type: str, result: dict[str, Any]) -> str:
         return ", ".join(bits)
     if entity_type == "Customer":
         return name or f"ID {entity_id}"
+    if entity_type == "Item":
+        item_name = result.get("Name") or ""
+        return item_name or f"ID {entity_id}"
     return name or doc_num or f"ID {entity_id}"
 
 
@@ -566,6 +569,7 @@ def create_quickbooks_tools(
         doc_num = result.get("DocNumber", "")
         total = result.get("TotalAmt")
         display_name = result.get("DisplayName", "")
+        item_name = result.get("Name", "")
 
         # LLM-facing content stays terse and data-only so the model has no
         # receipt-shaped phrasing to bullet-point back to the user. The
@@ -578,6 +582,8 @@ def create_quickbooks_tools(
             parts.append(f"Total: ${total:.2f}")
         if display_name:
             parts.append(f"Name: {display_name}")
+        if not display_name and item_name:
+            parts.append(f"Name: {item_name}")
 
         return ToolResult(
             content=" | ".join(parts),
@@ -616,6 +622,7 @@ def create_quickbooks_tools(
         doc_num = result.get("DocNumber", "")
         total = result.get("TotalAmt")
         display_name = result.get("DisplayName", "")
+        item_name = result.get("Name", "")
 
         parts = ["ok", f"Id: {entity_id}"]
         if doc_num:
@@ -624,6 +631,8 @@ def create_quickbooks_tools(
             parts.append(f"Total: ${total:.2f}")
         if display_name:
             parts.append(f"Name: {display_name}")
+        if not display_name and item_name:
+            parts.append(f"Name: {item_name}")
 
         return ToolResult(
             content=" | ".join(parts),
@@ -697,13 +706,13 @@ def create_quickbooks_tools(
             name=ToolName.QB_CREATE,
             description=(
                 "Create an entity in QuickBooks Online. Pass the entity type "
-                "(Customer, Estimate, or Invoice) and the QBO API payload. "
+                "(Customer, Estimate, Invoice, or Item) and the QBO API payload. "
                 "See the QuickBooks skill for payload formats and examples."
             ),
             function=qb_create,
             params_model=QBCreateParams,
             usage_hint=(
-                "Create a Customer, Estimate, or Invoice in QB. "
+                "Create a Customer, Estimate, Invoice, or Item in QB. "
                 "Construct the QBO API payload as described in the skill docs."
             ),
             approval_policy=ApprovalPolicy(
@@ -718,14 +727,14 @@ def create_quickbooks_tools(
             name=ToolName.QB_UPDATE,
             description=(
                 "Update an existing entity in QuickBooks Online. Pass the entity type "
-                "(Customer, Estimate, or Invoice) and the full QBO API payload "
+                "(Customer, Estimate, Invoice, or Item) and the full QBO API payload "
                 "including Id and SyncToken from a prior qb_query. "
                 "See the QuickBooks skill for payload formats."
             ),
             function=qb_update,
             params_model=QBUpdateParams,
             usage_hint=(
-                "Update a Customer, Estimate, or Invoice in QB. "
+                "Update a Customer, Estimate, Invoice, or Item in QB. "
                 "Payload must include Id and SyncToken from a prior query."
             ),
             approval_policy=ApprovalPolicy(
