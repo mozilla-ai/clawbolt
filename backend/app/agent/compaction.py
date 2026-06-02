@@ -234,6 +234,7 @@ async def compact_session(
     max_message_seq: int | None = None,
     event_id: int | None = None,
     admin_note: str | None = None,
+    hygiene_only: bool = False,
 ) -> tuple[str, int | None]:
     """Consolidate messages into an updated MEMORY.md via LLM rewrite.
 
@@ -244,6 +245,7 @@ async def compact_session(
     Args:
         user_id: The user whose session is being compacted.
         trimmed_messages: Messages that are about to be dropped from context.
+            Ignored when *hygiene_only* is True.
         max_message_seq: The highest message seq among the trimmed messages,
             used to track compaction progress. Passed through to the return value.
         event_id: When provided, the existing ``compaction_events`` row to
@@ -260,21 +262,46 @@ async def compact_session(
             about its own capabilities; do not preserve those as facts".
             Has no effect on the trim-driven hot path, which leaves it
             unset.
+        hygiene_only: When True, skip the conversation-message requirement
+            and instead run the compliance audit only. The LLM re-audits
+            the existing MEMORY.md against the Do-Not-Include list without
+            needing new conversation content. ``trimmed_messages`` is
+            ignored in this mode.
 
     Returns:
         A tuple of (memory_update, max_message_seq) where memory_update is the
         new MEMORY.md content (empty string if nothing changed), and
         max_message_seq is the highest compacted message seq (for tracking).
     """
-    if not trimmed_messages:
+    if not trimmed_messages and not hygiene_only:
         return "", None
 
     if not settings.compaction_enabled:
         return "", None
 
-    conversation_text = _format_messages_for_compaction(trimmed_messages)
-    if not conversation_text.strip():
-        return "", None
+    if hygiene_only:
+        # If memory is empty, there is nothing to audit.
+        memory_store = get_memory_store(user_id)
+        current_memory_check = await memory_store.read_memory_async()
+        if not current_memory_check or not current_memory_check.strip():
+            return "", None
+
+        # Build a minimal conversation block that triggers the compliance
+        # audit in Step 1 of the prompt without providing actual messages.
+        # The model reads this and performs the compliance audit on the
+        # existing MEMORY.md, then merges nothing because there are no
+        # new facts.
+        conversation_text = (
+            "[compliance audit: re-audit existing MEMORY.md against the Do-Not-Include list]"
+        )
+        _trimmed_count = 0
+        _input_chars = 0
+    else:
+        conversation_text = _format_messages_for_compaction(trimmed_messages)
+        if not conversation_text.strip():
+            return "", None
+        _trimmed_count = len(trimmed_messages)
+        _input_chars = sum(len(m.content or "") for m in trimmed_messages if hasattr(m, "content"))
 
     if admin_note:
         conversation_text = f"[admin note: {admin_note}]\n\n{conversation_text}"
@@ -284,8 +311,6 @@ async def compact_session(
     # per-run shape so we can audit frequency, cost, and whether the LLM
     # is actually picking up new facts vs producing empty rewrites.
     _start_monotonic = time.monotonic()
-    _trimmed_count = len(trimmed_messages)
-    _input_chars = sum(len(m.content or "") for m in trimmed_messages if hasattr(m, "content"))
 
     memory_store = get_memory_store(user_id)
     current_memory = await memory_store.read_memory_async()
