@@ -7,8 +7,8 @@ You now have access to QuickBooks Online tools. Here is how to use them effectiv
 | Tool | Purpose |
 |------|---------|
 | `qb_query` | Run read-only queries using QBO query language |
-| `qb_create` | Create a Customer, Estimate, or Invoice |
-| `qb_update` | Update an existing Customer, Estimate, or Invoice |
+| `qb_create` | Create a Customer, Estimate, Invoice, or Item |
+| `qb_update` | Update an existing Customer, Estimate, Invoice, or Item |
 | `qb_send` | Email an invoice or estimate to a customer |
 
 ## Query Guide (qb_query)
@@ -44,7 +44,7 @@ An ID you already resolved this session can be reused without re-querying.
 
 ## Creating Entities (qb_create)
 
-Pass `entity_type` (Customer, Estimate, or Invoice) and `data` (the QBO API payload).
+Pass `entity_type` (Customer, Estimate, Invoice, or Item) and `data` (the QBO API payload).
 
 ### Customer payload
 
@@ -92,6 +92,38 @@ Optional fields:
 - `CustomerMemo`: `{"value": "notes text"}`
 - `TxnDate`: "YYYY-MM-DD" (defaults to today)
 - `LinkedTxn`: array of linked transactions (used when converting an estimate)
+
+### Item payload
+
+Required fields:
+- `Name` (string, must be unique in QB)
+- `Type` (string): "Inventory", "Service", or "OtherCharge"
+
+Optional fields:
+- `Description`: string
+- `UnitPrice`: number
+- `IncomeAccountRef`: `{"value": "<account_id>", "name": "<account_name>"}`
+- `Active`: boolean (defaults to true)
+- `Sku`: string (stock-keeping unit code)
+- `ParentRef`: `{"value": "<parent_item_id>"}`
+- `PurchaseDesc`: string
+- `PurchaseCost`: number
+- `QtyOnHand`: number (for Inventory items)
+
+Example:
+```json
+{
+  "entity_type": "Item",
+  "data": {
+    "Name": "Materials",
+    "Type": "Service",
+    "IncomeAccountRef": {
+      "value": "1",
+      "name": "Services"
+    }
+  }
+}
+```
 
 ### Line item format
 
