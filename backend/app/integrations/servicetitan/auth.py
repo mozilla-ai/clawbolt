@@ -265,6 +265,52 @@ async def save_credentials(
     return cred
 
 
+async def connect_credentials(
+    user_id: str,
+    *,
+    tenant_id: str,
+    client_id: str,
+    client_secret: str,
+) -> ServiceTitanCredential:
+    """Validate pasted ServiceTitan credentials and persist them.
+
+    Strips the three values, mints a bearer against the token endpoint to
+    prove they work, then persists them (with the operator-level App Key
+    snapshotted in). Returns the saved credential.
+
+    Raises :class:`ServiceTitanAuthError` when any field is blank, when the
+    deployment is missing its App Key, or when ServiceTitan rejects the
+    client credentials. Callers (the web connect endpoint) map that to a
+    user-facing error.
+
+    Connecting only happens through the authenticated web app: pasting
+    these secrets into a chat thread would leave them in the message
+    history where they cannot be cleared (issue #1337).
+    """
+    tenant_id = tenant_id.strip()
+    client_id = client_id.strip()
+    client_secret = client_secret.strip()
+    if not tenant_id or not client_id or not client_secret:
+        raise ServiceTitanAuthError("Tenant ID, Client ID, and Client Secret are all required.")
+    if not settings.servicetitan_app_key:
+        raise ServiceTitanAuthError(
+            "ServiceTitan is not configured: the deployment is missing an App Key."
+        )
+    access_token, expires_at = await mint_access_token(
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    return await save_credentials(
+        user_id,
+        tenant_id=tenant_id,
+        client_id=client_id,
+        client_secret=client_secret,
+        app_key=settings.servicetitan_app_key,
+        access_token=access_token,
+        expires_at=expires_at,
+    )
+
+
 async def load_credentials(user_id: str) -> ServiceTitanCredential | None:
     """Load the user's persisted ServiceTitan credential, if any."""
     token = await oauth_service.load_token(user_id, INTEGRATION_NAME)

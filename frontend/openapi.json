@@ -263,6 +263,122 @@
         }
       }
     },
+    "/api/integrations/servicetitan/connect": {
+      "post": {
+        "summary": "Connect Servicetitan",
+        "description": "Validate ServiceTitan client credentials and persist them.",
+        "operationId": "connect_servicetitan_api_integrations_servicetitan_connect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceTitanConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationConnectionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/integrations/servicetitan": {
+      "delete": {
+        "summary": "Disconnect Servicetitan",
+        "description": "Remove the user's stored ServiceTitan credential.",
+        "operationId": "disconnect_servicetitan_api_integrations_servicetitan_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationConnectionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/integrations/appfolio_vendor/connect": {
+      "post": {
+        "summary": "Connect Appfolio",
+        "description": "Exchange a pasted AppFolio magic link for a credential and persist it.",
+        "operationId": "connect_appfolio_api_integrations_appfolio_vendor_connect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppFolioConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationConnectionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/integrations/appfolio_vendor": {
+      "delete": {
+        "summary": "Disconnect Appfolio",
+        "description": "Remove the user's stored AppFolio credential.",
+        "operationId": "disconnect_appfolio_api_integrations_appfolio_vendor_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationConnectionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/media/temp/{token}": {
       "get": {
         "summary": "Serve Temp Media",
@@ -1365,6 +1481,21 @@
         "title": "AppConfigResponse",
         "description": "Deployment-level feature flags the frontend reads on app load."
       },
+      "AppFolioConnectRequest": {
+        "properties": {
+          "magic_link": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Magic Link"
+          }
+        },
+        "type": "object",
+        "required": [
+          "magic_link"
+        ],
+        "title": "AppFolioConnectRequest",
+        "description": "A pasted AppFolio magic link (full URL or the bare token)."
+      },
       "BatchDeleteRequest": {
         "properties": {
           "seqs": {
@@ -2059,6 +2190,25 @@
         ],
         "title": "HeartbeatLogListResponse"
       },
+      "IntegrationConnectionResponse": {
+        "properties": {
+          "integration": {
+            "type": "string",
+            "title": "Integration"
+          },
+          "connected": {
+            "type": "boolean",
+            "title": "Connected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "integration",
+          "connected"
+        ],
+        "title": "IntegrationConnectionResponse",
+        "description": "Result of a connect/disconnect on a web-form integration."
+      },
       "LLMUsageByPurpose": {
         "properties": {
           "purpose": {
@@ -2436,6 +2586,33 @@
         ],
         "title": "ProviderInfo"
       },
+      "ServiceTitanConnectRequest": {
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Tenant Id"
+          },
+          "client_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Client Id"
+          },
+          "client_secret": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Client Secret"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "client_id",
+          "client_secret"
+        ],
+        "title": "ServiceTitanConnectRequest",
+        "description": "The three values from ServiceTitan's API Application Access page."
+      },
       "SessionDetailResponse": {
         "properties": {
           "session_id": {
@@ -2649,6 +2826,11 @@
             "type": "boolean",
             "title": "Always Enabled",
             "default": false
+          },
+          "connect_form": {
+            "type": "string",
+            "title": "Connect Form",
+            "default": ""
           },
           "sub_tools": {
             "items": {

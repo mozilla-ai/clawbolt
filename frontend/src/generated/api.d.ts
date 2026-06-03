@@ -180,6 +180,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/integrations/servicetitan/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect Servicetitan
+         * @description Validate ServiceTitan client credentials and persist them.
+         */
+        post: operations["connect_servicetitan_api_integrations_servicetitan_connect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/servicetitan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect Servicetitan
+         * @description Remove the user's stored ServiceTitan credential.
+         */
+        delete: operations["disconnect_servicetitan_api_integrations_servicetitan_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/appfolio_vendor/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect Appfolio
+         * @description Exchange a pasted AppFolio magic link for a credential and persist it.
+         */
+        post: operations["connect_appfolio_api_integrations_appfolio_vendor_connect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/appfolio_vendor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect Appfolio
+         * @description Remove the user's stored AppFolio credential.
+         */
+        delete: operations["disconnect_appfolio_api_integrations_appfolio_vendor_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/media/temp/{token}": {
         parameters: {
             query?: never;
@@ -900,6 +980,14 @@ export interface components {
             /** Chat Web Attachments Enabled */
             chat_web_attachments_enabled: boolean;
         };
+        /**
+         * AppFolioConnectRequest
+         * @description A pasted AppFolio magic link (full URL or the bare token).
+         */
+        AppFolioConnectRequest: {
+            /** Magic Link */
+            magic_link: string;
+        };
         /** BatchDeleteRequest */
         BatchDeleteRequest: {
             /** Seqs */
@@ -1194,6 +1282,16 @@ export interface components {
             /** Items */
             items: components["schemas"]["HeartbeatLogItemResponse"][];
         };
+        /**
+         * IntegrationConnectionResponse
+         * @description Result of a connect/disconnect on a web-form integration.
+         */
+        IntegrationConnectionResponse: {
+            /** Integration */
+            integration: string;
+            /** Connected */
+            connected: boolean;
+        };
         /** LLMUsageByPurpose */
         LLMUsageByPurpose: {
             /** Purpose */
@@ -1313,6 +1411,18 @@ export interface components {
             name: string;
             /** Local */
             local: boolean;
+        };
+        /**
+         * ServiceTitanConnectRequest
+         * @description The three values from ServiceTitan's API Application Access page.
+         */
+        ServiceTitanConnectRequest: {
+            /** Tenant Id */
+            tenant_id: string;
+            /** Client Id */
+            client_id: string;
+            /** Client Secret */
+            client_secret: string;
         };
         /** SessionDetailResponse */
         SessionDetailResponse: {
@@ -1448,6 +1558,11 @@ export interface components {
              * @default false
              */
             always_enabled: boolean;
+            /**
+             * Connect Form
+             * @default
+             */
+            connect_form: string;
             /** Sub Tools */
             sub_tools?: components["schemas"]["SubToolEntryResponse"][];
         };
@@ -1777,6 +1892,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    connect_servicetitan_api_integrations_servicetitan_connect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceTitanConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConnectionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_servicetitan_api_integrations_servicetitan_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConnectionResponse"];
+                };
+            };
+        };
+    };
+    connect_appfolio_api_integrations_appfolio_vendor_connect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppFolioConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConnectionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_appfolio_api_integrations_appfolio_vendor_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConnectionResponse"];
                 };
             };
         };

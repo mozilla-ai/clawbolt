@@ -26,6 +26,9 @@ export type ToolConfigUpdateEntry = components['schemas']['ToolConfigUpdateEntry
 export type OAuthStatusEntry = components['schemas']['OAuthStatusEntry'];
 export type OAuthStatusResponse = components['schemas']['OAuthStatusResponse'];
 export type OAuthAuthorizeResponse = components['schemas']['OAuthAuthorizeResponse'];
+export type ServiceTitanConnectRequest = components['schemas']['ServiceTitanConnectRequest'];
+export type AppFolioConnectRequest = components['schemas']['AppFolioConnectRequest'];
+export type IntegrationConnectionResponse = components['schemas']['IntegrationConnectionResponse'];
 export type ProviderInfo = components['schemas']['ProviderInfo'];
 
 // --- Frontend-only types (no backend equivalent, stay manual) ---

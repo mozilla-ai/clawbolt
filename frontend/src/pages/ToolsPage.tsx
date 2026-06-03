@@ -5,6 +5,7 @@ import { Switch } from '@heroui/switch';
 import { toast } from '@/lib/toast';
 import { displayName, subToolDisplayName, getToolOAuthStatus } from '@/lib/tool-utils';
 import { IntegrationIcon } from '@/components/integration-icons';
+import ConnectIntegrationModal from '@/components/ConnectIntegrationModal';
 import PermissionSelector, { PERM_OPTIONS, type PermLevel } from '@/components/PermissionSelector';
 
 const PERM_LEVEL_CLASSNAMES: Record<PermLevel, string> = {
@@ -24,7 +25,7 @@ function PermissionLevelLabel({ level }: { level: string }) {
     </span>
   );
 }
-import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
+import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useDisconnectIntegration, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
 import api from '@/api';
 import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
@@ -33,8 +34,11 @@ export default function ToolsPage() {
   const updateMutation = useUpdateToolConfig();
   const { data: oauthData } = useOAuthStatus();
   const disconnectMutation = useOAuthDisconnect();
+  const disconnectIntegrationMutation = useDisconnectIntegration();
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [connectingIntegration, setConnectingIntegration] = useState<string | null>(null);
+  // Which web-form integration's credential modal is open (e.g. ``servicetitan``).
+  const [connectFormFor, setConnectFormFor] = useState<string | null>(null);
 
   const tools = data?.tools ?? [];
   const oauthMap: Record<string, OAuthStatusEntry> = {};
@@ -102,6 +106,13 @@ export default function ToolsPage() {
     });
   };
 
+  const handleFormDisconnect = (integration: 'servicetitan' | 'appfolio_vendor') => {
+    disconnectIntegrationMutation.mutate(integration, {
+      onSuccess: () => toast.success(`Disconnected`),
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
   if (isPending && !data) {
     return (
       <div>
@@ -147,7 +158,7 @@ export default function ToolsPage() {
                               <span className={`size-1.5 rounded-full inline-block shrink-0 ${
                                 isConnected ? 'bg-success' : 'bg-warning'
                               }`} />
-                              {needsOAuth ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
+                              {needsOAuth || tool.connect_form ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -179,6 +190,25 @@ export default function ToolsPage() {
                           disabled={connectingIntegration === oauthIntegration}
                           isLoading={connectingIntegration === oauthIntegration}
                         >
+                          Connect
+                        </Button>
+                      )}
+                      {tool.connect_form && isConnected && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            handleFormDisconnect(
+                              tool.connect_form as 'servicetitan' | 'appfolio_vendor',
+                            )
+                          }
+                          disabled={disconnectIntegrationMutation.isPending}
+                        >
+                          Disconnect
+                        </Button>
+                      )}
+                      {tool.connect_form && !isConnected && (
+                        <Button size="sm" onClick={() => setConnectFormFor(tool.connect_form)}>
                           Connect
                         </Button>
                       )}
@@ -227,6 +257,14 @@ export default function ToolsPage() {
         </section>
       )}
 
+      {connectFormFor && (
+        <ConnectIntegrationModal
+          integration={connectFormFor}
+          displayName={displayName(connectFormFor)}
+          isOpen={connectFormFor !== null}
+          onClose={() => setConnectFormFor(null)}
+        />
+      )}
     </div>
   );
 }

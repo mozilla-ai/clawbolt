@@ -1,22 +1,18 @@
 """AppFolio Vendor Portal tool registration and factories.
 
 Picked up by the registry's ``ensure_tool_modules_imported`` scan; the
-``_register()`` call at the bottom installs two factories at module-import
-time:
+``_register()`` call at the bottom installs the ``appfolio_vendor``
+specialist factory at module-import time: the data tools (work-order reads +
+status updates, notes with photos, invoices). When the user is not yet
+connected, ``_appfolio_vendor_auth_check`` returns a reason string so the
+registry surfaces it under "Not connected" rather than letting the LLM
+believe AppFolio is ready to use. That closed a prod bug where the agent
+told users "AppFolio is connected" before they had connected.
 
-* ``appfolio_auth`` (core, always on the schema): the magic-link
-  ``appfolio_connect`` tool. This must stay reachable even when the user
-  has no credential, since pasting the token *is* the connect path.
-* ``appfolio_vendor`` (specialist, gated on connection state): the data
-  tools (work-order reads + status updates, notes with photos, invoices). When the user
-  is not yet connected, ``_appfolio_vendor_auth_check`` returns a reason
-  string so the registry surfaces it under "Not connected" rather than
-  letting the LLM believe AppFolio is ready to use.
-
-This split closes a prod bug where the agent confidently told users
-"AppFolio is connected" before they had connected, because a single
-combined factory had to keep ``auth_check`` returning ``None``
-unconditionally to keep the connect tool on the schema.
+Connecting happens in the Clawbolt web app, not over chat: the magic link
+is a single-use secret, and pasting it into a chat thread would leave it in
+the user's message history (issue #1337). The connect form lives on the
+Settings page and posts to ``/api/integrations/appfolio_vendor``.
 """
 
 from __future__ import annotations
@@ -28,7 +24,6 @@ from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.integrations.appfolio_vendor.auth import load_credential, save_credential
-from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
 from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
 from backend.app.integrations.appfolio_vendor.notes import build_note_tools
 from backend.app.integrations.appfolio_vendor.service import build_service
@@ -43,22 +38,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_AUTH_FACTORY = "appfolio_auth"
 _DATA_FACTORY = "appfolio_vendor"
-
-
-async def _appfolio_auth_factory(ctx: ToolContext) -> list[Tool]:
-    """Assemble just the magic-link auth tools for AppFolio.
-
-    Returns the connect + 2FA tools so the user can authenticate from a
-    fresh state. Registered as a core factory so the schema contract is
-    independent of credential state. Disabling the user-facing
-    ``appfolio_vendor`` integration cascades through ``manage_integration``
-    to also flip ``appfolio_auth`` in ``ToolConfigStore``, so the registry's
-    ``excluded_factories`` mechanism in ``tool_assembly`` removes both
-    factories together without a per-turn DB query in this factory body.
-    """
-    return list(build_auth_tools(ctx.user.id))
 
 
 async def _appfolio_vendor_factory(ctx: ToolContext) -> list[Tool]:
@@ -109,39 +89,22 @@ async def _appfolio_vendor_auth_check(ctx: ToolContext) -> str | None:
 
     When no credential is on file, returns a reason string so the
     registry surfaces ``appfolio_vendor`` under "Not connected" in the
-    LLM's capability list. The LLM then knows it must guide the user
-    through the magic-link flow before claiming AppFolio access.
-
-    The connect tool itself lives in the separate ``appfolio_auth``
-    factory (core, always available), so this auth_check returning a
-    reason does not strip the connect path from the schema.
+    LLM's capability list. The reason routes the user to the web app: the
+    single-use magic link must never be pasted into chat (issue #1337).
     """
     cred = await load_credential(ctx.user.id)
     if cred is not None and cred.jwt:
         return None
     return (
-        "AppFolio Vendor Portal is not connected. Use "
-        "manage_integration(action='connect', target='appfolio_vendor') "
-        "for the magic-link recipe, then call appfolio_connect with the "
-        "URL the user pastes."
+        "AppFolio Vendor Portal is not connected. The user connects it in the"
+        " Clawbolt web app under Settings, where they paste the magic link from"
+        " their AppFolio sign-in email. Do not accept the magic link over chat;"
+        " direct the user to the web app instead."
     )
 
 
 def _register() -> None:
     from backend.app.agent.tools.registry import SubToolInfo, default_registry
-
-    default_registry.register(
-        _AUTH_FACTORY,
-        _appfolio_auth_factory,
-        core=True,
-        sub_tools=[
-            SubToolInfo(
-                ToolName.APPFOLIO_CONNECT,
-                "Connect AppFolio Vendor Portal via magic link",
-                default_permission="always",
-            ),
-        ],
-    )
 
     default_registry.register(
         _DATA_FACTORY,

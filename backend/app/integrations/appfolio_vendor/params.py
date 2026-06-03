@@ -9,16 +9,6 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class AppFolioConnectParams(BaseModel):
-    magic_link: str = Field(
-        description=(
-            "The magic-link token from the user's AppFolio email (the value"
-            " after 'magic_link_token=' in the URL, e.g. 'eyJ...')."
-            " A full URL is also accepted as a fallback."
-        ),
-    )
-
-
 class AppFolioListWorkOrdersParams(BaseModel):
     include_in_progress: bool = Field(
         default=True,

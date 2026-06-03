@@ -303,6 +303,13 @@ class ToolConfigEntryResponse(BaseModel):
     # purely-internal categories cannot accidentally hide the toggle for
     # always-on OAuth tools (Google Drive).
     always_enabled: bool = False
+    # Integration key for tools that connect by submitting secrets through a
+    # web form (ServiceTitan client credentials, AppFolio magic link) rather
+    # than an OAuth redirect. Empty when the tool is not form-connected. The
+    # Settings UI keys off this to render the right credential form instead of
+    # an OAuth Connect button, so these secrets never travel through a chat
+    # thread (issue #1337).
+    connect_form: str = ""
     sub_tools: list[SubToolEntryResponse] = Field(default_factory=list)
 
 
@@ -412,6 +419,37 @@ class OAuthStatusResponse(BaseModel):
 class OAuthAuthorizeResponse(BaseModel):
     url: str
     integration: str
+
+
+# ---------------------------------------------------------------------------
+# Web-form integration connections (ServiceTitan, AppFolio Vendor Portal)
+#
+# These integrations authenticate with pasted secrets rather than an OAuth
+# redirect. The web app collects the secrets over an authenticated HTTPS
+# session and submits them here, so they never land in a chat thread
+# (issue #1337).
+# ---------------------------------------------------------------------------
+
+
+class ServiceTitanConnectRequest(BaseModel):
+    """The three values from ServiceTitan's API Application Access page."""
+
+    tenant_id: str = Field(..., min_length=1)
+    client_id: str = Field(..., min_length=1)
+    client_secret: str = Field(..., min_length=1)
+
+
+class AppFolioConnectRequest(BaseModel):
+    """A pasted AppFolio magic link (full URL or the bare token)."""
+
+    magic_link: str = Field(..., min_length=1)
+
+
+class IntegrationConnectionResponse(BaseModel):
+    """Result of a connect/disconnect on a web-form integration."""
+
+    integration: str
+    connected: bool
 
 
 # ---------------------------------------------------------------------------

@@ -260,8 +260,9 @@ class Settings(BaseSettings):
     appfolio_vendor_web_base: str = "https://vendor.appfolio.com"
 
     # ServiceTitan (OAuth 2.0 client-credentials per tenant + app-level App Key).
-    # Each tenant pastes their tenant ID, client ID, and client secret via
-    # ``connect_servicetitan``; the operator wires the app-level App Key here.
+    # Each tenant enters their tenant ID, client ID, and client secret in the
+    # Clawbolt web app (not over chat, issue #1337); the operator wires the
+    # app-level App Key here.
     # ``servicetitan_use_fake`` swaps the real API for the in-process fake
     # backend (see ``backend/app/integrations/servicetitan/_fake.py``); used
     # by tests and by the local dev loop until a real sandbox tenant is wired.

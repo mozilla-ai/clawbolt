@@ -76,7 +76,8 @@ def test_load_all_skills_discovers_servicetitan() -> None:
     assert "ServiceTitan" in content
     assert "st_search_customers" in content
     assert "st_list_appointments" in content
-    assert "connect_servicetitan" in content
+    # Connecting moved to the web app (issue #1337); the SKILL must say so.
+    assert "web app" in content
 
 
 # ---------------------------------------------------------------------------

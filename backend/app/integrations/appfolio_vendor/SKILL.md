@@ -8,7 +8,6 @@ AppFolio Vendor Portal.
 
 | Tool | Purpose | Approval |
 |------|---------|----------|
-| appfolio_connect | First-time connect with a pasted magic link | Auto |
 | appfolio_list_work_orders | List work orders, filter by status | Auto |
 | appfolio_search_work_orders | Search by address, number, or text | Auto |
 | appfolio_get_work_order | One work order's details | Auto |
@@ -38,16 +37,16 @@ convention. AppFolio receives photo bytes inline as base64 in the JSON body.
 
 ## Connecting
 
-AppFolio uses passwordless magic-link login (single-use, expires in
-minutes):
+AppFolio uses passwordless magic-link login. The magic link is a single-use
+secret, so the user connects in the Clawbolt web app under Settings,
+Integrations, never over chat where it would stay in the message history:
 
 1. User opens vendor.appfolio.com and requests a magic link.
-2. From the email, they copy only the token from the magic-link URL
-   (everything after `magic_link_token=`), not the full URL. iMessage
-   and other SMS clients strip query params from pasted links.
-3. Call `appfolio_connect(magic_link=...)` with the pasted token.
+2. They open the Clawbolt web app, go to Settings, Integrations, AppFolio
+   Vendor Portal, and paste the magic link from their AppFolio email there.
 
-The OAuth2 exchange returns a refresh token alongside the bearer JWT,
-so live sessions extend automatically on 401. On `auth` errors with no
-refresh path left, the same flow gets the user a fresh JWT; their
-fingerprint persists.
+Direct the user to the web app; do not accept the magic link in the
+conversation. The OAuth2 exchange returns a refresh token alongside the
+bearer JWT, so live sessions extend automatically on 401. When the refresh
+path is exhausted, the user reconnects the same way; their fingerprint
+persists.
