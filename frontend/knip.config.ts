@@ -14,6 +14,7 @@ const config: KnipConfig = {
     'tailwind-merge', // Peer dep of tailwind-variants (HeroUI)
     'remark-gfm', // Imported by premium's DocsPage overlay, not OSS
     'rehype-highlight', // Imported by premium's DocsPage overlay, not OSS
+    'html-to-image', // Imported by premium's share-snippet overlay, not OSS
     'esbuild', // Used by scripts/gen-tokens.mjs; provided transitively by vite
   ],
   vite: { config: ['vite.config.ts'] },
