@@ -72,9 +72,19 @@ _TOKEN_FALLBACK_TTL_SECONDS = 180.0
 class ServiceTitanAuthError(RuntimeError):
     """Raised when token minting against ServiceTitan fails.
 
-    Surfaces to the user via the connect tool when the pasted credentials
+    Surfaces to the user via the connect flow when the pasted credentials
     are wrong, and via the refresh path when an existing credential stops
     working (e.g. the tenant rotated the secret).
+    """
+
+
+class ServiceTitanUnavailableError(ServiceTitanAuthError):
+    """Raised when the failure is upstream (network or ServiceTitan 5xx).
+
+    Distinct from the base class so callers can tell "the user's credentials
+    are wrong" (a 4xx, the user's problem) from "ServiceTitan is down or
+    unreachable" (a transient outage). The web connect endpoint maps this to
+    HTTP 502 instead of 400 so a vendor outage does not read as bad input.
     """
 
 
@@ -156,7 +166,9 @@ async def mint_access_token(
             resp = await client.post(TOKEN_PATH, data=body)
     except httpx.HTTPError as exc:
         logger.warning("ServiceTitan token mint network failure: %s", exc)
-        raise ServiceTitanAuthError(f"ServiceTitan token endpoint unreachable: {exc!r}") from exc
+        raise ServiceTitanUnavailableError(
+            f"ServiceTitan token endpoint unreachable: {exc!r}"
+        ) from exc
 
     if resp.status_code >= 400:
         logger.warning(
@@ -164,6 +176,11 @@ async def mint_access_token(
             resp.status_code,
             resp.text[:500],
         )
+        if resp.status_code >= 500:
+            # Upstream is broken, not the user's credentials.
+            raise ServiceTitanUnavailableError(
+                f"ServiceTitan token endpoint returned HTTP {resp.status_code}"
+            )
         raise ServiceTitanAuthError(
             f"ServiceTitan rejected the client credentials (HTTP {resp.status_code})"
         )
@@ -263,6 +280,52 @@ async def save_credentials(
         tenant_id,
     )
     return cred
+
+
+async def connect_credentials(
+    user_id: str,
+    *,
+    tenant_id: str,
+    client_id: str,
+    client_secret: str,
+) -> ServiceTitanCredential:
+    """Validate pasted ServiceTitan credentials and persist them.
+
+    Strips the three values, mints a bearer against the token endpoint to
+    prove they work, then persists them (with the operator-level App Key
+    snapshotted in). Returns the saved credential.
+
+    Raises :class:`ServiceTitanAuthError` when any field is blank, when the
+    deployment is missing its App Key, or when ServiceTitan rejects the
+    client credentials. Callers (the web connect endpoint) map that to a
+    user-facing error.
+
+    Connecting only happens through the authenticated web app: pasting
+    these secrets into a chat thread would leave them in the message
+    history where they cannot be cleared (issue #1337).
+    """
+    tenant_id = tenant_id.strip()
+    client_id = client_id.strip()
+    client_secret = client_secret.strip()
+    if not tenant_id or not client_id or not client_secret:
+        raise ServiceTitanAuthError("Tenant ID, Client ID, and Client Secret are all required.")
+    if not settings.servicetitan_app_key:
+        raise ServiceTitanAuthError(
+            "ServiceTitan is not configured: the deployment is missing an App Key."
+        )
+    access_token, expires_at = await mint_access_token(
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    return await save_credentials(
+        user_id,
+        tenant_id=tenant_id,
+        client_id=client_id,
+        client_secret=client_secret,
+        app_key=settings.servicetitan_app_key,
+        access_token=access_token,
+        expires_at=expires_at,
+    )
 
 
 async def load_credentials(user_id: str) -> ServiceTitanCredential | None:

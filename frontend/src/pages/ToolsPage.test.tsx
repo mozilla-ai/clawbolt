@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { renderWithRouter } from '@/test/test-utils';
 import ToolsPage from './ToolsPage';
 
@@ -18,6 +18,10 @@ vi.mock('@/api', () => ({
     getCalendarList: (...args: unknown[]) => mockGetCalendarList(...args),
     getCalendarConfig: (...args: unknown[]) => mockGetCalendarConfig(...args),
     updateCalendarConfig: vi.fn().mockResolvedValue({}),
+    connectServiceTitan: vi.fn().mockResolvedValue({}),
+    connectAppFolio: vi.fn().mockResolvedValue({}),
+    disconnectServiceTitan: vi.fn().mockResolvedValue({}),
+    disconnectAppFolio: vi.fn().mockResolvedValue({}),
   },
 }));
 
@@ -222,5 +226,54 @@ describe('ToolsPage', () => {
 
       expect(toolNames).toEqual(['Gmail', 'Google Calendar', 'Google Drive', 'QuickBooks', 'ServiceTitan']);
     });
+  });
+
+  it('opens a credential form for web-form integrations instead of an OAuth redirect (ServiceTitan)', async () => {
+    // Issue #1337: ServiceTitan secrets are entered in the web app, not
+    // pasted into chat. A ``connect_form`` integration shows a Connect
+    // button that opens a credential modal.
+    setupMocks({
+      tools: {
+        tools: [
+          { name: 'servicetitan', description: 'ServiceTitan integration', category: 'domain', enabled: true, domain_group: 'Integrations', domain_group_order: 3, oauth_name: '', always_enabled: false, configured: false, connect_form: 'servicetitan' },
+        ],
+      },
+      oauth: { integrations: [] },
+    });
+    renderWithRouter(<ToolsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('ServiceTitan')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Connect'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Connect ServiceTitan')).toBeInTheDocument();
+    });
+    // The three credential fields are present.
+    expect(screen.getByText('Tenant ID')).toBeInTheDocument();
+    expect(screen.getByText('Client ID')).toBeInTheDocument();
+    expect(screen.getByText('Client Secret')).toBeInTheDocument();
+  });
+
+  it('shows Disconnect for a connected web-form integration (AppFolio)', async () => {
+    setupMocks({
+      tools: {
+        tools: [
+          { name: 'appfolio_vendor', description: 'Work orders and invoices', category: 'domain', enabled: true, domain_group: 'Integrations', domain_group_order: 2, oauth_name: '', always_enabled: false, configured: true, connect_form: 'appfolio_vendor' },
+        ],
+      },
+      oauth: { integrations: [] },
+    });
+    renderWithRouter(<ToolsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('AppFolio Vendor Portal')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Connected')).toBeInTheDocument();
+    expect(screen.getByText('Disconnect')).toBeInTheDocument();
+    expect(screen.queryByText('Connect')).not.toBeInTheDocument();
   });
 });

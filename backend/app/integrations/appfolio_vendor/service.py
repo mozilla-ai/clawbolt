@@ -31,7 +31,12 @@ from typing import Any
 
 import httpx
 
-from backend.app.integrations.appfolio_vendor.auth import AppFolioCredential
+from backend.app.integrations.appfolio_vendor.auth import (
+    AppFolioCredential,
+    extract_magic_link_token,
+    save_credential,
+    upsert_fingerprint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +75,15 @@ value itself is opaque to AppFolio."""
 
 class AppFolioError(RuntimeError):
     """Generic AppFolio API failure (5xx, network, validation)."""
+
+
+class AppFolioUnavailableError(AppFolioError):
+    """Raised when the failure is upstream (network or AppFolio 5xx).
+
+    Distinct from the base class so the web connect endpoint can map a
+    vendor outage to HTTP 502 instead of 400: a bad magic link is the
+    user's problem (4xx), an unreachable AppFolio is not.
+    """
 
 
 class AuthExpiredError(AppFolioError):
@@ -736,7 +750,7 @@ async def exchange_magic_link(
             resp = await client.post(OAUTH_TOKEN_URL, headers=headers, json=body)
     except httpx.HTTPError as exc:
         logger.warning("AppFolio OAuth exchange network failure: %s", exc)
-        raise AppFolioError(
+        raise AppFolioUnavailableError(
             f"AppFolio OAuth exchange network failure: {_format_http_exception(exc)}"
         ) from exc
     if resp.status_code >= 400:
@@ -746,8 +760,12 @@ async def exchange_magic_link(
             resp.status_code,
             response_text,
         )
-        # Body stays in the log; the raised message is shown to the user
-        # via ToolResult.content, so we keep it status-only.
+        # Body stays in the log; the raised message is shown to the user, so
+        # we keep it status-only. A 5xx is an upstream outage, not a bad link.
+        if resp.status_code >= 500:
+            raise AppFolioUnavailableError(
+                f"AppFolio OAuth exchange failed: HTTP {resp.status_code}"
+            )
         raise AppFolioError(f"AppFolio OAuth exchange failed: HTTP {resp.status_code}")
     payload: dict[str, Any] = resp.json() if resp.content else {}
     jwt = payload.get("access_token") or ""
@@ -761,6 +779,34 @@ async def exchange_magic_link(
         raw=payload,
         refresh_token=payload.get("refresh_token") or "",
     )
+
+
+async def connect_via_magic_link(user_id: str, magic_link: str) -> AccessExchangeResult:
+    """Connect a user's AppFolio Vendor Portal from a pasted magic link.
+
+    Reads the token out of whatever the user pasted (full URL or bare
+    token), mints a per-user fingerprint, exchanges the token for a Bearer
+    JWT, and persists the credential. Returns the exchange result.
+
+    Raises :class:`MagicLinkError` when the input has no usable token and
+    :class:`AppFolioError` when AppFolio rejects the exchange. Callers (the
+    web connect endpoint) map those to a user-facing error.
+
+    Connecting only happens through the authenticated web app: the
+    single-use magic link is a secret, and pasting it into a chat thread
+    would leave it in the message history (issue #1337).
+    """
+    token = extract_magic_link_token(magic_link)
+    fingerprint = await upsert_fingerprint(user_id)
+    result = await exchange_magic_link(magic_link_token=token)
+    await save_credential(
+        user_id=user_id,
+        jwt=result.jwt,
+        fingerprint=fingerprint,
+        customer_ids=result.customer_ids,
+        refresh_token=result.refresh_token,
+    )
+    return result
 
 
 async def refresh_access_token(

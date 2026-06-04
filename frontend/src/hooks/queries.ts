@@ -9,6 +9,8 @@ import type {
   ToolConfigUpdateEntry,
   ChannelConfigUpdate,
   DataSharingConsentRequest,
+  ServiceTitanConnectRequest,
+  AppFolioConnectRequest,
 } from '@/types';
 
 // --- App config (deployment-level feature flags) ---
@@ -179,6 +181,43 @@ export function useOAuthDisconnect() {
     mutationFn: (integration: string) => api.disconnectOAuth(integration),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.oauth });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
+    },
+  });
+}
+
+// --- Web-form integrations (ServiceTitan, AppFolio) ---
+// Connection state rides on the tool config (``configured``), so these
+// invalidate the tools query to refresh the Connected/Not connected badge.
+
+export function useConnectServiceTitan() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ServiceTitanConnectRequest) => api.connectServiceTitan(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
+    },
+  });
+}
+
+export function useConnectAppFolio() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AppFolioConnectRequest) => api.connectAppFolio(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
+    },
+  });
+}
+
+export function useDisconnectIntegration() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (integration: 'servicetitan' | 'appfolio_vendor') =>
+      integration === 'servicetitan' ? api.disconnectServiceTitan() : api.disconnectAppFolio(),
+    // onSettled (not onSuccess): the backend 404s when the credential is
+    // already gone, and we still want the badge to refresh in that case.
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     },
   });

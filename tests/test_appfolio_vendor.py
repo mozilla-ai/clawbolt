@@ -20,7 +20,6 @@ from backend.app.integrations.appfolio_vendor.auth import (
     upsert_fingerprint,
 )
 from backend.app.integrations.appfolio_vendor.params import (
-    AppFolioConnectParams,
     AppFolioListWorkOrdersParams,
 )
 from backend.app.integrations.appfolio_vendor.service import (
@@ -29,6 +28,7 @@ from backend.app.integrations.appfolio_vendor.service import (
     AuthExpiredError,
     AuthScopeError,
     build_service,
+    connect_via_magic_link,
     exchange_magic_link,
 )
 
@@ -1009,14 +1009,6 @@ def test_build_service_passes_on_token_refresh_callback() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_connect_params_requires_magic_link() -> None:
-    from pydantic import ValidationError
-
-    AppFolioConnectParams(magic_link="x")
-    with pytest.raises(ValidationError):
-        AppFolioConnectParams()  # type: ignore[call-arg]
-
-
 def test_list_work_orders_params_defaults() -> None:
     p = AppFolioListWorkOrdersParams()
     assert p.include_in_progress is True
@@ -1879,21 +1871,12 @@ async def test_4xx_log_summarizes_base64_files(caplog: Any) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_appfolio_connect_message_omits_customer_count(async_test_user: Any) -> None:
-    """Regression for #1275: connect must not surface 'customer' counts.
-
-    The OAuth2 migration in #1269 stopped populating ``customer_ids`` on
-    the exchange result, leaving the receipt forever rendering "0
-    customer(s)". Rather than backfill via /profiles/me just to print a
-    number that vendors don't think in, we drop the framing entirely.
-    """
-    from backend.app.agent.tools.names import ToolName
-    from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
+async def test_connect_via_magic_link_persists_credential(async_test_user: Any) -> None:
+    """The connect orchestration (backing the web endpoint) persists a credential."""
     from backend.app.integrations.appfolio_vendor.service import AccessExchangeResult
 
     user_id = async_test_user.id
-    tools = build_auth_tools(user_id)
-    connect = next(t for t in tools if t.name == ToolName.APPFOLIO_CONNECT)
+    assert await is_connected(user_id) is False
 
     fake_result = AccessExchangeResult(
         jwt="jwt-1",
@@ -1902,42 +1885,25 @@ async def test_appfolio_connect_message_omits_customer_count(async_test_user: An
         refresh_token="rt-1",
     )
     with patch(
-        "backend.app.integrations.appfolio_vendor.auth_tools.exchange_magic_link",
+        "backend.app.integrations.appfolio_vendor.service.exchange_magic_link",
         new=AsyncMock(return_value=fake_result),
     ):
-        result = await connect.function(magic_link="eyJ.fake.token")
+        result = await connect_via_magic_link(user_id, "eyJ.fake.token")
 
-    assert result.is_error is False
-    assert result.content == "AppFolio connected. Tools are now available."
-    assert "customer" not in result.content.lower()
-    assert result.receipt is not None
-    assert "customer" not in (result.receipt.target or "").lower()
+    assert result.jwt == "jwt-1"
+    assert await is_connected(user_id) is True
+    cred = await load_credential(user_id)
+    assert cred is not None
+    assert cred.jwt == "jwt-1"
 
 
 @pytest.mark.asyncio()
-async def test_appfolio_connect_parse_failure_hint_steers_to_token_paste(
+async def test_connect_via_magic_link_rejects_unparseable_input(
     async_test_user: Any,
 ) -> None:
-    """Regression for #1297: parse-failure hint must mention the iMessage gotcha.
-
-    When the user pastes a full magic-link URL over iMessage, the SMS
-    client strips the query params and the token never reaches us. The
-    validation hint has to tell the agent to ask for the token alone, not
-    the full URL, so the next attempt actually succeeds.
-    """
-    from backend.app.agent.tools.names import ToolName
-    from backend.app.integrations.appfolio_vendor.auth_tools import build_auth_tools
-
-    tools = build_auth_tools(async_test_user.id)
-    connect = next(t for t in tools if t.name == ToolName.APPFOLIO_CONNECT)
-
-    # Empty input triggers MagicLinkError -> the validation hint we care about.
-    result = await connect.function(magic_link="")
-
-    assert result.is_error is True
-    assert result.hint is not None
-    assert "magic_link_token=" in result.hint
-    assert "iMessage" in result.hint
+    """Empty / token-less input raises MagicLinkError before any exchange."""
+    with pytest.raises(MagicLinkError):
+        await connect_via_magic_link(async_test_user.id, "")
 
 
 @pytest.mark.asyncio()
@@ -1974,17 +1940,13 @@ async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_auth_tools_always_in_schema_when_disconnected() -> None:
-    """``appfolio_connect`` must stay reachable when the user has no credential.
+async def test_disconnected_data_factory_reports_not_connected_and_returns_no_tools() -> None:
+    """A disconnected user must see ``appfolio_vendor`` as "Not connected".
 
-    Magic-link integrations need the auth tool on the schema regardless
-    of connection state, since pasting the token *is* the connect path.
-    The auth tools live in a separate core factory (``appfolio_auth``) so
-    the data factory's auth_check can correctly report "not connected"
-    without stripping the connect path. Regression for the prod bug where
-    the agent confidently told users "AppFolio is connected" before they
-    had connected, and for the original dev.clawbolt.ai bug where the
-    agent had no way to start the connect flow.
+    The data factory's auth_check returns a reason routing the user to the
+    web app (connecting moved out of chat, issue #1337), and the factory
+    body returns no tools. Regression for the prod bug where the agent
+    told users "AppFolio is connected" before they had connected.
     """
     from backend.app.agent.tools.names import ToolName
     from backend.app.agent.tools.registry import (
@@ -1999,10 +1961,10 @@ async def test_auth_tools_always_in_schema_when_disconnected() -> None:
     user = User(id="appfolio-disconnected-user", user_id="test")
     ctx = ToolContext(user=user)
 
-    # The data factory's auth_check returns a reason when not connected,
-    # so the registry will surface ``appfolio_vendor`` under "Not
-    # connected" in list_capabilities and the LLM will know it must
-    # connect first before claiming AppFolio access.
+    # The connect tool was removed; only the data factory remains.
+    assert "appfolio_auth" not in default_registry.factory_names
+    assert not hasattr(ToolName, "APPFOLIO_CONNECT")
+
     data_factory = default_registry._factories["appfolio_vendor"]
     assert data_factory.auth_check is not None
     with patch(
@@ -2012,19 +1974,11 @@ async def test_auth_tools_always_in_schema_when_disconnected() -> None:
         reason = await data_factory.auth_check(ctx)
     assert reason is not None
     assert "not connected" in reason.lower()
-
-    # The auth factory is separate, core, and always materializes the
-    # connect tools so the LLM has a way to drive the magic-link flow.
-    from backend.app.integrations.appfolio_vendor.factory import (
-        _appfolio_auth_factory,
-        _appfolio_vendor_factory,
-    )
-
-    auth_tools = await _appfolio_auth_factory(ctx)
-    auth_names = {t.name for t in auth_tools}
-    assert ToolName.APPFOLIO_CONNECT in auth_names
+    assert "web app" in reason.lower()
 
     # The data factory returns nothing when the credential is missing.
+    from backend.app.integrations.appfolio_vendor.factory import _appfolio_vendor_factory
+
     with patch(
         "backend.app.integrations.appfolio_vendor.factory.load_credential",
         new=AsyncMock(return_value=None),
@@ -2032,7 +1986,6 @@ async def test_auth_tools_always_in_schema_when_disconnected() -> None:
         data_tools = await _appfolio_vendor_factory(ctx)
     data_names = {t.name for t in data_tools}
     assert ToolName.APPFOLIO_LIST_WORK_ORDERS not in data_names
-    assert ToolName.APPFOLIO_CONNECT not in data_names
 
 
 @pytest.mark.asyncio()

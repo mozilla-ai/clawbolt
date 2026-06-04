@@ -134,14 +134,14 @@ async def test_usage_hint_lists_current_oauth_integrations(test_user: User) -> N
             f"missing '{oauth_name}'"
         )
 
-    # Magic-link integrations (paste-token auth, e.g. appfolio_vendor) are
-    # also routed through manage_integration and so must appear in the hint
-    # for the same staleness-override reason as OAuth integrations.
-    from backend.app.agent.tools.integration_tools import _MAGIC_LINK_INTEGRATIONS
+    # Web-form integrations (paste-secret auth, e.g. appfolio_vendor,
+    # servicetitan) are also routed through manage_integration and so must
+    # appear in the hint for the same staleness-override reason as OAuth.
+    from backend.app.agent.tools.integration_tools import _WEB_CONNECT_INTEGRATIONS
 
-    for magic_link_name in _MAGIC_LINK_INTEGRATIONS:
-        assert magic_link_name in tool.usage_hint, (
-            f"usage_hint should reference every magic-link integration; missing '{magic_link_name}'"
+    for web_connect_name in _WEB_CONNECT_INTEGRATIONS:
+        assert web_connect_name in tool.usage_hint, (
+            f"usage_hint should reference every web-form integration; missing '{web_connect_name}'"
         )
 
     # Human-readable labels render for at least one well-known integration.
@@ -574,15 +574,12 @@ async def test_status_marks_appfolio_connected(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_connect_appfolio_returns_magic_link_instructions(test_user: User) -> None:
-    """Connect with target='appfolio_vendor' should return paste-token instructions.
+async def test_connect_appfolio_directs_to_web_app(test_user: User) -> None:
+    """Connect with target='appfolio_vendor' should route the user to the web app.
 
-    The agent-facing message must mention vendor.appfolio.com (so the
-    agent can guide the user to the right site) and appfolio_connect (so
-    the agent knows which tool finishes the flow). It must also tell the
-    agent to ask the user for the token only (not the full URL), because
-    iMessage strips query params from pasted links and the token gets
-    lost. Regression for issue #1297.
+    The magic link is a secret, so connecting moved out of chat (issue
+    #1337). The agent-facing message must point at the web app and must
+    not coach the user to paste a token into the conversation.
     """
     with patch(
         "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
@@ -590,13 +587,38 @@ async def test_connect_appfolio_returns_magic_link_instructions(test_user: User)
     ):
         result = await _call(test_user, "connect", "appfolio_vendor")
     assert not result.is_error
-    assert "vendor.appfolio.com" in result.content
-    assert "appfolio_connect" in result.content
-    # Should NOT claim AppFolio "does not use OAuth" or look like a rejection.
+    assert "web app" in result.content.lower()
+    # Must not coach a chat paste flow anymore.
+    assert "magic_link_token=" not in result.content
     assert "does not use OAuth" not in result.content
-    # Must steer the agent toward the token-only paste flow.
-    assert "magic_link_token=" in result.content
-    assert "iMessage" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_connect_servicetitan_directs_to_web_app(test_user: User) -> None:
+    """Connect with target='servicetitan' should route the user to the web app."""
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.settings.servicetitan_app_key", "fake-key"
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.servicetitan_auth.is_connected",
+            new=AsyncMock(return_value=False),
+        ),
+    ):
+        result = await _call(test_user, "connect", "servicetitan")
+    assert not result.is_error
+    assert "web app" in result.content.lower()
+    assert "ServiceTitan" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_connect_servicetitan_unavailable_without_app_key(test_user: User) -> None:
+    """Connect must refuse (not advertise the web flow) when the deployment has
+    no SERVICETITAN_APP_KEY, since connect_credentials would hard-fail."""
+    with patch("backend.app.agent.tools.integration_tools.settings.servicetitan_app_key", ""):
+        result = await _call(test_user, "connect", "servicetitan")
+    assert result.is_error
+    assert "not available" in result.content.lower() or "not configured" in result.content.lower()
 
 
 @pytest.mark.asyncio()
@@ -645,90 +667,76 @@ async def test_disconnect_appfolio_when_not_connected(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_appfolio_usage_hint_mentions_magic_link(test_user: User) -> None:
-    """The usage_hint should tell the agent that AppFolio uses magic-link auth.
+async def test_web_connect_usage_hint_points_to_web_app(test_user: User) -> None:
+    """The usage_hint should tell the agent AppFolio and ServiceTitan connect
+    in the web app, never over chat.
 
     Without this guidance the agent would assume a connect URL is coming
-    back and either stall or pass the instructions through verbatim.
+    back, or worse, ask the user to paste secrets into the conversation.
     """
     ctx = ToolContext(user=test_user)
     tools = create_integration_tools(ctx)
     tool = next(t for t in tools if t.name == ToolName.MANAGE_INTEGRATION)
     assert tool.usage_hint is not None
     hint = tool.usage_hint.lower()
-    assert "appfolio" in hint
-    assert "magic-link" in hint or "magic link" in hint
+    assert "appfolio_vendor" in hint
+    assert "servicetitan" in hint
+    assert "web app" in hint
 
 
 # ---------------------------------------------------------------------------
-# Hidden backing factories (``appfolio_auth``)
+# ServiceTitan web-form connect/disconnect
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_status_omits_hidden_appfolio_auth_factory(test_user: User) -> None:
-    """``manage_integration(status)`` must not surface the backing
-    ``appfolio_auth`` factory; users see only ``appfolio_vendor`` as the
-    AppFolio integration.
-    """
-    with patch(
-        "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
-        new=AsyncMock(return_value=False),
+async def test_status_marks_servicetitan_connected(test_user: User) -> None:
+    """When ServiceTitan has a credential (and an App Key is set), status says 'connected'."""
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.settings.servicetitan_app_key", "fake-key"
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.servicetitan_auth.is_connected",
+            new=AsyncMock(return_value=True),
+        ),
     ):
         result = await _call(test_user, "status")
-    assert "appfolio_auth" not in result.content
-
-
-@pytest.mark.asyncio()
-@pytest.mark.parametrize("action", ["enable", "disable", "connect", "disconnect"])
-async def test_hidden_factory_rejected_from_all_actions(test_user: User, action: str) -> None:
-    """All ``manage_integration`` actions must reject the backing
-    ``appfolio_auth`` factory as ``Unknown tool group``. The LLM never has
-    a reason to address it directly; this is defense in depth in case it
-    tries.
-    """
-    result = await _call(test_user, action, "appfolio_auth")
-    assert result.is_error
-    assert "Unknown tool group" in result.content
-    assert "appfolio_auth" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_disable_appfolio_vendor_cascades_to_appfolio_auth(
-    test_user: User,
-) -> None:
-    """Disabling ``appfolio_vendor`` must also flip ``appfolio_auth`` so
-    the registry's ``excluded_factories`` mechanism removes both
-    factories together. Without the cascade, the auth tools would stay
-    on the LLM's schema even though the user disabled the integration.
-    """
-    store = ToolConfigStore(test_user.id)
-
-    result = await _call(test_user, "disable", "appfolio_vendor")
     assert not result.is_error
-
-    disabled = await store.get_disabled_tool_names()
-    assert "appfolio_vendor" in disabled
-    assert "appfolio_auth" in disabled
+    st_line = next(line for line in result.content.splitlines() if "servicetitan" in line)
+    assert "connected" in st_line
+    assert "not connected" not in st_line
 
 
 @pytest.mark.asyncio()
-async def test_enable_appfolio_vendor_cascades_to_appfolio_auth(
-    test_user: User,
-) -> None:
-    """The complementary cascade: re-enabling ``appfolio_vendor`` must
-    also re-enable ``appfolio_auth`` so the connect flow works again.
-    """
-    store = ToolConfigStore(test_user.id)
-    await store.set_enabled("appfolio_vendor", enabled=False)
-    await store.set_enabled("appfolio_auth", enabled=False)
+async def test_status_servicetitan_not_configured_without_app_key(test_user: User) -> None:
+    """Without SERVICETITAN_APP_KEY the deployment can't support ServiceTitan, so
+    status says 'not configured by admin' rather than advertising a connect flow
+    that would fail (issue #1337 follow-up)."""
+    with patch("backend.app.agent.tools.integration_tools.settings.servicetitan_app_key", ""):
+        result = await _call(test_user, "status")
+    st_line = next(line for line in result.content.splitlines() if "servicetitan" in line)
+    assert "not configured by admin" in st_line
 
-    result = await _call(test_user, "enable", "appfolio_vendor")
+
+@pytest.mark.asyncio()
+async def test_disconnect_servicetitan_clears_credentials(test_user: User) -> None:
+    """Disconnecting ServiceTitan should call clear_credentials."""
+    clear_mock = AsyncMock()
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.servicetitan_auth.is_connected",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.servicetitan_auth.clear_credentials",
+            new=clear_mock,
+        ),
+    ):
+        result = await _call(test_user, "disconnect", "servicetitan")
     assert not result.is_error
-
-    disabled = await store.get_disabled_tool_names()
-    assert "appfolio_vendor" not in disabled
-    assert "appfolio_auth" not in disabled
+    assert "Disconnected" in result.content
+    clear_mock.assert_awaited_once_with(test_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -760,6 +768,10 @@ async def test_status_renders_registry_display_names_for_every_integration(
         ) as mock_oauth,
         patch(
             "backend.app.agent.tools.integration_tools.appfolio_auth.is_connected",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.servicetitan_auth.is_connected",
             new=AsyncMock(return_value=False),
         ),
     ):
@@ -800,7 +812,7 @@ def test_user_facing_integrations_declare_display_names() -> None:
     silently leaking ``companycam`` / ``google_drive`` style raw keys
     into chat.
     """
-    from backend.app.agent.tools.integration_tools import _MAGIC_LINK_INTEGRATIONS
+    from backend.app.agent.tools.integration_tools import _WEB_CONNECT_INTEGRATIONS
     from backend.app.services.oauth import list_oauth_integrations
 
     # Every OAuth integration must be reachable through some factory's
@@ -819,13 +831,13 @@ def test_user_facing_integrations_declare_display_names() -> None:
             f"a display_name in its registry.register() call"
         )
 
-    # Magic-link integrations share the factory name with the target.
-    for target in _MAGIC_LINK_INTEGRATIONS:
+    # Web-form integrations share the factory name with the target.
+    for target in _WEB_CONNECT_INTEGRATIONS:
         factory = default_registry.get_factory(target)
         assert factory is not None, (
-            f"Magic-link integration {target!r} must be registered as a factory"
+            f"Web-form integration {target!r} must be registered as a factory"
         )
-        assert factory.display_name, f"Magic-link factory {target!r} must declare a display_name"
+        assert factory.display_name, f"Web-form factory {target!r} must declare a display_name"
 
 
 @pytest.mark.asyncio()
@@ -905,7 +917,7 @@ async def test_get_user_connected_integrations_skips_unconfigured_oauth() -> Non
         ),
         patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth_service,
         patch(
-            "backend.app.agent.tools.integration_tools._is_magic_link_connected",
+            "backend.app.agent.tools.integration_tools._is_web_connect_connected",
             new_callable=AsyncMock,
             return_value=False,
         ),
@@ -952,7 +964,7 @@ async def test_get_user_connected_integrations_reflects_per_user_state() -> None
         ),
         patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth_service,
         patch(
-            "backend.app.agent.tools.integration_tools._is_magic_link_connected",
+            "backend.app.agent.tools.integration_tools._is_web_connect_connected",
             new_callable=AsyncMock,
             return_value=False,
         ),

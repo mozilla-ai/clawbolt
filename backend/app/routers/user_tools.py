@@ -15,7 +15,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.app.agent.approval import ApprovalStore, PermissionLevel, get_approval_store
 from backend.app.agent.dto import SubToolEntry, ToolConfigEntry, UserData
 from backend.app.agent.stores import ToolConfigStore
-from backend.app.agent.tools.integration_tools import _HIDDEN_CORE_FACTORIES
+from backend.app.agent.tools.integration_tools import (
+    _HIDDEN_CORE_FACTORIES,
+    _WEB_CONNECT_INTEGRATIONS,
+    _web_connect_available,
+)
 from backend.app.agent.tools.registry import (
     default_registry,
     ensure_tool_modules_imported,
@@ -56,8 +60,9 @@ async def _build_tool_list(
     )
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
-        # Hidden backing factories (e.g. ``appfolio_auth``) are part of a
-        # user-facing integration's plumbing, not a separate dashboard row.
+        # Hidden backing factories are part of a user-facing integration's
+        # plumbing, not a separate dashboard row. ``_HIDDEN_CORE_FACTORIES``
+        # is currently empty; the guard stays for future paired factories.
         if name in _HIDDEN_CORE_FACTORIES:
             continue
         factory = default_registry.get_factory(name)
@@ -170,6 +175,9 @@ def _entry_to_response(
         configured=not bool(auth_reason),
         auth_message=auth_reason,
         oauth_name=_effective_oauth_name(e.name),
+        connect_form=(
+            e.name if e.name in _WEB_CONNECT_INTEGRATIONS and _web_connect_available(e.name) else ""
+        ),
         always_enabled=factory.dashboard_always_enabled if factory else False,
         sub_tools=[
             SubToolEntryResponse(

@@ -20,6 +20,8 @@ import type {
   ModelConfigUpdate,
   OAuthAuthorizeResponse,
   OAuthStatusResponse,
+  ServiceTitanConnectRequest,
+  AppFolioConnectRequest,
   ProviderInfo,
   SessionDetailResponse,
   SessionSystemPromptResponse,
@@ -319,6 +321,29 @@ const api = {
       params: { path: { integration } },
     });
     if (error) _throwApiError(error, 'Failed to disconnect OAuth');
+  },
+
+  // Web-form integrations (ServiceTitan, AppFolio): secrets are entered
+  // here in the web app rather than pasted into a chat thread (issue #1337).
+  connectServiceTitan: async (body: ServiceTitanConnectRequest) => {
+    const { error } = await client.POST('/api/integrations/servicetitan/connect', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to connect ServiceTitan');
+  },
+  disconnectServiceTitan: async () => {
+    const { error } = await client.DELETE('/api/integrations/servicetitan');
+    if (error) _throwApiError(error, 'Failed to disconnect ServiceTitan');
+  },
+  connectAppFolio: async (body: AppFolioConnectRequest) => {
+    const { error } = await client.POST('/api/integrations/appfolio_vendor/connect', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to connect AppFolio');
+  },
+  disconnectAppFolio: async () => {
+    const { error } = await client.DELETE('/api/integrations/appfolio_vendor');
+    if (error) _throwApiError(error, 'Failed to disconnect AppFolio');
   },
   // Calendar config
   getCalendarList: async () => {
