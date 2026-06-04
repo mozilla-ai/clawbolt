@@ -38,6 +38,7 @@ from backend.app.routers import (
     app_config,
     auth,
     health,
+    integrations,
     media_temp,
     oauth,
     user_calendar,
@@ -384,6 +385,7 @@ app.include_router(health.router, prefix="/api")
 app.include_router(app_config.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(oauth.router, prefix="/api")
+app.include_router(integrations.router, prefix="/api")
 app.include_router(media_temp.router, prefix="/api")
 
 # Include routers from all registered channels.

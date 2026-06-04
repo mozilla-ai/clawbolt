@@ -26,8 +26,9 @@ logger = logging.getLogger(__name__)
 
 
 _AUTH_EXPIRED_HINT = (
-    "AppFolio session expired. Tell the user to request a fresh magic link"
-    " from vendor.appfolio.com and re-run appfolio_connect."
+    "AppFolio session expired. Tell the user to reconnect AppFolio on the"
+    " Integrations page of the Clawbolt web app (request a fresh magic link from"
+    " vendor.appfolio.com first). Do not ask them to paste the link into chat."
 )
 
 

@@ -299,8 +299,8 @@ def test_visible_factories_declare_dashboard_description() -> None:
     show up as an empty-string row in Settings, and this test will
     catch that at CI time rather than after deploy.
 
-    Hidden backing factories (``appfolio_auth``) are filtered out of the
-    dashboard and so are exempt.
+    Hidden backing factories (``_HIDDEN_CORE_FACTORIES``, currently empty)
+    are filtered out of the dashboard and so are exempt.
     """
     from backend.app.agent.tools.integration_tools import _HIDDEN_CORE_FACTORIES
 

@@ -21,7 +21,8 @@ This module also lives in the auto-discovery path:
 ``backend.app.agent.tools`` at startup. The import is side-effect-free
 here (no ``_register()`` call); registration of the data factory lives
 in ``backend/app/integrations/servicetitan/factory.py`` where the
-companion ``servicetitan_auth`` factory and ``auth_check`` are wired.
+``auth_check`` is wired. Connecting happens in the web app, not over chat
+(issue #1337).
 """
 
 from __future__ import annotations
@@ -74,8 +75,9 @@ def _service_error(label: str, exc: Exception) -> ToolResult:
             is_error=True,
             error_kind=ToolErrorKind.AUTH,
             hint=(
-                "Ask the user to run connect_servicetitan with their Tenant"
-                " ID, Client ID, and Client Secret."
+                "Tell the user to connect ServiceTitan in the Clawbolt web app"
+                " on the Integrations page, where they enter their Tenant ID,"
+                " Client ID, and Client Secret. Do not ask them to paste those into chat."
             ),
         )
     if isinstance(exc, ServiceTitanError):

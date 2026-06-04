@@ -73,7 +73,6 @@ class ToolName:
     COMPANYCAM_CREATE_CHECKLIST = "companycam_create_checklist"
 
     # AppFolio Vendor Portal
-    APPFOLIO_CONNECT = "appfolio_connect"
     APPFOLIO_LIST_WORK_ORDERS = "appfolio_list_work_orders"
     APPFOLIO_SEARCH_WORK_ORDERS = "appfolio_search_work_orders"
     APPFOLIO_GET_WORK_ORDER = "appfolio_get_work_order"
@@ -86,7 +85,6 @@ class ToolName:
     APPFOLIO_UPLOAD_INVOICE_PDF = "appfolio_upload_invoice_pdf"
 
     # ServiceTitan
-    SERVICETITAN_CONNECT = "connect_servicetitan"
     SERVICETITAN_SEARCH_CUSTOMERS = "st_search_customers"
     SERVICETITAN_GET_CUSTOMER = "st_get_customer"
     SERVICETITAN_LIST_APPOINTMENTS = "st_list_appointments"
