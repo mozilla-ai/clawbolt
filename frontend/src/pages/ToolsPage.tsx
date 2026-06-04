@@ -7,6 +7,9 @@ import { displayName, subToolDisplayName, getToolOAuthStatus } from '@/lib/tool-
 import { IntegrationIcon } from '@/components/integration-icons';
 import ConnectIntegrationModal from '@/components/ConnectIntegrationModal';
 import PermissionSelector, { PERM_OPTIONS, type PermLevel } from '@/components/PermissionSelector';
+import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useDisconnectIntegration, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
+import api from '@/api';
+import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
 const PERM_LEVEL_CLASSNAMES: Record<PermLevel, string> = {
   always: 'text-success',
@@ -25,9 +28,6 @@ function PermissionLevelLabel({ level }: { level: string }) {
     </span>
   );
 }
-import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useDisconnectIntegration, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
-import api from '@/api';
-import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
 export default function ToolsPage() {
   const { data, isPending } = useToolConfig();

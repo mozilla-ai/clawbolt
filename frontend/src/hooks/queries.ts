@@ -215,7 +215,9 @@ export function useDisconnectIntegration() {
   return useMutation({
     mutationFn: (integration: 'servicetitan' | 'appfolio_vendor') =>
       integration === 'servicetitan' ? api.disconnectServiceTitan() : api.disconnectAppFolio(),
-    onSuccess: () => {
+    // onSettled (not onSuccess): the backend 404s when the credential is
+    // already gone, and we still want the badge to refresh in that case.
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     },
   });

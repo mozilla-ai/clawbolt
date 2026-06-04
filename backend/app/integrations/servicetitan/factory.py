@@ -9,8 +9,8 @@ the user connects.
 
 Connecting happens in the Clawbolt web app, not over chat: the tenant's
 Client Secret is a credential, and pasting it into a chat thread would
-leave it in the user's message history (issue #1337). The connect form
-lives on the Settings page and posts to ``/api/integrations/servicetitan``.
+leave it in the user's message history (issue #1337). The connect form lives
+on the Integrations page and posts to ``/api/integrations/servicetitan``.
 """
 
 from __future__ import annotations
@@ -62,9 +62,9 @@ async def _servicetitan_auth_check(ctx: ToolContext) -> str | None:
         return None
     return (
         "ServiceTitan is not connected. The user connects it in the Clawbolt"
-        " web app under Settings, where they paste their Tenant ID, Client ID,"
-        " and Client Secret. Do not accept those secrets over chat; direct the"
-        " user to the web app instead."
+        " web app on the Integrations page, where they paste their Tenant ID,"
+        " Client ID, and Client Secret. Do not accept those secrets over chat;"
+        " direct the user to the web app instead."
     )
 
 

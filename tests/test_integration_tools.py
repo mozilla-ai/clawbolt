@@ -596,14 +596,29 @@ async def test_connect_appfolio_directs_to_web_app(test_user: User) -> None:
 @pytest.mark.asyncio()
 async def test_connect_servicetitan_directs_to_web_app(test_user: User) -> None:
     """Connect with target='servicetitan' should route the user to the web app."""
-    with patch(
-        "backend.app.agent.tools.integration_tools.servicetitan_auth.is_connected",
-        new=AsyncMock(return_value=False),
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.settings.servicetitan_app_key", "fake-key"
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.servicetitan_auth.is_connected",
+            new=AsyncMock(return_value=False),
+        ),
     ):
         result = await _call(test_user, "connect", "servicetitan")
     assert not result.is_error
     assert "web app" in result.content.lower()
     assert "ServiceTitan" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_connect_servicetitan_unavailable_without_app_key(test_user: User) -> None:
+    """Connect must refuse (not advertise the web flow) when the deployment has
+    no SERVICETITAN_APP_KEY, since connect_credentials would hard-fail."""
+    with patch("backend.app.agent.tools.integration_tools.settings.servicetitan_app_key", ""):
+        result = await _call(test_user, "connect", "servicetitan")
+    assert result.is_error
+    assert "not available" in result.content.lower() or "not configured" in result.content.lower()
 
 
 @pytest.mark.asyncio()
@@ -676,16 +691,32 @@ async def test_web_connect_usage_hint_points_to_web_app(test_user: User) -> None
 
 @pytest.mark.asyncio()
 async def test_status_marks_servicetitan_connected(test_user: User) -> None:
-    """When ServiceTitan has a credential, status should say 'connected'."""
-    with patch(
-        "backend.app.agent.tools.integration_tools.servicetitan_auth.is_connected",
-        new=AsyncMock(return_value=True),
+    """When ServiceTitan has a credential (and an App Key is set), status says 'connected'."""
+    with (
+        patch(
+            "backend.app.agent.tools.integration_tools.settings.servicetitan_app_key", "fake-key"
+        ),
+        patch(
+            "backend.app.agent.tools.integration_tools.servicetitan_auth.is_connected",
+            new=AsyncMock(return_value=True),
+        ),
     ):
         result = await _call(test_user, "status")
     assert not result.is_error
     st_line = next(line for line in result.content.splitlines() if "servicetitan" in line)
     assert "connected" in st_line
     assert "not connected" not in st_line
+
+
+@pytest.mark.asyncio()
+async def test_status_servicetitan_not_configured_without_app_key(test_user: User) -> None:
+    """Without SERVICETITAN_APP_KEY the deployment can't support ServiceTitan, so
+    status says 'not configured by admin' rather than advertising a connect flow
+    that would fail (issue #1337 follow-up)."""
+    with patch("backend.app.agent.tools.integration_tools.settings.servicetitan_app_key", ""):
+        result = await _call(test_user, "status")
+    st_line = next(line for line in result.content.splitlines() if "servicetitan" in line)
+    assert "not configured by admin" in st_line
 
 
 @pytest.mark.asyncio()

@@ -34,7 +34,7 @@ All date inputs to `st_list_appointments` are ISO 8601. Append `Z` for UTC (`202
 
 ## Connecting
 
-ServiceTitan auth is OAuth2 client credentials: a Tenant ID, Client ID, and Client Secret from ServiceTitan Settings, Integrations, API Application Access. The Client Secret is a credential, so the user enters all three in the Clawbolt web app under Settings, Integrations, never over chat where they would stay in the message history. Direct the user there; do not accept these values in the conversation. Until they connect, the data tools stay surfaced under "Not connected" in `list_capabilities` and refuse to execute.
+ServiceTitan auth is OAuth2 client credentials: a Tenant ID, Client ID, and Client Secret from ServiceTitan Settings, Integrations, API Application Access. The Client Secret is a credential, so the user enters all three in the Clawbolt web app on the Integrations page, never over chat where they would stay in the message history. Direct the user there; do not accept these values in the conversation. Until they connect, the data tools stay surfaced under "Not connected" in `list_capabilities` and refuse to execute.
 
 ## Common Workflows
 

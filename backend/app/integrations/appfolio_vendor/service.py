@@ -77,6 +77,15 @@ class AppFolioError(RuntimeError):
     """Generic AppFolio API failure (5xx, network, validation)."""
 
 
+class AppFolioUnavailableError(AppFolioError):
+    """Raised when the failure is upstream (network or AppFolio 5xx).
+
+    Distinct from the base class so the web connect endpoint can map a
+    vendor outage to HTTP 502 instead of 400: a bad magic link is the
+    user's problem (4xx), an unreachable AppFolio is not.
+    """
+
+
 class AuthExpiredError(AppFolioError):
     """JWT was rejected because the credential genuinely expired.
 
@@ -741,7 +750,7 @@ async def exchange_magic_link(
             resp = await client.post(OAUTH_TOKEN_URL, headers=headers, json=body)
     except httpx.HTTPError as exc:
         logger.warning("AppFolio OAuth exchange network failure: %s", exc)
-        raise AppFolioError(
+        raise AppFolioUnavailableError(
             f"AppFolio OAuth exchange network failure: {_format_http_exception(exc)}"
         ) from exc
     if resp.status_code >= 400:
@@ -751,8 +760,12 @@ async def exchange_magic_link(
             resp.status_code,
             response_text,
         )
-        # Body stays in the log; the raised message is shown to the user
-        # via ToolResult.content, so we keep it status-only.
+        # Body stays in the log; the raised message is shown to the user, so
+        # we keep it status-only. A 5xx is an upstream outage, not a bad link.
+        if resp.status_code >= 500:
+            raise AppFolioUnavailableError(
+                f"AppFolio OAuth exchange failed: HTTP {resp.status_code}"
+            )
         raise AppFolioError(f"AppFolio OAuth exchange failed: HTTP {resp.status_code}")
     payload: dict[str, Any] = resp.json() if resp.content else {}
     jwt = payload.get("access_token") or ""

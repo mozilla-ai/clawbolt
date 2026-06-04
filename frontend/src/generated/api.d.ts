@@ -983,9 +983,15 @@ export interface components {
         /**
          * AppFolioConnectRequest
          * @description A pasted AppFolio magic link (full URL or the bare token).
+         *
+         *     ``magic_link`` is a single-use secret, so it is a ``SecretStr`` (masked
+         *     in logs/reprs, write-only in the OpenAPI schema).
          */
         AppFolioConnectRequest: {
-            /** Magic Link */
+            /**
+             * Magic Link
+             * Format: password
+             */
             magic_link: string;
         };
         /** BatchDeleteRequest */
@@ -1415,13 +1421,20 @@ export interface components {
         /**
          * ServiceTitanConnectRequest
          * @description The three values from ServiceTitan's API Application Access page.
+         *
+         *     ``client_secret`` is a ``SecretStr`` so it is masked in logs/reprs and
+         *     marked write-only in the OpenAPI schema; the value still arrives as a
+         *     plain JSON string from the client.
          */
         ServiceTitanConnectRequest: {
             /** Tenant Id */
             tenant_id: string;
             /** Client Id */
             client_id: string;
-            /** Client Secret */
+            /**
+             * Client Secret
+             * Format: password
+             */
             client_secret: string;
         };
         /** SessionDetailResponse */

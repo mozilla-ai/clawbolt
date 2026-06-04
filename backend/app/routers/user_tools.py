@@ -18,6 +18,7 @@ from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.integration_tools import (
     _HIDDEN_CORE_FACTORIES,
     _WEB_CONNECT_INTEGRATIONS,
+    _web_connect_available,
 )
 from backend.app.agent.tools.registry import (
     default_registry,
@@ -174,7 +175,9 @@ def _entry_to_response(
         configured=not bool(auth_reason),
         auth_message=auth_reason,
         oauth_name=_effective_oauth_name(e.name),
-        connect_form=e.name if e.name in _WEB_CONNECT_INTEGRATIONS else "",
+        connect_form=(
+            e.name if e.name in _WEB_CONNECT_INTEGRATIONS and _web_connect_available(e.name) else ""
+        ),
         always_enabled=factory.dashboard_always_enabled if factory else False,
         sub_tools=[
             SubToolEntryResponse(

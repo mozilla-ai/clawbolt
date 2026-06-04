@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 class HealthResponse(BaseModel):
@@ -432,17 +432,26 @@ class OAuthAuthorizeResponse(BaseModel):
 
 
 class ServiceTitanConnectRequest(BaseModel):
-    """The three values from ServiceTitan's API Application Access page."""
+    """The three values from ServiceTitan's API Application Access page.
+
+    ``client_secret`` is a ``SecretStr`` so it is masked in logs/reprs and
+    marked write-only in the OpenAPI schema; the value still arrives as a
+    plain JSON string from the client.
+    """
 
     tenant_id: str = Field(..., min_length=1)
     client_id: str = Field(..., min_length=1)
-    client_secret: str = Field(..., min_length=1)
+    client_secret: SecretStr = Field(..., min_length=1)
 
 
 class AppFolioConnectRequest(BaseModel):
-    """A pasted AppFolio magic link (full URL or the bare token)."""
+    """A pasted AppFolio magic link (full URL or the bare token).
 
-    magic_link: str = Field(..., min_length=1)
+    ``magic_link`` is a single-use secret, so it is a ``SecretStr`` (masked
+    in logs/reprs, write-only in the OpenAPI schema).
+    """
+
+    magic_link: SecretStr = Field(..., min_length=1)
 
 
 class IntegrationConnectionResponse(BaseModel):

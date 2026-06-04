@@ -18,8 +18,14 @@ from fastapi.testclient import TestClient
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import db_session_async
-from backend.app.integrations.appfolio_vendor.service import AppFolioError
-from backend.app.integrations.servicetitan.auth import ServiceTitanAuthError
+from backend.app.integrations.appfolio_vendor.service import (
+    AppFolioError,
+    AppFolioUnavailableError,
+)
+from backend.app.integrations.servicetitan.auth import (
+    ServiceTitanAuthError,
+    ServiceTitanUnavailableError,
+)
 from backend.app.main import app
 from backend.app.models import User
 
@@ -87,6 +93,23 @@ def test_servicetitan_connect_rejects_bad_credentials(client: TestClient) -> Non
         )
     assert resp.status_code == 400
     assert "rejected" in resp.json()["detail"].lower()
+
+
+def test_servicetitan_connect_maps_upstream_outage_to_502(client: TestClient) -> None:
+    """A ServiceTitan outage (not bad credentials) must return 502, not 400."""
+
+    async def _down(*args: Any, **kwargs: Any) -> None:
+        raise ServiceTitanUnavailableError("ServiceTitan token endpoint unreachable")
+
+    with patch(
+        "backend.app.routers.integrations.servicetitan_auth.connect_credentials",
+        new=_down,
+    ):
+        resp = client.post(
+            "/api/integrations/servicetitan/connect",
+            json={"tenant_id": "t1", "client_id": "cid", "client_secret": "csec"},
+        )
+    assert resp.status_code == 502
 
 
 def test_servicetitan_connect_validates_empty_fields(client: TestClient) -> None:
@@ -157,6 +180,23 @@ def test_appfolio_connect_rejects_bad_link(client: TestClient) -> None:
         )
     assert resp.status_code == 400
     assert "appfolio" in resp.json()["detail"].lower()
+
+
+def test_appfolio_connect_maps_upstream_outage_to_502(client: TestClient) -> None:
+    """An AppFolio outage must return 502, not 400 (which blames the user)."""
+
+    async def _down(*args: Any, **kwargs: Any) -> None:
+        raise AppFolioUnavailableError("AppFolio OAuth exchange network failure")
+
+    with patch(
+        "backend.app.routers.integrations.connect_via_magic_link",
+        new=_down,
+    ):
+        resp = client.post(
+            "/api/integrations/appfolio_vendor/connect",
+            json={"magic_link": "https://vendor.appfolio.com/?magic_link_token=eyJ.fake"},
+        )
+    assert resp.status_code == 502
 
 
 def test_appfolio_disconnect(client: TestClient) -> None:

@@ -38,11 +38,11 @@ convention. AppFolio receives photo bytes inline as base64 in the JSON body.
 ## Connecting
 
 AppFolio uses passwordless magic-link login. The magic link is a single-use
-secret, so the user connects in the Clawbolt web app under Settings,
-Integrations, never over chat where it would stay in the message history:
+secret, so the user connects in the Clawbolt web app on the Integrations page,
+never over chat where it would stay in the message history:
 
 1. User opens vendor.appfolio.com and requests a magic link.
-2. They open the Clawbolt web app, go to Settings, Integrations, AppFolio
+2. They open the Clawbolt web app, go to the Integrations page, find AppFolio
    Vendor Portal, and paste the magic link from their AppFolio email there.
 
 Direct the user to the web app; do not accept the magic link in the

@@ -72,9 +72,19 @@ _TOKEN_FALLBACK_TTL_SECONDS = 180.0
 class ServiceTitanAuthError(RuntimeError):
     """Raised when token minting against ServiceTitan fails.
 
-    Surfaces to the user via the connect tool when the pasted credentials
+    Surfaces to the user via the connect flow when the pasted credentials
     are wrong, and via the refresh path when an existing credential stops
     working (e.g. the tenant rotated the secret).
+    """
+
+
+class ServiceTitanUnavailableError(ServiceTitanAuthError):
+    """Raised when the failure is upstream (network or ServiceTitan 5xx).
+
+    Distinct from the base class so callers can tell "the user's credentials
+    are wrong" (a 4xx, the user's problem) from "ServiceTitan is down or
+    unreachable" (a transient outage). The web connect endpoint maps this to
+    HTTP 502 instead of 400 so a vendor outage does not read as bad input.
     """
 
 
@@ -156,7 +166,9 @@ async def mint_access_token(
             resp = await client.post(TOKEN_PATH, data=body)
     except httpx.HTTPError as exc:
         logger.warning("ServiceTitan token mint network failure: %s", exc)
-        raise ServiceTitanAuthError(f"ServiceTitan token endpoint unreachable: {exc!r}") from exc
+        raise ServiceTitanUnavailableError(
+            f"ServiceTitan token endpoint unreachable: {exc!r}"
+        ) from exc
 
     if resp.status_code >= 400:
         logger.warning(
@@ -164,6 +176,11 @@ async def mint_access_token(
             resp.status_code,
             resp.text[:500],
         )
+        if resp.status_code >= 500:
+            # Upstream is broken, not the user's credentials.
+            raise ServiceTitanUnavailableError(
+                f"ServiceTitan token endpoint returned HTTP {resp.status_code}"
+            )
         raise ServiceTitanAuthError(
             f"ServiceTitan rejected the client credentials (HTTP {resp.status_code})"
         )

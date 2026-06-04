@@ -72,13 +72,19 @@ export default function ConnectIntegrationModal({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
+    // Trim before sending: a trailing newline from a copied credential or
+    // magic-link email would otherwise cause an avoidable auth failure.
     if (integration === 'servicetitan') {
       connectServiceTitan.mutate(
-        { tenant_id: tenantId, client_id: clientId, client_secret: clientSecret },
+        {
+          tenant_id: tenantId.trim(),
+          client_id: clientId.trim(),
+          client_secret: clientSecret.trim(),
+        },
         { onSuccess: onConnected, onError },
       );
     } else if (integration === 'appfolio_vendor') {
-      connectAppFolio.mutate({ magic_link: magicLink }, { onSuccess: onConnected, onError });
+      connectAppFolio.mutate({ magic_link: magicLink.trim() }, { onSuccess: onConnected, onError });
     }
   };
 

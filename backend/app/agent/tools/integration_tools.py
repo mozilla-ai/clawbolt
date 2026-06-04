@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.config import settings
 from backend.app.integrations.appfolio_vendor import auth as appfolio_auth
 from backend.app.integrations.servicetitan import auth as servicetitan_auth
 from backend.app.services.oauth import get_oauth_config, list_oauth_integrations, oauth_service
@@ -222,8 +223,11 @@ async def _handle_status(
                 else:
                     status_parts.append("not configured by admin")
             elif name in _WEB_CONNECT_INTEGRATIONS:
-                connected = await _is_web_connect_connected(name, user_id)
-                status_parts.append("connected" if connected else "not connected")
+                if not _web_connect_available(name):
+                    status_parts.append("not configured by admin")
+                else:
+                    connected = await _is_web_connect_connected(name, user_id)
+                    status_parts.append("connected" if connected else "not connected")
 
             integration_lines.append(f"- {name}: {display} ({', '.join(status_parts)})")
 
@@ -456,6 +460,20 @@ async def _handle_disconnect(user_id: str, target: str, registry: ToolRegistry) 
     )
 
 
+def _web_connect_available(target: str) -> bool:
+    """Whether the operator has configured this web-form integration.
+
+    Mirrors the OAuth path's ``config.is_configured`` gate so the agent and
+    Settings UI never advertise a connect flow that cannot succeed.
+    ServiceTitan needs an operator-level App Key (``SERVICETITAN_APP_KEY``);
+    without it ``connect_credentials`` hard-fails. AppFolio has no
+    operator-level credential, so it is always available.
+    """
+    if target == "servicetitan":
+        return bool(settings.servicetitan_app_key)
+    return True
+
+
 async def _is_web_connect_connected(target: str, user_id: str) -> bool:
     """Dispatch ``is_connected`` lookup for web-form integrations."""
     if target == "appfolio_vendor":
@@ -488,6 +506,8 @@ async def get_user_connected_integrations(user_id: str) -> dict[str, bool]:
             continue
         result[name] = await oauth_service.is_connected(user_id, name)
     for name in _WEB_CONNECT_INTEGRATIONS:
+        if not _web_connect_available(name):
+            continue
         result[name] = await _is_web_connect_connected(name, user_id)
     return result
 
@@ -499,9 +519,18 @@ async def _handle_web_connect(user_id: str, target: str, registry: ToolRegistry)
     credentials, a single-use magic link). Those must never be entered
     over chat, where they would persist in the message history
     (issue #1337), so there is no chat connect flow: the user enters them
-    in the Clawbolt web app under Settings.
+    on the Integrations page of the Clawbolt web app.
     """
     display = registry.get_display_name(target)
+    if not _web_connect_available(target):
+        return ToolResult(
+            content=(
+                f"{display} is not available on this deployment: the operator has not"
+                " configured it. Tell the user the admin needs to set it up first."
+            ),
+            is_error=True,
+            error_kind=ToolErrorKind.AUTH,
+        )
     if await _is_web_connect_connected(target, user_id):
         return ToolResult(
             content=(
@@ -512,8 +541,8 @@ async def _handle_web_connect(user_id: str, target: str, registry: ToolRegistry)
     return ToolResult(
         content=(
             f"{display} is connected in the Clawbolt web app, not over chat. Tell the user"
-            " to open the web app, go to Settings, find "
-            f"{display} under Integrations, and enter their credentials there. Do not ask"
+            " to open the Clawbolt web app, go to the Integrations page, find "
+            f"{display}, and enter their credentials there. Do not ask"
             " them to paste any secret (client secret, magic link) into this conversation;"
             " those would stay in their message history."
         ),

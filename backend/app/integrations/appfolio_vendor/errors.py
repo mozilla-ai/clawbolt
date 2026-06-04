@@ -86,8 +86,8 @@ def log_unexpected_response_shape(
 
 
 _AUTH_EXPIRED_HINT = (
-    "Have the user reconnect AppFolio in the Clawbolt web app under Settings"
-    " with a fresh magic link. Do not ask them to paste the link into chat."
+    "Have the user reconnect AppFolio on the Integrations page of the Clawbolt"
+    " web app with a fresh magic link. Do not ask them to paste the link into chat."
 )
 
 # Distinct hint for scope failures: reconnecting does not help, the

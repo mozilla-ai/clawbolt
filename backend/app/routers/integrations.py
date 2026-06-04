@@ -20,10 +20,14 @@ from backend.app.integrations.appfolio_vendor import auth as appfolio_auth
 from backend.app.integrations.appfolio_vendor.auth import MagicLinkError
 from backend.app.integrations.appfolio_vendor.service import (
     AppFolioError,
+    AppFolioUnavailableError,
     connect_via_magic_link,
 )
 from backend.app.integrations.servicetitan import auth as servicetitan_auth
-from backend.app.integrations.servicetitan.auth import ServiceTitanAuthError
+from backend.app.integrations.servicetitan.auth import (
+    ServiceTitanAuthError,
+    ServiceTitanUnavailableError,
+)
 from backend.app.models import User
 from backend.app.schemas import (
     AppFolioConnectRequest,
@@ -50,8 +54,13 @@ async def connect_servicetitan(
             current_user.id,
             tenant_id=body.tenant_id,
             client_id=body.client_id,
-            client_secret=body.client_secret,
+            client_secret=body.client_secret.get_secret_value(),
         )
+    except ServiceTitanUnavailableError as exc:
+        logger.warning("ServiceTitan unreachable for user=%s: %s", current_user.id, exc)
+        raise HTTPException(
+            status_code=502, detail="ServiceTitan is unreachable right now. Try again shortly."
+        ) from exc
     except ServiceTitanAuthError as exc:
         logger.warning("ServiceTitan connect failed for user=%s: %s", current_user.id, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -82,7 +91,7 @@ async def connect_appfolio(
 ) -> IntegrationConnectionResponse:
     """Exchange a pasted AppFolio magic link for a credential and persist it."""
     try:
-        await connect_via_magic_link(current_user.id, body.magic_link)
+        await connect_via_magic_link(current_user.id, body.magic_link.get_secret_value())
     except MagicLinkError as exc:
         raise HTTPException(
             status_code=400,
@@ -90,6 +99,11 @@ async def connect_appfolio(
                 f"Could not read the magic link: {exc}. Paste the full link from your"
                 " AppFolio sign-in email, including the part after 'magic_link_token='."
             ),
+        ) from exc
+    except AppFolioUnavailableError as exc:
+        logger.warning("AppFolio unreachable for user=%s: %s", current_user.id, exc)
+        raise HTTPException(
+            status_code=502, detail="AppFolio is unreachable right now. Try again shortly."
         ) from exc
     except AppFolioError as exc:
         logger.warning("AppFolio connect failed for user=%s: %s", current_user.id, exc)

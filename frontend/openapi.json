@@ -1486,7 +1486,9 @@
           "magic_link": {
             "type": "string",
             "minLength": 1,
-            "title": "Magic Link"
+            "format": "password",
+            "title": "Magic Link",
+            "writeOnly": true
           }
         },
         "type": "object",
@@ -1494,7 +1496,7 @@
           "magic_link"
         ],
         "title": "AppFolioConnectRequest",
-        "description": "A pasted AppFolio magic link (full URL or the bare token)."
+        "description": "A pasted AppFolio magic link (full URL or the bare token).\n\n``magic_link`` is a single-use secret, so it is a ``SecretStr`` (masked\nin logs/reprs, write-only in the OpenAPI schema)."
       },
       "BatchDeleteRequest": {
         "properties": {
@@ -2601,7 +2603,9 @@
           "client_secret": {
             "type": "string",
             "minLength": 1,
-            "title": "Client Secret"
+            "format": "password",
+            "title": "Client Secret",
+            "writeOnly": true
           }
         },
         "type": "object",
@@ -2611,7 +2615,7 @@
           "client_secret"
         ],
         "title": "ServiceTitanConnectRequest",
-        "description": "The three values from ServiceTitan's API Application Access page."
+        "description": "The three values from ServiceTitan's API Application Access page.\n\n``client_secret`` is a ``SecretStr`` so it is masked in logs/reprs and\nmarked write-only in the OpenAPI schema; the value still arrives as a\nplain JSON string from the client."
       },
       "SessionDetailResponse": {
         "properties": {

@@ -12,7 +12,7 @@ told users "AppFolio is connected" before they had connected.
 Connecting happens in the Clawbolt web app, not over chat: the magic link
 is a single-use secret, and pasting it into a chat thread would leave it in
 the user's message history (issue #1337). The connect form lives on the
-Settings page and posts to ``/api/integrations/appfolio_vendor``.
+Integrations page and posts to ``/api/integrations/appfolio_vendor``.
 """
 
 from __future__ import annotations
@@ -97,9 +97,9 @@ async def _appfolio_vendor_auth_check(ctx: ToolContext) -> str | None:
         return None
     return (
         "AppFolio Vendor Portal is not connected. The user connects it in the"
-        " Clawbolt web app under Settings, where they paste the magic link from"
-        " their AppFolio sign-in email. Do not accept the magic link over chat;"
-        " direct the user to the web app instead."
+        " Clawbolt web app on the Integrations page, where they paste the magic"
+        " link from their AppFolio sign-in email. Do not accept the magic link"
+        " over chat; direct the user to the web app instead."
     )
 
 

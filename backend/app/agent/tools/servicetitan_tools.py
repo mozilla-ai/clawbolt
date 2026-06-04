@@ -76,8 +76,8 @@ def _service_error(label: str, exc: Exception) -> ToolResult:
             error_kind=ToolErrorKind.AUTH,
             hint=(
                 "Tell the user to connect ServiceTitan in the Clawbolt web app"
-                " under Settings, where they enter their Tenant ID, Client ID,"
-                " and Client Secret. Do not ask them to paste those into chat."
+                " on the Integrations page, where they enter their Tenant ID,"
+                " Client ID, and Client Secret. Do not ask them to paste those into chat."
             ),
         )
     if isinstance(exc, ServiceTitanError):
