@@ -166,7 +166,8 @@ async def test_agent_system_prompt_includes_soul(mock_amessages: object, test_us
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_system_prompt_includes_tool_hints(mock_amessages: object, test_user: User) -> None:
-    """System prompt should include usage hints from registered tools."""
+    """Tool usage hints are dynamic, so they ride on the current user turn,
+    not the cacheable system param (#1420)."""
     mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
     async def dummy(**kwargs: object) -> ToolResult:
@@ -194,10 +195,12 @@ async def test_system_prompt_includes_tool_hints(mock_amessages: object, test_us
     await agent.process_message("Hello")
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_prompt = extract_system_text(call_args.kwargs["system"])
-    assert "Tool Guidelines" in system_prompt
-    assert "When you learn new info, save it." in system_prompt
-    assert "Search memory for relevant information." in system_prompt
+    current_turn = call_args.kwargs["messages"][-1]["content"]
+    assert "Tool Guidelines" in current_turn
+    assert "When you learn new info, save it." in current_turn
+    assert "Search memory for relevant information." in current_turn
+    # Dynamic hints must stay out of the cacheable system param.
+    assert "Tool Guidelines" not in extract_system_text(call_args.kwargs["system"])
 
 
 @pytest.mark.asyncio()
@@ -222,7 +225,7 @@ async def test_system_prompt_omits_tool_section_when_no_hints(
 async def test_system_prompt_skips_tools_without_hints(
     mock_amessages: object, test_user: User
 ) -> None:
-    """Tools with empty usage_hint should not appear in the system prompt."""
+    """Tools with empty usage_hint should not appear in the tool guidelines."""
     mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
     async def dummy(**kwargs: object) -> ToolResult:
@@ -249,9 +252,10 @@ async def test_system_prompt_skips_tools_without_hints(
     await agent.process_message("Hello")
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_prompt = extract_system_text(call_args.kwargs["system"])
-    assert "This tool does something useful." in system_prompt
-    assert "tool_without_hint" not in system_prompt
+    # Tool guidelines are dynamic and now ride on the current user turn.
+    current_turn = call_args.kwargs["messages"][-1]["content"]
+    assert "This tool does something useful." in current_turn
+    assert "tool_without_hint" not in current_turn
 
 
 @pytest.mark.asyncio()
