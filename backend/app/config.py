@@ -100,22 +100,31 @@ class Settings(BaseSettings):
     inbound_recovery_lookback_minutes: int = Field(default=30, ge=0)
     max_tool_rounds: int = Field(default=10, ge=1)
     max_input_tokens: int = Field(default=600_000, ge=1)
-    context_trim_target_tokens: int = Field(default=400_000, ge=1)
-    # Cap user turns kept verbatim in LLM context. Long single-conversation
-    # histories reinforce their own dominant tone, so new requests inherit
-    # prior conversational patterns rather than optimal procedural ones.
-    # Trimming oldest turns past this cap (independent of token budget)
-    # rolls them through compaction into MEMORY.md / USER.md / SOUL.md.
-    # Set ge=2 so at least one prior turn is always retained alongside the
-    # current one. Tune up if compaction proves too aggressive.
-    context_trim_target_turns: int = Field(default=80, ge=2)
-    # Trim trigger threshold: trim only fires when user-turn count exceeds
-    # this. Trim then drops down to ``context_trim_target_turns``, leaving
-    # ``trigger - target`` turns of headroom before the next trim fires.
-    # A single threshold (target == trigger) re-fires compaction on every
-    # message after the first overflow because the resting state sits
-    # exactly at the ceiling. When ``None``, defaults to
-    # ``context_trim_target_turns + 16`` inside ``trim_messages``.
+    # Primary trim governor: the raw conversation window is bounded by
+    # tokens, not turns. Trim fires when the prompt exceeds
+    # ``context_trim_trigger_tokens`` and drops the oldest turns until it
+    # is back under ``context_trim_target_tokens``. The gap between the two
+    # is hysteresis: a single threshold (target == trigger) would re-fire
+    # compaction on every message once the resting state sits at the
+    # ceiling. ~30K of headroom spaces trims a few active days apart for a
+    # token-light messaging user. Lower the target to trade raw recall for
+    # per-turn cost; the full window is sent every turn.
+    context_trim_target_tokens: int = Field(default=120_000, ge=1)
+    context_trim_trigger_tokens: int = Field(default=150_000, ge=1)
+    # Turn-count backstop, not the primary governor. Tokens bind first in
+    # normal use (150K is ~330 turns for a token-light user); this cap only
+    # catches pathological message-count bloat (many tiny messages), a
+    # latency and attention concern independent of tokens. Keep it well
+    # above the turn-equivalent of the token budget. Trimming oldest turns
+    # past this cap rolls them through compaction into MEMORY.md / USER.md
+    # / SOUL.md. ge=2 so at least one prior turn is always retained; not
+    # ``None``, which would disable the guard entirely.
+    context_trim_target_turns: int = Field(default=600, ge=2)
+    # Turn-backstop trigger threshold: the turn cap fires only when the
+    # user-turn count exceeds this, then drops to
+    # ``context_trim_target_turns`` (same hysteresis rationale as the token
+    # path). When ``None``, defaults to ``context_trim_target_turns + 16``
+    # inside ``trim_messages``.
     context_trim_trigger_turns: int | None = Field(default=None)
     # Per-file truncation cap for memory-text snapshots persisted on
     # ``compaction_events`` rows. A user with a 500KB MEMORY.md would
@@ -467,10 +476,18 @@ def log_config_warnings(s: Settings | None = None) -> list[str]:
             f"llm_max_tokens_agent={s.llm_max_tokens_agent} is very low"
             " and may produce truncated responses"
         )
-    if s.context_trim_target_tokens >= s.max_input_tokens:
+    # Invariant: target_tokens < trigger_tokens <= max_input_tokens.
+    if s.context_trim_target_tokens >= s.context_trim_trigger_tokens:
         warnings.append(
             f"context_trim_target_tokens ({s.context_trim_target_tokens})"
-            f" >= max_input_tokens ({s.max_input_tokens});"
+            f" >= context_trim_trigger_tokens ({s.context_trim_trigger_tokens});"
+            " token-side hysteresis is disabled and compaction may re-fire"
+            " on every message after the first overflow"
+        )
+    if s.context_trim_trigger_tokens > s.max_input_tokens:
+        warnings.append(
+            f"context_trim_trigger_tokens ({s.context_trim_trigger_tokens})"
+            f" > max_input_tokens ({s.max_input_tokens});"
             " trimming will never trigger"
         )
 
