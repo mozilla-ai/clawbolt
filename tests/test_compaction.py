@@ -1025,6 +1025,51 @@ async def test_compact_session_appends_history(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_compact_session_preserves_event_timestamps_in_summary(
+    test_user: UserData,
+) -> None:
+    """A real event timestamp emitted by the model survives into HISTORY.md
+    verbatim, and is not overwritten by the compaction wall-clock time.
+
+    Regression for issue #1423: compaction used to stamp every breadcrumb
+    with the moment the compaction ran (the ``[TIMESTAMP]`` placeholder was
+    always replaced with ``now``). When older messages were trimmed, the
+    agent lost when the events actually happened and would later claim a
+    past action happened "today". Now the model anchors each breadcrumb to
+    the event's own time (from the conversation markers); the placeholder
+    fill is only a fallback for events with no visible marker.
+
+    This response mixes both cases in one multi-line summary: a breadcrumb
+    with a concrete event time, and a second with the literal placeholder.
+    """
+    summary = (
+        "[2026-06-02 19:27] Scheduled the Carter job for June 3-5 on the work calendar.\n"
+        "[TIMESTAMP] Added a full-day labor entry for June 2."
+    )
+    llm_response_text = json.dumps({"memory_update": "", "summary": summary})
+    mock_response = make_text_response(llm_response_text)
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="Schedule the Carter job June 3-5, 8 to 4."),
+        AssistantMessage(content="Done, added Carter June 3-5."),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, messages, max_message_seq=2)
+
+    memory_store = get_memory_store(test_user.id)
+    history_content = await memory_store.read_history_async()
+
+    # The concrete event time is preserved exactly, not squashed to "now".
+    assert "[2026-06-02 19:27] Scheduled the Carter job for June 3-5" in history_content
+    # The placeholder line still gets a real timestamp filled in.
+    assert "Added a full-day labor entry for June 2." in history_content
+    assert "[TIMESTAMP]" not in history_content
+    # The summary must use absolute dates, never relative words that drift.
+    assert "today" not in history_content.lower()
+
+
+@pytest.mark.asyncio()
 async def test_compact_session_no_summary_skips_history(test_user: UserData) -> None:
     """compact_session should not write HISTORY.md when summary is empty."""
     llm_response_text = json.dumps({"memory_update": "", "summary": ""})

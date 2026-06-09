@@ -447,8 +447,12 @@ async def compact_session(
     # the read-and-write, so the snapshot we record matches what landed in
     # the DB even when two compactions race.
     if result.summary:
-        timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M")
-        entry = result.summary.replace("[TIMESTAMP]", f"[{timestamp}]")
+        # Real event times come from the model, anchored to the conversation's
+        # [Weekday, ...] markers (see compaction.md Step 4). Any leftover
+        # [TIMESTAMP] placeholder means the model saw no marker for that event;
+        # fill it with the compaction time as a fallback.
+        fallback_ts = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M")
+        entry = result.summary.replace("[TIMESTAMP]", f"[{fallback_ts}]")
         try:
             new_history = await memory_store.append_history(entry)
             logger.info("Compaction appended history entry for user %s", user_id)
