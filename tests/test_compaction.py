@@ -868,10 +868,13 @@ async def test_compact_session_does_not_log_when_no_messages(test_user: UserData
     mock_log.assert_not_called()
 
 
-# --- Integration: load_conversation_history no longer triggers compaction ---
-# Compaction is now triggered from process_message() when trim_messages() drops
-# messages, not from load_conversation_history(). The tests below verify the new
-# behavior. See test_agent.py for trim-triggered compaction tests.
+# --- Integration: load_conversation_history compaction behavior ---
+# Compaction is triggered from process_message() when trim_messages() drops
+# messages, and (issue #1427) from load_conversation_history() when rows
+# fall outside the loader window before trim could ever see them. The
+# loader path reuses trigger_compaction_for_dropped, so the watermark
+# advance plus headroom batching prevents the per-message churn that led
+# PR #843 to remove the original loader-driven compaction.
 
 
 @pytest.mark.asyncio()
@@ -882,7 +885,7 @@ async def test_load_history_returns_all_messages_under_limit(
     """load_conversation_history should return all messages when under the soft limit."""
     _add_messages(session, 8)
 
-    # No compaction should be triggered from load_history anymore
+    # Under the limit there is no overflow, so no compaction fires.
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
         history = await load_conversation_history(session, limit=500)
 
@@ -899,25 +902,134 @@ async def test_load_history_soft_limit_caps_messages(
     """The soft limit should still cap how many messages are loaded into memory."""
     _add_messages(session, 10)
 
-    history = await load_conversation_history(session, limit=5)
+    with patch("backend.app.agent.context.trigger_compaction_for_dropped", new=AsyncMock()):
+        history = await load_conversation_history(session, limit=5)
     # 5 loaded, minus 1 for current = 4
     assert len(history) == 4
 
 
 @pytest.mark.asyncio()
-async def test_load_history_no_compaction_regardless_of_count(
+async def test_load_history_overflow_routes_to_compaction(
     test_user: UserData,
     session: SessionState,
 ) -> None:
-    """load_conversation_history should never trigger compaction, even over limit."""
+    """Rows that fall outside the loader window must be passed to
+    trigger_compaction_for_dropped, with a headroom batch so the path
+    does not re-fire on every subsequent message (issue #1427).
+    """
     _add_messages(session, 100)
 
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch(
+        "backend.app.agent.context.trigger_compaction_for_dropped", new=AsyncMock()
+    ) as mock_trigger:
         history = await load_conversation_history(session, limit=5)
 
-    # No compaction LLM call should happen from load_history
-    mock_llm.assert_not_called()
+    mock_trigger.assert_awaited_once()
+    assert mock_trigger.await_args is not None
+    user_id_arg, overflow_arg = mock_trigger.await_args.args
+    assert user_id_arg == test_user.id
+    # overflow (100 - 5 = 95) + 32 headroom rows, capped at total - 1 = 99:
+    # the current message is never compacted.
+    seqs = [m.seq for m in overflow_arg if getattr(m, "seq", None) is not None]
+    assert max(seqs) == 99
+    # The returned window is unchanged on the turn that detects overflow.
     assert len(history) == 4
+
+
+@pytest.mark.asyncio()
+async def test_load_history_overflow_skips_when_compaction_disabled(
+    test_user: UserData,
+    session: SessionState,
+) -> None:
+    """With compaction disabled, overflow keeps the pre-#1427 silent
+    fall-off behavior: no trigger, no watermark write.
+    """
+    _add_messages(session, 100)
+
+    with (
+        patch.object(settings, "compaction_enabled", False),
+        patch(
+            "backend.app.agent.context.trigger_compaction_for_dropped", new=AsyncMock()
+        ) as mock_trigger,
+    ):
+        history = await load_conversation_history(session, limit=5)
+
+    mock_trigger.assert_not_called()
+    assert len(history) == 4
+
+
+@pytest.mark.asyncio()
+async def test_load_history_overflow_advances_watermark_and_compacts(
+    test_user: User,
+) -> None:
+    """End-to-end overflow path against a DB-backed session: the watermark
+    advances past the compacted batch, a CompactionEvent row is written,
+    and the extracted facts land in MEMORY.md (issue #1427).
+    """
+    from backend.app.agent import context as _context_module
+
+    cs = await _seed_session_with_messages(test_user, message_count=20)
+    store = get_session_store(test_user.id)
+    session = await store.load_session_async(cs.session_id)
+    assert session is not None
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": "## Facts\n- fact: from_overflow", "summary": ""})
+    )
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        history = await load_conversation_history(session, limit=10)
+        if _context_module._background_tasks:
+            await asyncio.gather(*list(_context_module._background_tasks), return_exceptions=True)
+
+    # The window itself is unchanged this turn: last 10 rows minus current.
+    assert len(history) == 9
+
+    async with db_session_async() as db:
+        cs_ref = (await db.execute(select(ChatSession).filter_by(id=cs.id))).scalar_one_or_none()
+        assert cs_ref is not None
+        # overflow (20 - 10 = 10) + 32 headroom rows, capped at total - 1 = 19.
+        assert cs_ref.last_trim_seq == 19
+        events = (
+            (await db.execute(select(CompactionEvent).filter_by(user_id=test_user.id)))
+            .scalars()
+            .all()
+        )
+        assert len(events) == 1
+
+    content = await get_memory_store(test_user.id).read_memory_async()
+    assert "fact: from_overflow" in content
+
+
+@pytest.mark.asyncio()
+async def test_load_history_overflow_does_not_refire_after_watermark(
+    test_user: User,
+) -> None:
+    """Once the overflow batch is watermarked, the next load sees no
+    overflow and must not trigger compaction again (hysteresis).
+    """
+    cs = await _seed_session_with_messages(test_user, message_count=20)
+    store = get_session_store(test_user.id)
+
+    session = await store.load_session_async(cs.session_id)
+    assert session is not None
+    with patch(
+        "backend.app.agent.context.compact_session",
+        new=AsyncMock(return_value=("", None)),
+    ):
+        await load_conversation_history(session, limit=10)
+        await asyncio.sleep(0)
+
+    # Reload: the advanced watermark filters the compacted rows, so the
+    # visible set is back under the limit.
+    session2 = await store.load_session_async(cs.session_id)
+    assert session2 is not None
+    assert session2.last_trim_seq == 19
+    with patch(
+        "backend.app.agent.context.trigger_compaction_for_dropped", new=AsyncMock()
+    ) as mock_trigger:
+        await load_conversation_history(session2, limit=10)
+
+    mock_trigger.assert_not_called()
 
 
 # --- trigger_compaction_for_dropped tests ---
