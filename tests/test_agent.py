@@ -1003,6 +1003,38 @@ def test_trim_messages_keeps_system_and_recent() -> None:
     assert len(result.dropped) > 0
 
 
+def test_trim_token_hysteresis_no_trim_between_target_and_trigger() -> None:
+    """A prompt above the target but below the trigger must not trim.
+
+    This is the token-side hysteresis (#1421): without it the resting
+    state sits at the target and every message re-fires trim plus the
+    compaction LLM call.
+    """
+    big = "x" * 1000
+    messages: list[AgentMessage] = [
+        SystemMessage(content="sys"),
+        *[UserMessage(content=big) for _ in range(5)],
+    ]
+    # 150 tokens: above target (100) but within trigger (200).
+    result = trim_messages(messages, target_tokens=100, trigger_tokens=200, input_tokens=150)
+    assert result.messages == messages
+    assert result.dropped == []
+
+
+def test_trim_token_fires_at_trigger_drops_to_target() -> None:
+    """Once over the trigger, trim drops the prompt back under the target."""
+    big = "x" * 1000
+    messages: list[AgentMessage] = [
+        SystemMessage(content="sys"),
+        *[UserMessage(content=big) for _ in range(10)],
+    ]
+    # 300 tokens: over the trigger (200); trim must drop oldest turns until
+    # the estimate is within the target (100), not merely under the trigger.
+    result = trim_messages(messages, target_tokens=100, trigger_tokens=200, input_tokens=300)
+    assert result.dropped
+    assert len(result.messages) < len(messages)
+
+
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_does_not_trim_normal_conversations(
@@ -1357,26 +1389,30 @@ async def test_agent_trims_chatty_conversation_below_token_limit(
     mock_amessages: AsyncMock,
     test_user: User,
 ) -> None:
-    """A 200-turn chatty conversation under the token budget should still be trimmed.
+    """A chatty conversation under the token budget should still be trimmed
+    by the turn backstop.
 
     Regression test for issue #1135: pattern lock-in from accumulated
     conversational tone, even when total tokens stay well under the limit.
+    The turn cap is the backstop now (#1421), so pin it small here to
+    exercise the backstop without building hundreds of turns.
     """
     mock_amessages.return_value = make_text_response("Ok!")
 
-    # 200 short turn pairs: trivial token footprint, well under the 400K cap.
+    # 200 short turn pairs: trivial token footprint, well under the budget.
     long_history = _build_turn_history(turn_pairs=200)
 
     agent = ClawboltAgent(user=test_user)
     # Simulate the API reporting a low token count so the token budget is
-    # not violated; only the turn cap should fire.
+    # not violated; only the turn backstop should fire.
     agent._last_input_tokens = 5_000
 
-    await agent.process_message(
-        "Current message",
-        conversation_history=long_history,
-        system_prompt_override="Short system prompt",
-    )
+    with patch("backend.app.agent.core.settings.context_trim_target_turns", 80):
+        await agent.process_message(
+            "Current message",
+            conversation_history=long_history,
+            system_prompt_override="Short system prompt",
+        )
 
     call_args = mock_amessages.call_args
     sent_messages = call_args.kwargs["messages"]
