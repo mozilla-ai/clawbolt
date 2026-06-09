@@ -10,6 +10,7 @@ from backend.app.agent.system_prompt import (
     SystemPromptBuilder,
     _strip_integrations_block,
     build_agent_system_prompt,
+    build_agent_system_prompt_parts,
     build_cross_session_context,
     build_date_section,
     build_heartbeat_system_prompt,
@@ -24,6 +25,7 @@ from backend.app.agent.system_prompt import (
     to_local_time,
 )
 from backend.app.models import User
+from backend.app.services.llm_service import prepare_system_with_caching
 
 
 class TestSystemPromptBuilder:
@@ -128,8 +130,6 @@ class TestBuildParts:
 
     def test_prepare_system_single_cached_block(self) -> None:
         """prepare_system_with_caching wraps the whole string in one cached block."""
-        from backend.app.services.llm_service import prepare_system_with_caching
-
         blocks = prepare_system_with_caching("Just a plain prompt")
         assert len(blocks) == 1
         assert "cache_control" in blocks[0]
@@ -138,8 +138,6 @@ class TestBuildParts:
     @pytest.mark.asyncio
     async def test_agent_prompt_parts_split_dynamic_out(self) -> None:
         """build_agent_system_prompt_parts returns memory in the dynamic half only."""
-        from backend.app.agent.system_prompt import build_agent_system_prompt_parts
-
         user = MagicMock()
         user.id = "user-123"
         user.soul_text = "soul"
@@ -281,8 +279,6 @@ class TestBuildAgentSystemPrompt:
         """Tool guidelines must sit in the dynamic half so that specialist
         activation mid-conversation does not bust the stable system-prompt
         cache. They must never leak into the stable half."""
-        from backend.app.agent.system_prompt import build_agent_system_prompt_parts
-
         user = MagicMock()
         user.soul_text = "I'm Bolt."
         user.user_text = ""
@@ -736,8 +732,6 @@ class TestAgentPromptIncludesLiveIntegrationStatus:
         stable prefix. Placing it ``dynamic=True`` keeps it in the dynamic
         half that is appended to the user turn.
         """
-        from backend.app.agent.system_prompt import build_agent_system_prompt_parts
-
         user = MagicMock()
         user.soul_text = "soul"
         user.user_text = "user"

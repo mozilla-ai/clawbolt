@@ -8,6 +8,8 @@ from unittest.mock import patch
 import pytest
 
 from backend.app.services.llm_service import (
+    _cache_control,
+    apply_history_cache_breakpoint,
     apply_tool_caching,
     prepare_system_with_caching,
     resolve_user_llm_override,
@@ -135,13 +137,9 @@ class TestApplyHistoryCacheBreakpoint:
     """The history breakpoint lands on the message before the current turn."""
 
     def _control(self) -> dict[str, object]:
-        from backend.app.services.llm_service import _cache_control
-
         return _cache_control()
 
     def test_marks_message_before_current_turn(self) -> None:
-        from backend.app.services.llm_service import apply_history_cache_breakpoint
-
         messages = [
             {"role": "user", "content": "older question"},
             {"role": "assistant", "content": [{"type": "text", "text": "older answer"}]},
@@ -155,8 +153,6 @@ class TestApplyHistoryCacheBreakpoint:
         assert "cache_control" not in result[2]
 
     def test_converts_string_anchor_to_block(self) -> None:
-        from backend.app.services.llm_service import apply_history_cache_breakpoint
-
         messages = [
             {"role": "user", "content": "older question"},
             {"role": "user", "content": "current turn"},
@@ -168,8 +164,6 @@ class TestApplyHistoryCacheBreakpoint:
         assert anchor["content"][0]["cache_control"] == self._control()
 
     def test_marks_last_block_of_tool_result_anchor(self) -> None:
-        from backend.app.services.llm_service import apply_history_cache_breakpoint
-
         messages = [
             {"role": "assistant", "content": [{"type": "text", "text": "calling tool"}]},
             {
@@ -187,16 +181,12 @@ class TestApplyHistoryCacheBreakpoint:
         assert tool_results[1]["cache_control"] == self._control()
 
     def test_no_breakpoint_without_prior_history(self) -> None:
-        from backend.app.services.llm_service import apply_history_cache_breakpoint
-
         messages = [{"role": "user", "content": "only the current turn"}]
         result = apply_history_cache_breakpoint(messages)
         assert result == messages
         assert "cache_control" not in result[0]
 
     def test_no_breakpoint_when_no_string_user_turn(self) -> None:
-        from backend.app.services.llm_service import apply_history_cache_breakpoint
-
         # Only tool-result (list-content) user messages: no current inbound
         # string turn to anchor against.
         messages = [
