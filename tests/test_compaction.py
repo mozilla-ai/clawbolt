@@ -241,6 +241,59 @@ async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_compact_session_skips_memory_write_on_concurrent_change(
+    test_user: UserData,
+) -> None:
+    """A write landing during the compaction LLM call must win (issue #1429).
+
+    compact_session reads MEMORY.md, runs an LLM call that takes tens of
+    seconds, then writes a full rewrite. If the agent's workspace tools
+    (or a second compaction) write a new fact in that window, the rewrite
+    is based on a stale read and must not clobber the newer value: the
+    compare-and-swap in write_memory_async detects the drift and skips.
+    """
+    store = get_memory_store(test_user.id)
+    await store.write_memory_async("## Facts\n- original")
+
+    mock_response = make_text_response(
+        json.dumps(
+            {
+                "memory_update": "## Facts\n- original\n- from compaction",
+                "summary": "",
+            }
+        )
+    )
+
+    async def _llm_with_concurrent_write(*args: Any, **kwargs: Any) -> Any:
+        # Simulates the agent writing a new fact while the compaction
+        # LLM call is in flight.
+        await store.write_memory_async("## Facts\n- original\n- agent fact")
+        return mock_response
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="some old conversation", seq=1),
+        AssistantMessage(content="noted", seq=2),
+    ]
+    with patch("backend.app.agent.compaction.amessages", side_effect=_llm_with_concurrent_write):
+        memory_update, _ = await compact_session(test_user.id, messages, max_message_seq=2)
+
+    # CAS miss: compaction reports no memory change and the concurrent
+    # write is preserved.
+    assert memory_update == ""
+    content = await store.read_memory_async()
+    assert "agent fact" in content
+    assert "from compaction" not in content
+
+    # The audit row records that no memory update landed.
+    async with db_session_async() as db:
+        event = (
+            await db.execute(select(CompactionEvent).filter_by(user_id=test_user.id))
+        ).scalar_one_or_none()
+        assert event is not None
+        assert event.memory_updated is False
+
+
+@pytest.mark.asyncio()
 async def test_compact_session_includes_current_memory_and_user(
     test_user: UserData,
 ) -> None:
