@@ -31,9 +31,11 @@ class SystemPromptBuilder:
 
     Sections may be marked ``dynamic=True`` to indicate their content
     changes between calls (e.g. memory, cross-session context).
-    ``build()`` uses this flag to split the prompt into a cacheable
-    stable prefix and a non-cached dynamic suffix so that Anthropic
-    prompt caching can reuse the stable prefix across turns.
+    ``build_parts()`` uses this flag to separate the cacheable stable
+    sections from the dynamic ones. The agent loop sends the stable half
+    in the ``system`` param (cacheable) and emits the dynamic half after
+    the message history so a memory write no longer invalidates the
+    history cache (see #1420).
     """
 
     def __init__(self) -> None:
@@ -61,31 +63,46 @@ class SystemPromptBuilder:
         self._sections.append((heading, content, dynamic))
         return self
 
-    # Marker inserted between stable and dynamic sections so the caching
-    # layer can split the prompt into a cacheable prefix and a dynamic suffix.
-    CACHE_BOUNDARY = "\n<!-- CACHE_BOUNDARY -->\n"
+    def build_parts(self) -> tuple[str, str]:
+        """Return the ``(stable, dynamic)`` halves of the prompt.
 
-    def build(self) -> str:
-        """Assemble all sections into the final prompt string.
+        *stable* is the preamble plus every non-dynamic section, joined
+        with blank lines. It is byte-stable across turns and is sent in
+        the cacheable ``system`` param.
 
-        A ``CACHE_BOUNDARY`` marker is inserted before the first dynamic
-        section so ``prepare_system_with_caching()`` can split the prompt
-        into a cacheable stable prefix and a non-cached dynamic suffix.
+        *dynamic* is every section marked ``dynamic=True`` (memory,
+        integration status, cross-session context). It changes between
+        turns and is emitted outside the ``system`` param by the agent
+        loop so it does not gate the message-history cache.
+
+        Section order within each half is preserved.
         """
-        parts: list[str] = []
+        stable_parts: list[str] = []
+        dynamic_parts: list[str] = []
         if self._preamble:
-            parts.append(self._preamble)
+            stable_parts.append(self._preamble)
 
-        hit_dynamic = False
         for heading, content, dynamic in self._sections:
             if not content:
                 continue
-            if dynamic and not hit_dynamic:
-                hit_dynamic = True
-                parts.append(self.CACHE_BOUNDARY.strip())
-            parts.append(f"## {heading}\n{content}")
+            target = dynamic_parts if dynamic else stable_parts
+            target.append(f"## {heading}\n{content}")
 
-        return "\n\n".join(parts)
+        return "\n\n".join(stable_parts), "\n\n".join(dynamic_parts)
+
+    def build(self) -> str:
+        """Assemble all sections into a single prompt string.
+
+        Stable sections come first, then dynamic ones. Used by callers
+        that want the full prompt as one string (e.g. the system-prompt
+        preview endpoint and prompts with no dynamic sections). The agent
+        loop uses :meth:`build_parts` instead so it can place the dynamic
+        half after the history.
+        """
+        stable, dynamic = self.build_parts()
+        if stable and dynamic:
+            return f"{stable}\n\n{dynamic}"
+        return stable or dynamic
 
 
 # -----------------------------------------------------------------------
@@ -328,13 +345,18 @@ async def build_cross_session_context(
 # -----------------------------------------------------------------------
 
 
-async def build_agent_system_prompt(
+async def _build_agent_prompt_builder(
     user: User,
     tools: list[Tool],
     message_context: str,
     current_session_id: str = "",
-) -> str:
-    """Assemble the full system prompt for the main agent loop."""
+) -> SystemPromptBuilder:
+    """Assemble the composable builder for the main agent loop.
+
+    Shared by :func:`build_agent_system_prompt` (full string, used by the
+    preview endpoint) and :func:`build_agent_system_prompt_parts` (stable
+    and dynamic halves, used by the agent loop).
+    """
     builder = SystemPromptBuilder()
     builder.set_preamble("You are an AI assistant for solo tradespeople.")
 
@@ -373,7 +395,40 @@ async def build_agent_system_prompt(
         if cross:
             builder.add_section("Recent Activity (other channel)", cross, dynamic=True)
 
+    return builder
+
+
+async def build_agent_system_prompt(
+    user: User,
+    tools: list[Tool],
+    message_context: str,
+    current_session_id: str = "",
+) -> str:
+    """Assemble the full system prompt for the main agent loop.
+
+    Returns the stable and dynamic sections as one string. Used by the
+    system-prompt preview endpoint; the agent loop uses
+    :func:`build_agent_system_prompt_parts` instead.
+    """
+    builder = await _build_agent_prompt_builder(user, tools, message_context, current_session_id)
     return builder.build()
+
+
+async def build_agent_system_prompt_parts(
+    user: User,
+    tools: list[Tool],
+    message_context: str,
+    current_session_id: str = "",
+) -> tuple[str, str]:
+    """Assemble the agent system prompt as ``(stable, dynamic)`` halves.
+
+    The agent loop sends *stable* in the cacheable ``system`` param and
+    appends *dynamic* (memory, integration status, cross-session context)
+    to the current user turn, so a memory write does not invalidate the
+    message-history prompt cache (#1420).
+    """
+    builder = await _build_agent_prompt_builder(user, tools, message_context, current_session_id)
+    return builder.build_parts()
 
 
 async def build_heartbeat_system_prompt(
