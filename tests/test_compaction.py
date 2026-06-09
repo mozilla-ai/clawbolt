@@ -1723,6 +1723,75 @@ async def test_watermark_event_seq_invariant_after_compaction(test_user: User) -
         assert cs_ref.last_trim_seq == event.max_message_seq == 8
 
 
+@pytest.mark.asyncio()
+async def test_trigger_compaction_skips_rows_below_live_watermark(test_user: User) -> None:
+    """Rows at or below the live watermark must not be re-compacted.
+
+    The loader's window-overflow path and the trim path can both fire in
+    one turn over an overlapping seq range (issue #1427): the loader
+    advances the watermark during load_history_step, then the trim path
+    in process_message drops rows from a history snapshot taken before
+    that advance. The trigger must re-check the live watermark so the
+    overlap is not compacted twice.
+    """
+    cs = await _seed_session_with_messages(test_user, message_count=20)
+    async with db_session_async() as db:
+        cs_ref = (await db.execute(select(ChatSession).filter_by(id=cs.id))).scalar_one_or_none()
+        assert cs_ref is not None
+        cs_ref.last_trim_seq = 10
+        await db.commit()
+
+    # Fully covered range: no event row, no compaction call.
+    fully_covered: list[AgentMessage] = [
+        UserMessage(content="old", seq=9),
+        AssistantMessage(content="old reply", seq=10),
+    ]
+    with patch(
+        "backend.app.agent.context.compact_session",
+        new=AsyncMock(return_value=("", None)),
+    ) as mock_compact:
+        await trigger_compaction_for_dropped(test_user.id, fully_covered)
+        await asyncio.sleep(0)
+    mock_compact.assert_not_called()
+    async with db_session_async() as db:
+        events = (
+            (await db.execute(select(CompactionEvent).filter_by(user_id=test_user.id)))
+            .scalars()
+            .all()
+        )
+        assert len(events) == 0
+
+    # Partial overlap: only the rows above the watermark are compacted,
+    # and the event row records the filtered range.
+    partial: list[AgentMessage] = [
+        AssistantMessage(content="old reply", seq=10),
+        UserMessage(content="new message", seq=11),
+        AssistantMessage(content="new reply", seq=12),
+    ]
+    with patch(
+        "backend.app.agent.context.compact_session",
+        new=AsyncMock(return_value=("", None)),
+    ) as mock_compact:
+        await trigger_compaction_for_dropped(test_user.id, partial)
+        await asyncio.sleep(0)
+    mock_compact.assert_called_once()
+    compacted_msgs = mock_compact.call_args.args[1]
+    compacted_seqs = sorted(
+        m.seq for m in compacted_msgs if isinstance(getattr(m, "seq", None), int)
+    )
+    assert compacted_seqs == [11, 12]
+    async with db_session_async() as db:
+        event = (
+            await db.execute(select(CompactionEvent).filter_by(user_id=test_user.id))
+        ).scalar_one_or_none()
+        cs_ref = (await db.execute(select(ChatSession).filter_by(id=cs.id))).scalar_one_or_none()
+        assert event is not None
+        assert event.min_message_seq == 11
+        assert event.max_message_seq == 12
+        assert cs_ref is not None
+        assert cs_ref.last_trim_seq == 12
+
+
 # ---------------------------------------------------------------------------
 # compact_session with event_id: UPDATE the pre-inserted row
 # ---------------------------------------------------------------------------

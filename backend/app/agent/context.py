@@ -159,14 +159,47 @@ async def trigger_compaction_for_dropped(
         # summary) with no DB rows to watermark against. Nothing to compact.
         return
 
-    min_seq = min(dropped_seqs)
-    max_seq = max(dropped_seqs)
     triggered_at = datetime.datetime.now(datetime.UTC)
 
     # Phase 1: insert + watermark advance, in one transaction.
     event_id: int
     try:
         async with db_session_async() as db:
+            cs = (
+                await db.execute(select(ChatSession).filter_by(user_id=user_id))
+            ).scalar_one_or_none()
+
+            # Re-check the live watermark before compacting. The caller
+            # computed ``dropped_messages`` from a session snapshot that may
+            # predate another trigger's watermark advance: the window-overflow
+            # path in ``load_conversation_history`` runs earlier in the same
+            # turn than the trim path in ``process_message``, and both can
+            # fire when a conversation crosses the row cap and the token
+            # budget together. Rows at or below the live watermark are
+            # already covered by a prior CompactionEvent; re-compacting them
+            # would double the LLM cost and write a confusing duplicate
+            # audit row for the same seq range.
+            current_watermark = (cs.last_trim_seq or 0) if cs is not None else 0
+            if current_watermark:
+                dropped_seqs = [s for s in dropped_seqs if s > current_watermark]
+                if not dropped_seqs:
+                    logger.info(
+                        "Skipping compaction for user %s: all dropped rows are"
+                        " at or below the live watermark %d",
+                        user_id,
+                        current_watermark,
+                    )
+                    return
+                kept: list[AgentMessage] = []
+                for m in dropped_messages:
+                    seq = getattr(m, "seq", None)
+                    if not isinstance(seq, int) or seq > current_watermark:
+                        kept.append(m)
+                dropped_messages = kept
+
+            min_seq = min(dropped_seqs)
+            max_seq = max(dropped_seqs)
+
             event = CompactionEvent(
                 user_id=user_id,
                 triggered_at=triggered_at,
@@ -180,13 +213,8 @@ async def trigger_compaction_for_dropped(
             assert event.id is not None, "flush() must populate the autoincrement id"
             event_id = event.id
 
-            cs = (
-                await db.execute(select(ChatSession).filter_by(user_id=user_id))
-            ).scalar_one_or_none()
-            if cs is not None:
-                current = cs.last_trim_seq or 0
-                if max_seq > current:
-                    cs.last_trim_seq = max_seq
+            if cs is not None and max_seq > current_watermark:
+                cs.last_trim_seq = max_seq
             await db.commit()
     except Exception:
         logger.exception(
