@@ -46,9 +46,9 @@ One terse 1 to 3 sentence breadcrumb entry per event, one per line.
 
 **Timestamp each entry in exactly one format: `[YYYY-MM-DD HH:MM]` (24-hour).** Never use weekdays, AM/PM, ranges, or arrows. If you know the day an event happened but not the time, write `[YYYY-MM-DD]` with no time rather than guessing one.
 
-Take the time from the nearest marker at or before the event in `<conversation>`, converted to 24-hour form. Markers only appear after a gap or a new day, so one marker can sit far above the event it precedes. If the only available marker is hours away from when the event actually happened, drop the time and stamp the date alone: do not propagate the batch's opening marker time onto every event in the batch. When no marker is visible at all, write the literal `[TIMESTAMP]` and the system fills in the current time.
+Take each event's time from the nearest marker at or before it, in 24-hour form. A marker can sit far above the event it precedes, so when the nearest one is hours off, drop the time and stamp the date alone; never copy one marker's time onto every event under it. With no marker visible, write the literal `[TIMESTAMP]` and the system fills in the current time.
 
-**Resolve every relative time reference to an absolute date in the prose.** "today", "tomorrow", "this Friday", "earlier" are wrong when this breadcrumb is read days later. Write "scheduled the Miller job for June 3-5", never "added Miller today". Keep the day an action was taken distinct from the day it targets.
+**Resolve every relative time reference to an absolute date in the prose.** "today", "tomorrow", "this Friday", "earlier" are wrong when this breadcrumb is read days later. Write "scheduled the Miller job for June 3-5", never "added Miller today".
 
 Pointers over numbers. Drop deep links, draft IDs, and dollar amounts (unless the dollar is genuinely the news). Skip trivial small talk. Return an empty string when nothing noteworthy happened.
 
