@@ -937,6 +937,32 @@ async def test_load_history_overflow_routes_to_compaction(
 
 
 @pytest.mark.asyncio()
+async def test_load_history_overflow_batch_capped_per_turn(
+    test_user: UserData,
+    session: SessionState,
+) -> None:
+    """A huge legacy backlog must not be compacted in one LLM call: the
+    overflow batch is a contiguous prefix capped at 200 rows per turn, so
+    the backlog converges over several turns instead of blowing the
+    compaction model's context (issue #1427).
+    """
+    _add_messages(session, 400)
+
+    with patch(
+        "backend.app.agent.context.trigger_compaction_for_dropped", new=AsyncMock()
+    ) as mock_trigger:
+        await load_conversation_history(session, limit=5)
+
+    mock_trigger.assert_awaited_once()
+    assert mock_trigger.await_args is not None
+    _user_id_arg, overflow_arg = mock_trigger.await_args.args
+    seqs = [m.seq for m in overflow_arg if getattr(m, "seq", None) is not None]
+    # Contiguous prefix from the oldest row, capped at 200.
+    assert min(seqs) == 1
+    assert max(seqs) == 200
+
+
+@pytest.mark.asyncio()
 async def test_load_history_overflow_skips_when_compaction_disabled(
     test_user: UserData,
     session: SessionState,

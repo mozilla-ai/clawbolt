@@ -75,6 +75,18 @@ DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 # buffer (a user turn is typically an inbound + outbound row pair).
 _WINDOW_OVERFLOW_BATCH_ROWS = 32
 
+# Upper bound on rows compacted per turn by the window-overflow path. A
+# legacy session can arrive with a multi-thousand-row backlog above the
+# watermark (compaction disabled for a while, or rows accumulated before
+# the overflow path shipped). Compacting the whole backlog in one go
+# would feed the entire thing into a single compaction LLM call and blow
+# its context. The batch is always a contiguous prefix starting at the
+# oldest row above the watermark, so capping it is safe: the watermark
+# advances to the end of the capped batch and the next message picks up
+# the next chunk, converging over a handful of turns. At a token-light
+# ~300 tokens/row, 200 rows is roughly 60K tokens of compaction input.
+_WINDOW_OVERFLOW_MAX_ROWS_PER_TURN = 200
+
 # Strong references to fire-and-forget background tasks so they are not
 # garbage-collected before completion.
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -527,7 +539,11 @@ async def load_conversation_history(
     # watermark advance plus headroom batching is what makes this
     # reintroduction safe.
     if total_count > limit and settings.compaction_enabled:
-        compact_count = min(total_count - 1, (total_count - limit) + _WINDOW_OVERFLOW_BATCH_ROWS)
+        compact_count = min(
+            total_count - 1,
+            (total_count - limit) + _WINDOW_OVERFLOW_BATCH_ROWS,
+            _WINDOW_OVERFLOW_MAX_ROWS_PER_TURN,
+        )
         overflow = all_messages[:compact_count]
         overflow_agent_messages = _stored_messages_to_agent_messages(overflow, tz_name=tz_name)
         if overflow_agent_messages:
