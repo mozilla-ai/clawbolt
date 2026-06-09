@@ -113,6 +113,7 @@ def trim_messages(
     target_tokens: int = CONTEXT_TRIM_TARGET_TOKENS,
     target_turns: int | None = CONTEXT_TRIM_TARGET_TURNS,
     trigger_turns: int | None = CONTEXT_TRIM_TRIGGER_TURNS,
+    trigger_tokens: int | None = None,
     input_tokens: int | None = None,
 ) -> TrimResult:
     """Trim conversation messages to fit within a token and turn budget.
@@ -127,16 +128,22 @@ def trim_messages(
     conversation messages until the content fits within *target_tokens*
     and the number of remaining user turns is within *target_turns*.
 
-    The turn cap fires when user-turn count exceeds *trigger_turns* and
-    drops down to *target_turns*, leaving ``trigger - target`` turns of
-    headroom before the next trim fires. This hysteresis prevents
-    per-message re-triggering: a single threshold (target == trigger)
-    would leave the resting state exactly at the ceiling, so the next
-    user message would push count back over the cap and re-fire trim
-    plus the downstream compaction LLM call. When ``trigger_turns`` is
-    ``None``, defaults to ``target_turns + 16``. When ``target_turns``
-    is ``None``, the turn-count guard is disabled entirely (token
-    budget only).
+    The token budget is the primary governor. Trim fires when the
+    estimated token count exceeds *trigger_tokens* and drops the oldest
+    turns until the count is back within *target_tokens*, leaving
+    ``trigger - target`` tokens of headroom before the next trim. This
+    hysteresis prevents per-message re-triggering: a single threshold
+    (target == trigger) leaves the resting state exactly at the ceiling,
+    so the next message re-fires trim plus the downstream compaction LLM
+    call. When *trigger_tokens* is ``None``, it defaults to *target_tokens*
+    (no token-side hysteresis), so callers that want hysteresis must pass
+    ``context_trim_trigger_tokens`` explicitly.
+
+    The turn cap is a backstop with the same hysteresis: it fires when the
+    user-turn count exceeds *trigger_turns* and drops to *target_turns*.
+    When *trigger_turns* is ``None``, it defaults to ``target_turns + 16``.
+    When *target_turns* is ``None``, the turn-count guard is disabled
+    entirely (token budget only).
 
     Tool-call / tool-result pairs are treated as atomic units: an
     ``AssistantMessage`` with ``tool_calls`` is never removed without also
@@ -152,7 +159,10 @@ def trim_messages(
     if len(messages) <= 2:
         return TrimResult(messages=messages)
 
-    # Resolve the trigger threshold. Hysteresis = trigger - target.
+    # Resolve the trigger thresholds. Hysteresis = trigger - target.
+    # Token trigger defaults to the target (no hysteresis) when unset.
+    effective_trigger_tokens = trigger_tokens if trigger_tokens is not None else target_tokens
+
     effective_trigger_turns: int | None
     if trigger_turns is not None:
         effective_trigger_turns = trigger_turns
@@ -175,7 +185,7 @@ def trim_messages(
         orig_len = _content_length(messages) or 1
         return int(actual_input_tokens * _content_length(msgs) / orig_len)
 
-    over_token_budget = _tokens_for(messages) > target_tokens
+    over_token_budget = _tokens_for(messages) > effective_trigger_tokens
     over_turn_budget = (
         effective_trigger_turns is not None
         and _count_user_turns(messages) > effective_trigger_turns

@@ -113,10 +113,30 @@ class TestLogConfigWarnings:
         warnings = log_config_warnings(s)
         assert any("llm_max_tokens_agent" in w for w in warnings)
 
-    def test_warns_trim_target_exceeds_max_input(self) -> None:
-        s = Settings(max_input_tokens=1000, context_trim_target_tokens=2000)
+    def test_warns_trim_trigger_exceeds_max_input(self) -> None:
+        s = Settings(
+            max_input_tokens=1000,
+            context_trim_target_tokens=500,
+            context_trim_trigger_tokens=2000,
+        )
         warnings = log_config_warnings(s)
-        assert any("context_trim_target_tokens" in w for w in warnings)
+        assert any("context_trim_trigger_tokens" in w and "never trigger" in w for w in warnings)
+
+    def test_warns_trim_target_at_or_above_trigger(self) -> None:
+        """target >= trigger disables token-side hysteresis."""
+        s = Settings(
+            context_trim_target_tokens=150_000,
+            context_trim_trigger_tokens=150_000,
+        )
+        warnings = log_config_warnings(s)
+        assert any("hysteresis is disabled" in w for w in warnings)
+
+    def test_default_trim_token_invariant_holds(self) -> None:
+        """Defaults satisfy target < trigger <= max_input (no warnings)."""
+        s = Settings()
+        assert s.context_trim_target_tokens < s.context_trim_trigger_tokens <= s.max_input_tokens
+        trim_warnings = [w for w in log_config_warnings(s) if "context_trim" in w]
+        assert trim_warnings == []
 
     def test_logs_warnings(self, caplog: pytest.LogCaptureFixture) -> None:
         s = Settings(max_tool_rounds=100)
