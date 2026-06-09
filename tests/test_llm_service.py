@@ -8,6 +8,8 @@ from unittest.mock import patch
 import pytest
 
 from backend.app.services.llm_service import (
+    _cache_control,
+    apply_history_cache_breakpoint,
     apply_tool_caching,
     prepare_system_with_caching,
     resolve_user_llm_override,
@@ -119,19 +121,84 @@ def test_apply_tool_caching_falls_back_to_5min_when_disabled() -> None:
     assert result[0]["cache_control"] == {"type": "ephemeral"}
 
 
-def test_prepare_system_with_cache_boundary_marks_only_stable_prefix() -> None:
-    """When a CACHE_BOUNDARY marker is present, only the stable prefix
-    block carries cache_control; the dynamic suffix block has no marker
-    so per-turn variation does not bust the cache."""
-    text = "stable prefix\n<!-- CACHE_BOUNDARY -->\ndynamic suffix"
+def test_prepare_system_wraps_whole_string_in_one_cached_block() -> None:
+    """The whole system string is stable now (dynamic content moved to the
+    user turn, #1420), so it is a single cache-marked block."""
+    text = "stable prefix\n\ndynamic suffix"
     with patch("backend.app.services.llm_service.settings") as mock_settings:
         mock_settings.llm_cache_extended_ttl = True
         result = prepare_system_with_caching(text)
-    assert len(result) == 2
-    assert result[0]["text"] == "stable prefix"
+    assert len(result) == 1
+    assert result[0]["text"] == text
     assert result[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-    assert result[1]["text"] == "dynamic suffix"
-    assert "cache_control" not in result[1]
+
+
+class TestApplyHistoryCacheBreakpoint:
+    """The history breakpoint lands on the message before the current turn."""
+
+    def _control(self) -> dict[str, object]:
+        return _cache_control()
+
+    def test_marks_message_before_current_turn(self) -> None:
+        messages = [
+            {"role": "user", "content": "older question"},
+            {"role": "assistant", "content": [{"type": "text", "text": "older answer"}]},
+            {"role": "user", "content": "current turn with time + dynamic"},
+        ]
+        result = apply_history_cache_breakpoint(messages)
+        # Breakpoint stamped on the assistant message (index 1), not the
+        # volatile current turn (index 2).
+        assert result[1]["content"][-1]["cache_control"] == self._control()
+        assert isinstance(result[2]["content"], str)
+        assert "cache_control" not in result[2]
+
+    def test_converts_string_anchor_to_block(self) -> None:
+        messages = [
+            {"role": "user", "content": "older question"},
+            {"role": "user", "content": "current turn"},
+        ]
+        result = apply_history_cache_breakpoint(messages)
+        anchor = result[0]
+        assert isinstance(anchor["content"], list)
+        assert anchor["content"][0]["text"] == "older question"
+        assert anchor["content"][0]["cache_control"] == self._control()
+
+    def test_marks_last_block_of_tool_result_anchor(self) -> None:
+        messages = [
+            {"role": "assistant", "content": [{"type": "text", "text": "calling tool"}]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "a", "content": "one"},
+                    {"type": "tool_result", "tool_use_id": "b", "content": "two"},
+                ],
+            },
+            {"role": "user", "content": "current turn"},
+        ]
+        result = apply_history_cache_breakpoint(messages)
+        tool_results = result[1]["content"]
+        assert "cache_control" not in tool_results[0]
+        assert tool_results[1]["cache_control"] == self._control()
+
+    def test_no_breakpoint_without_prior_history(self) -> None:
+        messages = [{"role": "user", "content": "only the current turn"}]
+        result = apply_history_cache_breakpoint(messages)
+        assert result == messages
+        assert "cache_control" not in result[0]
+
+    def test_no_breakpoint_when_no_string_user_turn(self) -> None:
+        # Only tool-result (list-content) user messages: no current inbound
+        # string turn to anchor against.
+        messages = [
+            {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "a", "content": "x"}],
+            },
+        ]
+        result = apply_history_cache_breakpoint(messages)
+        assert all("cache_control" not in block for block in result[0]["content"])
+        assert all("cache_control" not in block for block in result[1]["content"])
 
 
 # ---------------------------------------------------------------------------

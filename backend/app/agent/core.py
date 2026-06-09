@@ -60,7 +60,10 @@ from backend.app.agent.observer import (
     emit_llm_request,
     emit_llm_response,
 )
-from backend.app.agent.system_prompt import build_agent_system_prompt, build_time_user_context
+from backend.app.agent.system_prompt import (
+    build_agent_system_prompt_parts,
+    build_time_user_context,
+)
 from backend.app.agent.tool_errors import (
     _DEFAULT_ERROR_HINT,
     _ERROR_KIND_HINTS,
@@ -80,6 +83,7 @@ from backend.app.config import settings
 from backend.app.logging_utils import mask_pii
 from backend.app.models import User
 from backend.app.services.llm_service import (
+    apply_history_cache_breakpoint,
     apply_tool_caching,
     prepare_system_with_caching,
     reasoning_effort_to_thinking,
@@ -397,9 +401,14 @@ class ClawboltAgent:
             )
         self._prev_tool_names = current
 
-    async def _build_system_prompt(self, message_context: str) -> str:
-        """Build the full system prompt via the composable builder."""
-        return await build_agent_system_prompt(
+    async def _build_system_prompt(self, message_context: str) -> tuple[str, str]:
+        """Build the system prompt as ``(stable, dynamic)`` halves.
+
+        *stable* goes in the cacheable ``system`` param; *dynamic* (memory,
+        integrations, cross-session context) is appended to the current
+        user turn so it does not invalidate the history cache (#1420).
+        """
+        return await build_agent_system_prompt_parts(
             self.user,
             self.tools,
             message_context,
@@ -478,6 +487,7 @@ class ClawboltAgent:
         await self._send_typing_indicator()
         effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
         system_str, msg_dicts = messages_to_messages_api(messages)
+        msg_dicts = apply_history_cache_breakpoint(msg_dicts)
         system: str | list[dict[str, Any]] | None = system_str
         if system is not None:
             system = prepare_system_with_caching(system)
@@ -560,6 +570,7 @@ class ClawboltAgent:
                     len(trim_result.messages),
                 )
                 retry_system_str, trimmed_dicts = messages_to_messages_api(trim_result.messages)
+                trimmed_dicts = apply_history_cache_breakpoint(trimmed_dicts)
                 system = (
                     prepare_system_with_caching(retry_system_str)
                     if retry_system_str is not None
@@ -1097,7 +1108,22 @@ class ClawboltAgent:
             len(message_context),
             len(conversation_history) if conversation_history else 0,
         )
-        system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
+        # The system prompt splits into a stable half (cacheable, sent in
+        # the ``system`` param) and a dynamic half (memory, integrations,
+        # cross-session context). The dynamic half is appended to the
+        # current user turn rather than the system param so a memory write
+        # does not invalidate the message-history cache (#1420). An
+        # override (e.g. onboarding) is treated as fully stable.
+        if system_prompt_override is not None:
+            stable_system, dynamic_context = system_prompt_override, ""
+        else:
+            stable_system, dynamic_context = await self._build_system_prompt(message_context)
+        # The full assembled prompt for observers / debugging. The dynamic
+        # half physically ships on the user turn now, but this field still
+        # reflects everything the model was given as instruction context.
+        system_prompt = (
+            f"{stable_system}\n\n{dynamic_context}" if dynamic_context else stable_system
+        )
         await self._emit(
             AgentStartEvent(
                 user_id=self.user.id,
@@ -1105,13 +1131,20 @@ class ClawboltAgent:
             )
         )
 
-        messages: list[AgentMessage] = [SystemMessage(content=system_prompt)]
+        messages: list[AgentMessage] = [SystemMessage(content=stable_system)]
 
         if conversation_history:
             messages.extend(conversation_history)
 
         time_context = build_time_user_context(self.user)
-        messages.append(UserMessage(content=f"{time_context}\n\n{message_context}"))
+        # Order: time context, then dynamic context (memory, integrations,
+        # cross-session), then the user's actual message last so the model
+        # reads the ask after its context, mirroring how time is prepended.
+        current_turn_parts = [time_context]
+        if dynamic_context:
+            current_turn_parts.append(dynamic_context)
+        current_turn_parts.append(message_context)
+        messages.append(UserMessage(content="\n\n".join(current_turn_parts)))
 
         # Trim oldest conversation history if content exceeds the limit.
         # Uses the block-based trimmer which preserves tool-call/result pairing

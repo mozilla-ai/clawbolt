@@ -10,6 +10,7 @@ from backend.app.agent.system_prompt import (
     SystemPromptBuilder,
     _strip_integrations_block,
     build_agent_system_prompt,
+    build_agent_system_prompt_parts,
     build_cross_session_context,
     build_date_section,
     build_heartbeat_system_prompt,
@@ -24,6 +25,7 @@ from backend.app.agent.system_prompt import (
     to_local_time,
 )
 from backend.app.models import User
+from backend.app.services.llm_service import prepare_system_with_caching
 
 
 class TestSystemPromptBuilder:
@@ -92,55 +94,50 @@ class TestSystemPromptBuilder:
         assert "## B" in result
 
 
-class TestCacheBoundary:
-    def test_boundary_inserted_before_dynamic(self) -> None:
-        """CACHE_BOUNDARY marker should appear before the first dynamic section."""
+class TestBuildParts:
+    def test_dynamic_sections_split_into_second_half(self) -> None:
+        """build_parts puts stable sections in the first half, dynamic in the second."""
         builder = SystemPromptBuilder()
         builder.set_preamble("Preamble")
         builder.add_section("Stable", "stable content")
         builder.add_section("Dynamic", "dynamic content", dynamic=True)
-        result = builder.build()
-        assert SystemPromptBuilder.CACHE_BOUNDARY.strip() in result
-        idx = result.index(SystemPromptBuilder.CACHE_BOUNDARY.strip())
-        assert result.index("stable content") < idx
-        assert result.index("dynamic content") > idx
+        stable, dynamic = builder.build_parts()
+        assert "Preamble" in stable
+        assert "stable content" in stable
+        assert "dynamic content" not in stable
+        assert "dynamic content" in dynamic
+        assert "stable content" not in dynamic
 
-    def test_no_boundary_when_all_stable(self) -> None:
-        """No marker should appear when no sections are dynamic."""
+    def test_dynamic_empty_when_all_stable(self) -> None:
+        """The dynamic half is empty when no sections are dynamic."""
         builder = SystemPromptBuilder()
         builder.set_preamble("Preamble")
         builder.add_section("A", "content a")
         builder.add_section("B", "content b")
-        result = builder.build()
-        assert SystemPromptBuilder.CACHE_BOUNDARY.strip() not in result
+        stable, dynamic = builder.build_parts()
+        assert dynamic == ""
+        assert "content a" in stable
+        assert "content b" in stable
 
-    def test_prepare_system_splits_on_boundary(self) -> None:
-        """prepare_system_with_caching should split into two blocks at the marker."""
-        from backend.app.services.llm_service import prepare_system_with_caching
-
+    def test_build_joins_stable_then_dynamic(self) -> None:
+        """build() returns stable sections first, then dynamic ones."""
         builder = SystemPromptBuilder()
         builder.set_preamble("Preamble")
         builder.add_section("Instructions", "be helpful")
         builder.add_section("Memory", "user likes coffee", dynamic=True)
-        prompt = builder.build()
-        blocks = prepare_system_with_caching(prompt)
-        assert len(blocks) == 2
-        assert "cache_control" in blocks[0]
-        assert "cache_control" not in blocks[1]
-        assert "be helpful" in blocks[0]["text"]
-        assert "user likes coffee" in blocks[1]["text"]
+        result = builder.build()
+        assert result.index("be helpful") < result.index("user likes coffee")
 
-    def test_prepare_system_single_block_without_boundary(self) -> None:
-        """Without a boundary marker the whole prompt is one cached block."""
-        from backend.app.services.llm_service import prepare_system_with_caching
-
+    def test_prepare_system_single_cached_block(self) -> None:
+        """prepare_system_with_caching wraps the whole string in one cached block."""
         blocks = prepare_system_with_caching("Just a plain prompt")
         assert len(blocks) == 1
         assert "cache_control" in blocks[0]
+        assert blocks[0]["text"] == "Just a plain prompt"
 
     @pytest.mark.asyncio
-    async def test_agent_prompt_has_boundary(self) -> None:
-        """build_agent_system_prompt should include the cache boundary marker."""
+    async def test_agent_prompt_parts_split_dynamic_out(self) -> None:
+        """build_agent_system_prompt_parts returns memory in the dynamic half only."""
         user = MagicMock()
         user.id = "user-123"
         user.soul_text = "soul"
@@ -151,8 +148,12 @@ class TestCacheBoundary:
             new_callable=AsyncMock,
             return_value="some memory",
         ):
-            prompt = await build_agent_system_prompt(user, tools=[], message_context="hello")
-        assert SystemPromptBuilder.CACHE_BOUNDARY.strip() in prompt
+            stable, dynamic = await build_agent_system_prompt_parts(
+                user, tools=[], message_context="hello"
+            )
+        assert "some memory" in dynamic
+        assert "some memory" not in stable
+        assert "AI assistant for solo tradespeople" in stable
 
 
 class TestSectionBuilders:
@@ -274,11 +275,10 @@ class TestBuildAgentSystemPrompt:
         assert "Proactive Messaging" in result
 
     @pytest.mark.asyncio
-    async def test_tool_guidelines_live_after_cache_boundary(self) -> None:
-        """Tool guidelines must sit in the dynamic suffix so that specialist
+    async def test_tool_guidelines_live_in_dynamic_half(self) -> None:
+        """Tool guidelines must sit in the dynamic half so that specialist
         activation mid-conversation does not bust the stable system-prompt
-        cache. They should appear after CACHE_BOUNDARY, never inside
-        Instructions."""
+        cache. They must never leak into the stable half."""
         user = MagicMock()
         user.soul_text = "I'm Bolt."
         user.user_text = ""
@@ -293,23 +293,18 @@ class TestBuildAgentSystemPrompt:
             new_callable=AsyncMock,
             return_value="",
         ):
-            result = await build_agent_system_prompt(
+            stable, dynamic = await build_agent_system_prompt_parts(
                 user=user,
                 tools=[tool],
                 message_context="hello",
             )
 
-        marker = SystemPromptBuilder.CACHE_BOUNDARY.strip()
-        assert marker in result
-        boundary_idx = result.index(marker)
-        guidelines_idx = result.index("Tool Guidelines")
-        assert guidelines_idx > boundary_idx
-        # The stable Instructions block (everything before the boundary)
-        # must not leak the tool hints, or activating a new specialist
-        # would invalidate the cached prefix.
-        stable_prefix = result[:boundary_idx]
-        assert "Tool Guidelines" not in stable_prefix
-        assert "save_fact" not in stable_prefix
+        assert "Tool Guidelines" in dynamic
+        assert "save_fact" in dynamic
+        # The stable half must not leak the tool hints, or activating a new
+        # specialist would invalidate the cached prefix.
+        assert "Tool Guidelines" not in stable
+        assert "save_fact" not in stable
 
     @pytest.mark.asyncio
     async def test_preamble_is_generic(self) -> None:
@@ -729,12 +724,13 @@ class TestBuildIntegrationStatusSection:
 
 class TestAgentPromptIncludesLiveIntegrationStatus:
     @pytest.mark.asyncio
-    async def test_section_appears_after_cache_boundary(self) -> None:
-        """The live integration status sits in the dynamic suffix.
+    async def test_section_lands_in_dynamic_half(self) -> None:
+        """The live integration status sits in the dynamic half.
 
         Mid-conversation OAuth completions must take effect on the very
         next turn, which means the section cannot be inside the cached
-        prefix. Placing it ``dynamic=True`` puts it after the boundary.
+        stable prefix. Placing it ``dynamic=True`` keeps it in the dynamic
+        half that is appended to the user turn.
         """
         user = MagicMock()
         user.soul_text = "soul"
@@ -757,19 +753,16 @@ class TestAgentPromptIncludesLiveIntegrationStatus:
                 ),
             ),
         ):
-            prompt = await build_agent_system_prompt(
+            stable, dynamic = await build_agent_system_prompt_parts(
                 user=user,
                 tools=[],
                 message_context="hello",
             )
 
-        assert "## Connected Integrations" in prompt
-        assert "Connected: google_calendar" in prompt
-        assert "Not connected: google_drive" in prompt
-        # Must sit after CACHE_BOUNDARY.
-        boundary_idx = prompt.index(SystemPromptBuilder.CACHE_BOUNDARY.strip())
-        section_idx = prompt.index("## Connected Integrations")
-        assert section_idx > boundary_idx
+        assert "## Connected Integrations" in dynamic
+        assert "Connected: google_calendar" in dynamic
+        assert "Not connected: google_drive" in dynamic
+        assert "## Connected Integrations" not in stable
 
     @pytest.mark.asyncio
     async def test_heartbeat_prompt_includes_section(self) -> None:

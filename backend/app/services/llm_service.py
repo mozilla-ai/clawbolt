@@ -108,9 +108,6 @@ async def resolve_user_llm_override(user_id: str) -> tuple[str, str] | None:
 # ---------------------------------------------------------------------------
 
 
-_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
-
-
 def _cache_control() -> dict[str, Any]:
     """Build the ``cache_control`` block honoring the extended-TTL flag.
 
@@ -126,27 +123,68 @@ def _cache_control() -> dict[str, Any]:
 
 
 def prepare_system_with_caching(system: str) -> list[dict[str, Any]]:
-    """Wrap a system prompt string as content blocks with cache_control.
+    """Wrap a system prompt string as a single cache-marked content block.
 
-    If the prompt contains a ``<!-- CACHE_BOUNDARY -->`` marker (inserted
-    by ``SystemPromptBuilder``), the text before the marker is cached and
-    the text after it is sent without caching.  This allows the stable
-    prefix (identity, instructions) to be reused across turns even when
-    dynamic sections (memory, cross-session context) change.
+    The whole system string is stable across turns: the agent loop now
+    emits dynamic content (memory, cross-session context) after the
+    message history rather than in the ``system`` param, so there is no
+    dynamic suffix to exclude from the cache (#1420).
 
     Providers that do not support caching silently ignore the
     ``cache_control`` key.
     """
-    if _CACHE_BOUNDARY in system:
-        stable, dynamic = system.split(_CACHE_BOUNDARY, 1)
-        blocks: list[dict[str, Any]] = [
-            {"type": "text", "text": stable.strip(), "cache_control": _cache_control()},
-        ]
-        dynamic = dynamic.strip()
-        if dynamic:
-            blocks.append({"type": "text", "text": dynamic})
-        return blocks
     return [{"type": "text", "text": system, "cache_control": _cache_control()}]
+
+
+def apply_history_cache_breakpoint(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Stamp a ``cache_control`` breakpoint on the prior-history tail.
+
+    Anthropic caches the prefix up to and including a marked block, so
+    marking the last message of the prior conversation history makes that
+    history independently cacheable rather than depending on automatic
+    prefix caching (which the old dynamic ``system`` suffix broke on every
+    memory write, #1420).
+
+    The breakpoint lands on the message immediately before the current
+    inbound user turn. The current turn carries volatile content (the
+    injected current time and dynamic context) and changes every turn, so
+    a breakpoint there would never be read back. The prior history reloads
+    byte-identical next turn, so the breakpoint advances forward as the
+    conversation grows (the standard rotation).
+
+    The current inbound turn is the last ``user``-role message whose
+    content is a plain string; tool-result turns carry list content and
+    assistant turns carry block content, so this reliably distinguishes
+    it. Returns the list unchanged when there is no prior history to
+    cache.
+    """
+    current_turn_idx: int | None = None
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+            current_turn_idx = idx
+            break
+
+    if current_turn_idx is None or current_turn_idx == 0:
+        return messages
+
+    anchor = messages[current_turn_idx - 1]
+    content = anchor.get("content")
+    if isinstance(content, str):
+        blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": content, "cache_control": _cache_control()}
+        ]
+    elif isinstance(content, list) and content:
+        blocks = [dict(block) for block in content]
+        blocks[-1] = {**blocks[-1], "cache_control": _cache_control()}
+    else:
+        # Empty or unexpected content shape: nothing safe to mark.
+        return messages
+
+    messages[current_turn_idx - 1] = {**anchor, "content": blocks}
+    return messages
 
 
 def apply_tool_caching(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
