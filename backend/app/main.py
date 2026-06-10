@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from backend.app.agent.approval import cleanup_orphaned_approvals
+from backend.app.agent.compaction_recovery import recover_pending_compactions
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.agent.inbound_recovery import recover_orphan_inbound_messages
 from backend.app.bus import message_bus
@@ -326,6 +327,20 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             logger.info("Re-dispatched %d orphan inbound message(s) on startup", recovered_inbounds)
     except Exception:
         logger.exception("Orphan inbound recovery failed on startup")
+
+    # Retry compaction events stuck in 'pending' (the async LLM call
+    # crashed or the process restarted mid-call). The trim watermark is
+    # already advanced for these ranges, so without the retry their facts
+    # never reach MEMORY.md. Same shape as the recoveries above.
+    try:
+        retried_compactions = await recover_pending_compactions()
+        if retried_compactions:
+            logger.info(
+                "Completed %d stale pending compaction event(s) on startup",
+                retried_compactions,
+            )
+    except Exception:
+        logger.exception("Pending compaction recovery failed on startup")
 
     # Replay any BlueBubbles iMessages that arrived while Clawbolt was down.
     # The orphan recovery above only handles messages that reached our DB;

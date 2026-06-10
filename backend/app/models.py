@@ -741,6 +741,12 @@ class CompactionEvent(Base):
     # re-run that compaction manually. Existing pre-feature rows are
     # ``'completed'`` via the server-side default in migration 029.
     status: Mapped[str] = mapped_column(String, default="completed")
+    # Startup-sweep retry attempts (see
+    # ``backend/app/agent/compaction_recovery.py``). Incremented before
+    # each retry's LLM call so a crash mid-retry still counts; rows at
+    # the sweep's cap stay ``'pending'`` but stop being selected, so a
+    # poisoned range cannot retry forever. Migration 039.
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # Before/after snapshots of the four memory files this event touched.
     # Stored as envelope-encrypted text so an admin can inspect what the
     # compaction LLM call actually changed. ``None`` means either the field
