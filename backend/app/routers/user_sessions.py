@@ -161,7 +161,6 @@ async def get_conversation_system_prompt(
             current_user,
             tools,
             message_context="",
-            current_session_id=session.session_id,
         )
 
     return SessionSystemPromptResponse(

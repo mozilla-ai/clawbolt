@@ -1362,6 +1362,73 @@ def test_trim_messages_turn_cap_preserves_tool_call_pairs() -> None:
     assert has_tool_msg == has_tc_msg
 
 
+def test_input_token_cache_remember_recall_and_reset() -> None:
+    """The per-user input-token cache survives across agent instances so the
+    proactive trim uses the real API-reported count instead of the chars/4
+    heuristic (issue #1433), and is bounded plus resettable for tests.
+    """
+    from backend.app.agent.core import (
+        _LAST_INPUT_TOKENS_MAX,
+        _recall_input_tokens,
+        _remember_input_tokens,
+        reset_last_input_tokens,
+    )
+
+    reset_last_input_tokens()
+    assert _recall_input_tokens("user-a") is None
+
+    _remember_input_tokens("user-a", 42_000)
+    assert _recall_input_tokens("user-a") == 42_000
+
+    # Bounded: the LRU evicts the oldest entry past the cap.
+    for i in range(_LAST_INPUT_TOKENS_MAX):
+        _remember_input_tokens(f"user-{i}", i)
+    assert _recall_input_tokens("user-a") is None
+
+    reset_last_input_tokens()
+    assert _recall_input_tokens(f"user-{_LAST_INPUT_TOKENS_MAX - 1}") is None
+
+
+def test_trim_messages_keeps_same_row_reply_with_its_tool_block() -> None:
+    """The final-reply AssistantMessage expanded from the same DB row as a
+    tool-call block must trim atomically with that block (issue #1433).
+
+    History rebuild expands one outbound row into the tool-call
+    AssistantMessage, its ToolResultMessages, and a final-reply
+    AssistantMessage, all stamped with the row's seq. Dropping the
+    tool-call half while keeping the reply would advance the trim
+    watermark over the shared seq and silently filter the kept reply
+    from the next turn's history.
+    """
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        UserMessage(content="Old user with tool", seq=1),
+        # One DB row (seq=2) expanded into three messages.
+        AssistantMessage(
+            content=None,
+            tool_calls=[ToolCallRequest(id="call_old", name="save_fact", arguments={})],
+            seq=2,
+        ),
+        ToolResultMessage(tool_call_id="call_old", content="Saved"),
+        AssistantMessage(content="Done, saved it!", seq=2),
+    ]
+    messages.extend(_build_turn_history(turn_pairs=50))
+    messages.append(UserMessage(content="Current message"))
+
+    result = trim_messages(messages, target_tokens=10_000_000, target_turns=10, input_tokens=500)
+
+    dropped_seq2 = [m for m in result.dropped if getattr(m, "seq", None) == 2]
+    kept_seq2 = [m for m in result.messages if getattr(m, "seq", None) == 2]
+    # Either the whole seq=2 expansion dropped or the whole thing stayed,
+    # never a split. With a 10-turn cap and 50 padding turns, it dropped.
+    assert len(dropped_seq2) == 2
+    assert kept_seq2 == []
+    # And the reply prose travels with the block into the compaction input.
+    assert any(
+        isinstance(m, AssistantMessage) and m.content == "Done, saved it!" for m in result.dropped
+    )
+
+
 def test_trim_messages_combined_token_and_turn_budgets() -> None:
     """Whichever budget binds first should drive trimming; both stay respected."""
     # Long, fat content: both budgets are violated.

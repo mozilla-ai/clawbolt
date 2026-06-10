@@ -11,7 +11,6 @@ from backend.app.agent.system_prompt import (
     _strip_integrations_block,
     build_agent_system_prompt,
     build_agent_system_prompt_parts,
-    build_cross_session_context,
     build_date_section,
     build_heartbeat_system_prompt,
     build_identity_section,
@@ -486,116 +485,6 @@ class TestBuildTimeUserContext:
         assert "[Current time:" in result
         assert "(UTC)" in result
         assert "No timezone has been configured yet" in result
-
-
-class TestCrossSessionContext:
-    @pytest.mark.asyncio()
-    async def test_returns_empty_when_no_other_sessions(
-        self,
-        test_user: "User",
-    ) -> None:
-        """Should return empty string when no other sessions exist."""
-        result = await build_cross_session_context(
-            test_user.id, current_session_id="nonexistent_999"
-        )
-        assert result == ""
-
-    @pytest.mark.asyncio()
-    async def test_includes_messages_from_other_session(
-        self,
-        test_user: "User",
-    ) -> None:
-        """Should include messages from sessions other than the current one."""
-        from backend.app.agent.session_db import get_session_store
-
-        store = get_session_store(test_user.id)
-
-        # Create session A with messages
-        session_a, _ = await store.get_or_create_session()
-        await store.add_message(session_a, "inbound", "Hello from Telegram")
-        await store.add_message(session_a, "outbound", "Hi! How can I help?")
-
-        result = await build_cross_session_context(
-            test_user.id, current_session_id="different_session_999"
-        )
-        assert "Hello from Telegram" in result
-        assert "Hi! How can I help?" in result
-        assert "[User]" in result
-        assert "[You]" in result
-
-    @pytest.mark.asyncio()
-    async def test_excludes_current_session(
-        self,
-        test_user: "User",
-    ) -> None:
-        """Should not include messages from the current session."""
-        from backend.app.agent.session_db import get_session_store
-
-        store = get_session_store(test_user.id)
-
-        session_a, _ = await store.get_or_create_session()
-        await store.add_message(session_a, "inbound", "Message in session A")
-
-        # When querying with session A's own ID, nothing should appear
-        result = await build_cross_session_context(
-            test_user.id, current_session_id=session_a.session_id
-        )
-        assert result == ""
-
-    @pytest.mark.asyncio()
-    async def test_truncates_long_messages(
-        self,
-        test_user: "User",
-    ) -> None:
-        """Long message bodies should be truncated."""
-        from backend.app.agent.session_db import get_session_store
-
-        store = get_session_store(test_user.id)
-        session_a, _ = await store.get_or_create_session()
-        long_body = "x" * 300
-        await store.add_message(session_a, "inbound", long_body)
-
-        result = await build_cross_session_context(test_user.id, current_session_id="other_999")
-        assert "..." in result
-        # Should be truncated to ~200 chars + "..."
-        assert "x" * 201 not in result
-
-    @pytest.mark.asyncio()
-    async def test_agent_prompt_includes_cross_session_context(
-        self,
-        test_user: "User",
-    ) -> None:
-        """Agent system prompt should include cross-session context when available."""
-        from backend.app.agent.session_db import get_session_store
-
-        store = get_session_store(test_user.id)
-
-        # Create a session with messages (simulates a Telegram conversation)
-        session_a, _ = await store.get_or_create_session()
-        await store.add_message(session_a, "inbound", "Draft estimate for deck")
-        await store.add_message(session_a, "outbound", "Sure, what size deck?")
-
-        user = MagicMock()
-        user.soul_text = ""
-        user.user_text = ""
-        user.id = test_user.id
-        user.timezone = ""
-
-        with patch(
-            "backend.app.agent.system_prompt.build_memory_context",
-            new_callable=AsyncMock,
-            return_value="",
-        ):
-            result = await build_agent_system_prompt(
-                user=user,
-                tools=[],
-                message_context="hello",
-                current_session_id="webchat_session_999",
-            )
-
-        assert "## Recent Activity (other channel)" in result
-        assert "Draft estimate for deck" in result
-        assert "Sure, what size deck?" in result
 
 
 # ---------------------------------------------------------------------------

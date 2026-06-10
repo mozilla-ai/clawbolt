@@ -670,6 +670,8 @@ def reset_stores() -> None:
     global _idempotency_store
     _idempotency_store = None
 
+    from backend.app.agent.core import reset_last_input_tokens
     from backend.app.agent.user_db import reset_user_store
 
+    reset_last_input_tokens()
     reset_user_store()

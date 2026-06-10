@@ -4,6 +4,7 @@ import logging
 import random
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -106,6 +107,37 @@ MAX_INPUT_TOKENS = settings.max_input_tokens
 _VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "stop_sequence", None}
 
 _LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
+
+# Last API-reported input token count per user, surviving across agent
+# instances. A fresh ClawboltAgent is constructed per message, so without
+# this the proactive trim at the top of ``process_message`` always falls
+# back to the chars/4 + flat-overhead heuristic, which ignores tool
+# schemas and the real system prompt size and therefore fires later than
+# configured (issue #1433). Process-local by design: after a restart the
+# first message per user falls back to the heuristic once, then the real
+# count takes over. Bounded LRU so a multi-tenant deployment cannot grow
+# it without limit.
+_LAST_INPUT_TOKENS: OrderedDict[str, int] = OrderedDict()
+_LAST_INPUT_TOKENS_MAX = 1024
+
+
+def _remember_input_tokens(user_id: str, tokens: int) -> None:
+    """Record the latest API-reported input token count for *user_id*."""
+    _LAST_INPUT_TOKENS[user_id] = tokens
+    _LAST_INPUT_TOKENS.move_to_end(user_id)
+    while len(_LAST_INPUT_TOKENS) > _LAST_INPUT_TOKENS_MAX:
+        _LAST_INPUT_TOKENS.popitem(last=False)
+
+
+def _recall_input_tokens(user_id: str) -> int | None:
+    """Return the last reported input token count for *user_id*, if any."""
+    return _LAST_INPUT_TOKENS.get(user_id)
+
+
+def reset_last_input_tokens() -> None:
+    """Clear the per-user input-token cache (for tests)."""
+    _LAST_INPUT_TOKENS.clear()
+
 
 # Patterns that commonly appear in tool exception messages and would leak
 # secrets into the LLM context (and thence into provider logs and the
@@ -406,14 +438,13 @@ class ClawboltAgent:
         """Build the system prompt as ``(stable, dynamic)`` halves.
 
         *stable* goes in the cacheable ``system`` param; *dynamic* (memory,
-        integrations, cross-session context) is appended to the current
-        user turn so it does not invalidate the history cache (#1420).
+        integrations) is appended to the current user turn so it does not
+        invalidate the history cache (#1420).
         """
         return await build_agent_system_prompt_parts(
             self.user,
             self.tools,
             message_context,
-            current_session_id=self._session_id,
         )
 
     async def _emit_response(
@@ -1159,12 +1190,16 @@ class ClawboltAgent:
         # a backstop that catches message-count bloat even under the token
         # limit. Both use hysteresis to avoid re-firing compaction every turn.
         original_count = len(messages)
+        # ``self._last_input_tokens`` is 0 on a fresh agent (one is built
+        # per message), so fall back to the process-local per-user cache
+        # of the last API-reported count. Only without either does the
+        # trimmer use its chars/4 heuristic.
         trim_result = trim_messages(
             messages,
             target_tokens=settings.context_trim_target_tokens,
             target_turns=settings.context_trim_target_turns,
             trigger_tokens=settings.context_trim_trigger_tokens,
-            input_tokens=self._last_input_tokens or None,
+            input_tokens=self._last_input_tokens or _recall_input_tokens(self.user.id),
         )
         messages = trim_result.messages
         all_dropped = list(trim_result.dropped)
@@ -1214,6 +1249,7 @@ class ClawboltAgent:
             )
             if response.usage and response.usage.input_tokens:
                 self._last_input_tokens = response.usage.input_tokens
+                _remember_input_tokens(self.user.id, response.usage.input_tokens)
                 _total_input_tokens += response.usage.input_tokens
                 _total_output_tokens += response.usage.output_tokens or 0
                 cache_create = response.usage.cache_creation_input_tokens or 0

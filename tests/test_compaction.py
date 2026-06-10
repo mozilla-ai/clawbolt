@@ -200,6 +200,39 @@ def test_parse_missing_new_fields_defaults_empty() -> None:
     assert result.soul_update == ""
 
 
+# --- _line_diff_counts tests (memory erosion signal, issue #1433) ---
+
+
+def test_line_diff_counts_additions_and_removals() -> None:
+    from backend.app.agent.compaction import _line_diff_counts
+
+    before = "## Facts\n- keeps\n- gets dropped"
+    after = "## Facts\n- keeps\n- newly added\n- also added"
+    added, removed = _line_diff_counts(before, after)
+    assert added == 2
+    assert removed == 1
+
+
+def test_line_diff_counts_reorder_is_zero() -> None:
+    """A pure reorder is not erosion; the multiset diff reports (0, 0)."""
+    from backend.app.agent.compaction import _line_diff_counts
+
+    before = "- a\n- b\n- c"
+    after = "- c\n- a\n- b"
+    assert _line_diff_counts(before, after) == (0, 0)
+
+
+def test_line_diff_counts_large_removal_visible() -> None:
+    """Silently dropping many lines (the erosion failure mode) is loud."""
+    from backend.app.agent.compaction import _line_diff_counts
+
+    before = "\n".join(f"- fact {i}" for i in range(20))
+    after = "- fact 0"
+    added, removed = _line_diff_counts(before, after)
+    assert added == 0
+    assert removed == 19
+
+
 # --- compact_session tests ---
 
 
@@ -750,6 +783,9 @@ async def test_compact_session_emits_structured_summary_log(
     # value, not the substituted one).
     assert "summary_len=" in msg
     assert "duration_ms=" in msg
+    # Erosion signal (issue #1433): line-level diff counts for MEMORY.md.
+    assert "memory_lines_added=" in msg
+    assert "memory_lines_removed=" in msg
 
 
 @pytest.mark.asyncio()
