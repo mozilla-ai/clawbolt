@@ -15,7 +15,6 @@ from backend.app.agent.compaction_note import build_pending_compaction_note
 from backend.app.agent.markdown_registry import truncate_for_injection
 from backend.app.agent.memory_db import build_memory_context
 from backend.app.agent.prompts import load_prompt
-from backend.app.agent.session_db import get_session_store
 from backend.app.agent.tools.base import Tool
 from backend.app.models import User
 
@@ -312,35 +311,6 @@ def build_time_user_context(user: User) -> str:
     )
 
 
-async def build_cross_session_context(
-    user_id: str,
-    current_session_id: str,
-    count: int | None = None,
-) -> str:
-    """Build a summary of recent messages from other sessions.
-
-    Gives the agent awareness of recent conversations that happened on
-    a different channel (e.g. Telegram vs webchat) so it can maintain
-    continuity when the user switches channels.
-    """
-    store = get_session_store(user_id)
-    messages = await store.get_other_session_messages_async(current_session_id, count=count)
-    if not messages:
-        return ""
-    lines: list[str] = []
-    for msg in messages:
-        label = "You" if msg.direction == "outbound" else "User"
-        body = msg.body[:200].rstrip()
-        if len(msg.body) > 200:
-            body += "..."
-        lines.append(f"- [{label}] {body}")
-    return (
-        "These are your most recent messages from a different conversation session.\n"
-        "Use this context for continuity but do not explicitly mention "
-        '"another session" unless the user asks.\n\n' + "\n".join(lines)
-    )
-
-
 # -----------------------------------------------------------------------
 # Pre-built prompt assemblers
 # -----------------------------------------------------------------------
@@ -350,7 +320,6 @@ async def _build_agent_prompt_builder(
     user: User,
     tools: list[Tool],
     message_context: str,
-    current_session_id: str = "",
 ) -> SystemPromptBuilder:
     """Assemble the composable builder for the main agent loop.
 
@@ -408,10 +377,11 @@ async def _build_agent_prompt_builder(
             dynamic=True,
         )
 
-    if current_session_id:
-        cross = await build_cross_session_context(user.id, current_session_id)
-        if cross:
-            builder.add_section("Recent Activity (other channel)", cross, dynamic=True)
+    # NOTE: the old "Recent Activity (other channel)" cross-session section
+    # was removed (issue #1433): migration 026 collapsed sessions to one per
+    # user, so the query excluding the current session always returned
+    # empty. All channels share the single session, so channel switches are
+    # already covered by ordinary history.
 
     return builder
 
@@ -420,7 +390,6 @@ async def build_agent_system_prompt(
     user: User,
     tools: list[Tool],
     message_context: str,
-    current_session_id: str = "",
 ) -> str:
     """Assemble the full system prompt for the main agent loop.
 
@@ -428,7 +397,7 @@ async def build_agent_system_prompt(
     system-prompt preview endpoint; the agent loop uses
     :func:`build_agent_system_prompt_parts` instead.
     """
-    builder = await _build_agent_prompt_builder(user, tools, message_context, current_session_id)
+    builder = await _build_agent_prompt_builder(user, tools, message_context)
     return builder.build()
 
 
@@ -436,16 +405,15 @@ async def build_agent_system_prompt_parts(
     user: User,
     tools: list[Tool],
     message_context: str,
-    current_session_id: str = "",
 ) -> tuple[str, str]:
     """Assemble the agent system prompt as ``(stable, dynamic)`` halves.
 
     The agent loop sends *stable* in the cacheable ``system`` param and
-    appends *dynamic* (memory, integration status, cross-session context)
-    to the current user turn, so a memory write does not invalidate the
-    message-history prompt cache (#1420).
+    appends *dynamic* (memory, integration status) to the current user
+    turn, so a memory write does not invalidate the message-history
+    prompt cache (#1420).
     """
-    builder = await _build_agent_prompt_builder(user, tools, message_context, current_session_id)
+    builder = await _build_agent_prompt_builder(user, tools, message_context)
     return builder.build_parts()
 
 

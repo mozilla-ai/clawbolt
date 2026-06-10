@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import time
+from collections import Counter
 from datetime import UTC
 from typing import Any, cast
 
@@ -82,6 +83,24 @@ def _serialize_snapshot(text: str | None, cap: int) -> str | None:
         },
         ensure_ascii=False,
     )
+
+
+def _line_diff_counts(before: str, after: str) -> tuple[int, int]:
+    """Multiset line diff: ``(added, removed)`` counts between two texts.
+
+    Cheap deterministic signal for memory erosion across compaction
+    rewrites (issue #1433): the rewrite model can silently drop a valid
+    line on any cycle, and the compliance audit explicitly encourages
+    deletion, so erosion looks like a large removed count not matched by
+    additions. Counter-based and order-insensitive: a pure reorder
+    reports ``(0, 0)``. Surfaced on the ``compaction.summary`` log line
+    so an aggregator can alert on unexplained large removals.
+    """
+    before_counts = Counter(before.splitlines())
+    after_counts = Counter(after.splitlines())
+    added = sum((after_counts - before_counts).values())
+    removed = sum((before_counts - after_counts).values())
+    return added, removed
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -546,10 +565,16 @@ async def compact_session(
     _input_tokens = response.usage.input_tokens or 0 if response.usage else 0
     _output_tokens = response.usage.output_tokens or 0 if response.usage else 0
     _duration_ms = int((time.monotonic() - _start_monotonic) * 1000)
+    # Erosion signal: how many MEMORY.md lines this rewrite added and
+    # removed. (0, 0) when the file did not change this event.
+    _memory_lines_added, _memory_lines_removed = (
+        _line_diff_counts(current_memory or "", result.memory_update) if memory_changed else (0, 0)
+    )
     logger.info(
         "compaction.summary user=%s trimmed_count=%d trimmed_chars=%d "
         "input_tokens=%d output_tokens=%d duration_ms=%d "
-        "memory_updated=%s user_updated=%s soul_updated=%s summary_len=%d",
+        "memory_updated=%s user_updated=%s soul_updated=%s summary_len=%d "
+        "memory_lines_added=%d memory_lines_removed=%d",
         user_id,
         _trimmed_count,
         _input_chars,
@@ -560,6 +585,8 @@ async def compact_session(
         user_changed,
         soul_changed,
         len(result.summary or ""),
+        _memory_lines_added,
+        _memory_lines_removed,
     )
 
     # Compute "after" snapshots deterministically from what was written
