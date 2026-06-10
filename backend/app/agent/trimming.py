@@ -210,6 +210,25 @@ def trim_messages(
                     j += 1
                 else:
                     break
+            # History rebuild expands one outbound DB row into the
+            # tool-call AssistantMessage, its ToolResultMessages, AND a
+            # final-reply AssistantMessage, all sharing the row's seq
+            # (see context._expand_outbound_with_tools). Treat that
+            # reply as part of this block: dropping the tool-call half
+            # while keeping the reply would advance the trim watermark
+            # over the shared seq and silently filter the kept reply
+            # from the next turn's history (issue #1433). Live-loop
+            # messages carry seq=None and are unaffected.
+            if j < len(body):
+                nxt = body[j]
+                if (
+                    isinstance(nxt, AssistantMessage)
+                    and not nxt.tool_calls
+                    and msg.seq is not None
+                    and nxt.seq == msg.seq
+                ):
+                    block.append(nxt)
+                    j += 1
             blocks.append(block)
             i = j
         else:

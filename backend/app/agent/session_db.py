@@ -156,22 +156,20 @@ def _select_last_timestamp(user_id: str, direction: str) -> Select[tuple[datetim
 def _select_recent_messages(
     user_id: str,
     count: int,
-    exclude_session_id: str | None = None,
 ) -> Select[tuple[Message]]:
-    """Most recent ``count`` messages across the user's sessions.
+    """Most recent ``count`` messages across the user's session.
 
     Returned in DESC order so the caller can ``reversed(...)`` to render
     chronologically; the ORDER BY is on the SQL side so LIMIT applies to
     the newest tail rather than to an arbitrary slice.
     """
-    stmt = (
+    return (
         select(Message)
         .join(ChatSession, Message.session_id == ChatSession.id)
         .where(ChatSession.user_id == user_id)
+        .order_by(Message.timestamp.desc())
+        .limit(count)
     )
-    if exclude_session_id:
-        stmt = stmt.where(ChatSession.session_id != exclude_session_id)
-    return stmt.order_by(Message.timestamp.desc()).limit(count)
 
 
 def _delete_message_by_seq(cs_id: int, seq: int) -> Delete[tuple[Message]]:
@@ -740,40 +738,24 @@ class SessionStore:
     # recent-message collectors
     # ------------------------------------------------------------------
 
-    async def _collect_messages_async(
-        self,
-        count: int | None = None,
-        exclude_session_id: str | None = None,
-    ) -> list[StoredMessage]:
-        """Collect the most recent messages, optionally excluding a session."""
+    async def get_recent_messages_async(self, count: int | None = None) -> list[StoredMessage]:
+        """Get the most recent messages in the user's session.
+
+        NOTE: the old ``get_other_session_messages_async`` peer (and the
+        ``exclude_session_id`` plumbing) was removed in issue #1433:
+        migration 026 collapsed sessions to one per user, so excluding
+        the current session always returned the empty list.
+        """
         resolved = count if count is not None else settings.heartbeat_recent_messages_count
         db = AsyncSessionLocal()
         try:
             messages = list(
-                (
-                    await db.execute(
-                        _select_recent_messages(self.user_id, resolved, exclude_session_id)
-                    )
-                )
-                .scalars()
-                .all()
+                (await db.execute(_select_recent_messages(self.user_id, resolved))).scalars().all()
             )
             # Return in chronological order
             return [_msg_to_stored(m) for m in reversed(messages)]
         finally:
             await db.close()
-
-    async def get_recent_messages_async(self, count: int | None = None) -> list[StoredMessage]:
-        """Get the most recent messages across all sessions."""
-        return await self._collect_messages_async(count)
-
-    async def get_other_session_messages_async(
-        self,
-        exclude_session_id: str,
-        count: int | None = None,
-    ) -> list[StoredMessage]:
-        """Get recent messages from sessions other than *exclude_session_id*."""
-        return await self._collect_messages_async(count, exclude_session_id)
 
 
 # ---------------------------------------------------------------------------

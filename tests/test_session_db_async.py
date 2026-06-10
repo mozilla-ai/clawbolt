@@ -526,8 +526,11 @@ async def test_last_timestamp_async_returns_max_per_direction(
 
 
 # ---------------------------------------------------------------------------
-# recent / other-session collectors
+# recent-message collector
 # ---------------------------------------------------------------------------
+# NOTE: ``get_other_session_messages_async`` and its test were removed in
+# issue #1433: migration 026 collapsed sessions to one per user, so
+# excluding the current session always returned the empty list.
 
 
 async def test_get_recent_messages_async_returns_chronological(
@@ -541,20 +544,6 @@ async def test_get_recent_messages_async_returns_chronological(
 
     recent = await store.get_recent_messages_async(count=10)
     assert [m.body for m in recent] == ["first", "second", "third"]
-
-
-async def test_get_other_session_messages_async_excludes_named(
-    async_db: async_sessionmaker,
-) -> None:
-    user_id = await _create_user(async_db)
-    store = SessionStore(user_id)
-    session, _ = await store.get_or_create_session_async()
-    await store.add_message_async(session, direction="inbound", body="hidden")
-
-    excluded = await store.get_other_session_messages_async(
-        exclude_session_id=session.session_id, count=10
-    )
-    assert excluded == []
 
 
 # ---------------------------------------------------------------------------
