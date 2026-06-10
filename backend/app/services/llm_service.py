@@ -187,6 +187,51 @@ def apply_history_cache_breakpoint(
     return messages
 
 
+def apply_in_turn_cache_breakpoint(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Stamp a ``cache_control`` breakpoint on a trailing tool-result block.
+
+    During the tool loop, every round re-sends the current user turn
+    (which carries the dynamic context: memory, integrations,
+    cross-session) plus all prior rounds' tool calls and results as
+    uncached input, because the only message-side breakpoint
+    (:func:`apply_history_cache_breakpoint`) sits before the current
+    turn and never advances within it. With ``max_tool_rounds=10`` and
+    large tool results, that cost grows quadratically with round count
+    (issue #1430).
+
+    When the request ends in tool results (rounds N > 0), marking the
+    last ``tool_result`` block makes the current turn plus rounds
+    0..N-1 cacheable for round N; only the newest round's content pays
+    cache-write. The message dicts are re-serialized from typed
+    messages on every round, so the marker naturally advances with the
+    loop instead of accumulating: each request carries at most four
+    breakpoints (system, tools, prior-history tail, this one), which is
+    Anthropic's limit.
+
+    Round 0 ends in the current user turn (plain string content), not
+    tool results, so this is a no-op there and the request keeps three
+    breakpoints. Returns the list unchanged when there is nothing safe
+    to mark.
+    """
+    if not messages:
+        return messages
+    last = messages[-1]
+    content = last.get("content")
+    if (
+        last.get("role") != "user"
+        or not isinstance(content, list)
+        or not content
+        or content[-1].get("type") != "tool_result"
+    ):
+        return messages
+    blocks = [dict(block) for block in content]
+    blocks[-1] = {**blocks[-1], "cache_control": _cache_control()}
+    messages[-1] = {**last, "content": blocks}
+    return messages
+
+
 def apply_tool_caching(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Add a cache_control marker to the last tool definition.
 
