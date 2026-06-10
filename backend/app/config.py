@@ -106,6 +106,16 @@ class Settings(BaseSettings):
     # unlikely to still be relevant; tune up if you have evidence
     # otherwise. 0 disables the sweep entirely.
     inbound_recovery_lookback_minutes: int = Field(default=30, ge=0)
+    # Startup sweep for ``compaction_events`` rows stuck in ``'pending'``:
+    # the async compaction LLM call crashed (deploy restart, provider
+    # outage) after the trim watermark advanced, so the seq range's facts
+    # were never extracted into MEMORY.md. Rows older than a 10-minute
+    # grace floor and younger than this lookback are retried on boot
+    # (max 3 attempts per row, tracked in ``retry_count``). Unlike
+    # orphaned inbounds, a stale compaction stays fully recoverable for
+    # as long as the message rows exist, so the default lookback is a
+    # week rather than minutes. 0 disables the sweep entirely.
+    compaction_retry_lookback_minutes: int = Field(default=10_080, ge=0)
     max_tool_rounds: int = Field(default=10, ge=1)
     max_input_tokens: int = Field(default=600_000, ge=1)
     # Primary trim governor: the raw conversation window is bounded by
