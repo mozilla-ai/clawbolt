@@ -85,6 +85,7 @@ from backend.app.logging_utils import mask_pii
 from backend.app.models import User
 from backend.app.services.llm_service import (
     apply_history_cache_breakpoint,
+    apply_in_turn_cache_breakpoint,
     apply_tool_caching,
     prepare_system_with_caching,
     reasoning_effort_to_thinking,
@@ -519,6 +520,10 @@ class ClawboltAgent:
         effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
         system_str, msg_dicts = messages_to_messages_api(messages)
         msg_dicts = apply_history_cache_breakpoint(msg_dicts)
+        # Rounds N > 0 end in tool results: mark the trailing block so the
+        # current turn plus prior rounds read from cache instead of being
+        # re-sent as fresh input every round (issue #1430). No-op on round 0.
+        msg_dicts = apply_in_turn_cache_breakpoint(msg_dicts)
         system: str | list[dict[str, Any]] | None = system_str
         if system is not None:
             system = prepare_system_with_caching(system)
@@ -602,6 +607,7 @@ class ClawboltAgent:
                 )
                 retry_system_str, trimmed_dicts = messages_to_messages_api(trim_result.messages)
                 trimmed_dicts = apply_history_cache_breakpoint(trimmed_dicts)
+                trimmed_dicts = apply_in_turn_cache_breakpoint(trimmed_dicts)
                 system = (
                     prepare_system_with_caching(retry_system_str)
                     if retry_system_str is not None

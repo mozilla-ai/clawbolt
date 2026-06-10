@@ -65,6 +65,28 @@ def _is_approval_prompt(content: str) -> bool:
 
 DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 
+# Hysteresis for the window-overflow compaction path in
+# ``load_conversation_history``: when rows fall outside the loader window,
+# this many additional rows (oldest first) are compacted along with them.
+# Without the headroom, every message after the first overflow would push
+# one more row out of the window and re-fire compaction per message, the
+# exact churn the trim path's trigger/target gap exists to prevent. 32
+# rows is the row-equivalent of the trim path's default 16-turn trigger
+# buffer (a user turn is typically an inbound + outbound row pair).
+_WINDOW_OVERFLOW_BATCH_ROWS = 32
+
+# Upper bound on rows compacted per turn by the window-overflow path. A
+# legacy session can arrive with a multi-thousand-row backlog above the
+# watermark (compaction disabled for a while, or rows accumulated before
+# the overflow path shipped). Compacting the whole backlog in one go
+# would feed the entire thing into a single compaction LLM call and blow
+# its context. The batch is always a contiguous prefix starting at the
+# oldest row above the watermark, so capping it is safe: the watermark
+# advances to the end of the capped batch and the next message picks up
+# the next chunk, converging over a handful of turns. At a token-light
+# ~300 tokens/row, 200 rows is roughly 60K tokens of compaction input.
+_WINDOW_OVERFLOW_MAX_ROWS_PER_TURN = 200
+
 # Strong references to fire-and-forget background tasks so they are not
 # garbage-collected before completion.
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -117,8 +139,10 @@ async def trigger_compaction_for_dropped(
     """Fire compaction for messages that were trimmed from context.
 
     Called from the agent loop (``process_message``) when ``trim_messages``
-    drops messages. Two-phase to keep the watermark and the audit log
-    consistent under crash:
+    drops messages, and from ``load_conversation_history`` when rows fall
+    outside the history window before trim could ever see them (issue
+    #1427). Two-phase to keep the watermark and the audit log consistent
+    under crash:
 
     1. Synchronously, in one transaction: insert a ``'pending'``
        ``CompactionEvent`` row (with ``min_message_seq`` /
@@ -135,7 +159,8 @@ async def trigger_compaction_for_dropped(
        advanced regardless: this is the design tradeoff (no per-message
        compaction churn) for losing facts on a crashed compaction call.
 
-    This is the only compaction trigger in the system.
+    Together with :func:`admin_compact_visible_messages`, these are the
+    only compaction triggers in the system.
     """
     if not dropped_messages or not settings.compaction_enabled:
         return
@@ -146,14 +171,47 @@ async def trigger_compaction_for_dropped(
         # summary) with no DB rows to watermark against. Nothing to compact.
         return
 
-    min_seq = min(dropped_seqs)
-    max_seq = max(dropped_seqs)
     triggered_at = datetime.datetime.now(datetime.UTC)
 
     # Phase 1: insert + watermark advance, in one transaction.
     event_id: int
     try:
         async with db_session_async() as db:
+            cs = (
+                await db.execute(select(ChatSession).filter_by(user_id=user_id))
+            ).scalar_one_or_none()
+
+            # Re-check the live watermark before compacting. The caller
+            # computed ``dropped_messages`` from a session snapshot that may
+            # predate another trigger's watermark advance: the window-overflow
+            # path in ``load_conversation_history`` runs earlier in the same
+            # turn than the trim path in ``process_message``, and both can
+            # fire when a conversation crosses the row cap and the token
+            # budget together. Rows at or below the live watermark are
+            # already covered by a prior CompactionEvent; re-compacting them
+            # would double the LLM cost and write a confusing duplicate
+            # audit row for the same seq range.
+            current_watermark = (cs.last_trim_seq or 0) if cs is not None else 0
+            if current_watermark:
+                dropped_seqs = [s for s in dropped_seqs if s > current_watermark]
+                if not dropped_seqs:
+                    logger.info(
+                        "Skipping compaction for user %s: all dropped rows are"
+                        " at or below the live watermark %d",
+                        user_id,
+                        current_watermark,
+                    )
+                    return
+                kept: list[AgentMessage] = []
+                for m in dropped_messages:
+                    seq = getattr(m, "seq", None)
+                    if not isinstance(seq, int) or seq > current_watermark:
+                        kept.append(m)
+                dropped_messages = kept
+
+            min_seq = min(dropped_seqs)
+            max_seq = max(dropped_seqs)
+
             event = CompactionEvent(
                 user_id=user_id,
                 triggered_at=triggered_at,
@@ -167,13 +225,8 @@ async def trigger_compaction_for_dropped(
             assert event.id is not None, "flush() must populate the autoincrement id"
             event_id = event.id
 
-            cs = (
-                await db.execute(select(ChatSession).filter_by(user_id=user_id))
-            ).scalar_one_or_none()
-            if cs is not None:
-                current = cs.last_trim_seq or 0
-                if max_seq > current:
-                    cs.last_trim_seq = max_seq
+            if cs is not None and max_seq > current_watermark:
+                cs.last_trim_seq = max_seq
             await db.commit()
     except Exception:
         logger.exception(
@@ -457,7 +510,9 @@ async def load_conversation_history(
 
     The *limit* parameter is a soft safety net that bounds memory usage
     (default 500). Token-based trimming in the agent loop is the primary
-    guard against exceeding the LLM context window.
+    guard against exceeding the LLM context window. Rows that fall outside
+    the window are routed through compaction (see below) so they are never
+    silently lost.
     """
     all_messages = session.messages
 
@@ -469,6 +524,36 @@ async def load_conversation_history(
     if session.last_trim_seq is not None:
         all_messages = [m for m in all_messages if m.seq > session.last_trim_seq]
     total_count = len(all_messages)
+
+    # Window-overflow compaction (issue #1427). Rows older than the
+    # ``limit`` window never reach ``trim_messages``, so the trim-driven
+    # compaction path cannot see them, and a token-light conversation can
+    # grow past the row cap while staying under the token trigger forever.
+    # Route the overflowed rows, plus a headroom batch so this does not
+    # re-fire on every subsequent message, through the same watermark +
+    # compaction machinery the trim path uses. The batch is still returned
+    # in this turn's history; the advanced watermark filters it from the
+    # next turn, mirroring trim semantics (dropped messages are visible on
+    # the turn that drops them, gone afterwards). PR #843 removed the old
+    # loader-driven compaction because it re-fired per message; the
+    # watermark advance plus headroom batching is what makes this
+    # reintroduction safe.
+    if total_count > limit and settings.compaction_enabled:
+        compact_count = min(
+            total_count - 1,
+            (total_count - limit) + _WINDOW_OVERFLOW_BATCH_ROWS,
+            _WINDOW_OVERFLOW_MAX_ROWS_PER_TURN,
+        )
+        overflow = all_messages[:compact_count]
+        overflow_agent_messages = _stored_messages_to_agent_messages(overflow, tz_name=tz_name)
+        if overflow_agent_messages:
+            await trigger_compaction_for_dropped(session.user_id, overflow_agent_messages)
+        else:
+            # Every overflowed row was filtered (approval prompts, blank
+            # attachment placeholders). There is nothing to extract facts
+            # from, but the watermark must still advance or this branch
+            # re-detects the same rows on every message forever.
+            await _advance_trim_watermark_only(session.user_id, overflow[-1].seq)
 
     # Get the most recent `limit` messages, excluding the current (last) one
     if total_count > 1:

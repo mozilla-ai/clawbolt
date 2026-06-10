@@ -449,10 +449,23 @@ async def compact_session(
     # silently corrupt durable state. The conversation that triggered
     # this compaction will still trim, and the next compaction will get
     # another chance to produce an in-budget rewrite.
+    #
+    # All three writes are compare-and-swap against the value read at the
+    # top of this function (issue #1429). The LLM call between the read
+    # and the write takes tens of seconds, and the conversation keeps
+    # running: the agent's workspace tools can write a new fact in that
+    # window, and a second compaction for the same user can land first.
+    # A full rewrite computed from the stale read would silently clobber
+    # the newer value. On a CAS miss we keep the newer value and skip
+    # this rewrite: losing one batch's extraction is recoverable (the
+    # conversation that was sent to the LLM is preserved in the event
+    # row's ``prompt_text`` audit column), while clobbering a durable
+    # file, possibly holding an explicit user save, is not.
     if memory_changed:
         try:
-            await memory_store.write_memory_async(result.memory_update)
-            logger.info("Compaction rewrote MEMORY.md for user %s", user_id)
+            wrote = await memory_store.write_memory_async(
+                result.memory_update, expected_current=current_memory
+            )
         except BudgetExceededError as exc:
             logger.warning(
                 "Compaction skipping MEMORY.md update for user %s: %s",
@@ -460,6 +473,17 @@ async def compact_session(
                 exc,
             )
             memory_changed = False
+        else:
+            if wrote:
+                logger.info("Compaction rewrote MEMORY.md for user %s", user_id)
+            else:
+                logger.warning(
+                    "Compaction skipping MEMORY.md update for user %s: the file"
+                    " changed since this compaction read it (concurrent agent"
+                    " write or another compaction); keeping the newer value",
+                    user_id,
+                )
+                memory_changed = False
 
     # Append summary to HISTORY.md if the LLM produced one. ``append_history``
     # returns the new full text under the same row-level lock that protected
@@ -479,11 +503,13 @@ async def compact_session(
             logger.exception("Failed to append history for user %s", user_id)
 
     # Write updated USER.md only when the rewrite actually differs.
-    # See MEMORY.md branch above for the BudgetExceededError handling.
+    # See MEMORY.md branch above for the BudgetExceededError and
+    # compare-and-swap handling.
     if user_changed:
         try:
-            await memory_store.write_user_async(result.user_profile_update)
-            logger.info("Compaction updated USER.md for user %s", user_id)
+            wrote = await memory_store.write_user_async(
+                result.user_profile_update, expected_current=current_user_profile
+            )
         except BudgetExceededError as exc:
             logger.warning(
                 "Compaction skipping USER.md update for user %s: %s",
@@ -491,12 +517,25 @@ async def compact_session(
                 exc,
             )
             user_changed = False
+        else:
+            if wrote:
+                logger.info("Compaction updated USER.md for user %s", user_id)
+            else:
+                logger.warning(
+                    "Compaction skipping USER.md update for user %s: the file"
+                    " changed since this compaction read it; keeping the"
+                    " newer value",
+                    user_id,
+                )
+                user_changed = False
 
     # Write updated SOUL.md only when the rewrite actually differs.
+    # See MEMORY.md branch above for the compare-and-swap handling.
     if soul_changed:
         try:
-            await memory_store.write_soul_async(result.soul_update)
-            logger.info("Compaction updated SOUL.md for user %s", user_id)
+            wrote = await memory_store.write_soul_async(
+                result.soul_update, expected_current=current_soul
+            )
         except BudgetExceededError as exc:
             logger.warning(
                 "Compaction skipping SOUL.md update for user %s: %s",
@@ -504,6 +543,17 @@ async def compact_session(
                 exc,
             )
             soul_changed = False
+        else:
+            if wrote:
+                logger.info("Compaction updated SOUL.md for user %s", user_id)
+            else:
+                logger.warning(
+                    "Compaction skipping SOUL.md update for user %s: the file"
+                    " changed since this compaction read it; keeping the"
+                    " newer value",
+                    user_id,
+                )
+                soul_changed = False
 
     # Single structured summary line. Fields are space-separated key=value
     # so log aggregators (Railway, Loki) can group / filter without

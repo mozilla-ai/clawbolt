@@ -10,6 +10,7 @@ import pytest
 from backend.app.services.llm_service import (
     _cache_control,
     apply_history_cache_breakpoint,
+    apply_in_turn_cache_breakpoint,
     apply_tool_caching,
     prepare_system_with_caching,
     resolve_user_llm_override,
@@ -199,6 +200,77 @@ class TestApplyHistoryCacheBreakpoint:
         result = apply_history_cache_breakpoint(messages)
         assert all("cache_control" not in block for block in result[0]["content"])
         assert all("cache_control" not in block for block in result[1]["content"])
+
+
+class TestApplyInTurnCacheBreakpoint:
+    """The in-turn breakpoint advances with the tool loop (issue #1430)."""
+
+    def _control(self) -> dict[str, object]:
+        return _cache_control()
+
+    def test_marks_trailing_tool_result_block(self) -> None:
+        messages = [
+            {"role": "user", "content": "current turn"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "a", "name": "t"}]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "a", "content": "one"},
+                    {"type": "tool_result", "tool_use_id": "b", "content": "two"},
+                ],
+            },
+        ]
+        result = apply_in_turn_cache_breakpoint(messages)
+        tool_results = result[-1]["content"]
+        assert "cache_control" not in tool_results[0]
+        assert tool_results[1]["cache_control"] == self._control()
+
+    def test_noop_on_round_zero(self) -> None:
+        # Round 0 ends in the current user turn (string content).
+        messages = [
+            {"role": "user", "content": "older question"},
+            {"role": "assistant", "content": [{"type": "text", "text": "older answer"}]},
+            {"role": "user", "content": "current turn"},
+        ]
+        result = apply_in_turn_cache_breakpoint(messages)
+        assert isinstance(result[-1]["content"], str)
+        assert "cache_control" not in result[-1]
+
+    def test_noop_on_trailing_assistant_message(self) -> None:
+        messages = [
+            {"role": "user", "content": "current turn"},
+            {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+        ]
+        result = apply_in_turn_cache_breakpoint(messages)
+        assert all("cache_control" not in block for block in result[-1]["content"])
+
+    def test_noop_on_empty_list(self) -> None:
+        assert apply_in_turn_cache_breakpoint([]) == []
+
+    def test_at_most_four_breakpoints_with_history_anchor(self) -> None:
+        """Combined with the history anchor, the message side carries at
+        most two breakpoints; system and tools carry the other two, which
+        is Anthropic's four-breakpoint limit.
+        """
+        messages = [
+            {"role": "user", "content": "older question"},
+            {"role": "assistant", "content": [{"type": "text", "text": "older answer"}]},
+            {"role": "user", "content": "current turn"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "a", "name": "t"}]},
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "a", "content": "x"}],
+            },
+        ]
+        result = apply_history_cache_breakpoint(messages)
+        result = apply_in_turn_cache_breakpoint(result)
+
+        marker_count = 0
+        for msg in result:
+            content = msg.get("content")
+            if isinstance(content, list):
+                marker_count += sum(1 for block in content if "cache_control" in block)
+        assert marker_count == 2
 
 
 # ---------------------------------------------------------------------------

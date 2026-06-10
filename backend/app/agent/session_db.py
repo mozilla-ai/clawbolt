@@ -137,6 +137,27 @@ def _select_messages_for_session(cs_id: int) -> Select[tuple[Message]]:
     return select(Message).filter_by(session_id=cs_id).order_by(Message.seq)
 
 
+def _select_messages_above_watermark(
+    cs_id: int, last_trim_seq: int | None
+) -> Select[tuple[Message]]:
+    """Messages still visible to the agent: ``seq > last_trim_seq``.
+
+    The hot inbound path (:meth:`SessionStore.get_or_create_session_async`)
+    uses this instead of :func:`_select_messages_for_session` so rows that
+    have been compacted out of LLM context are never loaded from the
+    database. ``load_conversation_history`` applies the same filter in
+    Python, so the visible result is identical; doing it SQL-side keeps
+    the per-message load bounded by the visible window instead of growing
+    with the user's lifetime message count (issue #1428). The
+    ``uq_message_seq`` unique constraint on ``(session_id, seq)`` indexes
+    the range scan. NULL watermark = no filter, matching the loader.
+    """
+    stmt = select(Message).filter_by(session_id=cs_id)
+    if last_trim_seq is not None:
+        stmt = stmt.where(Message.seq > last_trim_seq)
+    return stmt.order_by(Message.seq)
+
+
 def _select_message_by_seq(cs_id: int, seq: int) -> Select[tuple[Message]]:
     return select(Message).filter_by(session_id=cs_id, seq=seq)
 
@@ -308,6 +329,19 @@ class SessionStore:
         ``(session, is_new)`` where ``is_new`` is True only on the very
         first call for a user.
 
+        Loads only the messages still visible to the agent
+        (``seq > last_trim_seq``); rows below the trim watermark have been
+        compacted into MEMORY.md / USER.md / SOUL.md and every downstream
+        consumer of this method either filters them out anyway
+        (``load_conversation_history``, ``admin_compact_visible_messages``)
+        or never reads ``messages`` at all (heartbeat persistence). This
+        keeps the hot inbound path bounded by the visible window instead
+        of re-materializing the user's full lifetime history on every
+        message (issue #1428). Callers that need the complete transcript
+        (webchat history endpoint, admin views) use
+        :meth:`load_session_async` / :meth:`list_sessions_async`, which
+        keep loading everything.
+
         Concurrent first-message arrivals on different channels would
         otherwise race the INSERT and one would lose to the unique
         constraint. We serialize with a transaction-scoped advisory lock
@@ -332,7 +366,9 @@ class SessionStore:
                 cs.last_message_at = now
                 await db.commit()
                 messages = list(
-                    (await db.execute(_select_messages_for_session(cs.id))).scalars().all()
+                    (await db.execute(_select_messages_above_watermark(cs.id, cs.last_trim_seq)))
+                    .scalars()
+                    .all()
                 )
                 return _session_to_state(cs, messages), False
 
@@ -356,7 +392,13 @@ class SessionStore:
                 cs = (await db.execute(_select_session_by_user(self.user_id))).scalar_one_or_none()
                 if cs is not None:
                     messages = list(
-                        (await db.execute(_select_messages_for_session(cs.id))).scalars().all()
+                        (
+                            await db.execute(
+                                _select_messages_above_watermark(cs.id, cs.last_trim_seq)
+                            )
+                        )
+                        .scalars()
+                        .all()
                     )
                     return _session_to_state(cs, messages), False
                 short_uid = uuid.uuid4().hex[:8]
