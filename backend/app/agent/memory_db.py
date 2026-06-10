@@ -51,6 +51,17 @@ def _user_select(user_id: str) -> Select[tuple[User]]:
     return select(User).filter_by(id=user_id)
 
 
+def _user_select_for_update(user_id: str) -> Select[tuple[User]]:
+    """Builder for the locked read used by compare-and-swap writes.
+
+    ``write_user_async`` / ``write_soul_async`` re-read the row under
+    ``FOR UPDATE`` when the caller supplies *expected_current*, so the
+    compare and the write are atomic against concurrent writers (the
+    agent's workspace tools, another compaction). See issue #1429.
+    """
+    return select(User).filter_by(id=user_id).with_for_update()
+
+
 def _doc_select_for_update(user_id: str) -> Select[tuple[MemoryDocument]]:
     """Builder for the locked read used by ``append_history``.
 
@@ -148,8 +159,20 @@ class MemoryStore:
         finally:
             await db.close()
 
-    async def write_memory_async(self, content: str) -> None:
+    async def write_memory_async(
+        self, content: str, *, expected_current: str | None = None
+    ) -> bool:
         """Write memory text (full rewrite, equivalent of MEMORY.md).
+
+        Returns True when the write landed. When *expected_current* is
+        provided, the write is compare-and-swap: the row is re-read under
+        the per-user advisory lock plus ``FOR UPDATE``, and when the
+        stored text no longer matches (another writer landed since the
+        caller's read: the agent's workspace tools mid-conversation, or a
+        concurrent compaction), nothing is written and False is returned.
+        Full rewrites computed from a stale read must not clobber a newer
+        value (issue #1429). *expected_current* is compared in the same
+        normalized form :meth:`read_memory_async` returns (stripped).
 
         Raises :class:`BudgetExceededError` when the value exceeds the
         ``MEMORY.md`` byte budget declared in
@@ -160,9 +183,30 @@ class MemoryStore:
         stored = content.rstrip() + "\n"
         assert_within_budget("MEMORY.md", stored)
         async with db_session_async() as db:
-            doc = await self._get_or_create_doc_async(db)
+            if expected_current is None:
+                doc = await self._get_or_create_doc_async(db)
+            else:
+                # Advisory lock so the no-row-yet branch cannot race a
+                # concurrent first writer (FOR UPDATE on a missing row
+                # acquires no predicate lock; same rationale as
+                # ``append_history``).
+                await db.execute(
+                    _advisory_lock_sql(),
+                    {"k": _advisory_lock_key(self.user_id)},
+                )
+                doc = (await db.execute(_doc_select_for_update(self.user_id))).scalar_one_or_none()
+                if doc is None:
+                    doc = MemoryDocument(user_id=self.user_id, memory_text="", history_text="")
+                    db.add(doc)
+                    await db.flush()
+                if (doc.memory_text or "").strip() != expected_current.strip():
+                    # Early return without commit: db_session_async closes
+                    # the session, rolling back the open transaction and
+                    # releasing the row lock.
+                    return False
             doc.memory_text = stored
             await db.commit()
+            return True
 
     # -- history text ------------------------------------------------------
 
@@ -258,8 +302,13 @@ class MemoryStore:
         finally:
             await db.close()
 
-    async def write_soul_async(self, content: str) -> None:
+    async def write_soul_async(self, content: str, *, expected_current: str | None = None) -> bool:
         """Write soul text to User model.
+
+        Returns True when the write landed. When *expected_current* is
+        provided, the write is compare-and-swap against the current value
+        in the same normalized form :meth:`read_soul_async` returns; see
+        :meth:`write_memory_async` for the rationale (issue #1429).
 
         Raises :class:`BudgetExceededError` when the wrapped value
         exceeds the ``SOUL.md`` byte budget. Compaction wraps the call
@@ -268,10 +317,21 @@ class MemoryStore:
         stored = f"# Soul\n\n{content}\n"
         assert_within_budget("SOUL.md", stored)
         async with db_session_async() as db:
-            user = (await db.execute(_user_select(self.user_id))).scalar_one_or_none()
-            if user is not None:
-                user.soul_text = stored
-                await db.commit()
+            stmt = (
+                _user_select(self.user_id)
+                if expected_current is None
+                else _user_select_for_update(self.user_id)
+            )
+            user = (await db.execute(stmt)).scalar_one_or_none()
+            if user is None:
+                return False
+            if expected_current is not None:
+                current = _strip_section_prefix(user.soul_text or "", "# Soul")
+                if current != expected_current.strip():
+                    return False
+            user.soul_text = stored
+            await db.commit()
+            return True
 
     # -- user text ---------------------------------------------------------
 
@@ -286,8 +346,13 @@ class MemoryStore:
         finally:
             await db.close()
 
-    async def write_user_async(self, content: str) -> None:
+    async def write_user_async(self, content: str, *, expected_current: str | None = None) -> bool:
         """Write user text to User model.
+
+        Returns True when the write landed. When *expected_current* is
+        provided, the write is compare-and-swap against the current value
+        in the same normalized form :meth:`read_user_async` returns; see
+        :meth:`write_memory_async` for the rationale (issue #1429).
 
         Raises :class:`BudgetExceededError` when the wrapped value
         exceeds the ``USER.md`` byte budget. Compaction wraps the call
@@ -296,10 +361,21 @@ class MemoryStore:
         stored = f"# User\n\n{content}\n"
         assert_within_budget("USER.md", stored)
         async with db_session_async() as db:
-            user = (await db.execute(_user_select(self.user_id))).scalar_one_or_none()
-            if user is not None:
-                user.user_text = stored
-                await db.commit()
+            stmt = (
+                _user_select(self.user_id)
+                if expected_current is None
+                else _user_select_for_update(self.user_id)
+            )
+            user = (await db.execute(stmt)).scalar_one_or_none()
+            if user is None:
+                return False
+            if expected_current is not None:
+                current = _strip_section_prefix(user.user_text or "", "# User")
+                if current != expected_current.strip():
+                    return False
+            user.user_text = stored
+            await db.commit()
+            return True
 
     # -- composite helpers -------------------------------------------------
 
