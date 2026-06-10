@@ -6,6 +6,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from backend.app.config import (
+    CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS,
     Settings,
     log_config_warnings,
     resolve_imessage_backend,
@@ -137,6 +138,29 @@ class TestLogConfigWarnings:
         assert s.context_trim_target_tokens < s.context_trim_trigger_tokens <= s.max_input_tokens
         trim_warnings = [w for w in log_config_warnings(s) if "context_trim" in w]
         assert trim_warnings == []
+
+    def test_warns_history_limit_below_turn_trigger(self) -> None:
+        """A loader window too small for the turn backstop must warn.
+
+        Regression for issue #1427: when the row cap binds before the
+        turn trigger, old messages roll through window-overflow compaction
+        instead of the turn backstop. The operator should know.
+        """
+        s = Settings(conversation_history_limit=100)  # default trigger is 216 turns
+        warnings = log_config_warnings(s)
+        assert any("conversation_history_limit" in w for w in warnings)
+
+    def test_default_turn_trigger_reachable_in_history_window(self) -> None:
+        """Defaults must keep the turn backstop reachable inside the loader
+        window: 2 * (effective_trigger + 1) <= conversation_history_limit.
+        Regression for issue #1427, where target_turns=600 made the turn
+        backstop unreachable behind the 500-row loader cap.
+        """
+        s = Settings()
+        effective_trigger = s.context_trim_target_turns + CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS
+        assert 2 * (effective_trigger + 1) <= s.conversation_history_limit
+        limit_warnings = [w for w in log_config_warnings(s) if "conversation_history_limit" in w]
+        assert limit_warnings == []
 
     def test_logs_warnings(self, caplog: pytest.LogCaptureFixture) -> None:
         s = Settings(max_tool_rounds=100)
