@@ -9,6 +9,14 @@ from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
+# Default hysteresis buffer for the turn-count trim backstop: when
+# ``context_trim_trigger_turns`` is unset, the trigger resolves to
+# ``context_trim_target_turns + CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS``
+# (see ``trim_messages`` in backend/app/agent/trimming.py). Lives here, not
+# in trimming.py, so ``log_config_warnings`` can compute the effective
+# trigger without importing agent code.
+CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS: int = 16
+
 
 def _derive_webhook_secret(bot_token: str) -> str:
     """Derive a deterministic webhook secret from the bot token via HMAC-SHA256."""
@@ -121,20 +129,25 @@ class Settings(BaseSettings):
     # per-turn cost; the full window is sent every turn.
     context_trim_target_tokens: int = Field(default=120_000, ge=1)
     context_trim_trigger_tokens: int = Field(default=150_000, ge=1)
-    # Turn-count backstop, not the primary governor. Tokens bind first in
-    # normal use (150K is ~330 turns for a token-light user); this cap only
-    # catches pathological message-count bloat (many tiny messages), a
-    # latency and attention concern independent of tokens. Keep it well
-    # above the turn-equivalent of the token budget. Trimming oldest turns
-    # past this cap rolls them through compaction into MEMORY.md / USER.md
-    # / SOUL.md. ge=2 so at least one prior turn is always retained; not
-    # ``None``, which would disable the guard entirely.
-    context_trim_target_turns: int = Field(default=600, ge=2)
+    # Turn-count backstop. Tokens bind first for token-heavy users (150K
+    # is reached well before this cap when messages carry tool traffic);
+    # this cap is what protects token-light users, whose conversations
+    # can grow past ``conversation_history_limit`` rows while staying
+    # under the token trigger forever. The backstop must therefore be
+    # reachable inside the loader window: a user turn is typically an
+    # inbound + outbound row pair, so the effective trigger needs about
+    # 2x its value in rows, and ``log_config_warnings`` warns when
+    # ``2 * (trigger + 1) > conversation_history_limit`` (issue #1427).
+    # Trimming oldest turns past this cap rolls them through compaction
+    # into MEMORY.md / USER.md / SOUL.md. ge=2 so at least one prior turn
+    # is always retained; not ``None``, which would disable the guard
+    # entirely.
+    context_trim_target_turns: int = Field(default=200, ge=2)
     # Turn-backstop trigger threshold: the turn cap fires only when the
     # user-turn count exceeds this, then drops to
     # ``context_trim_target_turns`` (same hysteresis rationale as the token
-    # path). When ``None``, defaults to ``context_trim_target_turns + 16``
-    # inside ``trim_messages``.
+    # path). When ``None``, defaults to ``context_trim_target_turns +
+    # CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS`` inside ``trim_messages``.
     context_trim_trigger_turns: int | None = Field(default=None)
     # Per-file truncation cap for memory-text snapshots persisted on
     # ``compaction_events`` rows. A user with a 500KB MEMORY.md would
@@ -499,6 +512,25 @@ def log_config_warnings(s: Settings | None = None) -> list[str]:
             f"context_trim_trigger_tokens ({s.context_trim_trigger_tokens})"
             f" > max_input_tokens ({s.max_input_tokens});"
             " trimming will never trigger"
+        )
+    # Invariant: the turn backstop must be reachable inside the history
+    # loader window. A user turn is typically an inbound + outbound row
+    # pair, so reaching the trigger takes about 2x its value in rows.
+    # When the row cap binds first, facts are still protected by the
+    # window-overflow compaction path in load_conversation_history
+    # (issue #1427), but that path has less hysteresis than the turn
+    # backstop and compacts rows that are still visible to the agent.
+    effective_trigger_turns = (
+        s.context_trim_trigger_turns
+        if s.context_trim_trigger_turns is not None
+        else s.context_trim_target_turns + CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS
+    )
+    if 2 * (effective_trigger_turns + 1) > s.conversation_history_limit:
+        warnings.append(
+            f"conversation_history_limit ({s.conversation_history_limit}) is below"
+            f" 2x the effective turn-trim trigger ({effective_trigger_turns});"
+            " the row cap will bind before the turn backstop and old messages"
+            " will roll through window-overflow compaction instead"
         )
 
     # Warn when an iMessage backend is configured but the address users are

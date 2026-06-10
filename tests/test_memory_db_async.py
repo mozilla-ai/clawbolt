@@ -26,6 +26,83 @@ from backend.app.agent.memory_db import MemoryStore, get_memory_store
 from backend.app.models import MemoryDocument, User
 
 # ---------------------------------------------------------------------------
+# compare-and-swap writes (issue #1429)
+# ---------------------------------------------------------------------------
+
+
+async def test_async_write_memory_cas_match_writes(
+    async_db: async_sessionmaker,
+    async_test_user: User,
+) -> None:
+    """CAS write lands when the row still matches the caller's read."""
+    store = MemoryStore(async_test_user.id)
+    await store.write_memory_async("v1")
+    current = await store.read_memory_async()
+    assert await store.write_memory_async("v2", expected_current=current) is True
+    assert "v2" in await store.read_memory_async()
+
+
+async def test_async_write_memory_cas_mismatch_skips(
+    async_db: async_sessionmaker,
+    async_test_user: User,
+) -> None:
+    """A rewrite computed from a stale read must not clobber a newer write."""
+    store = MemoryStore(async_test_user.id)
+    await store.write_memory_async("v1")
+    stale = await store.read_memory_async()
+    # A concurrent writer (agent workspace tool, another compaction)
+    # lands after the caller's read.
+    await store.write_memory_async("agent fact")
+    assert await store.write_memory_async("stale rewrite", expected_current=stale) is False
+    assert await store.read_memory_async() == "agent fact"
+
+
+async def test_async_write_memory_cas_empty_expected_matches_missing_row(
+    async_db: async_sessionmaker,
+    async_test_user: User,
+) -> None:
+    """``expected_current=""`` matches a missing row (first compaction)."""
+    store = MemoryStore(async_test_user.id)
+    assert await store.write_memory_async("first", expected_current="") is True
+    assert "first" in await store.read_memory_async()
+
+
+async def test_async_write_user_cas_mismatch_skips(
+    async_db: async_sessionmaker,
+    async_test_user: User,
+) -> None:
+    store = MemoryStore(async_test_user.id)
+    await store.write_user_async("trade: deck builder")
+    stale = await store.read_user_async()
+    await store.write_user_async("trade: general contractor")
+    assert await store.write_user_async("stale rewrite", expected_current=stale) is False
+    assert await store.read_user_async() == "trade: general contractor"
+
+
+async def test_async_write_soul_cas_mismatch_skips(
+    async_db: async_sessionmaker,
+    async_test_user: User,
+) -> None:
+    store = MemoryStore(async_test_user.id)
+    await store.write_soul_async("tone: friendly")
+    stale = await store.read_soul_async()
+    await store.write_soul_async("tone: blunt, no emojis")
+    assert await store.write_soul_async("stale rewrite", expected_current=stale) is False
+    assert await store.read_soul_async() == "tone: blunt, no emojis"
+
+
+async def test_async_write_user_cas_match_writes(
+    async_db: async_sessionmaker,
+    async_test_user: User,
+) -> None:
+    store = MemoryStore(async_test_user.id)
+    await store.write_user_async("trade: deck builder")
+    current = await store.read_user_async()
+    assert await store.write_user_async("trade: remodeler", expected_current=current) is True
+    assert await store.read_user_async() == "trade: remodeler"
+
+
+# ---------------------------------------------------------------------------
 # memory_text: read / write
 # ---------------------------------------------------------------------------
 
