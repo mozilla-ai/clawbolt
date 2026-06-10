@@ -142,6 +142,57 @@ async def test_get_or_create_session_async_advances_last_message_at(
     assert second.last_message_at >= first.last_message_at
 
 
+async def test_get_or_create_session_async_excludes_compacted_rows(
+    async_db: async_sessionmaker,
+) -> None:
+    """The hot inbound path must not load rows at or below the trim
+    watermark: they were compacted out of LLM context and every consumer
+    of this method filters them out anyway (issue #1428). Loading them
+    made the per-message DB load grow with the user's lifetime message
+    count.
+    """
+    user_id = await _create_user(async_db)
+    store = SessionStore(user_id)
+    session, _ = await store.get_or_create_session_async()
+    for i in range(1, 7):
+        await store.add_message_async(
+            session, direction="inbound" if i % 2 else "outbound", body=f"msg {i}"
+        )
+
+    # Advance the watermark the same way trigger_compaction_for_dropped does.
+    async with async_db() as db:
+        cs = (
+            await db.execute(select(ChatSession).filter_by(session_id=session.session_id))
+        ).scalar_one()
+        cs.last_trim_seq = 4
+        await db.commit()
+
+    reloaded, is_new = await store.get_or_create_session_async()
+    assert is_new is False
+    assert [m.seq for m in reloaded.messages] == [5, 6]
+    assert reloaded.last_trim_seq == 4
+
+    # The full-transcript path is unchanged: load_session_async still
+    # returns every row (webchat history endpoint, admin views).
+    full = await store.load_session_async(session.session_id)
+    assert full is not None
+    assert [m.seq for m in full.messages] == [1, 2, 3, 4, 5, 6]
+
+
+async def test_get_or_create_session_async_null_watermark_loads_all(
+    async_db: async_sessionmaker,
+) -> None:
+    """NULL watermark (no compaction yet) keeps loading every row."""
+    user_id = await _create_user(async_db)
+    store = SessionStore(user_id)
+    session, _ = await store.get_or_create_session_async()
+    for i in range(1, 4):
+        await store.add_message_async(session, direction="inbound", body=f"m{i}")
+
+    reloaded, _ = await store.get_or_create_session_async()
+    assert [m.seq for m in reloaded.messages] == [1, 2, 3]
+
+
 # ---------------------------------------------------------------------------
 # add_message_async / add_message_by_session_id_async
 # ---------------------------------------------------------------------------
