@@ -15,7 +15,7 @@ from backend.app.agent.messages import (
     ToolResultMessage,
     UserMessage,
 )
-from backend.app.config import settings
+from backend.app.config import CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS, settings
 
 _SUMMARY_MAX_CHARS = 500
 
@@ -29,7 +29,9 @@ _CHARS_PER_TOKEN = 4
 # When ``trigger_turns`` is unset and ``target_turns`` is set, the trigger
 # defaults to ``target_turns + _DEFAULT_TRIGGER_BUFFER_TURNS``. Hysteresis
 # prevents per-message re-triggering once the conversation crosses the cap.
-_DEFAULT_TRIGGER_BUFFER_TURNS = 16
+# The value lives in config.py so ``log_config_warnings`` can compute the
+# effective trigger without importing agent code.
+_DEFAULT_TRIGGER_BUFFER_TURNS = CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS
 
 
 def _count_user_turns(msgs: list[AgentMessage]) -> int:
