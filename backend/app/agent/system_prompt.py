@@ -11,6 +11,7 @@ import datetime
 import logging
 import zoneinfo
 
+from backend.app.agent.compaction_note import build_pending_compaction_note
 from backend.app.agent.markdown_registry import truncate_for_injection
 from backend.app.agent.memory_db import build_memory_context
 from backend.app.agent.prompts import load_prompt
@@ -389,6 +390,23 @@ async def _build_agent_prompt_builder(
 
     memory = await build_memory_section(user.id, query=message_context)
     builder.add_section("Your Memory", memory, dynamic=True)
+
+    # Continuity cover for the trim-to-compaction window (issue #1432):
+    # rows dropped by trim vanish from history on the very next message
+    # (the watermark advances synchronously), but the compaction LLM call
+    # that moves their facts into MEMORY.md is async and may still be in
+    # flight. While a recent compaction event is pending, inject a terse
+    # deterministic summary of the covered rows so the agent's context
+    # contains either the compacted facts or this note, never neither.
+    # Dynamic: it appears for a few turns at most and rides the uncached
+    # current-turn slot, so it never busts the history cache.
+    pending_note = await build_pending_compaction_note(user.id)
+    if pending_note:
+        builder.add_section(
+            "Recently Archived Conversation (memory update in progress)",
+            pending_note,
+            dynamic=True,
+        )
 
     if current_session_id:
         cross = await build_cross_session_context(user.id, current_session_id)
