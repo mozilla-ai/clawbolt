@@ -284,6 +284,134 @@ def test_delete_file_params_accepts_valid_path() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Numeric-to-string coercion: LLMs emit numeric-looking strings as JSON
+# numbers (e.g. a calendar event titled after a work order number), which
+# must not fail the whole tool call.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_validation_coerces_int_for_string_field(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """A JSON integer sent for a str field should be stringified, not rejected."""
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_1",
+                "name": "typed_tool",
+                # The LLM emits a numeric-only title as a JSON number.
+                "arguments": json.dumps({"title": 20240, "value": 1}),
+            }
+        ]
+    )
+    followup_response = make_text_response("Done!")
+    mock_amessages.side_effect = [tool_response, followup_response]
+
+    class TypedParams(BaseModel):
+        title: str = Field(description="A title")
+        value: int = Field(description="A value")
+
+    mock_func = AsyncMock(return_value=ToolResult(content="ok"))
+    tool = Tool(
+        name="typed_tool",
+        description="A typed tool",
+        function=mock_func,
+        params_model=TypedParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    mock_func.assert_called_once_with(title="20240", value=1)
+    assert response.tool_calls[0].is_error is False
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_validation_coerces_number_in_nested_string_field(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """Numeric values nested inside lists of models should also be stringified."""
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_1",
+                "name": "typed_tool",
+                "arguments": json.dumps({"items": [{"label": 42, "amount": 7.5}]}),
+            }
+        ]
+    )
+    followup_response = make_text_response("Done!")
+    mock_amessages.side_effect = [tool_response, followup_response]
+
+    class LineItem(BaseModel):
+        label: str = Field(description="A label")
+        amount: float = Field(description="An amount")
+
+    class TypedParams(BaseModel):
+        items: list[LineItem] = Field(description="Line items")
+
+    mock_func = AsyncMock(return_value=ToolResult(content="ok"))
+    tool = Tool(
+        name="typed_tool",
+        description="A typed tool",
+        function=mock_func,
+        params_model=TypedParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    mock_func.assert_called_once_with(items=[{"label": "42", "amount": 7.5}])
+    assert response.tool_calls[0].is_error is False
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_validation_does_not_coerce_bool_for_string_field(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """A boolean for a str field is a real bug and should still be rejected."""
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_1",
+                "name": "typed_tool",
+                "arguments": json.dumps({"title": True}),
+            }
+        ]
+    )
+    followup_response = make_text_response("Let me fix that.")
+    mock_amessages.side_effect = [tool_response, followup_response]
+
+    class TypedParams(BaseModel):
+        title: str = Field(description="A title")
+
+    mock_func = AsyncMock(return_value=ToolResult(content="ok"))
+    tool = Tool(
+        name="typed_tool",
+        description="A typed tool",
+        function=mock_func,
+        params_model=TypedParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    mock_func.assert_not_called()
+    assert response.tool_calls[0].is_error is True
+    assert "Validation error" in response.tool_calls[0].result
+
+
+# ---------------------------------------------------------------------------
 # Eager (batch) validation tests: all errors reported in one round (#350)
 # ---------------------------------------------------------------------------
 

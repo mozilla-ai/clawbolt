@@ -111,18 +111,25 @@ async def process_message_media(
         ", ".join(f"{r.category} ({len(r.extracted_text)} chars)" for r in media_results),
     )
 
-    parts: list[str] = []
-    if text_body:
-        parts.append(f"[Text message]: {text_body!r}")
+    media_parts: list[str] = []
     for i, result in enumerate(media_results):
         label = _format_label(result.category, i + 1, result.handle)
         if result.extracted_text:
-            parts.append(f"[{label}]: {result.extracted_text}")
+            media_parts.append(f"[{label}]: {result.extracted_text}")
         elif result.category == "image" and result.handle:
-            parts.append(
+            media_parts.append(
                 f"[{label}]: (staged, call analyze_photo(handle={result.handle!r})"
                 " if you need a description)"
             )
+
+    # The "[Text message]:" wrapper delimits the user's text from the media
+    # descriptions that follow it. With no media parts it is pure noise the
+    # model can parrot back as its own reply, so text-only messages pass
+    # through verbatim.
+    parts: list[str] = []
+    if text_body:
+        parts.append(f"[Text message]: {text_body!r}" if media_parts else text_body)
+    parts.extend(media_parts)
 
     combined_context = "\n\n".join(parts)
 
