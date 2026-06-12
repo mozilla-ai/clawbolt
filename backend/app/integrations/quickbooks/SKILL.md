@@ -42,6 +42,11 @@ the user a customer, invoice, or estimate does not exist, and never create a
 new one, until `qb_query` has returned no match for the identifier they gave.
 An ID you already resolved this session can be reused without re-querying.
 
+Amounts, balances, and statuses are the opposite of IDs: they go stale
+(payments land, invoices get edited). Quote them only from rows a query
+returned this turn. If the entity the user asked about is not in those rows,
+query for it directly; do not recite numbers remembered from an earlier turn.
+
 ## Creating Entities (qb_create)
 
 Pass `entity_type` (Customer, Estimate, Invoice, or Item) and `data` (the QBO API payload).

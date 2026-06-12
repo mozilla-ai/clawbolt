@@ -1636,6 +1636,71 @@ async def test_create_invoice_tool_falls_back_when_customer_id_scope_rejected() 
     assert create_invoice.call_args.kwargs["customer_id"] == "canonical-cust"
 
 
+@pytest.mark.asyncio()
+async def test_get_work_order_tool_falls_back_when_customer_id_scope_rejected() -> None:
+    """appfolio_get_work_order retries with the canonical customer on a scope 401.
+
+    Same production failure mode as the invoice tool: the agent guesses a
+    ``customer_id`` (a name, or a stale id from an earlier turn), the GET
+    answers 401 with no ``login_url``, and without the retry the agent
+    dead-ends and falls back to scanning the full work-order list.
+    """
+    from backend.app.integrations.appfolio_vendor.work_orders import build_work_order_tools
+
+    cred = AppFolioCredential(
+        user_id="u1",
+        jwt="jwt-1",
+        fingerprint="fp-1",
+        customer_ids=[],
+        extra={"fingerprint": "fp-1"},
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    get_wo = AsyncMock(
+        side_effect=[
+            AuthScopeError("wrong customer in path"),
+            {
+                "work_order_number": "42",
+                "status": "open",
+                "property_address": "123 Example Street",
+            },
+        ]
+    )
+    get_profile = AsyncMock(return_value={"customers": [{"customer_id": "canonical-cust"}]})
+    get_details = AsyncMock(return_value={})
+    service.get_work_order = get_wo  # type: ignore[method-assign]
+    service.get_profile = get_profile  # type: ignore[method-assign]
+    service.get_work_order_details = get_details  # type: ignore[method-assign]
+
+    tools = build_work_order_tools(service)
+    get_tool = next(t for t in tools if t.name == "appfolio_get_work_order")
+    result = await get_tool.function(customer_id="agent-guess", work_order_id="42")
+
+    assert result.is_error is False
+    assert get_wo.await_count == 2
+    assert get_wo.await_args_list[0].args == ("agent-guess", "42")
+    assert get_wo.await_args_list[1].args == ("canonical-cust", "42")
+    assert "Work order #42" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_search_work_orders_no_match_explains_visibility_limits() -> None:
+    """A no-match search result tells the agent why the number may be missing,
+    so it can explain (closed/archived or different property manager) instead
+    of dead-ending with a bare "can't find it"."""
+    from backend.app.integrations.appfolio_vendor.work_orders import build_work_order_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    service.search_work_orders = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+    tools = build_work_order_tools(service)
+    search = next(t for t in tools if t.name == "appfolio_search_work_orders")
+    result = await search.function(search_term="99999")
+
+    assert result.is_error is False
+    assert "No work orders matched '99999'" in result.content
+    assert "closed, canceled, or archived" in result.content
+
+
 # ---------------------------------------------------------------------------
 # Wire-shape: amount * quantity collapsed before POST
 # ---------------------------------------------------------------------------

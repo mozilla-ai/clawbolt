@@ -20,6 +20,7 @@ from backend.app.integrations.appfolio_vendor.service import (
     AppFolioError,
     AppFolioVendorService,
     AuthExpiredError,
+    AuthScopeError,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,7 +166,16 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
                         f"{list(_KNOWN_WO_LIST_ENVELOPES)} containing the list"
                     ),
                 )
-            return ToolResult(content=f"No work orders matched '{search_term}'.")
+            return ToolResult(
+                content=(
+                    f"No work orders matched '{search_term}'. The portal only"
+                    " surfaces work orders this vendor login can access: a"
+                    " specific number the user expects to exist may be closed,"
+                    " canceled, or archived, or belong to a property manager"
+                    " this login is not authorized for. Explain that to the"
+                    " user instead of just reporting the miss."
+                )
+            )
         lines = [f"{len(items)} match(es) for '{search_term}':"]
         lines.extend(_fmt_work_order_line(w) for w in items[:20])
         return ToolResult(content="\n".join(lines))
@@ -173,6 +183,19 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
     async def appfolio_get_work_order(customer_id: str, work_order_id: str) -> ToolResult:
         try:
             wo = await service.get_work_order(customer_id, work_order_id)
+        except AuthScopeError:
+            # The agent often arrives with a wrong or guessed customer_id
+            # (search results carry a different customer_id field than the
+            # path expects). Resolve the canonical primary customer from
+            # /profiles/me and retry once before surfacing the failure.
+            try:
+                canonical_customer_id = await service._resolve_primary_customer_id()
+            except Exception as exc:
+                return _service_error("resolving the AppFolio customer", exc)
+            try:
+                wo = await service.get_work_order(canonical_customer_id, work_order_id)
+            except Exception as exc:
+                return _service_error("fetching work order", exc)
         except Exception as exc:
             return _service_error("fetching work order", exc)
 
