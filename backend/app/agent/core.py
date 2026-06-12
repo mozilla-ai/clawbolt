@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import random
@@ -177,6 +178,40 @@ def _normalize_tool_args(args: dict[str, Any]) -> str:
         return json.dumps(args, sort_keys=True, default=str)
     except (TypeError, ValueError):
         return repr(sorted(args.items()))
+
+
+def _stringify_numbers_for_string_fields(
+    tool_args: dict[str, Any], exc: ValidationError
+) -> dict[str, Any] | None:
+    """Stringify numeric values that failed ``str`` field validation.
+
+    LLMs emit numeric-looking values (work order numbers, street numbers,
+    event titles like "20240") as JSON numbers. Pydantic v2 rejects
+    ``int``/``float`` input for ``str`` fields by default, which fails the
+    whole tool call even though the intent is unambiguous. Returns a copy
+    of ``tool_args`` with each offending value stringified, or ``None``
+    when no error is coercible (the original error should be reported).
+    Booleans are left alone: ``True`` for a string field is a real bug,
+    not a serialization quirk.
+    """
+    coerced: Any = copy.deepcopy(tool_args)
+    fixed_any = False
+    for error in exc.errors():
+        if error.get("type") != "string_type":
+            continue
+        value = error.get("input")
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            continue
+        container: Any = coerced
+        loc = error.get("loc", ())
+        try:
+            for key in loc[:-1]:
+                container = container[key]
+            cast("dict[Any, Any]", container)[loc[-1]] = str(value)
+        except (KeyError, IndexError, TypeError):
+            continue
+        fixed_any = True
+    return coerced if fixed_any else None
 
 
 def _resolve_concurrency_group(tool: Tool, validated_args: dict[str, Any]) -> str | None:
@@ -676,6 +711,13 @@ class ClawboltAgent:
             validated = tool.params_model.model_validate(tool_args)
             return validated.model_dump(), None
         except ValidationError as exc:
+            coerced_args = _stringify_numbers_for_string_fields(tool_args, exc)
+            if coerced_args is not None:
+                try:
+                    validated = tool.params_model.model_validate(coerced_args)
+                    return validated.model_dump(), None
+                except ValidationError as retry_exc:
+                    return tool_args, format_validation_error(tool.name, retry_exc, tool)
             return tool_args, format_validation_error(tool.name, exc, tool)
 
     def _get_tool_tags(self, tool_name: str) -> set[ToolTags]:

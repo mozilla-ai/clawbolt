@@ -192,6 +192,22 @@ def test_skill_md_requires_query_before_claiming_absence() -> None:
     )
 
 
+def test_skill_md_requires_fresh_rows_for_amounts() -> None:
+    """The guard must tell the agent to quote amounts from current query rows.
+
+    Without this, the agent answers balance/status questions from its
+    in-context memory of an earlier pull: it runs a fresh query, then recites
+    a remembered breakdown (and an unverified payment status) instead of
+    reading the rows the query just returned.
+    """
+    content = SKILL_MD_PATH.read_text()
+    lowered = content.lower()
+    assert "returned this turn" in lowered, (
+        "The guard should require amounts, balances, and statuses to come "
+        "from rows a query returned this turn, not from conversation memory."
+    )
+
+
 def test_skill_md_new_customer_job_queries_first() -> None:
     """The 'New customer job' workflow must query Customer before creating.
 

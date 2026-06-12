@@ -57,6 +57,31 @@ async def test_process_text_only() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_text_only_message_has_no_wrapper() -> None:
+    """Text-only messages pass through verbatim, without the "[Text message]:"
+    delimiter. The wrapper only earns its keep next to media parts; alone it
+    is formatting noise the model can parrot back as its own reply."""
+    result = await process_message_media("Yes", [])
+    assert result.combined_context == "Yes"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
+async def test_text_with_media_keeps_wrapper(mock_vision: AsyncMock, test_user: User) -> None:
+    """When media parts are present, the text keeps its delimiting wrapper."""
+    await media_staging.clear_user(test_user.id)
+    await media_staging.stage(
+        test_user.id, "https://example.com/media", b"fake-bytes", "image/jpeg"
+    )
+    result = await process_message_media(
+        "Check this deck", [_make_media("image/jpeg")], user_id=test_user.id
+    )
+    assert result.combined_context.startswith("[Text message]: 'Check this deck'")
+    assert "Photo 1" in result.combined_context
+    await media_staging.clear_user(test_user.id)
+
+
+@pytest.mark.asyncio()
 async def test_process_unknown_media_type() -> None:
     """Unknown media type should be skipped gracefully with a placeholder."""
     result = await process_message_media("", [_make_media("application/octet-stream")])
