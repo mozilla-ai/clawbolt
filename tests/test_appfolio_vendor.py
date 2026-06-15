@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,6 +28,8 @@ from backend.app.integrations.appfolio_vendor.service import (
     AppFolioVendorService,
     AuthExpiredError,
     AuthScopeError,
+    _response_shape,
+    _summarize_response_for_log,
     build_service,
     connect_via_magic_link,
     exchange_magic_link,
@@ -2130,3 +2133,109 @@ async def test_connected_user_sees_appfolio_in_specialist_summaries() -> None:
     # ("AppFolio is read-only on my end..."). The summary must surface
     # write capabilities so the LLM knows the full surface area.
     assert "note" in summary or "invoice" in summary
+
+
+# ---------------------------------------------------------------------------
+# Raw-response logging (debug aid for the display-number/internal-id mapping)
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_response_for_log_preserves_mapping_fields() -> None:
+    """The fields the number/id debugging needs (id, numberForDisplay,
+    customer_id, status) must survive untouched."""
+    out = _summarize_response_for_log(
+        [{"id": 900113, "numberForDisplay": "WO-2026-0042", "customer_id": "c1", "status": "new"}]
+    )
+    assert out == [
+        {"id": 900113, "numberForDisplay": "WO-2026-0042", "customer_id": "c1", "status": "new"}
+    ]
+
+
+def test_summarize_response_for_log_redacts_pii_fields() -> None:
+    """Tenant names, addresses, and contact details are PII and must not
+    reach the logs, while the id stays so the record is still identifiable."""
+    out = _summarize_response_for_log(
+        {
+            "id": 900113,
+            "name": "a real person",
+            "email": "someone@example.com",
+            "phone": "+15555550123",
+            "address": "123 Example St",
+            "city": "Anytown",
+        }
+    )
+    assert out["id"] == 900113
+    assert out["name"] == "<redacted>"
+    assert out["email"] == "<redacted>"
+    assert out["phone"] == "<redacted>"
+    assert out["address"] == "<redacted>"
+    assert out["city"] == "<redacted>"
+
+
+def test_summarize_response_for_log_redacts_secret_keys() -> None:
+    """An auth/refresh body funnelled through ``_request`` must never log
+    its tokens, even though read responses don't normally carry them."""
+    out = _summarize_response_for_log(
+        {"access_token": "jwt-abc", "refresh_token": "rt-xyz", "expires_in": 7200}
+    )
+    assert out == {
+        "access_token": "<redacted>",
+        "refresh_token": "<redacted>",
+        "expires_in": 7200,
+    }
+
+
+def test_summarize_response_for_log_collapses_long_strings() -> None:
+    out = _summarize_response_for_log({"blob": "x" * 500, "short": "ok"})
+    assert out["blob"] == "<500 char string>"
+    assert out["short"] == "ok"
+
+
+def test_response_shape_describes_dict_and_list() -> None:
+    assert _response_shape({"results": []}) == "dict keys=['results']"
+    assert _response_shape([{"id": 1}, {"id": 2}]) == "list len=2 sample_keys=['id']"
+
+
+@pytest.mark.asyncio()
+async def test_successful_read_logs_raw_response_body(caplog: Any) -> None:
+    """A 200 OK is logged at INFO with the full (summarized) body, so a
+    surprising shape is reconstructable from logs alone. This is the exact
+    gap that made a number search undebuggable: when the raw response
+    carries only an internal id and no user-facing number, the byte-count
+    log we had before told us nothing."""
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    # The failing shape: search returns an internal id, no display number.
+    response = _mock_response(json_data=[{"id": 900113}])
+
+    with (
+        caplog.at_level(logging.INFO, logger="backend.app.integrations.appfolio_vendor.service"),
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+    ):
+        cm, _ = _patch_request(response)
+        cls.return_value = cm
+        result = await service.search_work_orders("WO-2026-0042")
+
+    assert result == [{"id": 900113}]
+    record_text = "\n".join(r.message for r in caplog.records)
+    assert "raw response" in record_text
+    assert "/api/v1/search/work_order_search" in record_text
+    assert "900113" in record_text
+    assert "list len=1 sample_keys=['id']" in record_text
+
+
+@pytest.mark.asyncio()
+async def test_raw_response_log_redacts_tokens(caplog: Any) -> None:
+    """Secret values in a JSON response body never reach the log line."""
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={"access_token": "super-secret-jwt", "ok": True})
+
+    with (
+        caplog.at_level(logging.INFO, logger="backend.app.integrations.appfolio_vendor.service"),
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+    ):
+        cm, _ = _patch_request(response)
+        cls.return_value = cm
+        await service.get("/api/v1/anything")
+
+    assert "super-secret-jwt" not in caplog.text
+    assert "<redacted>" in caplog.text
