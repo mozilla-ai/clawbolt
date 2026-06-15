@@ -191,6 +191,82 @@ _LOG_BODY_PREVIEW_LIMIT = 1500
 error in full; short enough to keep individual log lines manageable."""
 
 
+_RAW_RESPONSE_LOG_LIMIT = 8000
+"""Cap on the summarized response body in the success raw-response log.
+Larger than :data:`_LOG_BODY_PREVIEW_LIMIT` on purpose: that limit is for an
+error *preview*, whereas the raw-response log exists to capture the *full*
+work-order shape (every id / number / customer_id in a list) so AppFolio's
+display-number-to-internal-id mapping is reconstructable from logs alone."""
+
+
+# Response keys whose values are credential-ish and must never reach the
+# logs. Read responses don't normally carry these, but ``_request`` is the
+# one funnel for every call (auth/refresh bodies included), so redact
+# defensively rather than trusting each caller.
+_RESPONSE_SECRET_KEYS = frozenset(
+    {
+        "jwt",
+        "token",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "authorization",
+        "password",
+        "secret",
+    }
+)
+
+
+# Response keys whose values are personal information. AppFolio work-order
+# responses carry tenant names, addresses, and contact details; per the
+# repo's PII rules those must not land in logs. We deliberately keep the
+# fields that the number/id translation debugging actually needs (id,
+# numberForDisplay, customer_id, status) and redact the rest. Free-text
+# fields (description/title) can still carry incidental PII, but redacting
+# them would gut the debug value; treat that as soft PII handled by the
+# 200-char string collapse, not blanket redaction.
+_RESPONSE_PII_KEYS = frozenset(
+    {
+        "name",
+        "full_name",
+        "fullname",
+        "first_name",
+        "last_name",
+        "display_name",
+        "tenant",
+        "tenant_name",
+        "occupant",
+        "resident",
+        "contact",
+        "contact_name",
+        "email",
+        "email_address",
+        "phone",
+        "phone_number",
+        "mobile",
+        "cell",
+        "address",
+        "address_1",
+        "address_2",
+        "address1",
+        "address2",
+        "street",
+        "street_address",
+        "property_address",
+        "propertyaddress",
+        "city",
+        "state",
+        "zip",
+        "zip_code",
+        "zipcode",
+        "postal_code",
+    }
+)
+
+
+_RESPONSE_REDACT_KEYS = _RESPONSE_SECRET_KEYS | _RESPONSE_PII_KEYS
+
+
 def _summarize_body_for_log(body: Any) -> Any:
     """Replace base64-encoded file payloads with size markers for log output.
 
@@ -239,6 +315,73 @@ def _summarize_files_field(body: Any) -> Any:
         else:
             out[k] = _summarize_body_for_log(v)
     return out
+
+
+def _summarize_response_for_log(body: Any) -> Any:
+    """Collapse base64/long strings and redact secret + PII keys for logs.
+
+    Reuses the request summarizer's base64/long-string collapsing (so photo
+    URLs or any inlined blobs don't bury the structure) and additionally
+    redacts values under known credential and personal-information keys.
+    The fields the number/id translation debugging needs (id,
+    numberForDisplay, customer_id, status) pass through untouched; tenant
+    names, addresses, and contact details are redacted per the repo's PII
+    rules.
+    """
+    if isinstance(body, dict):
+        out: dict[str, Any] = {}
+        for k, v in body.items():
+            if isinstance(k, str) and k.lower() in _RESPONSE_REDACT_KEYS:
+                out[k] = "<redacted>"
+            else:
+                out[k] = _summarize_response_for_log(v)
+        return out
+    if isinstance(body, list):
+        return [_summarize_response_for_log(v) for v in body]
+    if isinstance(body, str) and len(body) > 200:
+        return f"<{len(body)} char string>"
+    return body
+
+
+def _response_shape(body: Any) -> str:
+    """One-line structural descriptor for a parsed response (no values).
+
+    Mirrors :func:`errors.log_unexpected_response_shape` so the success
+    log and the unexpected-shape warning describe shapes the same way.
+    """
+    if isinstance(body, dict):
+        return f"dict keys={sorted(body.keys())!r}"
+    if isinstance(body, list):
+        if body and isinstance(body[0], dict):
+            return f"list len={len(body)} sample_keys={sorted(body[0].keys())!r}"
+        return f"list len={len(body)}"
+    return f"type={type(body).__name__}"
+
+
+def _log_raw_response(method: str, path: str, status: int, byte_len: int, parsed: Any) -> None:
+    """INFO-log the full (summarized, secret- and PII-redacted) response.
+
+    Success responses were previously logged only as a byte count, so a
+    200 OK with a surprising shape (e.g. a work-order search that returns
+    an internal id but not the user-facing number) left nothing to debug
+    from after the fact. We can't reach AppFolio ourselves, so the only way
+    to debug a user's report later is to have captured what AppFolio
+    actually returned at the time. This logs the structure on every call:
+    short scalar fields intact, base64/long strings collapsed, credential
+    keys redacted, truncated at :data:`_RAW_RESPONSE_LOG_LIMIT`.
+    """
+    body_repr = repr(_summarize_response_for_log(parsed))
+    if len(body_repr) > _RAW_RESPONSE_LOG_LIMIT:
+        body_repr = body_repr[:_RAW_RESPONSE_LOG_LIMIT] + f"...<{len(body_repr)} chars>"
+    logger.info(
+        "AppFolio raw response: %s %s -> status=%d (%d bytes) | shape=%s | body=%s",
+        method,
+        path,
+        status,
+        byte_len,
+        _response_shape(parsed),
+        body_repr,
+    )
 
 
 class AppFolioVendorService:
@@ -398,18 +541,32 @@ class AppFolioVendorService:
             # messages flow into ToolResult.content (visible to the LLM and
             # the end user). The full body stays in the warning log above.
             raise AppFolioError(f"AppFolio {method} {path} failed: HTTP {resp.status_code}")
+        byte_len = len(resp.content or b"")
         logger.debug(
             "AppFolio %s %s ok (%d, %d bytes)",
             method,
             path,
             resp.status_code,
-            len(resp.content or b""),
+            byte_len,
         )
         if not resp.content:
             return None
         ctype = resp.headers.get("content-type", "")
         if "application/json" in ctype:
-            return resp.json()
+            parsed = resp.json()
+            _log_raw_response(method, path, resp.status_code, byte_len, parsed)
+            return parsed
+        # Non-JSON payload (e.g. a PDF or image download): never log the
+        # bytes; the size and content-type are enough to debug from.
+        logger.info(
+            "AppFolio raw response: %s %s -> status=%d non-JSON content-type=%r"
+            " (%d bytes, body not logged)",
+            method,
+            path,
+            resp.status_code,
+            ctype,
+            byte_len,
+        )
         return resp.content
 
     async def get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
