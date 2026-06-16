@@ -217,14 +217,15 @@ _RESPONSE_SECRET_KEYS = frozenset(
 )
 
 
-# Response keys whose values are personal information. AppFolio work-order
-# responses carry tenant names, addresses, and contact details; per the
-# repo's PII rules those must not land in logs. We deliberately keep the
-# fields that the number/id translation debugging actually needs (id,
-# numberForDisplay, customer_id, status) and redact the rest. Free-text
-# fields (description/title) can still carry incidental PII, but redacting
-# them would gut the debug value; treat that as soft PII handled by the
-# 200-char string collapse, not blanket redaction.
+# Response keys whose values are personal information. AppFolio responses
+# carry tenant names, addresses, contact details, business names, and
+# free-text instructions; per the repo's PII rules none of those may land
+# in logs. We deliberately keep only the fields the number/id translation
+# debugging needs (id, numberForDisplay/result_text, customer_id/
+# customer_ids, status) and redact the rest. This exact set is paired with
+# :data:`_RESPONSE_PII_SUBSTRINGS` below, which catches schema variants
+# (company_email, two_fa_phone_number_last_four, company_primary_address_1,
+# portfolio_name, ...) without us having to enumerate every one.
 _RESPONSE_PII_KEYS = frozenset(
     {
         "name",
@@ -233,6 +234,9 @@ _RESPONSE_PII_KEYS = frozenset(
         "first_name",
         "last_name",
         "display_name",
+        "company_name",
+        "customer_name",
+        "portfolio_name",
         "tenant",
         "tenant_name",
         "occupant",
@@ -260,11 +264,37 @@ _RESPONSE_PII_KEYS = frozenset(
         "zip_code",
         "zipcode",
         "postal_code",
+        # Free-text fields that routinely carry tenant names + phone numbers
+        # ("call or text <name> <number>"). Not needed for id/number
+        # debugging, so redact rather than risk leaking names into logs.
+        "description",
+        "vendor_instructions",
+        "vendorinstructions",
+        "instructions",
     }
 )
 
 
+# Substrings that mark a key as PII regardless of its exact name, to catch
+# schema variants the exact set above doesn't enumerate. Kept narrow and
+# unambiguous so the identifier keys the debugging needs -- id, customer_id,
+# customer_ids, numberForDisplay, result_text, result_type, status -- are
+# never caught. ("state" stays exact-only on purpose: it would otherwise
+# redact ``two_fa_enrollment_state`` and similar non-PII status fields.)
+_RESPONSE_PII_SUBSTRINGS = ("email", "phone", "address", "name", "last_four", "ssn", "tax_id")
+
+
 _RESPONSE_REDACT_KEYS = _RESPONSE_SECRET_KEYS | _RESPONSE_PII_KEYS
+
+
+def _is_pii_response_key(key: Any) -> bool:
+    """True if a response key should be redacted (exact match or PII substring)."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    if lowered in _RESPONSE_REDACT_KEYS:
+        return True
+    return any(token in lowered for token in _RESPONSE_PII_SUBSTRINGS)
 
 
 def _summarize_body_for_log(body: Any) -> Any:
@@ -331,7 +361,7 @@ def _summarize_response_for_log(body: Any) -> Any:
     if isinstance(body, dict):
         out: dict[str, Any] = {}
         for k, v in body.items():
-            if isinstance(k, str) and k.lower() in _RESPONSE_REDACT_KEYS:
+            if _is_pii_response_key(k):
                 out[k] = "<redacted>"
             else:
                 out[k] = _summarize_response_for_log(v)

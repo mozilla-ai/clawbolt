@@ -108,6 +108,55 @@ def _normalize_list(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _normalize_search_hit(hit: dict[str, Any]) -> dict[str, Any]:
+    """Map an ``/api/v1/search/work_order_search`` hit into the work-order
+    dict shape :func:`_fmt_work_order_line` expects.
+
+    The search endpoint is a separate universal-search API with its own
+    field names, not the maintenance work-order schema. A hit looks like::
+
+        {"id": 900113, "result_text": "WO-2026-0042 - UnitLabel",
+         "result_type": "maintenance/work_order", "customer_ids": [4242]}
+
+    The user-facing number lives in ``result_text`` (``"<number> - <unit>"``)
+    and the customer id is a *list* under ``customer_ids`` -- neither of
+    which the formatter reads. Without this remap it falls back to the bare
+    internal ``id``, so a number search renders as a different number (the
+    agent then reports a false "that doesn't match") and write tools have
+    no customer_id and 404. Translate so the number and customer_id surface
+    from data the search already returned, with no extra API call.
+
+    Hits already in the work-order shape (or non-dicts) pass through.
+    """
+    if not isinstance(hit, dict):
+        return hit
+    if "result_text" not in hit and "customer_ids" not in hit:
+        return hit
+    out = dict(hit)
+    result_text = hit.get("result_text")
+    has_number = any(
+        hit.get(k)
+        for k in ("numberForDisplay", "number_for_display", "work_order_number", "number")
+    )
+    if result_text and not has_number:
+        # ``result_text`` is "<display number> - <unit label>"; the number
+        # is the segment before the first " - ". Keep the unit label as a
+        # summary so the agent has something to disambiguate on.
+        number, _, unit = str(result_text).partition(" - ")
+        out["numberForDisplay"] = number.strip() or str(result_text)
+        if unit.strip() and not any(hit.get(k) for k in ("description", "title", "summary")):
+            out["title"] = unit.strip()
+    customer_ids = hit.get("customer_ids")
+    if (
+        isinstance(customer_ids, list)
+        and customer_ids
+        and not hit.get("customer_id")
+        and not hit.get("customerId")
+    ):
+        out["customer_id"] = customer_ids[0]
+    return out
+
+
 def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
     """Return the AppFolio work-order read tools."""
 
@@ -155,7 +204,10 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
         except Exception as exc:
             return _service_error("searching work orders", exc)
 
-        items = _normalize_list(payload)
+        # The search endpoint returns its own hit schema (result_text,
+        # customer_ids); remap each hit to the work-order shape so the
+        # display number and customer_id surface instead of the bare id.
+        items = [_normalize_search_hit(hit) for hit in _normalize_list(payload)]
         if not items:
             if isinstance(payload, dict) and payload:
                 log_unexpected_response_shape(

@@ -34,6 +34,10 @@ from backend.app.integrations.appfolio_vendor.service import (
     connect_via_magic_link,
     exchange_magic_link,
 )
+from backend.app.integrations.appfolio_vendor.work_orders import (
+    _normalize_search_hit,
+    build_work_order_tools,
+)
 
 # ---------------------------------------------------------------------------
 # Magic-link parsing
@@ -2239,3 +2243,101 @@ async def test_raw_response_log_redacts_tokens(caplog: Any) -> None:
 
     assert "super-secret-jwt" not in caplog.text
     assert "<redacted>" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Search-hit schema remap (result_text / customer_ids -> work-order shape)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_search_hit_maps_result_text_and_customer_ids() -> None:
+    """The search endpoint puts the WO number in ``result_text`` and the
+    customer id in a ``customer_ids`` list; both must surface so the agent
+    sees the number and can route writes without a 404."""
+    out = _normalize_search_hit(
+        {
+            "id": 900113,
+            "result_text": "WO-2026-0042 - UnitLabel",
+            "result_type": "maintenance/work_order",
+            "customer_ids": [4242],
+        }
+    )
+    assert out["id"] == 900113
+    assert out["numberForDisplay"] == "WO-2026-0042"
+    assert out["customer_id"] == 4242
+
+
+def test_normalize_search_hit_passes_through_work_order_shape() -> None:
+    """A dict already in the work-order shape is returned untouched."""
+    wo = {"id": 900113, "numberForDisplay": "WO-9", "customer_id": 4242}
+    assert _normalize_search_hit(wo) == wo
+
+
+@pytest.mark.asyncio()
+async def test_search_work_orders_surfaces_number_and_customer_id() -> None:
+    """Regression: a number search used to render the bare internal id and a
+    false "doesn't match". The hit's result_text/customer_ids must drive the
+    output so the user-facing number and customer_id show instead."""
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    service.search_work_orders = AsyncMock(  # type: ignore[method-assign]
+        return_value=[
+            {
+                "id": 900113,
+                "result_text": "WO-2026-0042 - UnitLabel",
+                "result_type": "maintenance/work_order",
+                "customer_ids": [4242],
+            }
+        ]
+    )
+
+    tools = build_work_order_tools(service)
+    search = next(t for t in tools if t.name == "appfolio_search_work_orders")
+    result = await search.function(search_term="WO-2026-0042")
+
+    assert result.is_error is False
+    assert "ID: 900113" in result.content
+    assert "#WO-2026-0042" in result.content
+    assert "customer_id=4242" in result.content
+    # The bare-internal-id fallback must NOT be what gets shown as the number.
+    assert "#900113" not in result.content
+
+
+def test_summarize_response_for_log_redacts_business_and_freetext_pii() -> None:
+    """Business names, company_email, *_last_four, and free-text instructions
+    are PII and must be redacted; the id/number/customer fields stay so the
+    raw-response log is still useful for debugging."""
+    out = _summarize_response_for_log(
+        {
+            "id": 900113,
+            "numberForDisplay": "WO-9",
+            "result_text": "WO-9 - UnitLabel",
+            "customer_id": 4242,
+            "customer_ids": [4242],
+            "status_code": 3,
+            "two_fa_enrollment_state": "required",
+            "portfolio_name": "Some Property Co",
+            "company_email": "ops@example.com",
+            "company_primary_address_1": "1 Example Ave",
+            "current_payment_last_four": "0000",
+            "two_fa_phone_number_last_four": "0000",
+            "description": "free text that can carry a name and number",
+        }
+    )
+    # Identifiers needed for debugging survive.
+    assert out["id"] == 900113
+    assert out["numberForDisplay"] == "WO-9"
+    assert out["result_text"] == "WO-9 - UnitLabel"
+    assert out["customer_id"] == 4242
+    assert out["customer_ids"] == [4242]
+    assert out["status_code"] == 3
+    assert out["two_fa_enrollment_state"] == "required"
+    # PII is redacted.
+    for key in (
+        "portfolio_name",
+        "company_email",
+        "company_primary_address_1",
+        "current_payment_last_four",
+        "two_fa_phone_number_last_four",
+        "description",
+    ):
+        assert out[key] == "<redacted>", key
