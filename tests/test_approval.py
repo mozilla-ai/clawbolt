@@ -22,6 +22,7 @@ from backend.app.agent.approval import (
     reset_approval_gate,
 )
 from backend.app.agent.concurrency import user_locks
+from backend.app.agent.context import _is_approval_prompt
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.ingestion import (
     InboundMessage,
@@ -433,8 +434,6 @@ class TestFormatApprovalMessage:
         """The blanket option must be inserted before the "never" line so
         context.py can still identify stored approval prompts in history by
         their trailing menu line (issue #1049 filter)."""
-        from backend.app.agent.context import _is_approval_prompt
-
         msg = format_approval_message(
             "qb_send",
             "Send Invoice to alice@example.com via QuickBooks",

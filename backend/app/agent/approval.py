@@ -869,7 +869,7 @@ _APPROVAL_RESPONSE_FAST_PATH: dict[str, ApprovalDecision] = {
     "always y": ApprovalDecision.ALWAYS_ALLOW,
     "always allow": ApprovalDecision.ALWAYS_ALLOW,
     "allow always": ApprovalDecision.ALWAYS_ALLOW,
-    # Blanket tool-level allow ("always all") -- only offered for tools that
+    # Blanket tool-level allow ("always all"). Only offered for tools that
     # scope by a resource (e.g. invoice recipients). Stored as a tool-level
     # ALWAYS so every resource is covered, not just the one in front of the
     # user. Conservative phrasings only; anything else falls to the LLM.
