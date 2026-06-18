@@ -22,6 +22,7 @@ from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.approval import (
+    AMBIGUOUS_APPROVAL_REPLY,
     ApprovalDecision,
     _parse_approval_response,
     classify_approval_response,
@@ -796,7 +797,48 @@ async def process_inbound_from_bus(
             )
             decision = await classify_approval_response(inbound.text)
 
-        if decision is not None:
+        if decision == AMBIGUOUS_APPROVAL_REPLY:
+            # Short filler ("lol", "huh", "ok wait") is neither a yes/no nor a
+            # new request. Re-prompt for a clear decision and leave the gate
+            # pending, so a batched multi-tool approval is not aborted partway
+            # through (which would leave e.g. a multi-day reschedule applied to
+            # only some of its events).
+            clarification = gate.note_ambiguous_reply(user.id)
+            if clarification is not None:
+                from backend.app.bus import OutboundMessage, message_bus
+
+                reprompt = "Sorry, I didn't catch that as a yes or no.\n\n" + clarification
+                logger.info(
+                    "Ambiguous approval reply from user %s (%r); re-prompting",
+                    user.id,
+                    inbound.text[:100],
+                )
+                # Webchat replies carry a request_id whose SSE stream must be
+                # closed; messaging channels (no request_id) get the re-prompt
+                # pushed as a normal outbound message.
+                if inbound.request_id:
+                    message_bus.resolve_response(
+                        inbound.request_id,
+                        OutboundMessage(
+                            channel=inbound.channel,
+                            chat_id=inbound.sender_id,
+                            content=reprompt,
+                        ),
+                    )
+                else:
+                    await message_bus.publish_outbound(
+                        OutboundMessage(
+                            channel=inbound.channel,
+                            chat_id=inbound.sender_id,
+                            content=reprompt,
+                        )
+                    )
+                return
+            # Re-prompt cap reached: stop nagging and treat the next ambiguous
+            # reply as a genuine interruption via the fall-through path below.
+            decision = None
+
+        if isinstance(decision, ApprovalDecision):
             # The body is intentionally not persisted as a Message row (see
             # the explanatory block below). That makes it invisible to any
             # later audit query unless we leave a single visible breadcrumb

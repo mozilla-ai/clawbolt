@@ -118,6 +118,20 @@ class ApprovalDecision(StrEnum):
     INTERRUPTED = "interrupted"
 
 
+# Sentinel returned by ``classify_approval_response`` when a reply is short
+# filler ("lol", "haha", "ok wait") that is neither a clear yes/no nor a clear
+# new request. The caller re-prompts for a clear decision instead of resolving
+# the gate as INTERRUPTED, which would abort the rest of a batched approval and
+# leave a multi-event action (e.g. rescheduling a multi-day job) half-applied.
+AMBIGUOUS_APPROVAL_REPLY: Literal["ambiguous"] = "ambiguous"
+
+# How many times a single pending approval may be re-prompted after ambiguous
+# replies before we give up and treat the next ambiguous reply as a genuine
+# interruption. Keeps a user who keeps sending filler from looping forever; the
+# approval timeout is the outer bound.
+_MAX_APPROVAL_REPROMPTS = 2
+
+
 # ---------------------------------------------------------------------------
 # ApprovalPolicy (attached to Tool definitions)
 # ---------------------------------------------------------------------------
@@ -417,6 +431,11 @@ class PendingApproval:
     description: str
     event: asyncio.Event = field(default_factory=asyncio.Event)
     decision: ApprovalDecision | None = None
+    # The exact prompt text the user was shown, kept so an ambiguous reply can
+    # be answered by re-sending it (see ``note_ambiguous_reply``).
+    prompt: str = ""
+    # Number of times this approval has been re-prompted after ambiguous replies.
+    reprompt_count: int = 0
 
 
 class ApprovalGate:
@@ -433,6 +452,26 @@ class ApprovalGate:
     def has_pending(self, user_id: str) -> bool:
         """Return True if there is a pending approval for this user."""
         return user_id in self._pending
+
+    def note_ambiguous_reply(self, user_id: str) -> str | None:
+        """Record an ambiguous reply against a pending approval.
+
+        Returns the prompt text to re-send so the caller can ask the user
+        for a clear yes/no, leaving the approval pending. Returns ``None``
+        when there is no pending approval or the re-prompt cap has been
+        reached, in which case the caller should fall back to resolving the
+        gate as INTERRUPTED.
+
+        Re-prompting (instead of interrupting) keeps a batched multi-tool
+        approval intact when the user replies with filler like "lol" partway
+        through: the blocked agent loop stays waiting for a real decision
+        rather than aborting the batch and leaving it half-applied.
+        """
+        pending = self._pending.get(user_id)
+        if pending is None or pending.reprompt_count >= _MAX_APPROVAL_REPROMPTS:
+            return None
+        pending.reprompt_count += 1
+        return pending.prompt
 
     async def request_approval(
         self,
@@ -482,6 +521,7 @@ class ApprovalGate:
 
         if prompt is None:
             prompt = format_approval_message(tool_name, description)
+        pending.prompt = prompt
         try:
             await publish_outbound(
                 OutboundMessage(channel=channel, chat_id=chat_id, content=prompt)
@@ -857,27 +897,36 @@ def _parse_approval_response(text: str) -> ApprovalDecision | None:
     return _APPROVAL_RESPONSE_FAST_PATH.get(normalized)
 
 
-async def classify_approval_response(text: str) -> ApprovalDecision | None:
+async def classify_approval_response(
+    text: str,
+) -> ApprovalDecision | Literal["ambiguous"] | None:
     """Classify a natural-language approval response using an LLM.
 
     Called when ``_parse_approval_response()`` returns None but an approval
     gate is pending. Uses structured output to resolve ambiguous responses
     like "Yes to both", "go ahead", "sure thing", etc.
 
-    Returns None if the LLM call fails or the response is not approval-related.
+    Returns ``AMBIGUOUS_APPROVAL_REPLY`` for short filler ("lol", "huh", "ok
+    wait") that is neither a clear yes/no nor a clear new request: the caller
+    re-prompts instead of interrupting the pending batch. Returns ``None`` if
+    the LLM call fails or the message is a clear, unrelated new request.
     """
 
     class ApprovalClassification(BaseModel):
         """Structured classification of a user's approval response."""
 
-        decision: Literal["approved", "denied", "always_allow", "always_deny", "unrelated"] = Field(
+        decision: Literal[
+            "approved", "denied", "always_allow", "always_deny", "ambiguous", "unrelated"
+        ] = Field(
             description=(
                 "Classify the user's message: "
                 "'approved' if they are saying yes/agreeing, "
                 "'denied' if they are saying no/refusing, "
                 "'always_allow' if they want to always allow (e.g. 'always', 'always yes'), "
                 "'always_deny' if they want to always deny (e.g. 'never', 'never allow'), "
-                "'unrelated' if the message is not an approval response at all"
+                "'ambiguous' if the message is short filler or unclear (e.g. 'lol', 'haha', "
+                "'hmm', 'wait', 'huh') that is neither a clear yes/no nor a clear new request, "
+                "'unrelated' if the message is a clear new request or a clear change of subject"
             )
         )
 
@@ -900,7 +949,10 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
                             "yes (allow this once), no (deny this once), "
                             "always (allow and remember), never (deny and remember). "
                             "Classify their response into one of: approved, denied, "
-                            "always_allow, always_deny, unrelated."
+                            "always_allow, always_deny, ambiguous, unrelated. "
+                            "Use 'ambiguous' for short filler or unclear replies that do "
+                            "not commit to yes or no and are not a new request; the user "
+                            "will be asked to clarify."
                         ),
                     },
                     {"role": "user", "content": text},
@@ -910,9 +962,9 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
                 # No ``temperature``: claude-opus-4-7 (and newer Anthropic
                 # models) return 400 ``temperature is deprecated for this
                 # model``, which made every fuzzy approval response fall
-                # through to the INTERRUPTED fallback in prod. The 5-value
-                # enum via ``response_format`` already constrains the output;
-                # temperature has no meaningful effect on it.
+                # through to the INTERRUPTED fallback in prod. The
+                # six-value enum via ``response_format`` already constrains the
+                # output; temperature has no meaningful effect on it.
             ),
         )
     except Exception:
@@ -933,9 +985,12 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
     result = decision_map.get(parsed.decision)
     if result is not None:
         logger.info("LLM classified approval response %r as %s", text[:100], result)
-    else:
-        logger.info("LLM classified response %r as unrelated to approval", text[:100])
-    return result
+        return result
+    if parsed.decision == "ambiguous":
+        logger.info("LLM classified approval response %r as ambiguous (will re-prompt)", text[:100])
+        return AMBIGUOUS_APPROVAL_REPLY
+    logger.info("LLM classified response %r as unrelated to approval", text[:100])
+    return None
 
 
 def format_approval_message(tool_name: str, description: str) -> str:

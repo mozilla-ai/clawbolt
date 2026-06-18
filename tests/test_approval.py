@@ -8,6 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.approval import (
+    AMBIGUOUS_APPROVAL_REPLY,
     ApprovalDecision,
     ApprovalGate,
     ApprovalPolicy,
@@ -28,7 +29,7 @@ from backend.app.agent.ingestion import (
     process_inbound_from_bus,
 )
 from backend.app.agent.tools.base import Tool, ToolResult
-from backend.app.bus import OutboundMessage
+from backend.app.bus import OutboundMessage, message_bus
 from backend.app.database import db_session_async
 from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
@@ -758,6 +759,40 @@ class TestApprovalGate:
         )
         await task
 
+    @pytest.mark.asyncio()
+    async def test_note_ambiguous_reply_returns_prompt_then_caps(self) -> None:
+        """note_ambiguous_reply returns the prompt until the re-prompt cap."""
+        gate = ApprovalGate()
+        # No pending approval -> nothing to re-prompt.
+        assert gate.note_ambiguous_reply("1") is None
+
+        mock_publish = AsyncMock()
+
+        async def _drive() -> None:
+            await _await_pending(gate, "1")
+            # First two ambiguous replies return the stored prompt to re-send.
+            first = gate.note_ambiguous_reply("1")
+            assert first is not None
+            assert "yes" in first.lower()
+            assert gate.note_ambiguous_reply("1") is not None
+            # Third one is over the cap: caller should fall back to INTERRUPTED.
+            assert gate.note_ambiguous_reply("1") is None
+            # Gate is still pending the whole time -- re-prompting never resolves it.
+            assert gate.has_pending("1")
+            await gate.resolve("1", ApprovalDecision.APPROVED)
+
+        task = asyncio.create_task(_drive())
+        await gate.request_approval(
+            user_id="1",
+            tool_name="t",
+            description="d",
+            publish_outbound=mock_publish,
+            channel="telegram",
+            chat_id="c",
+            timeout=5.0,
+        )
+        await task
+
 
 # ---------------------------------------------------------------------------
 # Agent integration
@@ -1249,6 +1284,132 @@ class TestIngestionIntercept:
         assert not gate.has_pending(test_user.id)
 
     @pytest.mark.asyncio()
+    async def test_ambiguous_reply_reprompts_and_keeps_gate_pending(self, test_user: User) -> None:
+        """Filler like "lol" re-prompts without interrupting the batch.
+
+        Regression for the calendar partial-apply bug: an ambiguous reply
+        during a batched approval used to resolve the gate as INTERRUPTED,
+        aborting the rest of the batch. It should instead re-prompt for a
+        clear yes/no and leave the gate pending.
+        """
+        gate = get_approval_gate()
+        mock_publish = AsyncMock()
+
+        async def _start_approval() -> ApprovalDecision:
+            return await gate.request_approval(
+                user_id=test_user.id,
+                tool_name="calendar_update_event",
+                description="Update calendar event: Day 4",
+                publish_outbound=mock_publish,
+                channel="telegram",
+                chat_id="chat_1",
+                timeout=5.0,
+            )
+
+        approval_task = asyncio.create_task(_start_approval())
+        await _await_pending(gate, test_user.id)
+
+        inbound = InboundMessage(
+            channel="telegram",
+            sender_id=str(test_user.id),
+            text="lol",
+        )
+
+        mock_batcher = AsyncMock()
+        with (
+            patch(
+                "backend.app.agent.ingestion._get_or_create_user",
+                new_callable=AsyncMock,
+                return_value=test_user,
+            ),
+            patch(
+                "backend.app.agent.ingestion.classify_approval_response",
+                new_callable=AsyncMock,
+                return_value=AMBIGUOUS_APPROVAL_REPLY,
+            ),
+            patch(
+                "backend.app.agent.ingestion.message_batcher",
+                mock_batcher,
+            ),
+            patch.object(message_bus, "publish_outbound", new_callable=AsyncMock) as mock_out,
+        ):
+            await process_inbound_from_bus(inbound)
+
+            # The gate stays pending: the blocked agent loop is still waiting.
+            assert gate.has_pending(test_user.id)
+            # The user got a re-prompt asking for a clear yes/no.
+            mock_out.assert_called_once()
+            sent: OutboundMessage = mock_out.call_args.args[0]
+            assert sent.content.startswith("Sorry, I didn't catch that")
+            assert "yes" in sent.content.lower()
+            # The filler message was NOT dispatched to the pipeline.
+            mock_batcher.enqueue.assert_not_called()
+
+            # A clear "yes" now resolves the still-pending gate.
+            await gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+
+        decision = await approval_task
+        assert decision == ApprovalDecision.APPROVED
+        assert not gate.has_pending(test_user.id)
+
+    @pytest.mark.asyncio()
+    async def test_repeated_ambiguous_replies_eventually_interrupt(self, test_user: User) -> None:
+        """After the re-prompt cap, an ambiguous reply falls back to INTERRUPTED."""
+        gate = get_approval_gate()
+        mock_publish = AsyncMock()
+
+        async def _start_approval() -> ApprovalDecision:
+            return await gate.request_approval(
+                user_id=test_user.id,
+                tool_name="calendar_update_event",
+                description="Update calendar event: Day 4",
+                publish_outbound=mock_publish,
+                channel="telegram",
+                chat_id="chat_1",
+                timeout=5.0,
+            )
+
+        approval_task = asyncio.create_task(_start_approval())
+        await _await_pending(gate, test_user.id)
+
+        inbound = InboundMessage(
+            channel="telegram",
+            sender_id=str(test_user.id),
+            text="haha",
+        )
+
+        mock_batcher = AsyncMock()
+        with (
+            patch(
+                "backend.app.agent.ingestion._get_or_create_user",
+                new_callable=AsyncMock,
+                return_value=test_user,
+            ),
+            patch(
+                "backend.app.agent.ingestion.classify_approval_response",
+                new_callable=AsyncMock,
+                return_value=AMBIGUOUS_APPROVAL_REPLY,
+            ),
+            patch(
+                "backend.app.agent.ingestion.message_batcher",
+                mock_batcher,
+            ),
+            patch.object(message_bus, "publish_outbound", new_callable=AsyncMock),
+        ):
+            # First two ambiguous replies re-prompt; the gate stays pending.
+            await process_inbound_from_bus(inbound)
+            await process_inbound_from_bus(inbound)
+            assert gate.has_pending(test_user.id)
+            # The third one exceeds the cap and interrupts the batch instead.
+            await process_inbound_from_bus(inbound)
+
+        decision = await approval_task
+        assert decision == ApprovalDecision.INTERRUPTED
+        assert not gate.has_pending(test_user.id)
+        # The interrupting message falls through to the pipeline.
+        mock_batcher.enqueue.assert_called_once()
+
+    @pytest.mark.asyncio()
     async def test_message_with_attachments_is_not_eaten_as_approval(self, test_user: User) -> None:
         """A message with media attachments bypasses approval-eating.
 
@@ -1570,6 +1731,42 @@ class TestClassifyApprovalResponseCallShape:
         assert "response_format" in kwargs, (
             "response_format is what actually constrains the output to the enum"
         )
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize(
+        ("decision", "expected"),
+        [
+            ("approved", ApprovalDecision.APPROVED),
+            ("denied", ApprovalDecision.DENIED),
+            ("always_allow", ApprovalDecision.ALWAYS_ALLOW),
+            ("always_deny", ApprovalDecision.ALWAYS_DENY),
+            ("ambiguous", AMBIGUOUS_APPROVAL_REPLY),
+            ("unrelated", None),
+        ],
+    )
+    async def test_classification_maps_to_expected_result(
+        self, decision: str, expected: object
+    ) -> None:
+        """Each classifier label maps to its decision; 'ambiguous' re-prompts."""
+        from pydantic import BaseModel as _BaseModel
+
+        class _Parsed(_BaseModel):
+            decision: str
+
+        mock_msg = AsyncMock()
+        mock_msg.parsed = _Parsed(decision=decision)
+        mock_choice = AsyncMock()
+        mock_choice.message = mock_msg
+        mock_response = AsyncMock()
+        mock_response.choices = [mock_choice]
+
+        with patch(
+            "backend.app.agent.approval.acompletion",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            result = await classify_approval_response("lol")
+
+        assert result == expected
 
 
 class TestApprovalEvents:
