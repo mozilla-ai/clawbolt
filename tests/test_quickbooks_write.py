@@ -511,6 +511,18 @@ async def test_qb_update_api_error() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_qb_send_policy_offers_blanket_recipient_approval() -> None:
+    """qb_send declares a resource_noun so the approval prompt can offer a
+    blanket "always all" option covering every recipient (issue #1451),
+    instead of asking the user to approve each email individually."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    tool = next(t for t in tools if t.name == "qb_send")
+    assert tool.approval_policy is not None
+    assert tool.approval_policy.resource_extractor is not None
+    assert tool.approval_policy.resource_noun == "recipients"
+
+
 @pytest.mark.asyncio()
 async def test_qb_send_invoice_success() -> None:
     svc = FakeQBService()

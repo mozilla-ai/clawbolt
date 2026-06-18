@@ -1029,7 +1029,20 @@ class ClawboltAgent:
                     )
                     decision = cached_decision
                 elif self._publish_outbound is not None and self._chat_id is not None:
-                    prompt = format_approval_message(tool_obj.name, description)
+                    # Offer the blanket "always all" option only when the tool
+                    # scopes by a resource (resource is not None) and its policy
+                    # opts in with a resource_noun. Picking it stores a
+                    # tool-level ALWAYS so the user is not re-prompted per
+                    # recipient/target.
+                    policy = tool_obj.approval_policy
+                    resource_noun = policy.resource_noun if policy is not None else None
+                    offer_blanket = resource is not None and resource_noun is not None
+                    prompt = format_approval_message(
+                        tool_obj.name,
+                        description,
+                        offer_blanket=offer_blanket,
+                        resource_noun=resource_noun,
+                    )
 
                     # We deliberately do not persist the approval prompt to the
                     # session here. Past attempts persisted it as an OUTBOUND
@@ -1066,12 +1079,40 @@ class ClawboltAgent:
                 else:
                     decision = ApprovalDecision.DENIED
 
-                if decision in (ApprovalDecision.APPROVED, ApprovalDecision.ALWAYS_ALLOW):
+                if decision in (
+                    ApprovalDecision.APPROVED,
+                    ApprovalDecision.ALWAYS_ALLOW,
+                    ApprovalDecision.ALWAYS_ALLOW_ALL,
+                ):
                     approved_entries.append(entry)
-                    if decision == ApprovalDecision.ALWAYS_ALLOW:
+                    # ALWAYS_ALLOW remembers just this resource; ALWAYS_ALLOW_ALL
+                    # remembers at the tool level (resource=None) so every
+                    # resource is covered. Resolution still lets a more specific
+                    # resource-level NEVER override the blanket ALWAYS later.
+                    if decision in (
+                        ApprovalDecision.ALWAYS_ALLOW,
+                        ApprovalDecision.ALWAYS_ALLOW_ALL,
+                    ):
+                        # The blanket grant is only honored for tools that
+                        # offered it (policy declares a resource_noun). The
+                        # "always all" keywords resolve globally, so without
+                        # this gate a typed "allow all" on a resource-scoped
+                        # tool that never showed the option (e.g. web_fetch)
+                        # would grant a broader permission than was advertised.
+                        # In that case, fall back to scoping the shown resource.
+                        policy = tool_obj.approval_policy
+                        supports_blanket = policy is not None and policy.resource_noun is not None
+                        persist_resource = (
+                            None
+                            if (decision == ApprovalDecision.ALWAYS_ALLOW_ALL and supports_blanket)
+                            else resource
+                        )
                         try:
                             await store.set_permission(
-                                self.user.id, tool_obj.name, PermissionLevel.ALWAYS, resource
+                                self.user.id,
+                                tool_obj.name,
+                                PermissionLevel.ALWAYS,
+                                persist_resource,
                             )
                         except Exception:
                             logger.warning("Failed to persist ALWAYS for tool %s", tool_obj.name)
