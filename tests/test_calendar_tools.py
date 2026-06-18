@@ -201,6 +201,33 @@ def test_check_availability_is_ask(cal_tools: list[Tool]) -> None:
     assert tool.approval_policy.default_level == PermissionLevel.ASK
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "expected_resource"),
+    [
+        (ToolName.CALENDAR_CREATE_EVENT, "create event"),
+        (ToolName.CALENDAR_UPDATE_EVENT, "update event"),
+        (ToolName.CALENDAR_DELETE_EVENT, "delete event"),
+    ],
+)
+def test_mutation_resource_is_coarse_not_per_event(
+    cal_tools: list[Tool], tool_name: str, expected_resource: str
+) -> None:
+    """Create/update/delete scope approvals per action type, not per event_id.
+
+    Regression for issue #1449: a per-event_id resource made "always allow"
+    (and the within-turn approval cache) miss for every other event in a
+    batch, so rescheduling a multi-day job re-prompted on each day even
+    after the user chose "always allow". A coarse resource fixes that and
+    keeps all three mutation tools consistent.
+    """
+    tool = _get_tool(cal_tools, tool_name)
+    assert tool.approval_policy is not None
+    assert tool.approval_policy.resource_extractor is not None
+    # Two different events resolve to the same resource, so one approval covers both.
+    assert tool.approval_policy.resource_extractor({"event_id": "evt-A"}) == expected_resource
+    assert tool.approval_policy.resource_extractor({"event_id": "evt-B"}) == expected_resource
+
+
 # ---------------------------------------------------------------------------
 # Description builders
 # ---------------------------------------------------------------------------

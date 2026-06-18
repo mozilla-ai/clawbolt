@@ -826,7 +826,12 @@ def create_calendar_tools(
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
-                resource_extractor=lambda args: f"update {args.get('event_id', '')}",
+                # Coarse resource (not per-event_id) so "always allow" and the
+                # within-turn approval cache apply to every update in a batch.
+                # Rescheduling a multi-day job is one update per day; a per-id
+                # resource re-prompted for every day even after "always allow"
+                # (issue #1449). Mirrors create_event's "create event".
+                resource_extractor=lambda args: "update event",
                 description_builder=lambda args: (
                     f"Update calendar event: {args['title']}"
                     if args.get("title")
@@ -849,7 +854,10 @@ def create_calendar_tools(
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
-                resource_extractor=lambda args: f"delete {args.get('event_id', '')}",
+                # Coarse resource (not per-event_id) so "always allow" and the
+                # within-turn approval cache apply to every delete in a batch,
+                # matching create_event/update_event (issue #1449).
+                resource_extractor=lambda args: "delete event",
                 description_builder=lambda args: "Delete a calendar event",
             ),
         ),
