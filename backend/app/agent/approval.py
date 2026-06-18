@@ -114,6 +114,7 @@ class ApprovalDecision(StrEnum):
     APPROVED = "approved"
     DENIED = "denied"
     ALWAYS_ALLOW = "always_allow"
+    ALWAYS_ALLOW_ALL = "always_allow_all"
     ALWAYS_DENY = "always_deny"
     INTERRUPTED = "interrupted"
 
@@ -148,11 +149,19 @@ class ApprovalPolicy:
         description_builder: Optional callable that produces a human-readable
             description of what the tool call will do, shown in the approval
             prompt.
+        resource_noun: Optional plural noun for the resources this tool scopes
+            by (e.g. "recipients" for an email-send tool, "domains" for a web
+            fetch). When set alongside ``resource_extractor``, the approval
+            prompt offers an extra "always all" option that grants a blanket
+            tool-level approval covering every resource, not just the one in
+            front of the user. Leave ``None`` to keep approvals strictly
+            per-resource.
     """
 
     default_level: PermissionLevel = PermissionLevel.ASK
     resource_extractor: Callable[[dict[str, Any]], str | None] | None = None
     description_builder: Callable[[dict[str, Any]], str] | None = None
+    resource_noun: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -860,6 +869,15 @@ _APPROVAL_RESPONSE_FAST_PATH: dict[str, ApprovalDecision] = {
     "always y": ApprovalDecision.ALWAYS_ALLOW,
     "always allow": ApprovalDecision.ALWAYS_ALLOW,
     "allow always": ApprovalDecision.ALWAYS_ALLOW,
+    # Blanket tool-level allow ("always all") -- only offered for tools that
+    # scope by a resource (e.g. invoice recipients). Stored as a tool-level
+    # ALWAYS so every resource is covered, not just the one in front of the
+    # user. Conservative phrasings only; anything else falls to the LLM.
+    "always all": ApprovalDecision.ALWAYS_ALLOW_ALL,
+    "all always": ApprovalDecision.ALWAYS_ALLOW_ALL,
+    "allow all": ApprovalDecision.ALWAYS_ALLOW_ALL,
+    "always everyone": ApprovalDecision.ALWAYS_ALLOW_ALL,
+    "always anyone": ApprovalDecision.ALWAYS_ALLOW_ALL,
     "no never": ApprovalDecision.ALWAYS_DENY,
     "never no": ApprovalDecision.ALWAYS_DENY,
     "n never": ApprovalDecision.ALWAYS_DENY,
@@ -916,13 +934,22 @@ async def classify_approval_response(
         """Structured classification of a user's approval response."""
 
         decision: Literal[
-            "approved", "denied", "always_allow", "always_deny", "ambiguous", "unrelated"
+            "approved",
+            "denied",
+            "always_allow",
+            "always_allow_all",
+            "always_deny",
+            "ambiguous",
+            "unrelated",
         ] = Field(
             description=(
                 "Classify the user's message: "
                 "'approved' if they are saying yes/agreeing, "
                 "'denied' if they are saying no/refusing, "
-                "'always_allow' if they want to always allow (e.g. 'always', 'always yes'), "
+                "'always_allow' if they want to always allow this specific target "
+                "(e.g. 'always', 'always yes'), "
+                "'always_allow_all' if they want to always allow this action for every "
+                "target, not just this one (e.g. 'always all', 'allow all', 'always everyone'), "
                 "'always_deny' if they want to always deny (e.g. 'never', 'never allow'), "
                 "'ambiguous' if the message is short filler or unclear (e.g. 'lol', 'haha', "
                 "'hmm', 'wait', 'huh') that is neither a clear yes/no nor a clear new request, "
@@ -945,11 +972,16 @@ async def classify_approval_response(
                         "role": "system",
                         "content": (
                             "The user was asked to approve or deny a tool action. "
-                            "They were shown a four-option menu: "
+                            "They were shown a menu: "
                             "yes (allow this once), no (deny this once), "
-                            "always (allow and remember), never (deny and remember). "
+                            "always (allow and remember this target), "
+                            "never (deny and remember). For actions that target a "
+                            "specific resource (such as an email recipient) they may "
+                            "also have seen 'always all' (allow and remember for every "
+                            "target, not just this one). "
                             "Classify their response into one of: approved, denied, "
-                            "always_allow, always_deny, ambiguous, unrelated. "
+                            "always_allow, always_allow_all, always_deny, ambiguous, "
+                            "unrelated. "
                             "Use 'ambiguous' for short filler or unclear replies that do "
                             "not commit to yes or no and are not a new request; the user "
                             "will be asked to clarify."
@@ -980,6 +1012,7 @@ async def classify_approval_response(
         "approved": ApprovalDecision.APPROVED,
         "denied": ApprovalDecision.DENIED,
         "always_allow": ApprovalDecision.ALWAYS_ALLOW,
+        "always_allow_all": ApprovalDecision.ALWAYS_ALLOW_ALL,
         "always_deny": ApprovalDecision.ALWAYS_DENY,
     }
     result = decision_map.get(parsed.decision)
@@ -993,23 +1026,46 @@ async def classify_approval_response(
     return None
 
 
-def format_approval_message(tool_name: str, description: str) -> str:
+def format_approval_message(
+    tool_name: str,
+    description: str,
+    *,
+    offer_blanket: bool = False,
+    resource_noun: str | None = None,
+) -> str:
     """Build a plain-text approval prompt for the user.
 
-    The four reply options are listed as a vertical menu so each choice
-    is unambiguous. A previous wording, ``"Reply yes or no
-    (always/never to remember your choice)"``, was misread by users as
-    a two-axis answer ("yes always" or "no never"); the menu form makes
-    it clear that exactly one of {yes, no, always, never} is the
-    expected response. The parser still accepts the compound forms in
-    case a user types one anyway.
+    The reply options are listed as a vertical menu so each choice is
+    unambiguous. A previous wording, ``"Reply yes or no (always/never to
+    remember your choice)"``, was misread by users as a two-axis answer
+    ("yes always" or "no never"); the menu form makes it clear that
+    exactly one option is the expected response. The parser still accepts
+    the compound forms in case a user types one anyway.
+
+    When *offer_blanket* is True (a resource-scoped tool whose policy
+    declares a ``resource_noun``), an extra "always all" option is shown
+    between "always" and "never". Picking it grants a tool-level approval
+    covering every resource, so the user is not re-prompted for each new
+    recipient/target. The "always" line stays scoped to the one in front
+    of them. ``resource_noun`` (e.g. "recipients") fills the wording; it
+    falls back to "of them" when not supplied.
+
+    The "never: deny and remember" line stays last on purpose:
+    ``context.py`` identifies stored approval prompts in history by that
+    trailing line, so the blanket option must be inserted before it.
     """
+    blanket_line = ""
+    if offer_blanket:
+        noun = resource_noun or "of them"
+        blanket_line = f"  always all: allow for all {noun} and remember\n"
+
     return (
         f"I'd like to: {description}\n\n"
         "Reply with one of:\n"
         "  yes: allow this once\n"
         "  no: deny this once\n"
         "  always: allow and remember\n"
+        f"{blanket_line}"
         "  never: deny and remember"
     )
 
