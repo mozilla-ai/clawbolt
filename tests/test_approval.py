@@ -22,6 +22,7 @@ from backend.app.agent.approval import (
     reset_approval_gate,
 )
 from backend.app.agent.concurrency import user_locks
+from backend.app.agent.context import _is_approval_prompt
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.ingestion import (
     InboundMessage,
@@ -298,6 +299,27 @@ class TestParseApprovalResponse:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
+            # Blanket "always all" replies grant a tool-level approval that
+            # covers every resource (e.g. all invoice recipients), not just
+            # the one in front of the user. These resolve at the fast path.
+            ("always all", ApprovalDecision.ALWAYS_ALLOW_ALL),
+            ("Always all", ApprovalDecision.ALWAYS_ALLOW_ALL),
+            ("all always", ApprovalDecision.ALWAYS_ALLOW_ALL),
+            ("allow all", ApprovalDecision.ALWAYS_ALLOW_ALL),
+            ("always everyone", ApprovalDecision.ALWAYS_ALLOW_ALL),
+            ("always anyone", ApprovalDecision.ALWAYS_ALLOW_ALL),
+            ("always all.", ApprovalDecision.ALWAYS_ALLOW_ALL),  # punctuation stripped
+            ("always  all", ApprovalDecision.ALWAYS_ALLOW_ALL),  # whitespace collapsed
+        ],
+    )
+    def test_blanket_allow_all_responses(self, text: str, expected: ApprovalDecision) -> None:
+        """ "always all" and its natural variants resolve to a blanket
+        tool-level approval at the fast path, not the LLM classifier."""
+        assert _parse_approval_response(text) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
             # Trailing punctuation users type out of habit. All these
             # should route through the fast path, not the LLM classifier.
             ("Yes.", ApprovalDecision.APPROVED),
@@ -385,6 +407,41 @@ class TestFormatApprovalMessage:
         msg = format_approval_message("any_tool", "do the thing")
         assert "—" not in msg  # em dash
         assert " -- " not in msg  # double-hyphen approximation
+
+    def test_blanket_option_absent_by_default(self) -> None:
+        """The "always all" line only appears when explicitly offered."""
+        msg = format_approval_message("any_tool", "do the thing")
+        assert "always all" not in msg
+
+    def test_blanket_option_shown_with_noun(self) -> None:
+        """offer_blanket adds an "always all" line using the resource noun."""
+        msg = format_approval_message(
+            "qb_send",
+            "Send Invoice to alice@example.com via QuickBooks",
+            offer_blanket=True,
+            resource_noun="recipients",
+        )
+        assert "  always all: allow for all recipients and remember" in msg
+        # The per-target "always" line is still there and distinct.
+        assert "  always: allow and remember" in msg
+
+    def test_blanket_option_falls_back_when_noun_missing(self) -> None:
+        """Without a resource noun the line uses a generic phrasing."""
+        msg = format_approval_message("some_tool", "do it", offer_blanket=True)
+        assert "  always all: allow for all of them and remember" in msg
+
+    def test_blanket_prompt_keeps_never_as_trailer(self) -> None:
+        """The blanket option must be inserted before the "never" line so
+        context.py can still identify stored approval prompts in history by
+        their trailing menu line (issue #1049 filter)."""
+        msg = format_approval_message(
+            "qb_send",
+            "Send Invoice to alice@example.com via QuickBooks",
+            offer_blanket=True,
+            resource_noun="recipients",
+        )
+        assert msg.rstrip().endswith("never: deny and remember")
+        assert _is_approval_prompt(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -998,6 +1055,187 @@ class TestAgentApproval:
         store = get_approval_store()
         level = await store.check_permission(test_user.id, "fetcher")
         assert level == PermissionLevel.ALWAYS
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
+    async def test_always_allow_all_persists_tool_level_for_every_resource(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """'always all' on a resource-scoped tool persists a tool-level ALWAYS.
+
+        Regression for the QuickBooks invoice-send complaint (issue #1451):
+        approving one recipient with the blanket option must auto-approve a
+        DIFFERENT recipient too, instead of re-prompting per email.
+        """
+        mock_publish = AsyncMock()
+
+        tool = Tool(
+            name="fetcher",
+            description="Fetch URL",
+            function=_fetch_tool,
+            params_model=_UrlParams,
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_domain,
+                description_builder=_describe_fetch,
+                resource_noun="domains",
+            ),
+        )
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [{"name": "fetcher", "arguments": {"url": "https://example.com"}}]
+            ),
+            make_text_response("Done!"),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _always_all_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            await gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW_ALL)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools([tool])
+
+        task = asyncio.create_task(_always_all_soon())
+        await agent.process_message("fetch example.com")
+        await task
+
+        store = get_approval_store()
+        # Stored at the tool level (resource=None), so a brand-new resource
+        # the user never saw is already approved.
+        assert await store.check_permission(test_user.id, "fetcher") == PermissionLevel.ALWAYS
+        assert (
+            await store.check_permission(test_user.id, "fetcher", resource="other.com")
+            == PermissionLevel.ALWAYS
+        )
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
+    async def test_always_allow_all_does_not_escalate_when_tool_opted_out(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """A blanket decision must not grant more than the tool offered.
+
+        The "always all" keywords resolve globally, but only tools that
+        declare a resource_noun show the option. A resource-scoped tool that
+        opted out (no resource_noun) must scope the grant to the shown
+        resource, so a typed "allow all" cannot silently allow every target.
+        """
+        mock_publish = AsyncMock()
+
+        tool = Tool(
+            name="fetcher",
+            description="Fetch URL",
+            function=_fetch_tool,
+            params_model=_UrlParams,
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_domain,
+                description_builder=_describe_fetch,
+                # No resource_noun: this tool never offers the blanket option.
+            ),
+        )
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [{"name": "fetcher", "arguments": {"url": "https://example.com"}}]
+            ),
+            make_text_response("Done!"),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _always_all_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            await gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW_ALL)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools([tool])
+
+        task = asyncio.create_task(_always_all_soon())
+        await agent.process_message("fetch example.com")
+        await task
+
+        store = get_approval_store()
+        # Scoped to the shown resource only; a different one still asks.
+        assert (
+            await store.check_permission(test_user.id, "fetcher", resource="example.com")
+            == PermissionLevel.ALWAYS
+        )
+        assert (
+            await store.check_permission(test_user.id, "fetcher", resource="other.com")
+            == PermissionLevel.ASK
+        )
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
+    async def test_always_allow_scopes_to_single_resource(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """Contrast with the blanket option: plain 'always' on a resource-scoped
+        tool only remembers the one resource, so a different one still asks."""
+        mock_publish = AsyncMock()
+
+        tool = Tool(
+            name="fetcher",
+            description="Fetch URL",
+            function=_fetch_tool,
+            params_model=_UrlParams,
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_domain,
+                description_builder=_describe_fetch,
+                resource_noun="domains",
+            ),
+        )
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [{"name": "fetcher", "arguments": {"url": "https://example.com"}}]
+            ),
+            make_text_response("Done!"),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _always_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            await gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools([tool])
+
+        task = asyncio.create_task(_always_soon())
+        await agent.process_message("fetch example.com")
+        await task
+
+        store = get_approval_store()
+        assert (
+            await store.check_permission(test_user.id, "fetcher", resource="example.com")
+            == PermissionLevel.ALWAYS
+        )
+        # A different recipient/domain was never approved, so it still asks.
+        assert (
+            await store.check_permission(test_user.id, "fetcher", resource="other.com")
+            == PermissionLevel.ASK
+        )
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -1739,6 +1977,7 @@ class TestClassifyApprovalResponseCallShape:
             ("approved", ApprovalDecision.APPROVED),
             ("denied", ApprovalDecision.DENIED),
             ("always_allow", ApprovalDecision.ALWAYS_ALLOW),
+            ("always_allow_all", ApprovalDecision.ALWAYS_ALLOW_ALL),
             ("always_deny", ApprovalDecision.ALWAYS_DENY),
             ("ambiguous", AMBIGUOUS_APPROVAL_REPLY),
             ("unrelated", None),

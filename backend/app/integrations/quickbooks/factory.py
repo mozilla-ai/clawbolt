@@ -764,6 +764,9 @@ def create_quickbooks_tools(
                     f"Send {args.get('entity_type', 'entity')} "
                     f"to {args.get('email', 'recipient')} via QuickBooks"
                 ),
+                # Lets the user grant a blanket "always all" approval covering
+                # every recipient instead of approving each email separately.
+                resource_noun="recipients",
             ),
         ),
     ]
