@@ -1119,6 +1119,69 @@ class TestAgentApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
+    async def test_always_allow_all_does_not_escalate_when_tool_opted_out(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """A blanket decision must not grant more than the tool offered.
+
+        The "always all" keywords resolve globally, but only tools that
+        declare a resource_noun show the option. A resource-scoped tool that
+        opted out (no resource_noun) must scope the grant to the shown
+        resource, so a typed "allow all" cannot silently allow every target.
+        """
+        mock_publish = AsyncMock()
+
+        tool = Tool(
+            name="fetcher",
+            description="Fetch URL",
+            function=_fetch_tool,
+            params_model=_UrlParams,
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_domain,
+                description_builder=_describe_fetch,
+                # No resource_noun: this tool never offers the blanket option.
+            ),
+        )
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [{"name": "fetcher", "arguments": {"url": "https://example.com"}}]
+            ),
+            make_text_response("Done!"),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _always_all_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            await gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW_ALL)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools([tool])
+
+        task = asyncio.create_task(_always_all_soon())
+        await agent.process_message("fetch example.com")
+        await task
+
+        store = get_approval_store()
+        # Scoped to the shown resource only; a different one still asks.
+        assert (
+            await store.check_permission(test_user.id, "fetcher", resource="example.com")
+            == PermissionLevel.ALWAYS
+        )
+        assert (
+            await store.check_permission(test_user.id, "fetcher", resource="other.com")
+            == PermissionLevel.ASK
+        )
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
     async def test_always_allow_scopes_to_single_resource(
         self, mock_amessages: object, test_user: User
     ) -> None:

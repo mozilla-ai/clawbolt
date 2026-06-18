@@ -1089,22 +1089,33 @@ class ClawboltAgent:
                     # remembers at the tool level (resource=None) so every
                     # resource is covered. Resolution still lets a more specific
                     # resource-level NEVER override the blanket ALWAYS later.
-                    if decision == ApprovalDecision.ALWAYS_ALLOW:
+                    if decision in (
+                        ApprovalDecision.ALWAYS_ALLOW,
+                        ApprovalDecision.ALWAYS_ALLOW_ALL,
+                    ):
+                        # The blanket grant is only honored for tools that
+                        # offered it (policy declares a resource_noun). The
+                        # "always all" keywords resolve globally, so without
+                        # this gate a typed "allow all" on a resource-scoped
+                        # tool that never showed the option (e.g. web_fetch)
+                        # would grant a broader permission than was advertised.
+                        # In that case, fall back to scoping the shown resource.
+                        policy = tool_obj.approval_policy
+                        supports_blanket = policy is not None and policy.resource_noun is not None
+                        persist_resource = (
+                            None
+                            if (decision == ApprovalDecision.ALWAYS_ALLOW_ALL and supports_blanket)
+                            else resource
+                        )
                         try:
                             await store.set_permission(
-                                self.user.id, tool_obj.name, PermissionLevel.ALWAYS, resource
+                                self.user.id,
+                                tool_obj.name,
+                                PermissionLevel.ALWAYS,
+                                persist_resource,
                             )
                         except Exception:
                             logger.warning("Failed to persist ALWAYS for tool %s", tool_obj.name)
-                    elif decision == ApprovalDecision.ALWAYS_ALLOW_ALL:
-                        try:
-                            await store.set_permission(
-                                self.user.id, tool_obj.name, PermissionLevel.ALWAYS, resource=None
-                            )
-                        except Exception:
-                            logger.warning(
-                                "Failed to persist ALWAYS (all) for tool %s", tool_obj.name
-                            )
 
                 elif decision == ApprovalDecision.INTERRUPTED:
                     # User changed subject. Error this entry + all remaining.
