@@ -886,6 +886,149 @@ async def test_agent_trims_history_when_exceeding_token_limit(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
+async def test_agent_records_full_prompt_size_including_cached_tokens(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """The recorded prompt size must include cache-read and cache-creation
+    tokens, not just ``usage.input_tokens``.
+
+    With prompt caching, ``usage.input_tokens`` counts only the uncached
+    slice of the prompt. Recording it alone makes the trim governor read
+    a mostly-cached 180k-token context as 7k, so the token trigger never
+    fires and compaction goes quiet for token-heavy, turn-light users.
+    """
+    from backend.app.agent.core import _recall_input_tokens, reset_last_input_tokens
+
+    reset_last_input_tokens()
+    mock_amessages.return_value = make_text_response(
+        "Ok!",
+        input_tokens=7_000,
+        output_tokens=10,
+        cache_creation_input_tokens=3_000,
+        cache_read_input_tokens=170_000,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    await agent.process_message("Current message")
+
+    assert agent._last_input_tokens == 180_000
+    assert _recall_input_tokens(test_user.id) == 180_000
+    reset_last_input_tokens()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_token_trim_fires_on_cached_heavy_context(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """The proactive token trim must fire when the prompt is over the
+    trigger but mostly served from the prompt cache.
+
+    First turn: the API reports 7k uncached + 173k cached tokens (a 180k
+    prompt, over the 150k trigger). Second turn: the proactive trim at the
+    top of ``process_message`` must drop history and inject a summary.
+    Recording only the uncached 7k would leave the history untrimmed.
+    """
+    from backend.app.agent.core import reset_last_input_tokens
+
+    reset_last_input_tokens()
+    mock_amessages.return_value = make_text_response(
+        "Ok!",
+        input_tokens=7_000,
+        output_tokens=10,
+        cache_creation_input_tokens=3_000,
+        cache_read_input_tokens=170_000,
+    )
+    # Turn-light history: far below the turn backstop, so only the token
+    # trigger can cause a trim.
+    history = _build_turn_history(turn_pairs=30)
+
+    agent = ClawboltAgent(user=test_user)
+    with (
+        patch("backend.app.agent.core.settings.context_trim_target_tokens", 120_000),
+        patch("backend.app.agent.core.settings.context_trim_trigger_tokens", 150_000),
+    ):
+        await agent.process_message(
+            "First message",
+            conversation_history=history,
+            system_prompt_override="Short system prompt",
+        )
+        first_sent = mock_amessages.call_args.kwargs["messages"]
+        # First turn has no recorded count; the chars/4 heuristic keeps
+        # this small history untrimmed.
+        assert "[Summary of earlier conversation:" not in first_sent[0]["content"]
+
+        await agent.process_message(
+            "Second message",
+            conversation_history=history,
+            system_prompt_override="Short system prompt",
+        )
+
+    second_sent = mock_amessages.call_args.kwargs["messages"]
+    assert "[Summary of earlier conversation:" in second_sent[0]["content"]
+    assert len(second_sent) < len(first_sent)
+    reset_last_input_tokens()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_reactive_trim_drops_messages_on_cached_heavy_context(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """The ``ContextLengthExceededError`` retry trim must actually drop
+    messages when the last prompt was mostly cached.
+
+    The retry path trims with ``input_tokens=self._last_input_tokens``.
+    If that recorded only the uncached 7k slice of a 180k prompt, the
+    trimmer sees 7k < target, drops nothing, and the retry re-sends the
+    same oversized prompt until retries exhaust and the turn fails.
+    """
+    from backend.app.agent.core import reset_last_input_tokens
+
+    reset_last_input_tokens()
+    mock_amessages.side_effect = [
+        make_text_response(
+            "Ok!",
+            input_tokens=7_000,
+            output_tokens=10,
+            cache_creation_input_tokens=3_000,
+            cache_read_input_tokens=170_000,
+        ),
+        ContextLengthExceededError("Input too long"),
+        make_text_response("Recovered!"),
+    ]
+    history = _build_turn_history(turn_pairs=30)
+
+    agent = ClawboltAgent(user=test_user)
+    # Disable the proactive trim so this test isolates the reactive path.
+    with (
+        patch("backend.app.agent.core.settings.context_trim_target_tokens", 900_000),
+        patch("backend.app.agent.core.settings.context_trim_trigger_tokens", 1_000_000),
+    ):
+        await agent.process_message(
+            "First message",
+            conversation_history=history,
+            system_prompt_override="Short system prompt",
+        )
+        response = await agent.process_message(
+            "Second message",
+            conversation_history=history,
+            system_prompt_override="Short system prompt",
+        )
+
+    assert response.reply_text == "Recovered!"
+    assert mock_amessages.call_count == 3
+    failed_attempt = mock_amessages.call_args_list[1].kwargs["messages"]
+    retry_attempt = mock_amessages.call_args_list[2].kwargs["messages"]
+    assert len(retry_attempt) < len(failed_attempt)
+    reset_last_input_tokens()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
 async def test_agent_raises_content_filter_error(
     mock_amessages: AsyncMock,
     test_user: User,

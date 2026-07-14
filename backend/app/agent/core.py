@@ -109,7 +109,9 @@ _VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "s
 
 _LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
 
-# Last API-reported input token count per user, surviving across agent
+# Last API-reported prompt size per user (input + cache-read +
+# cache-creation tokens, since ``usage.input_tokens`` alone excludes the
+# cached slice under prompt caching), surviving across agent
 # instances. A fresh ClawboltAgent is constructed per message, so without
 # this the proactive trim at the top of ``process_message`` always falls
 # back to the chars/4 + flat-overhead heuristic, which ignores tool
@@ -123,7 +125,7 @@ _LAST_INPUT_TOKENS_MAX = 1024
 
 
 def _remember_input_tokens(user_id: str, tokens: int) -> None:
-    """Record the latest API-reported input token count for *user_id*."""
+    """Record the latest full prompt token count for *user_id*."""
     _LAST_INPUT_TOKENS[user_id] = tokens
     _LAST_INPUT_TOKENS.move_to_end(user_id)
     while len(_LAST_INPUT_TOKENS) > _LAST_INPUT_TOKENS_MAX:
@@ -131,7 +133,7 @@ def _remember_input_tokens(user_id: str, tokens: int) -> None:
 
 
 def _recall_input_tokens(user_id: str) -> int | None:
-    """Return the last reported input token count for *user_id*, if any."""
+    """Return the last recorded prompt token count for *user_id*, if any."""
     return _LAST_INPUT_TOKENS.get(user_id)
 
 
@@ -1331,12 +1333,20 @@ class ClawboltAgent:
                 provider=self._llm_provider_override or settings.llm_provider,
             )
             if response.usage and response.usage.input_tokens:
-                self._last_input_tokens = response.usage.input_tokens
-                _remember_input_tokens(self.user.id, response.usage.input_tokens)
-                _total_input_tokens += response.usage.input_tokens
-                _total_output_tokens += response.usage.output_tokens or 0
                 cache_create = response.usage.cache_creation_input_tokens or 0
                 cache_read = response.usage.cache_read_input_tokens or 0
+                # With prompt caching, ``usage.input_tokens`` counts only the
+                # uncached slice of the prompt; the cached slice is reported
+                # in the two cache fields. The trim governor needs the full
+                # prompt size: recording the uncached slice alone reads a
+                # mostly-cached 165k-token context as ~7k, so the token
+                # trigger never fires and the ContextLengthExceededError
+                # retry trim no-ops.
+                prompt_tokens = response.usage.input_tokens + cache_create + cache_read
+                self._last_input_tokens = prompt_tokens
+                _remember_input_tokens(self.user.id, prompt_tokens)
+                _total_input_tokens += response.usage.input_tokens
+                _total_output_tokens += response.usage.output_tokens or 0
                 _total_cache_creation_tokens += cache_create
                 _total_cache_read_tokens += cache_read
                 logger.debug(

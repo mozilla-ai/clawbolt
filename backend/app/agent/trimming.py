@@ -120,8 +120,9 @@ def trim_messages(
 ) -> TrimResult:
     """Trim conversation messages to fit within a token and turn budget.
 
-    Uses *input_tokens* (from ``response.usage.input_tokens``) to make
-    accurate trimming decisions using the API-reported token count. When
+    Uses *input_tokens* (the API-reported full prompt size: uncached input
+    plus cache-read plus cache-creation tokens) to make accurate trimming
+    decisions. When
     *input_tokens* is ``None`` (e.g. first call in a session), a
     character-based heuristic (~4 chars/token + overhead) is used to
     estimate whether trimming is needed.
