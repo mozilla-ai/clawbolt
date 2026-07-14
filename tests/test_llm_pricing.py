@@ -27,6 +27,7 @@ from backend.app.services.llm_pricing import compute_cost, is_known_model
     [
         "claude-sonnet-4-6",
         "claude-opus-4-7",
+        "claude-opus-4-8",  # model deployed in prod; missing pricing here logs $0 usage rows
         "claude-haiku-4-5",
         "claude-haiku-4-5-20251001",  # dated alias prefix-matches
     ],
@@ -199,6 +200,7 @@ def test_known_anthropic_models_all_produce_nonzero_cost() -> None:
     for model in (
         "claude-sonnet-4-6",
         "claude-opus-4-7",
+        "claude-opus-4-8",  # model deployed in prod; guards against $0 usage rows
         "claude-haiku-4-5",
         "claude-haiku-4-5-20251001",
     ):
