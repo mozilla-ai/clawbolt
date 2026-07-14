@@ -1534,9 +1534,9 @@ name = "ibm-cos-sdk"
 version = "2.14.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ibm-cos-sdk-core" },
-    { name = "ibm-cos-sdk-s3transfer" },
-    { name = "jmespath", version = "1.0.1", source = { registry = "https://pypi.org/simple" } },
+    { name = "ibm-cos-sdk-core", marker = "python_full_version < '3.14'" },
+    { name = "ibm-cos-sdk-s3transfer", marker = "python_full_version < '3.14'" },
+    { name = "jmespath", version = "1.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/98/b8/b99f17ece72d4bccd7e75539b9a294d0f73ace5c6c475d8f2631afd6f65b/ibm_cos_sdk-2.14.3.tar.gz", hash = "sha256:643b6f2aa1683adad7f432df23407d11ae5adb9d9ad01214115bee77dc64364a", size = 58831, upload-time = "2025-08-01T06:35:51.722Z" }
 
@@ -1545,10 +1545,10 @@ name = "ibm-cos-sdk-core"
 version = "2.14.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jmespath", version = "1.0.1", source = { registry = "https://pypi.org/simple" } },
-    { name = "python-dateutil" },
-    { name = "requests" },
-    { name = "urllib3" },
+    { name = "jmespath", version = "1.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "python-dateutil", marker = "python_full_version < '3.14'" },
+    { name = "requests", marker = "python_full_version < '3.14'" },
+    { name = "urllib3", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7e/45/80c23aa1e13175a9deefe43cbf8e853a3d3bfc8dfa8b6d6fe83e5785fe21/ibm_cos_sdk_core-2.14.3.tar.gz", hash = "sha256:85dee7790c92e8db69bf39dae4c02cac211e3c1d81bb86e64fa2d1e929674623", size = 1103637, upload-time = "2025-08-01T06:35:41.645Z" }
 
@@ -1557,7 +1557,7 @@ name = "ibm-cos-sdk-s3transfer"
 version = "2.14.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ibm-cos-sdk-core" },
+    { name = "ibm-cos-sdk-core", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/ff/c9baf0997266d398ae08347951a2970e5e96ed6232ed0252f649f2b9a7eb/ibm_cos_sdk_s3transfer-2.14.3.tar.gz", hash = "sha256:2251ebfc4a46144401e431f4a5d9f04c262a0d6f95c88a8e71071da056e55f72", size = 139594, upload-time = "2025-08-01T06:35:46.403Z" }
 
@@ -1566,16 +1566,16 @@ name = "ibm-watsonx-ai"
 version = "1.5.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cachetools" },
-    { name = "certifi" },
-    { name = "httpx" },
-    { name = "ibm-cos-sdk" },
-    { name = "lomond" },
-    { name = "packaging" },
-    { name = "pandas" },
-    { name = "requests" },
-    { name = "tabulate" },
-    { name = "urllib3" },
+    { name = "cachetools", marker = "python_full_version < '3.14'" },
+    { name = "certifi", marker = "python_full_version < '3.14'" },
+    { name = "httpx", marker = "python_full_version < '3.14'" },
+    { name = "ibm-cos-sdk", marker = "python_full_version < '3.14'" },
+    { name = "lomond", marker = "python_full_version < '3.14'" },
+    { name = "packaging", marker = "python_full_version < '3.14'" },
+    { name = "pandas", marker = "python_full_version < '3.14'" },
+    { name = "requests", marker = "python_full_version < '3.14'" },
+    { name = "tabulate", marker = "python_full_version < '3.14'" },
+    { name = "urllib3", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/a0/19e0bfefe4fe3409bb73821198a24eac931f12f8c2ea2eb05c98995dffaa/ibm_watsonx_ai-1.5.3.tar.gz", hash = "sha256:610c982416e18479e2029d16062e992d42a5454b6db5ed68541aa53b8f3bfa54", size = 710736, upload-time = "2026-02-26T09:18:03.628Z" }
 wheels = [
@@ -1789,7 +1789,7 @@ name = "lomond"
 version = "0.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "six" },
+    { name = "six", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c0/9e/ef7813c910d4a893f2bc763ce9246269f55cc68db21dc1327e376d6a2d02/lomond-0.3.3.tar.gz", hash = "sha256:427936596b144b4ec387ead99aac1560b77c8a78107d3d49415d3abbe79acbd3", size = 28789, upload-time = "2018-09-21T15:17:43.297Z" }
 wheels = [
@@ -2296,10 +2296,10 @@ name = "pandas"
 version = "2.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "python-dateutil" },
-    { name = "pytz" },
-    { name = "tzdata" },
+    { name = "numpy", marker = "python_full_version < '3.14'" },
+    { name = "python-dateutil", marker = "python_full_version < '3.14'" },
+    { name = "pytz", marker = "python_full_version < '3.14'" },
+    { name = "tzdata", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz", hash = "sha256:e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b", size = 4495223, upload-time = "2025-09-29T23:34:51.853Z" }
 wheels = [
@@ -2898,11 +2898,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.12.1"
+version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c2/27/a3b6e5bf6ff856d2509292e95c8f57f0df7017cf5394921fc4e4ef40308a/pyjwt-2.12.1.tar.gz", hash = "sha256:c74a7a2adf861c04d002db713dd85f84beb242228e671280bf709d765b03672b", size = 102564, upload-time = "2026-03-13T19:27:37.25Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/81/58d0ac84e1ef3a3843791d6954d94c0b33d526c75eeb1efbce9d0a4c4077/pyjwt-2.13.0.tar.gz", hash = "sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423", size = 107515, upload-time = "2026-05-21T19:54:36.618Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/7a/8dd906bd22e79e47397a61742927f6747fe93242ef86645ee9092e610244/pyjwt-2.12.1-py3-none-any.whl", hash = "sha256:28ca37c070cad8ba8cd9790cd940535d40274d22f80ab87f3ac6a713e6e8454c", size = 29726, upload-time = "2026-03-13T19:27:35.677Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl", hash = "sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728", size = 31274, upload-time = "2026-05-21T19:54:35.362Z" },
 ]
 
 [[package]]
@@ -3767,14 +3767,14 @@ name = "voyageai"
 version = "0.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohttp" },
-    { name = "aiolimiter" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "requests" },
-    { name = "tenacity" },
-    { name = "tokenizers" },
+    { name = "aiohttp", marker = "python_full_version < '3.14'" },
+    { name = "aiolimiter", marker = "python_full_version < '3.14'" },
+    { name = "numpy", marker = "python_full_version < '3.14'" },
+    { name = "pillow", marker = "python_full_version < '3.14'" },
+    { name = "pydantic", marker = "python_full_version < '3.14'" },
+    { name = "requests", marker = "python_full_version < '3.14'" },
+    { name = "tenacity", marker = "python_full_version < '3.14'" },
+    { name = "tokenizers", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/b5/63ed0399dbd6c155202e2fdefdbb85bb3d516ca0634775cc5acd73d3128a/voyageai-0.3.3.tar.gz", hash = "sha256:e132f99c78b27d9f90457befbef63d8e19c674c29af325778f775ece6582cbde", size = 19062, upload-time = "2025-07-02T19:47:17.772Z" }
 wheels = [
