@@ -62,6 +62,11 @@ from backend.app.agent.observer import (
     emit_llm_request,
     emit_llm_response,
 )
+from backend.app.agent.skills.loader import (
+    extract_delivered_skills,
+    get_skill_instructions,
+    skill_delivery_marker,
+)
 from backend.app.agent.system_prompt import (
     build_agent_system_prompt_parts,
     build_time_user_context,
@@ -333,6 +338,12 @@ class ClawboltAgent:
         # chains calls. ALWAYS_ALLOW is persisted to PERMISSIONS.json and does
         # not need this cache.
         self._approval_cache: dict[tuple[str, str | None], ApprovalDecision] = {}
+        # Specialist categories whose SKILL.md is already in this
+        # conversation's context, via a list_capabilities lookup or
+        # first-use auto-injection. Seeded each turn by scanning the
+        # post-trim history for delivery markers, so guidance dropped by
+        # trimming re-injects on the category's next use.
+        self._delivered_skill_categories: set[str] = set()
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -926,7 +937,11 @@ class ClawboltAgent:
                 )
                 result_str = validation_error + "\n\n" + hint
                 actions_taken.append(f"Failed: {tool_name} (validation)")
-                tool_call_records.append(
+                # A validation failure on a specialist tool is the clearest
+                # signal the model is flying without the category's SKILL.md
+                # (wrong arg shapes are what the guidance prevents), so run
+                # first-use injection here too and inform the retry.
+                v_record, v_msg = self._attach_first_use_skill_guidance(
                     StoredToolInteraction(
                         tool_call_id=tc_req.id,
                         name=tool_name,
@@ -934,15 +949,15 @@ class ClawboltAgent:
                         result=result_str,
                         is_error=True,
                         tags=set(tool_tags),
-                    )
-                )
-                tool_results.append(
+                    ),
                     ToolResultMessage(
                         tool_call_id=tc_req.id,
                         content=result_str,
                         is_error=True,
-                    )
+                    ),
                 )
+                tool_call_records.append(v_record)
+                tool_results.append(v_msg)
                 continue
 
             dup_key = (tool_name, _normalize_tool_args(validated_args))
@@ -1209,11 +1224,53 @@ class ClawboltAgent:
             # and tool_results match the sequence the model emitted.
             for pos in range(len(approved_entries)):
                 record, msg, label = results_by_pos[pos]
+                record, msg = self._attach_first_use_skill_guidance(record, msg)
                 actions_taken.append(label)
                 tool_call_records.append(record)
                 tool_results.append(msg)
 
         return tool_results
+
+    def _attach_first_use_skill_guidance(
+        self,
+        record: StoredToolInteraction,
+        msg: ToolResultMessage,
+    ) -> tuple[StoredToolInteraction, ToolResultMessage]:
+        """Append a category's SKILL.md to its first tool result in context.
+
+        SKILL.md delivery via ``list_capabilities`` is opt-in, so the model
+        can call a specialist tool without ever seeing the category's
+        guidance (issue #1457). When that happens, attach the guidance to
+        the first result. The appended text persists in the stored record,
+        so reloaded history carries the marker and later turns skip
+        re-injection until trimming drops it.
+        """
+        # Results that already carry guidance (a list_capabilities lookup
+        # earlier in this round's batch, or this injection) mark their
+        # category delivered for the rest of the turn.
+        self._delivered_skill_categories |= extract_delivered_skills(msg.content)
+        if self._registry is None:
+            return record, msg
+        category = self._registry.get_specialist_factory_for_tool(record.name)
+        if category is None or category in self._delivered_skill_categories:
+            return record, msg
+        # Mark categories without a SKILL.md too, so the lookup runs once.
+        self._delivered_skill_categories.add(category)
+        instructions = get_skill_instructions(category)
+        if not instructions:
+            return record, msg
+        logger.info(
+            "skill_auto_injection tool=%s category=%s",
+            record.name,
+            category,
+        )
+        block = f"\n\n{skill_delivery_marker(category)}\n{instructions}"
+        record.result = record.result + block
+        return record, ToolResultMessage(
+            tool_call_id=msg.tool_call_id,
+            content=msg.content + block,
+            is_error=msg.is_error,
+        )
 
     async def process_message(
         self,
@@ -1288,6 +1345,12 @@ class ClawboltAgent:
         )
         messages = trim_result.messages
         all_dropped = list(trim_result.dropped)
+        # Seed skill-delivery state from what actually survived trimming:
+        # a marker present in a reloaded tool result means that category's
+        # SKILL.md is in context and first-use injection must not repeat it.
+        for m in messages:
+            if isinstance(m, ToolResultMessage):
+                self._delivered_skill_categories |= extract_delivered_skills(m.content)
         trimmed_count = original_count - len(messages)
         if trimmed_count > 0:
             logger.warning(

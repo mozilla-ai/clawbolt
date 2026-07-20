@@ -182,7 +182,7 @@ The agent's capabilities are extended by adding tools. Tools follow a factory/re
 ### Core vs. Specialist
 
 - **Core tools** (`core=True`): Always available to the agent on every message. Use for universal capabilities (math, messaging, files, workspace). No activation step needed.
-- **Specialist tools** (`core=False`): Activated on demand via the `list_capabilities` meta-tool. Use for integrations and domain-specific features (calendar, QuickBooks, CompanyCam). Keeps the initial tool schema small.
+- **Specialist tools** (`core=False`): Gated on the integration's `auth_check`; loaded onto the schema from turn 1 once the user connects the integration (the tool list is held stable per auth state for prompt-cache reasons, issue #1170). Use for integrations and domain-specific features (calendar, QuickBooks, CompanyCam). The `list_capabilities` meta-tool surfaces unconnected integrations and serves SKILL.md guidance; it does not activate tools.
 
 ### Checklist for adding a tool
 
@@ -202,7 +202,7 @@ The agent's capabilities are extended by adding tools. Tools follow a factory/re
 
 7. **Write tests** at `tests/test_<name>_tools.py`. Call the factory function directly (e.g., `_create_calculator_tools()`) and invoke the tool function. No database needed for stateless tools.
 
-8. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is injected into the conversation when the LLM activates the category via `list_capabilities`. Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose. See "SKILL.md structure for specialist tools" below for the expected skeleton.
+8. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is delivered into the conversation as a tool result: either when the LLM calls `list_capabilities("<name>")`, or auto-appended to the first result of the category's tools when the model skips discovery (each delivery carries a `[skill-guidance: <name>]` marker so it happens at most once per context window). Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose. See "SKILL.md structure for specialist tools" below for the expected skeleton.
 
 ### Key files
 
@@ -227,7 +227,7 @@ After editing, read the diff and ask: did I add a new fact, or restate an old on
 
 ### SKILL.md structure for specialist tools
 
-A specialist SKILL.md is injected only when the agent calls `list_capabilities("<name>")`, so it pays its cost in one place. Aim for 60-150 lines covering what tool descriptions and `usage_hint` strings cannot carry on their own.
+A specialist SKILL.md is delivered at most once per context window (on `list_capabilities("<name>")` or first use of the category's tools), so it pays its cost in one place. Aim for 60-150 lines covering what tool descriptions and `usage_hint` strings cannot carry on their own.
 
 Use this skeleton; drop sections that do not apply:
 
