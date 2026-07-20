@@ -343,9 +343,10 @@ async def _build_agent_prompt_builder(
 
     # Dynamic sections: content changes between turns, placed after the
     # stable prefix so prompt caching can reuse the stable portion. Tool
-    # guidelines are dynamic because newly activated specialists append
-    # their usage hints mid-conversation. Keeping them out of Instructions
-    # prevents that activation from busting the stable system-prompt cache.
+    # guidelines are dynamic because the tool list tracks integration
+    # state: an OAuth connect or dashboard toggle between turns changes
+    # which usage hints render. Keeping them out of Instructions prevents
+    # that change from busting the stable system-prompt cache.
     tool_guidelines = build_tool_guidelines_section(tools)
     if tool_guidelines:
         builder.add_section("Tool Guidelines", tool_guidelines, dynamic=True)

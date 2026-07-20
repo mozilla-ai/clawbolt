@@ -12,8 +12,15 @@ import importlib
 import logging
 import os
 import pkgutil
+import re
 
 logger = logging.getLogger(__name__)
+
+# Marker line prepended to SKILL.md content whenever it is delivered into a
+# tool result (via list_capabilities or first-use auto-injection). Scanning
+# reloaded history for these markers tells the agent which categories'
+# guidance is already in context, so trimming a delivery re-arms injection.
+_SKILL_MARKER_RE = re.compile(r"\[skill-guidance: ([A-Za-z0-9_-]+)\]")
 
 # Mapping of factory name -> SKILL.md content, populated by load_all_skills().
 _skill_instructions: dict[str, str] = {}
@@ -72,3 +79,13 @@ def _scan_package(package_path: str) -> None:
 def get_skill_instructions(factory_name: str) -> str | None:
     """Return the SKILL.md content for a factory name, or None if not found."""
     return _skill_instructions.get(factory_name)
+
+
+def skill_delivery_marker(factory_name: str) -> str:
+    """Return the marker line that tags delivered skill guidance in a tool result."""
+    return f"[skill-guidance: {factory_name}]"
+
+
+def extract_delivered_skills(text: str) -> set[str]:
+    """Return factory names whose delivery marker appears in *text*."""
+    return set(_SKILL_MARKER_RE.findall(text))
