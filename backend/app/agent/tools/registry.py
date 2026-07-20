@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+from backend.app.agent.skills.loader import get_skill_instructions, skill_delivery_marker
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
@@ -157,8 +158,6 @@ def create_list_capabilities_tool(
     information is surfaced so the LLM can tell users about disabled
     capabilities.
     """
-    from backend.app.agent.skills.loader import get_skill_instructions
-
     _unauthenticated = unauthenticated or {}
     _disabled_subs = disabled_sub_tools or {}
 
@@ -225,7 +224,10 @@ def create_list_capabilities_tool(
             )
         skill_instructions = get_skill_instructions(category)
         if skill_instructions:
-            guidance_msg += f"\n\n{skill_instructions}"
+            # The marker lets the agent loop detect from reloaded history
+            # that this category's guidance is already in context, so
+            # first-use auto-injection does not deliver a second copy.
+            guidance_msg += f"\n\n{skill_delivery_marker(category)}\n{skill_instructions}"
         return ToolResult(content=guidance_msg)
 
     summary_lines = [

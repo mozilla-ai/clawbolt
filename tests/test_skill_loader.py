@@ -8,9 +8,11 @@ import pytest
 
 from backend.app.agent.skills.loader import (
     _skill_instructions,
+    extract_delivered_skills,
     get_skill_instructions,
     load_all_skills,
     load_skill_instructions,
+    skill_delivery_marker,
 )
 from backend.app.agent.tools.base import ToolResult
 from backend.app.agent.tools.registry import create_list_capabilities_tool
@@ -126,3 +128,32 @@ async def test_list_capabilities_unknown_category() -> None:
     result: ToolResult = await tool.function(category="nonexistent")
     assert result.is_error is True
     assert "Unknown category" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_capabilities_result_carries_delivery_marker() -> None:
+    """SKILL.md delivery must be tagged so the agent loop can detect it in history."""
+    load_all_skills()
+    tool = create_list_capabilities_tool({"quickbooks": "QB tools"})
+    result: ToolResult = await tool.function(category="quickbooks")
+    assert skill_delivery_marker("quickbooks") in result.content
+    assert extract_delivered_skills(result.content) == {"quickbooks"}
+
+
+# ---------------------------------------------------------------------------
+# delivery markers
+# ---------------------------------------------------------------------------
+
+
+def test_extract_delivered_skills_round_trip() -> None:
+    """Markers embedded in tool-result text are recovered by extraction."""
+    text = (
+        f"did the thing\n\n{skill_delivery_marker('companycam')}\nguidance here\n"
+        f"more output\n{skill_delivery_marker('calendar')}\nother guidance"
+    )
+    assert extract_delivered_skills(text) == {"companycam", "calendar"}
+
+
+def test_extract_delivered_skills_ignores_plain_text() -> None:
+    """Text without markers yields an empty set."""
+    assert extract_delivered_skills("no markers here, just [brackets] and words") == set()
