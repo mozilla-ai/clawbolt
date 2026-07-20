@@ -38,10 +38,14 @@ _MARKER = skill_delivery_marker("estimation")
 
 
 class _QueryParams(BaseModel):
+    """Single required-string params model; missing ``query`` fails validation."""
+
     query: str
 
 
 def _noop_tool(name: str) -> Tool:
+    """Build a stub tool that echoes its own name."""
+
     async def _run(query: str) -> ToolResult:
         return ToolResult(content=f"{name} ok")
 
@@ -49,6 +53,7 @@ def _noop_tool(name: str) -> Tool:
 
 
 def _specialist_registry() -> ToolRegistry:
+    """Build a registry with one specialist factory owning generate_estimate."""
     reg = ToolRegistry()
     reg.register(
         "estimation",
@@ -61,6 +66,7 @@ def _specialist_registry() -> ToolRegistry:
 
 
 def _patched_skills() -> AbstractContextManager[dict[str, str]]:
+    """Patch the loader's skill map so the estimation category has a SKILL.md."""
     return patch.dict(loader._skill_instructions, {"estimation": _SKILL_BODY})
 
 
@@ -92,6 +98,30 @@ async def test_first_use_appends_skill_guidance(mock_amessages: object, test_use
         if block.get("type") == "tool_result"
     ]
     assert any(_SKILL_BODY in block["content"] for block in tool_result_blocks)
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_validation_error_gets_skill_guidance(
+    mock_amessages: object, test_user: User
+) -> None:
+    """A first-use validation failure carries the guidance so the retry is informed."""
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response([{"name": "generate_estimate", "arguments": {}}]),
+        make_tool_call_response([{"name": "generate_estimate", "arguments": {"query": "deck"}}]),
+        make_text_response("done"),
+    ]
+    agent = ClawboltAgent(user=test_user, registry=_specialist_registry())
+    agent.register_tools([_noop_tool("generate_estimate")])
+
+    with _patched_skills():
+        response = await agent.process_message("estimate my deck")
+
+    assert len(response.tool_calls) == 2
+    invalid_record, valid_record = response.tool_calls
+    assert invalid_record.is_error
+    assert _SKILL_BODY in invalid_record.result
+    assert _SKILL_BODY not in valid_record.result
 
 
 @pytest.mark.asyncio()

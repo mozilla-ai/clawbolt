@@ -937,7 +937,11 @@ class ClawboltAgent:
                 )
                 result_str = validation_error + "\n\n" + hint
                 actions_taken.append(f"Failed: {tool_name} (validation)")
-                tool_call_records.append(
+                # A validation failure on a specialist tool is the clearest
+                # signal the model is flying without the category's SKILL.md
+                # (wrong arg shapes are what the guidance prevents), so run
+                # first-use injection here too and inform the retry.
+                v_record, v_msg = self._attach_first_use_skill_guidance(
                     StoredToolInteraction(
                         tool_call_id=tc_req.id,
                         name=tool_name,
@@ -945,15 +949,15 @@ class ClawboltAgent:
                         result=result_str,
                         is_error=True,
                         tags=set(tool_tags),
-                    )
-                )
-                tool_results.append(
+                    ),
                     ToolResultMessage(
                         tool_call_id=tc_req.id,
                         content=result_str,
                         is_error=True,
-                    )
+                    ),
                 )
+                tool_call_records.append(v_record)
+                tool_results.append(v_msg)
                 continue
 
             dup_key = (tool_name, _normalize_tool_args(validated_args))
