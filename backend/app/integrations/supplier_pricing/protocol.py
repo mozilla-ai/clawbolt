@@ -9,6 +9,13 @@ class Location(BaseModel):
     """User location for localized pricing."""
 
     zip_code: str
+    store_id: str = ""
+    """Home Depot store number, when known.
+
+    Optional because only the direct backend uses it. Supplying it sharpens
+    the result: pricing and shelf inventory come back for that specific store
+    rather than the region the zip code falls in.
+    """
 
 
 class ProductResult(BaseModel):

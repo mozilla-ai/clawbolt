@@ -272,9 +272,18 @@ ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERPAPI_API_KEY` | | SerpApi API key for Home Depot product price lookups. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
+| `HOME_DEPOT_SIDECAR_URL` | | Base URL of the browser sidecar, e.g. `http://localhost:8899`. The only backend that reliably returns product data. |
+| `HOME_DEPOT_SIDECAR_TOKEN` | | Bearer token for the sidecar. Must match its `HD_SIDECAR_TOKEN`. |
+| `SUPPLIER_DIRECT_ENABLED` | `true` | Query Home Depot's own endpoints directly. Needs no key or account. |
+| `SERPAPI_API_KEY` | | Optional SerpApi key. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
 
-When `SERPAPI_API_KEY` is set, the agent gains a `supplier_search_products` specialist tool that looks up Home Depot product prices, ratings, and links by keyword and zip code.
+The agent gets two specialist tools here: `supplier_search_products` (prices, ratings, stock, and links by keyword and zip code) and `supplier_find_stores` (store number, address, phone, and distance near a zip code, city, or address). Feed a store number from the second into the first to get that store's price and shelf count instead of regional pricing.
+
+**Store lookup** always uses Home Depot's store locator directly. It needs no key and no configuration, and is never blocked.
+
+**Product search** tries three backends in order and takes the first that answers: the sidecar, then the direct endpoints, then SerpApi. Only backends you have configured are tried, and if none answers the agent gets a clear error rather than a failed turn.
+
+Home Depot's bot manager refuses plain HTTP clients on every product route, so in practice the direct backend serves store lookup only and product search needs either the sidecar or SerpApi. The sidecar (`sidecar/home_depot/`) drives a real browser and is the only backend that returns live Home Depot product data; see its README for how to run it and how to point Clawbolt at one running on a different host. With no backend configured at all, neither tool loads.
 
 ## HTTP timeouts
 
