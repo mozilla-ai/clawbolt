@@ -1,0 +1,24 @@
+# Railway service config for the Home Depot sidecar.
+#
+# Set the service's Root Directory to sidecar/home_depot and Railway reads this
+# file from there. Railway does auto-detect the Dockerfile without it, but
+# pinning the builder keeps a stray requirements.txt from ever tempting the
+# Python auto-detection path, and the deploy settings below are worth having
+# checked in rather than living only in a dashboard.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# /health answers as soon as the port binds and reports the browser's state in
+# the body rather than through the status code, so this passes during the 15-25s
+# warm-up and a failed browser stays reachable for diagnosis instead of being
+# pulled out of routing.
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+# Chromium needs a moment to exit cleanly and release the profile lock.
+drainingSeconds = 15
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+numReplicas = 1
