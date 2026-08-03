@@ -36,7 +36,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Header, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from patchright.async_api import async_playwright
 from pydantic import BaseModel
 
@@ -162,23 +162,59 @@ class BrowserBackedSearch:
         self._ctx: Any = None
         self._page: Any = None
         self._lock = asyncio.Lock()
+        self.state = "starting"
+        """One of starting, ready, failed. Reported by /health."""
 
-    async def start(self) -> None:
-        self._pw = await async_playwright().start()
-        self._ctx = await self._pw.chromium.launch_persistent_context(
-            user_data_dir=PROFILE_DIR,
-            channel="chromium",
-            headless=False,
-            no_viewport=True,
-            locale="en-US",
-            timezone_id="America/New_York",
-        )
-        self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
-        await self._warm()
+        self.error: str | None = None
+        """Why startup failed, surfaced over HTTP so a broken deploy is diagnosable."""
+
+        self._task: asyncio.Task[None] | None = None
+
+    def start_background(self) -> None:
+        """Launch the browser without blocking the caller.
+
+        Startup takes 15-25s: Chromium has to launch and load the homepage. Doing
+        that inside the ASGI lifespan means the port is not listening yet, so a
+        platform healthcheck sees a dead container and a failure produces no HTTP
+        response at all, only container logs. Binding first and reporting status
+        on /health turns both cases into something `curl` can diagnose.
+        """
+        self._task = asyncio.create_task(self._start())
+
+    async def _start(self) -> None:
+        try:
+            self._pw = await async_playwright().start()
+            self._ctx = await self._pw.chromium.launch_persistent_context(
+                user_data_dir=PROFILE_DIR,
+                channel="chromium",
+                headless=False,
+                no_viewport=True,
+                locale="en-US",
+                timezone_id="America/New_York",
+            )
+            self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+            await self._warm()
+            self.state = "ready"
+            self.error = None
+        except Exception as exc:
+            # Chromium's sandbox needs unprivileged user namespaces, and a host
+            # that forbids them fails here. Keep the message: it is the only
+            # signal a remote operator gets.
+            self.state = "failed"
+            self.error = f"{type(exc).__name__}: {exc}"
+            logger.exception("browser startup failed")
+
+    def require_ready(self) -> None:
+        """Reject work with a useful reason while the browser is not usable."""
+        if self.state == "ready":
+            return
+        if self.state == "failed":
+            raise HTTPException(503, f"browser unavailable: {self.error}")
+        raise HTTPException(503, "browser is still starting, retry shortly")
 
     async def alive(self) -> bool:
         """Round-trip a trivial expression through the page to prove it responds."""
-        if self._page is None:
+        if self._page is None or self.state != "ready":
             return False
         try:
             return await self._page.evaluate("1 + 1") == 2
@@ -187,6 +223,10 @@ class BrowserBackedSearch:
             return False
 
     async def stop(self) -> None:
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._task
         for closer in (self._ctx, self._pw):
             if closer is not None:
                 with contextlib.suppress(Exception):
@@ -385,7 +425,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             "HD_SIDECAR_TOKEN is unset: /search is unauthenticated. Anyone who can reach "
             "this port can drive the browser. Only acceptable when bound to loopback."
         )
-    await _engine.start()
+    # Deliberately not awaited: see BrowserBackedSearch.start_background.
+    _engine.start_background()
     try:
         yield
     finally:
@@ -406,14 +447,15 @@ async def require_token(authorization: str = Header(default="")) -> None:
 
 
 @app.get("/health")
-async def health() -> dict[str, bool]:
-    """Report whether the browser can still execute, not merely whether it exists.
+async def health() -> dict[str, Any]:
+    """Report whether the browser can actually execute, and why not if it cannot.
 
-    A crashed or detached browser leaves the page object in place, so checking
-    for its presence reports healthy while every search fails. Evaluating in the
-    page is the cheapest way to prove the other end is alive.
+    A crashed or detached browser leaves the page object in place, so presence
+    is not health; this evaluates in the page to prove the other end responds.
+    ``state`` and ``error`` make a failed startup diagnosable over HTTP instead
+    of only in container logs.
     """
-    return {"ok": await _engine.alive()}
+    return {"ok": await _engine.alive(), "state": _engine.state, "error": _engine.error}
 
 
 @app.get("/search", response_model=SearchResponse, dependencies=[Depends(require_token)])
@@ -423,6 +465,7 @@ async def search(
     store_id: str = Query(default=""),
     limit: int = Query(default=5, ge=1, le=24),
 ) -> SearchResponse:
+    _engine.require_ready()
     return await _engine.search(q, store_id=store_id, zip_code=zip_code, page_size=limit)
 
 
@@ -432,4 +475,5 @@ async def stores(
     radius_miles: int = Query(default=25, ge=1, le=100),
     limit: int = Query(default=5, ge=1, le=25),
 ) -> StoresResponse:
+    _engine.require_ready()
     return await _engine.find_stores(near, radius_miles=radius_miles, limit=limit)
