@@ -64,6 +64,42 @@ that a search costs roughly a second.
 | `HD_PROFILE_DIR` | `~/.hd-sidecar-profile` | Persistent browser profile. Keep it between runs. |
 | `HD_WARM_SECONDS` | `7` | Homepage settle time before serving. |
 
+## Running it in a container
+
+```bash
+docker build -t hd-sidecar sidecar/home_depot
+docker run --rm -p 8899:8899 -v hd-profile:/data -e HD_SIDECAR_TOKEN=secret hd-sidecar
+```
+
+Mount something at `/data`. The browser profile lives there, and without a mount
+it is rebuilt on every restart, which makes each boot look like a first-time
+visitor to Home Depot. There is no `VOLUME` instruction in the Dockerfile
+because Railway's builder rejects it, so persistence is always the deployer's
+call.
+
+The container starts as root purely to take ownership of that mount, then drops
+to an unprivileged user before starting Chromium. Chromium running as root
+disables its own sandbox, which is one of the signals this whole approach
+depends on avoiding, so this is not optional. It does mean the host has to allow
+unprivileged user namespaces; where it does not, Chromium refuses to start
+rather than quietly downgrading.
+
+### Railway
+
+Deploy it as a service separate from the app, pointed at this repo with **root
+directory** `sidecar/home_depot`:
+
+- Add a volume with mount path `/data`.
+- Set `HD_SIDECAR_TOKEN`, and set `PORT=8899` so the listening port is
+  predictable. Railway injects its own `PORT`, which the entrypoint honours, so
+  without pinning it the internal URL below will not match.
+- Give it ~1GB of memory and point the healthcheck at `/health`.
+- Do not assign a public domain. Reach it over the private network instead:
+  `http://<service>.railway.internal:8899`.
+
+Confirm `/search` returns products before wiring the app to it. `/health` only
+proves the browser started, not that Home Depot is answering.
+
 ## API
 
 `GET /health` returns `{"ok": true}` once the browser is warm. It round-trips an
