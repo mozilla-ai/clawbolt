@@ -308,18 +308,14 @@ class Settings(BaseSettings):
     servicetitan_auth_base_url: str = "https://auth.servicetitan.io"
     servicetitan_use_fake: bool = True
 
-    # Supplier pricing. Product search is tried in this order, first one that
-    # answers wins: browser sidecar, direct endpoints, SerpApi.
-    #
-    # The sidecar (sidecar/home_depot/) drives a real browser and is the only
-    # backend that reliably returns Home Depot product data, because Home
-    # Depot's bot manager refuses plain HTTP clients on every product route.
+    # Supplier pricing. The sidecar (sidecar/home_depot/) drives a real browser
+    # and is the only client Home Depot serves: its bot manager refuses plain
+    # HTTP clients on both product and store routes. Store lookup needs the
+    # sidecar; product search falls back to SerpApi when the sidecar cannot
+    # answer. With neither set, the Home Depot tools do not load.
     home_depot_sidecar_url: str = ""  # e.g. http://localhost:8899
     home_depot_sidecar_token: str = ""  # must match the sidecar's HD_SIDECAR_TOKEN
-    # Direct endpoints need no key. The store locator works everywhere; the
-    # product search is bot-walled, so it is effectively store-lookup only.
-    supplier_direct_enabled: bool = True
-    serpapi_api_key: str = ""  # https://serpapi.com — free tier: 250 searches/month
+    serpapi_api_key: str = ""  # https://serpapi.com, free tier: 250 searches/month
 
     # OAuth
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks

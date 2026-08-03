@@ -1,23 +1,30 @@
 """Tests for the browser-sidecar Home Depot backend and the backend chain.
 
 The sidecar itself drives a real browser and is exercised by hand (see
-sidecar/home_depot/README.md). What is covered here is the client that calls
-it and the fall-through order the factory builds:
-sidecar -> direct -> SerpApi.
+sidecar/home_depot/README.md). What is covered here is the client that calls it,
+for both product search and store lookup, plus the fall-through order the
+factory builds: sidecar -> SerpApi for product search, sidecar-only for stores.
 """
 
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from backend.app.agent.tools.base import ToolErrorKind, ToolResult
 from backend.app.integrations.supplier_pricing.cache import SupplierCache
-from backend.app.integrations.supplier_pricing.homedepot_direct import (
-    HomeDepotBlockedError,
-    HomeDepotDirectSupplier,
+from backend.app.integrations.supplier_pricing.errors import SupplierUnavailableError
+from backend.app.integrations.supplier_pricing.factory import (
+    _create_pricing_tools,
+    _pricing_factory,
 )
 from backend.app.integrations.supplier_pricing.homedepot_sidecar import HomeDepotSidecarSupplier
-from backend.app.integrations.supplier_pricing.protocol import Location, ProductResult
+from backend.app.integrations.supplier_pricing.protocol import (
+    Location,
+    ProductResult,
+    StoreResult,
+)
 
 SIDECAR_URL = "http://sidecar.test:8899"
 
@@ -172,7 +179,7 @@ class TestSidecarClient:
                 "backend.app.integrations.supplier_pricing.homedepot_sidecar.httpx.AsyncClient",
                 return_value=client,
             ),
-            pytest.raises(HomeDepotBlockedError),
+            pytest.raises(SupplierUnavailableError),
         ):
             await supplier.search_products("drill", Location(zip_code="30301"))
 
@@ -186,7 +193,7 @@ class TestSidecarClient:
                 "backend.app.integrations.supplier_pricing.homedepot_sidecar.httpx.AsyncClient",
                 return_value=client,
             ),
-            pytest.raises(HomeDepotBlockedError),
+            pytest.raises(SupplierUnavailableError),
         ):
             await supplier.search_products("drill", Location(zip_code="30301"))
 
@@ -220,17 +227,19 @@ class TestBackendChain:
     """sidecar -> direct -> SerpApi, first one that answers wins."""
 
     @staticmethod
-    def _search_tool(sidecar: object, direct: object, serpapi: object):  # noqa: ANN205
-        from backend.app.integrations.supplier_pricing.factory import _create_pricing_tools
+    def _tools(sidecar: object, serpapi: object) -> dict[str, Callable[..., Awaitable[ToolResult]]]:
+        tools = _create_pricing_tools(sidecar, serpapi, SupplierCache())  # type: ignore[arg-type]
+        return {t.name: t.function for t in tools}
 
-        tools = _create_pricing_tools(direct, serpapi, SupplierCache(), sidecar)  # type: ignore[arg-type]
-        return next(t.function for t in tools if t.name == "supplier_search_products")
+    @classmethod
+    def _search_tool(cls, sidecar: object, serpapi: object) -> Callable[..., Awaitable[ToolResult]]:
+        return cls._tools(sidecar, serpapi)["supplier_search_products"]
 
     @staticmethod
     def _backend(name: str, blocked: bool = False) -> AsyncMock:
         backend = AsyncMock()
         if blocked:
-            backend.search_products = AsyncMock(side_effect=HomeDepotBlockedError(name))
+            backend.search_products = AsyncMock(side_effect=SupplierUnavailableError(name))
         else:
             backend.search_products = AsyncMock(
                 return_value=[ProductResult(supplier="homedepot", product_id="1", name=name)]
@@ -239,62 +248,88 @@ class TestBackendChain:
 
     @pytest.mark.asyncio
     async def test_sidecar_wins_when_healthy(self) -> None:
-        sidecar, direct, serpapi = (
-            self._backend("from-sidecar"),
-            self._backend("from-direct"),
-            self._backend("from-serpapi"),
-        )
-        search = self._search_tool(sidecar, direct, serpapi)
+        sidecar, serpapi = self._backend("from-sidecar"), self._backend("from-serpapi")
+        search = self._search_tool(sidecar, serpapi)
 
         result = await search(query="drill", zip_code="30301")
 
         assert "from-sidecar" in result.content
-        direct.search_products.assert_not_called()
         serpapi.search_products.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_falls_through_sidecar_to_direct(self) -> None:
-        sidecar = self._backend("sidecar", blocked=True)
-        direct, serpapi = self._backend("from-direct"), self._backend("from-serpapi")
-        search = self._search_tool(sidecar, direct, serpapi)
-
-        result = await search(query="drill", zip_code="30301")
-
-        assert "from-direct" in result.content
-        serpapi.search_products.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_falls_all_the_way_to_serpapi(self) -> None:
-        sidecar = self._backend("sidecar", blocked=True)
-        direct = self._backend("direct", blocked=True)
-        serpapi = self._backend("from-serpapi")
-        search = self._search_tool(sidecar, direct, serpapi)
+    async def test_falls_through_to_serpapi(self) -> None:
+        sidecar, serpapi = self._backend("sidecar", blocked=True), self._backend("from-serpapi")
+        search = self._search_tool(sidecar, serpapi)
 
         result = await search(query="drill", zip_code="30301")
 
         assert not result.is_error
         assert "from-serpapi" in result.content
+        serpapi.search_products.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_every_backend_blocked_is_a_service_error(self) -> None:
+    async def test_every_backend_unavailable_is_a_service_error(self) -> None:
         search = self._search_tool(
-            self._backend("sidecar", blocked=True),
-            self._backend("direct", blocked=True),
-            self._backend("serpapi", blocked=True),
+            self._backend("sidecar", blocked=True), self._backend("serpapi", blocked=True)
         )
 
         result = await search(query="drill", zip_code="30301")
 
         assert result.is_error
-        assert result.error_kind.value == "service"
+        assert result.error_kind is ToolErrorKind.SERVICE
 
     @pytest.mark.asyncio
     async def test_sidecar_alone_is_enough(self) -> None:
-        search = self._search_tool(self._backend("only-sidecar"), None, None)
+        search = self._search_tool(self._backend("only-sidecar"), None)
 
         result = await search(query="drill", zip_code="30301")
 
         assert "only-sidecar" in result.content
+
+    @pytest.mark.asyncio
+    async def test_store_lookup_uses_the_sidecar(self) -> None:
+        sidecar = self._backend("sidecar")
+        sidecar.find_stores = AsyncMock(
+            return_value=[
+                StoreResult(
+                    store_id="0159",
+                    name="Midtown",
+                    street="1 Example Ave",
+                    city="Springfield",
+                    state="GA",
+                    zip_code="30308",
+                    phone="(555) 555-0123",
+                    distance_miles=2.1,
+                )
+            ]
+        )
+
+        result = await self._tools(sidecar, None)["supplier_find_stores"](near="30301")
+
+        assert not result.is_error
+        assert "store #0159" in result.content
+        assert "1 Example Ave, Springfield, GA 30308" in result.content
+
+    @pytest.mark.asyncio
+    async def test_store_lookup_without_a_sidecar_is_unavailable(self) -> None:
+        """SerpApi has no store endpoint, so a missing sidecar means no stores."""
+        result = await self._tools(None, self._backend("serpapi"))["supplier_find_stores"](
+            near="30301"
+        )
+
+        assert result.is_error
+        assert result.error_kind is ToolErrorKind.SERVICE
+        assert "not available" in result.content
+
+    @pytest.mark.asyncio
+    async def test_store_lookup_surfaces_sidecar_failure(self) -> None:
+        sidecar = self._backend("sidecar")
+        sidecar.find_stores = AsyncMock(side_effect=SupplierUnavailableError("down"))
+
+        result = await self._tools(sidecar, None)["supplier_find_stores"](near="30301")
+
+        assert result.is_error
+        assert result.error_kind is ToolErrorKind.SERVICE
 
 
 class TestFactoryBuildsChain:
@@ -303,34 +338,33 @@ class TestFactoryBuildsChain:
         settings = MagicMock()
         settings.home_depot_sidecar_url = ""
         settings.home_depot_sidecar_token = ""
-        settings.supplier_direct_enabled = True
         settings.serpapi_api_key = ""
         for key, value in overrides.items():
             setattr(settings, key, value)
         return settings
 
     def test_sidecar_url_enables_the_tools(self) -> None:
-        from backend.app.integrations.supplier_pricing.factory import _pricing_factory
-
         with patch(
             "backend.app.integrations.supplier_pricing.factory.settings",
-            self._settings(home_depot_sidecar_url=SIDECAR_URL, supplier_direct_enabled=False),
+            self._settings(home_depot_sidecar_url=SIDECAR_URL),
         ):
             tools = _pricing_factory(MagicMock())
 
         assert [t.name for t in tools] == ["supplier_search_products", "supplier_find_stores"]
 
     def test_no_backends_yields_no_tools(self) -> None:
-        from backend.app.integrations.supplier_pricing.factory import _pricing_factory
-
         with patch(
             "backend.app.integrations.supplier_pricing.factory.settings",
-            self._settings(supplier_direct_enabled=False),
+            self._settings(),
         ):
             assert _pricing_factory(MagicMock()) == []
 
-    def test_direct_supplier_is_the_shared_singleton(self) -> None:
-        """One warmed session is reused rather than rebuilt per factory call."""
-        from backend.app.integrations.supplier_pricing import factory
+    def test_serpapi_alone_still_enables_product_search(self) -> None:
+        """A SerpApi key with no sidecar keeps product search working."""
+        with patch(
+            "backend.app.integrations.supplier_pricing.factory.settings",
+            self._settings(serpapi_api_key="key"),
+        ):
+            tools = _pricing_factory(MagicMock())
 
-        assert isinstance(factory._direct_supplier, HomeDepotDirectSupplier)
+        assert [t.name for t in tools] == ["supplier_search_products", "supplier_find_stores"]

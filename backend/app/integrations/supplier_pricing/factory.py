@@ -1,9 +1,9 @@
 """Supplier pricing specialist tools.
 
-Home Depot product search and store lookup. The default backend queries Home
-Depot's own endpoints directly and needs no API key; SerpApi is kept as an
-optional fallback for the product search, which Home Depot's bot protection can
-refuse depending on the outbound IP.
+Home Depot product search and store lookup, both served by the browser sidecar
+(``sidecar/home_depot/``). Home Depot's bot manager refuses plain HTTP clients,
+so a real browser is the only client it serves; SerpApi stays available as an
+optional fallback for product search only.
 """
 
 from __future__ import annotations
@@ -19,24 +19,23 @@ from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.integrations.supplier_pricing.cache import SupplierCache
+from backend.app.integrations.supplier_pricing.errors import SupplierUnavailableError
 from backend.app.integrations.supplier_pricing.homedepot import HomeDepotSupplier
-from backend.app.integrations.supplier_pricing.homedepot_direct import (
-    HomeDepotBlockedError,
-    HomeDepotDirectSupplier,
+from backend.app.integrations.supplier_pricing.homedepot_sidecar import HomeDepotSidecarSupplier
+from backend.app.integrations.supplier_pricing.protocol import (
+    Location,
+    ProductResult,
     StoreResult,
 )
-from backend.app.integrations.supplier_pricing.homedepot_sidecar import HomeDepotSidecarSupplier
-from backend.app.integrations.supplier_pricing.protocol import Location, ProductResult
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
 
-# Module-level singletons shared across all users. The direct supplier holds a
-# warmed cookie session, so reusing one instance avoids re-warming per call.
+# Shared across all users; the sidecar client is stateless so only the cache
+# needs to be a singleton.
 _cache = SupplierCache()
-_direct_supplier = HomeDepotDirectSupplier()
 
 
 class SupplierSearchParams(BaseModel):
@@ -130,47 +129,40 @@ def _format_stores(stores: list[StoreResult], near: str) -> str:
 
 
 def _create_pricing_tools(
-    direct: HomeDepotDirectSupplier | None,
+    sidecar: HomeDepotSidecarSupplier | None,
     fallback: HomeDepotSupplier | None,
     cache: SupplierCache,
-    sidecar: HomeDepotSidecarSupplier | None = None,
 ) -> list[Tool]:
     """Build the pricing tool list.
 
-    Product search tries each backend in turn and takes the first that answers:
-    ``sidecar`` (a real browser, the only one Home Depot reliably serves), then
-    ``direct`` (keyless but bot-walled on product routes), then ``fallback``
-    (SerpApi, needs a key). The store lookup is direct-only, since neither of
-    the others has an equivalent endpoint and the direct one is never blocked.
+    Product search tries ``sidecar`` (a real browser, the only client Home Depot
+    serves) and falls through to ``fallback`` (SerpApi, needs a key) when the
+    sidecar cannot answer. Store lookup is sidecar-only: SerpApi has no
+    equivalent endpoint.
     """
 
     async def _search_with_fallback(
         query: str, location: Location, max_results: int
     ) -> list[ProductResult]:
-        """Try each configured backend in order, on to the next when blocked."""
+        """Try each configured backend in order, on to the next when unavailable."""
         chain: list[tuple[str, Any]] = [
             (name, backend)
-            for name, backend in (
-                ("sidecar", sidecar),
-                ("direct", direct),
-                ("serpapi", fallback),
-            )
+            for name, backend in (("sidecar", sidecar), ("serpapi", fallback))
             if backend is not None
         ]
         if not chain:
-            raise HomeDepotBlockedError("No Home Depot backend is configured")
+            raise SupplierUnavailableError("No Home Depot backend is configured")
 
         for index, (name, backend) in enumerate(chain):
             try:
                 return await backend.search_products(query, location, max_results=max_results)
-            except HomeDepotBlockedError:
-                is_last = index == len(chain) - 1
-                if is_last:
+            except SupplierUnavailableError:
+                if index == len(chain) - 1:
                     raise
                 logger.info(
                     "Home Depot %s backend unavailable, trying %s", name, chain[index + 1][0]
                 )
-        raise HomeDepotBlockedError("No Home Depot backend answered")
+        raise SupplierUnavailableError("No Home Depot backend answered")
 
     async def supplier_search_products(
         query: str, zip_code: str = "", store_id: str = ""
@@ -201,18 +193,15 @@ def _create_pricing_tools(
         try:
             location = Location(zip_code=resolved_zip, store_id=resolved_store)
             results = await _search_with_fallback(query, location, 5)
-        except HomeDepotBlockedError:
+        except SupplierUnavailableError:
             logger.warning("Home Depot refused the search: query=%r", query)
             return ToolResult(
-                content=(
-                    "Home Depot blocked the price lookup. Their store locator still "
-                    "works, so I can find a nearby store to call."
-                ),
+                content="Couldn't reach Home Depot to look up pricing.",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
                 hint=(
-                    "Do not retry this query; the block is not caused by the search "
-                    "term. Offer supplier_find_stores so the user can phone the store."
+                    "Do not retry this query; the failure is not caused by the search "
+                    "term. Tell the user the lookup is unavailable right now."
                 ),
             )
         except httpx.TimeoutException:
@@ -263,11 +252,15 @@ def _create_pricing_tools(
                 error_kind=ToolErrorKind.VALIDATION,
                 hint="Ask the user where they want to look, then call this tool again.",
             )
-        if direct is None:
+        if sidecar is None:
             return ToolResult(
                 content="Store lookup is not available.",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
+                hint=(
+                    "Store lookup needs the Home Depot sidecar. Tell the user it is "
+                    "not configured; do not retry."
+                ),
             )
 
         cache_key = SupplierCache.make_key("homedepot_stores", resolved_near, str(radius_miles))
@@ -276,8 +269,8 @@ def _create_pricing_tools(
             return ToolResult(content=_format_stores(cached, resolved_near))
 
         try:
-            stores = await direct.find_stores(resolved_near, radius_miles=radius_miles)
-        except HomeDepotBlockedError:
+            stores = await sidecar.find_stores(resolved_near, radius_miles=radius_miles)
+        except SupplierUnavailableError:
             logger.warning("Home Depot refused the store lookup: near=%r", resolved_near)
             return ToolResult(
                 content="Couldn't reach Home Depot's store locator. Try again shortly.",
@@ -341,22 +334,20 @@ def _pricing_factory(ctx: ToolContext) -> list[Tool]:
         if settings.home_depot_sidecar_url
         else None
     )
-    direct = _direct_supplier if settings.supplier_direct_enabled else None
     fallback = (
         HomeDepotSupplier(api_key=settings.serpapi_api_key) if settings.serpapi_api_key else None
     )
 
-    if sidecar is None and direct is None and fallback is None:
+    if sidecar is None and fallback is None:
         logger.info("supplier_pricing factory: no Home Depot backend configured, skipping")
         return []
 
     logger.info(
-        "supplier_pricing factory: creating Home Depot tools (sidecar=%s, direct=%s, serpapi=%s)",
+        "supplier_pricing factory: creating Home Depot tools (sidecar=%s, serpapi=%s)",
         sidecar is not None,
-        direct is not None,
         fallback is not None,
     )
-    return _create_pricing_tools(direct, fallback, _cache, sidecar)
+    return _create_pricing_tools(sidecar, fallback, _cache)
 
 
 async def _pricing_auth_check(ctx: ToolContext) -> str | None:

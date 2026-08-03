@@ -430,7 +430,7 @@ class TestSupplierSearchTool:
 
         from backend.app.integrations.supplier_pricing.factory import _create_pricing_tools
 
-        # Drive the SerpApi backend directly by leaving the direct backend out.
+        # Drive the SerpApi backend directly by leaving the sidecar out.
         tools = _create_pricing_tools(None, mock_supplier, cache)
         tool_fn = tools[0].function
         return tool_fn, mock_supplier, cache
@@ -538,27 +538,26 @@ class TestSupplierSearchTool:
 
 class TestPricingFactory:
     def test_factory_returns_empty_when_no_backend_available(self) -> None:
-        """Direct backend off and no SerpApi key means nothing to offer."""
+        """No sidecar and no SerpApi key means nothing to offer."""
         from backend.app.integrations.supplier_pricing.factory import _pricing_factory
 
         ctx = MagicMock()
         with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = ""
-            mock_settings.supplier_direct_enabled = False
             mock_settings.home_depot_sidecar_url = ""
             result = _pricing_factory(ctx)
 
         assert len(result) == 0
 
-    def test_factory_returns_tools_with_direct_backend_and_no_key(self) -> None:
-        """The direct backend needs no API key, so tools load on a bare install."""
+    def test_factory_returns_tools_with_sidecar_and_no_key(self) -> None:
+        """The sidecar needs no API key, so tools load without SerpApi."""
         from backend.app.integrations.supplier_pricing.factory import _pricing_factory
 
         ctx = MagicMock()
         with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = ""
-            mock_settings.supplier_direct_enabled = True
-            mock_settings.home_depot_sidecar_url = ""
+            mock_settings.home_depot_sidecar_url = "http://localhost:8899"
+            mock_settings.home_depot_sidecar_token = ""
             result = _pricing_factory(ctx)
 
         assert [t.name for t in result] == ["supplier_search_products", "supplier_find_stores"]
@@ -569,7 +568,6 @@ class TestPricingFactory:
         ctx = MagicMock()
         with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = "test-key"
-            mock_settings.supplier_direct_enabled = False
             mock_settings.home_depot_sidecar_url = ""
             result = _pricing_factory(ctx)
 

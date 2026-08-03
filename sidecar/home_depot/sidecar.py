@@ -1,19 +1,25 @@
-"""Home Depot search sidecar.
+"""Home Depot sidecar: product search and store lookup, via a real browser.
 
-Runs a real browser and exposes Home Depot product search over a small HTTP
-API so a remotely hosted Clawbolt can query it. See README.md for why this
-exists and how to run it.
+Runs a browser and exposes Home Depot over a small HTTP API so a remotely
+hosted Clawbolt can query it. See README.md for why this exists and how to run
+it.
 
-Home Depot's bot manager rejects plain HTTP clients on every product route, and
-it also rejects a stock Playwright Chromium. What it accepts is a browser with
-no automation tells: patchright (which patches the CDP ``Runtime.enable``
-leak), the real Chromium sandbox (so: not running as root, no ``--no-sandbox``),
-and a persistent profile that accumulates normal cookies. Requests must be
-issued *by that browser*. Exporting its cookies to a plain HTTP client does not
-work, which is why this is a long-lived process rather than a cookie vendor.
+Home Depot's bot manager rejects plain HTTP clients, and also rejects a stock
+Playwright Chromium. What it accepts is a browser with no automation tells:
+patchright (which patches the CDP ``Runtime.enable`` leak), the real Chromium
+sandbox (so: not running as root, no ``--no-sandbox``), and a persistent profile
+that accumulates normal cookies. Requests must be issued *by that browser*.
+Exporting its cookies to a plain HTTP client does not work, which is why this is
+a long-lived process rather than a cookie vendor.
 
-The browser is warmed once on startup and reused, so a search costs about a
-second instead of the seven a cold start takes.
+The store locator served a TLS-impersonating HTTP client for a while, so an
+earlier version of this integration queried it directly and skipped the browser.
+That stopped working: the locator now answers such clients with a ``206``
+carrying ``{"GenericError": null}`` while serving the browser normally from the
+same address. Store lookup therefore goes through here too.
+
+The browser is warmed once on startup and reused, so a request costs about a
+second rather than the seven a cold start takes.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import urllib.parse
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -51,6 +58,14 @@ _NAV_RE = re.compile(r"/(N-[A-Za-z0-9]+)")
 
 # Executed inside the page so the request carries the browser's own TLS
 # fingerprint, cookies, and bot-manager state.
+_STORE_JS = """
+async ([query]) => {
+  const r = await fetch("/StoreSearchServices/v2/storesearch?" + query,
+                        {credentials: "include"});
+  return {status: r.status, body: await r.text()};
+}
+"""
+
 _FETCH_JS = """
 async ([query, keyword, navParam, currentUrl, storeId, zipCode, pageSize]) => {
   const r = await fetch("/federation-gateway/graphql?opname=searchModel", {
@@ -120,6 +135,25 @@ class SearchResponse(BaseModel):
     products: list[Product]
 
 
+class Store(BaseModel):
+    store_id: str
+    name: str
+    street: str = ""
+    city: str = ""
+    state: str = ""
+    zip_code: str = ""
+    phone: str = ""
+    distance_miles: float | None = None
+
+
+class StoresResponse(BaseModel):
+    near: str
+    geocoded: bool = False
+    """True when `near` was not a zip and had to be resolved to coordinates."""
+
+    stores: list[Store]
+
+
 class BrowserBackedSearch:
     """Owns the long-lived browser and serializes searches through it."""
 
@@ -142,6 +176,16 @@ class BrowserBackedSearch:
         self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
         await self._warm()
 
+    async def alive(self) -> bool:
+        """Round-trip a trivial expression through the page to prove it responds."""
+        if self._page is None:
+            return False
+        try:
+            return await self._page.evaluate("1 + 1") == 2
+        except Exception:
+            logger.warning("browser is no longer responding", exc_info=True)
+            return False
+
     async def stop(self) -> None:
         for closer in (self._ctx, self._pw):
             if closer is not None:
@@ -158,7 +202,7 @@ class BrowserBackedSearch:
         self, keyword: str, nav_param: str | None, store_id: str, zip_code: str, page_size: int
     ) -> dict[str, Any]:
         encoded = urllib.parse.quote(keyword)
-        current_url = f"/b{nav_param}" if nav_param else f"/s/{encoded}"
+        current_url = f"/b/{nav_param}" if nav_param else f"/s/{encoded}"
         res = await self._page.evaluate(
             _FETCH_JS,
             [SEARCH_MODEL_QUERY, encoded, nav_param, current_url, store_id, zip_code, page_size],
@@ -170,6 +214,48 @@ class BrowserBackedSearch:
         except ValueError as exc:
             raise HTTPException(502, "Home Depot returned a non-JSON body") from exc
         return (payload.get("data") or {}).get("searchModel") or {}
+
+    async def _store_call(self, params: dict[str, str]) -> dict[str, Any]:
+        query = urllib.parse.urlencode(params)
+        res = await self._page.evaluate(_STORE_JS, [query])
+        if res["status"] != 200:
+            raise HTTPException(502, f"Home Depot store locator returned {res['status']}")
+        try:
+            payload = json.loads(res["body"])
+        except ValueError as exc:
+            raise HTTPException(502, "Store locator returned a non-JSON body") from exc
+        if "GenericError" in res["body"] and "stores" not in payload:
+            raise HTTPException(502, "Home Depot refused the store lookup")
+        return payload
+
+    async def find_stores(self, near: str, *, radius_miles: int, limit: int) -> StoresResponse:
+        """Look up stores near a zip code, city, or address.
+
+        A non-zip `near` (for example "Denver, CO") makes the locator answer with
+        geocoding candidates instead of stores, so the first candidate's
+        coordinates drive a second lookup.
+        """
+        async with self._lock:
+            data = await self._store_call(
+                {"address": near, "radius": str(radius_miles), "pagesize": str(limit)}
+            )
+            geocoded = False
+            if "stores" not in data and "ambiguousAddresses" in data:
+                point = _first_geocode_point(data)
+                if point is None:
+                    return StoresResponse(near=near, geocoded=False, stores=[])
+                geocoded = True
+                data = await self._store_call(
+                    {
+                        "latitude": str(point[0]),
+                        "longitude": str(point[1]),
+                        "radius": str(radius_miles),
+                        "pagesize": str(limit),
+                    }
+                )
+
+        stores = [_parse_store(s) for s in (data.get("stores") or [])[:limit]]
+        return StoresResponse(near=near, geocoded=geocoded, stores=stores)
 
     async def search(
         self, keyword: str, *, store_id: str, zip_code: str, page_size: int
@@ -241,6 +327,33 @@ def _parse_product(raw: dict[str, Any]) -> Product:
     )
 
 
+def _parse_store(raw: dict[str, Any]) -> Store:
+    """Map one `stores[]` entry from the locator onto :class:`Store`."""
+    address = raw.get("address") or {}
+    distance = raw.get("distance")
+    return Store(
+        store_id=str(raw.get("storeId") or ""),
+        name=raw.get("name") or "",
+        street=address.get("street") or "",
+        city=address.get("city") or "",
+        state=address.get("state") or "",
+        zip_code=address.get("postalCode") or "",
+        phone=raw.get("phone") or "",
+        distance_miles=round(float(distance), 1) if isinstance(distance, (int, float)) else None,
+    )
+
+
+def _first_geocode_point(data: dict[str, Any]) -> tuple[float, float] | None:
+    """Pull (lat, lng) out of an ambiguous-address response."""
+    for ambiguous in data.get("ambiguousAddresses") or []:
+        for suggestion in ambiguous.get("suggestedLocations") or []:
+            coords = (suggestion.get("point") or {}).get("coordinates") or {}
+            lat, lng = coords.get("lat"), coords.get("lng")
+            if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+                return float(lat), float(lng)
+    return None
+
+
 def _stock(fulfillment: dict[str, Any] | None) -> tuple[bool | None, int | None]:
     if not fulfillment:
         return None, None
@@ -267,6 +380,11 @@ _engine = BrowserBackedSearch()
 
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    if not AUTH_TOKEN:
+        logger.warning(
+            "HD_SIDECAR_TOKEN is unset: /search is unauthenticated. Anyone who can reach "
+            "this port can drive the browser. Only acceptable when bound to loopback."
+        )
     await _engine.start()
     try:
         yield
@@ -281,13 +399,21 @@ async def require_token(authorization: str = Header(default="")) -> None:
     """Reject calls without the shared token, when one is configured."""
     if not AUTH_TOKEN:
         return
-    if authorization != f"Bearer {AUTH_TOKEN}":
+    # compare_digest, not ==, so a wrong token cannot be recovered byte by byte
+    # from response timing.
+    if not secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
         raise HTTPException(401, "bad or missing bearer token")
 
 
 @app.get("/health")
 async def health() -> dict[str, bool]:
-    return {"ok": _engine._page is not None}
+    """Report whether the browser can still execute, not merely whether it exists.
+
+    A crashed or detached browser leaves the page object in place, so checking
+    for its presence reports healthy while every search fails. Evaluating in the
+    page is the cheapest way to prove the other end is alive.
+    """
+    return {"ok": await _engine.alive()}
 
 
 @app.get("/search", response_model=SearchResponse, dependencies=[Depends(require_token)])
@@ -298,3 +424,12 @@ async def search(
     limit: int = Query(default=5, ge=1, le=24),
 ) -> SearchResponse:
     return await _engine.search(q, store_id=store_id, zip_code=zip_code, page_size=limit)
+
+
+@app.get("/stores", response_model=StoresResponse, dependencies=[Depends(require_token)])
+async def stores(
+    near: str = Query(min_length=1, description="Zip code, city and state, or street address"),
+    radius_miles: int = Query(default=25, ge=1, le=100),
+    limit: int = Query(default=5, ge=1, le=25),
+) -> StoresResponse:
+    return await _engine.find_stores(near, radius_miles=radius_miles, limit=limit)

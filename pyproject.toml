@@ -23,7 +23,6 @@ dependencies = [
     "Pillow>=10.0",
     "simpleeval>=1.0",
     "genai-prices>=0.0.57,<0.1",
-    "curl-cffi>=0.15.0",
 ]
 
 [project.optional-dependencies]

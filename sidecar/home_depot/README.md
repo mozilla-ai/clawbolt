@@ -1,6 +1,6 @@
-# Home Depot search sidecar
+# Home Depot sidecar
 
-Clawbolt's Home Depot product search, backed by a real browser.
+Clawbolt's Home Depot product search and store lookup, backed by a real browser.
 
 ## Why this exists
 
@@ -9,8 +9,10 @@ the GraphQL gateway) sits behind their bot manager. Things that do **not** work,
 all measured rather than assumed:
 
 - `httpx` or `requests`: rejected on the TLS handshake.
-- `curl_cffi` with Chrome TLS impersonation: gets the store locator, but product
-  routes return `403` or a `206` wrapping `{"GenericError": null}`.
+- `curl_cffi` with Chrome TLS impersonation: product routes return `403` or a
+  `206` wrapping `{"GenericError": null}`. The store locator served this client
+  for a while and then stopped, answering `206` while the browser kept getting
+  `200` from the same address. Do not assume a working endpoint stays working.
 - Stock Playwright Chromium, headless or headful: same `403`. The CDP
   `Runtime.enable` leak gives it away.
 - Exporting a trusted browser's cookies into `curl_cffi`: still `206`. The
@@ -64,7 +66,9 @@ that a search costs roughly a second.
 
 ## API
 
-`GET /health` returns `{"ok": true}` once the browser is warm.
+`GET /health` returns `{"ok": true}` once the browser is warm. It round-trips an
+expression through the page, so a crashed browser reports `false` rather than
+staying green.
 
 `GET /search?q=<keyword>&zip=<zip>&store_id=<id>&limit=<n>`
 
@@ -94,6 +98,25 @@ page rather than a keyword result set. The sidecar detects that, pulls the bare
 path instead of the bare token silently returns zero results, which is the one
 non-obvious thing about this API.
 
+`GET /stores?near=<zip|city|address>&radius_miles=<n>&limit=<n>`
+
+```console
+$ curl -s 'localhost:8899/stores?near=30301&limit=2' | jq
+{
+  "near": "30301",
+  "geocoded": false,
+  "stores": [
+    {"store_id": "0159", "name": "Midtown", "street": "650 Ponce De Leon",
+     "city": "Atlanta", "state": "GA", "zip_code": "30308",
+     "phone": "(404)892-8042", "distance_miles": 2.1}
+  ]
+}
+```
+
+A non-zip `near` makes Home Depot answer with geocoding candidates instead of
+stores; the sidecar resolves the first candidate to coordinates and looks up
+again, reporting `geocoded: true` when it did.
+
 ## Connecting Clawbolt
 
 Point Clawbolt at the sidecar and it becomes the preferred product-search
@@ -108,10 +131,9 @@ If Clawbolt runs somewhere a browser cannot (a small container, a PaaS dyno),
 run this on a machine that can and expose it over your own tunnel or private
 network. Do not put it on the public internet without the token set.
 
-When the sidecar is unreachable, Clawbolt falls through to the next backend
-rather than failing the turn, so product search degrades instead of breaking.
-Store lookup never uses the sidecar; it queries Home Depot's store locator
-directly and works without any of this.
+When the sidecar is unreachable, product search falls through to SerpApi if a
+key is set, so it degrades rather than breaking. Store lookup has no fallback:
+SerpApi has no equivalent endpoint, so no sidecar means no store lookup.
 
 ## Maintenance
 

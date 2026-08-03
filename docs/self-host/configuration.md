@@ -272,18 +272,19 @@ ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HOME_DEPOT_SIDECAR_URL` | | Base URL of the browser sidecar, e.g. `http://localhost:8899`. The only backend that reliably returns product data. |
+| `HOME_DEPOT_SIDECAR_URL` | | Base URL of the browser sidecar, e.g. `http://localhost:8899`. Required for store lookup; preferred for product search. |
 | `HOME_DEPOT_SIDECAR_TOKEN` | | Bearer token for the sidecar. Must match its `HD_SIDECAR_TOKEN`. |
-| `SUPPLIER_DIRECT_ENABLED` | `true` | Query Home Depot's own endpoints directly. Needs no key or account. |
-| `SERPAPI_API_KEY` | | Optional SerpApi key. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
+| `SERPAPI_API_KEY` | | Optional fallback for product search only. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
 
 The agent gets two specialist tools here: `supplier_search_products` (prices, ratings, stock, and links by keyword and zip code) and `supplier_find_stores` (store number, address, phone, and distance near a zip code, city, or address). Feed a store number from the second into the first to get that store's price and shelf count instead of regional pricing.
 
-**Store lookup** always uses Home Depot's store locator directly. It needs no key and no configuration, and is never blocked.
+Home Depot has no public API and its bot manager refuses plain HTTP clients on both product and store routes, so everything here goes through the sidecar (`sidecar/home_depot/`), which drives a real browser. See its README for how to run it and how to point Clawbolt at one on a different host.
 
-**Product search** tries three backends in order and takes the first that answers: the sidecar, then the direct endpoints, then SerpApi. Only backends you have configured are tried, and if none answers the agent gets a clear error rather than a failed turn.
+**Store lookup** requires the sidecar. SerpApi has no equivalent endpoint, so without a sidecar `supplier_find_stores` reports being unavailable.
 
-Home Depot's bot manager refuses plain HTTP clients on every product route, so in practice the direct backend serves store lookup only and product search needs either the sidecar or SerpApi. The sidecar (`sidecar/home_depot/`) drives a real browser and is the only backend that returns live Home Depot product data; see its README for how to run it and how to point Clawbolt at one running on a different host. With no backend configured at all, neither tool loads.
+**Product search** prefers the sidecar and falls back to SerpApi when the sidecar cannot answer, so a wedged or restarting sidecar degrades rather than breaking. With neither configured, neither tool loads at all.
+
+An earlier version of this integration queried the store locator directly with a TLS-impersonating HTTP client, which worked for a while and then stopped: the locator now answers such clients with a `206` error while serving a real browser normally from the same address. That is why there is no keyless direct mode any more.
 
 ## HTTP timeouts
 
