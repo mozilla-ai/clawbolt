@@ -57,7 +57,12 @@ RUN useradd --create-home --shell /bin/bash sidecar \
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-VOLUME ["/data"]
+# No VOLUME instruction: Railway's builder rejects it outright ("docker VOLUME
+# is not supported, use Railway Volumes"), and persistence is the deployer's
+# call regardless. Mount something at /data or the profile is rebuilt on every
+# restart, which makes each boot look like a first-time visitor:
+#   Railway: add a volume with mount path /data
+#   docker:  -v hd-profile:/data
 EXPOSE 8899
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
