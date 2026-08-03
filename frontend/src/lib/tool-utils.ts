@@ -58,6 +58,7 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   companycam_update_project: 'Update project',
   companycam_upload_photo: 'Upload photo',
   supplier_search_products: 'Search products',
+  supplier_find_stores: 'Find stores',
 };
 
 export function displayName(name: string): string {
@@ -76,7 +77,7 @@ export function subToolDisplayName(name: string): string {
  * For non-OAuth tools: uses the ``configured`` field from /user/tools
  * (populated from the tool's ``auth_check``). If the backend says
  * configured=false, the tool shows as "Not configured" (e.g. missing
- * SERPAPI_API_KEY for supplier_pricing).
+ * SERVICETITAN_APP_KEY for servicetitan).
  */
 export function getToolOAuthStatus(
   oauthName: string,

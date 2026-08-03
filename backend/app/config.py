@@ -308,8 +308,10 @@ class Settings(BaseSettings):
     servicetitan_auth_base_url: str = "https://auth.servicetitan.io"
     servicetitan_use_fake: bool = True
 
-    # Supplier pricing (SerpApi Home Depot engine)
-    serpapi_api_key: str = ""  # https://serpapi.com — free tier: 250 searches/month
+    # HTTP clients on both product and store routes. Store lookup needs the
+    # sidecar; product search falls back to SerpApi when the sidecar cannot
+    # answer. With neither set, the Home Depot tools do not load.
+    serpapi_api_key: str = ""  # https://serpapi.com, free tier: 250 searches/month
 
     # OAuth
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks

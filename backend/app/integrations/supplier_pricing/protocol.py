@@ -9,6 +9,15 @@ class Location(BaseModel):
     """User location for localized pricing."""
 
     zip_code: str
+    store_id: str = ""
+    """Home Depot store number, when known.
+
+    Used by the direct and sidecar backends; the SerpApi backend ignores it.
+    Supplying it sharpens the result: pricing and shelf inventory come back for
+    that specific store. Without it Home Depot still reports inventory, but for
+    a location it picks itself, so treat stock as store-local only when this is
+    set.
+    """
 
 
 class ProductResult(BaseModel):
@@ -35,6 +44,19 @@ class ProductDetails(ProductResult):
     description: str = ""
     specifications: dict[str, str] = {}
     feature_bullets: list[str] = []
+
+
+class StoreResult(BaseModel):
+    """A single retail location."""
+
+    store_id: str
+    name: str
+    street: str = ""
+    city: str = ""
+    state: str = ""
+    zip_code: str = ""
+    phone: str = ""
+    distance_miles: float | None = None
 
 
 @runtime_checkable
