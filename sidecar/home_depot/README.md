@@ -169,7 +169,8 @@ again, reporting `geocoded: true` when it did.
 ## Connecting Clawbolt
 
 Point Clawbolt at the sidecar and it becomes the preferred product-search
-backend, ahead of the direct endpoints and SerpApi:
+backend, ahead of the optional SerpApi fallback, and the only source of store
+lookup:
 
 ```bash
 HOME_DEPOT_SIDECAR_URL=http://localhost:8899
