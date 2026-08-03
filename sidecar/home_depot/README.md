@@ -102,9 +102,22 @@ proves the browser started, not that Home Depot is answering.
 
 ## API
 
-`GET /health` returns `{"ok": true}` once the browser is warm. It round-trips an
-expression through the page, so a crashed browser reports `false` rather than
-staying green.
+`GET /health` binds and answers immediately, before the browser is ready, and
+reports what state it is in:
+
+```json
+{"ok": true,  "state": "ready",    "error": null}
+{"ok": false, "state": "starting", "error": null}
+{"ok": false, "state": "failed",   "error": "Error: Failed to move to new namespace..."}
+```
+
+`ok` round-trips an expression through the page, so a crashed browser reports
+`false` rather than staying green. `state` and `error` exist because the browser
+takes 15 to 25 seconds to come up and can fail outright: warming it inside the
+ASGI lifespan would leave the port closed for that whole window, which a
+platform healthcheck reads as a dead container and which gives a remote operator
+no HTTP response to diagnose. `/search` and `/stores` return `503` with the same
+reason until the browser is ready.
 
 `GET /search?q=<keyword>&zip=<zip>&store_id=<id>&limit=<n>`
 
