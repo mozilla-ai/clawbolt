@@ -1,0 +1,75 @@
+# Publish the Home Depot sidecar container image to GHCR.
+#
+# The sidecar runs as its own service, typically on a different host from
+# Clawbolt, and needs a browser. Publishing an image here rather than having the
+# hosting platform build from source means:
+#
+#   * The platform needs no access to this repository. That matters when the
+#     Railway project lives in a personal account while the repo belongs to an
+#     org: granting the platform's GitHub App access to an org repo needs org
+#     admin, and without it the platform silently rebuilds whatever stale
+#     snapshot it last managed to fetch.
+#   * The image is built once, here, from a known commit. No mystery about which
+#     revision is actually deployed.
+#
+# Deploy it by pointing the service at the image instead of a repo:
+#   ghcr.io/mozilla-ai/clawbolt-hd-sidecar:latest
+name: Home Depot sidecar image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sidecar/home_depot/**"
+      - ".github/workflows/hd-sidecar-image.yml"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/clawbolt-hd-sidecar
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: sidecar/home_depot
+          # amd64 only: every PaaS worth deploying this to runs amd64, and an
+          # arm64 leg would double build time for nothing. Build locally with
+          # --platform linux/amd64 to match.
+          platforms: linux/amd64
+          push: true
+          # :latest for the deploy target, :sha so a bad deploy can be pinned
+          # back to a known-good revision.
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Home Depot sidecar image pushed"
+            echo
+            echo '```'
+            echo "${{ env.IMAGE }}:latest"
+            echo "${{ env.IMAGE }}:${{ github.sha }}"
+            echo '```'
+            echo
+            echo "The package defaults to private. Make it public once, under the"
+            echo "package settings, or give the deploy platform a registry credential."
+          } >> "$GITHUB_STEP_SUMMARY"

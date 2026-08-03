@@ -86,8 +86,23 @@ rather than quietly downgrading.
 
 ### Railway
 
-Deploy it as a service separate from the app, pointed at this repo with **root
-directory** `sidecar/home_depot`:
+Deploy from the **published image** rather than from source:
+
+```
+ghcr.io/mozilla-ai/clawbolt-hd-sidecar:latest
+```
+
+`.github/workflows/hd-sidecar-image.yml` builds and pushes that on every change
+under `sidecar/home_depot/`. Deploying the image is the path of least resistance
+for a reason worth knowing: if the Railway project lives in a personal account
+while this repo belongs to an org, connecting the repo needs org admin to grant
+the Railway GitHub App access. Without it Railway cannot fetch new commits and
+keeps rebuilding the last snapshot it managed to get, which presents as fixes
+that never take effect and build logs where every layer is `cached`. The image
+route sidesteps that entirely. The GHCR package defaults to private, so make it
+public once or give Railway a registry credential.
+
+Then, on the service:
 
 - Add a volume with mount path `/data`.
 - Set `HD_SIDECAR_TOKEN`, and set `PORT=8899` so the listening port is
@@ -97,8 +112,9 @@ directory** `sidecar/home_depot`:
 - Do not assign a public domain. Reach it over the private network instead:
   `http://<service>.railway.internal:8899`.
 
-Confirm `/search` returns products before wiring the app to it. `/health` only
-proves the browser started, not that Home Depot is answering.
+Confirm `/search` returns products before wiring the app to it: `/health` going
+green only means the port is up and the browser launched, not that Home Depot is
+answering.
 
 ## API
 
