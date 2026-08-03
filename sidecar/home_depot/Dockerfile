@@ -40,12 +40,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# xvfb supplies the display a non-headless Chromium needs. xauth is a separate
-# package that xvfb does NOT depend on, but xvfb-run shells out to it to build
-# the X authority file and dies with "xauth command not found" without it. It is
-# present on most desktop and CI images, which is exactly why it is easy to miss
-# on a slim base. util-linux supplies setpriv for the privilege drop, plus the
-# mcookie and getopt that xvfb-run also needs. patchright pulls Chromium's own
+# xvfb supplies the display a non-headless Chromium needs; the entrypoint starts
+# Xvfb directly rather than via xvfb-run, so xauth is no longer required and is
+# kept only so the wrapper still works if anyone reaches for it. util-linux
+# supplies setpriv for the privilege drop. patchright pulls Chromium's own
 # shared libraries.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends xvfb xauth util-linux \
