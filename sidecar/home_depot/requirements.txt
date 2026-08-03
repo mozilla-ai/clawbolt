@@ -1,0 +1,6 @@
+# Home Depot search sidecar. Deliberately separate from the main project's
+# dependencies so the browser stack never ships with the Clawbolt server.
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0
+patchright>=1.49
