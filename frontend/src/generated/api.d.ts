@@ -649,6 +649,18 @@ export interface paths {
         /**
          * List Provider Models
          * @description List available models for a provider.
+         *
+         *     ``api_base`` is honored only for a local provider. any-llm resolves a missing
+         *     ``api_key`` from the server's environment, so honoring a caller-supplied base
+         *     for a hosted provider would send that provider's key to whatever host the
+         *     caller named. Local providers are keyless, so there is nothing to send, and
+         *     they are the only case the settings UI uses the field for: the API-base input
+         *     and its "Fetch Models" button render only when the selected provider is
+         *     local, and a hosted provider is always listed with no base.
+         *
+         *     This endpoint is gated by ``get_current_user`` alone, which is every user in
+         *     a single-tenant deployment but every *tenant* under a multi-tenant auth
+         *     plugin, so the parameter must not be able to redirect a credentialed call.
          */
         get: operations["list_provider_models_api_user_providers__provider__models_get"];
         put?: never;
@@ -2520,6 +2532,7 @@ export interface operations {
     list_provider_models_api_user_providers__provider__models_get: {
         parameters: {
             query?: {
+                /** @description Endpoint to enumerate. Local providers only; a hosted provider always uses the configured LLM_API_BASE. */
                 api_base?: string | null;
             };
             header?: never;
