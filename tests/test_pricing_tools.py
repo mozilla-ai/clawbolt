@@ -430,8 +430,8 @@ class TestSupplierSearchTool:
 
         from backend.app.integrations.supplier_pricing.factory import _create_pricing_tools
 
-        # Drive the SerpApi backend directly by leaving the sidecar out.
-        tools = _create_pricing_tools(None, mock_supplier, cache)
+        # Drive the SerpApi backend directly by configuring no sidecars.
+        tools = _create_pricing_tools({}, mock_supplier, cache)
         tool_fn = tools[0].function
         return tool_fn, mock_supplier, cache
 

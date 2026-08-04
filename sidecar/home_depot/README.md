@@ -1,6 +1,11 @@
-# Home Depot sidecar
+# Retail sidecar
 
-Clawbolt's Home Depot product search and store lookup, backed by a real browser.
+Clawbolt's product search at Home Depot and Lowe's, plus Home Depot store lookup,
+backed by a real browser.
+
+The directory is still named `home_depot` because a rename would change the
+published image name and every deployment pointing at it. Not worth the churn for
+a name.
 
 ## Why this exists
 
@@ -137,7 +142,14 @@ platform healthcheck reads as a dead container and which gives a remote operator
 no HTTP response to diagnose. `/search` and `/stores` return `503` with the same
 reason until the browser is ready.
 
-`GET /search?q=<keyword>&zip=<zip>&store_id=<id>&limit=<n>`
+`GET /search?q=<keyword>&site=<home_depot|lowes>&zip=<zip>&store_id=<id>&limit=<n>`
+
+`site` defaults to `home_depot`. The two retailers are reached differently, which
+is invisible to callers but explains the parameter differences: Home Depot answers
+a GraphQL call issued from inside the page, so `zip` and `store_id` localize the
+result, while Lowe's has no reachable product API and its results are read out of
+the search page's embedded state, with localization riding on the session's own
+store rather than on parameters.
 
 ```console
 $ curl -s 'localhost:8899/search?q=cordless+drill&zip=30301&limit=2' | jq
@@ -183,6 +195,32 @@ $ curl -s 'localhost:8899/stores?near=30301&limit=2' | jq
 A non-zip `near` makes Home Depot answer with geocoding candidates instead of
 stores; the sidecar resolves the first candidate to coordinates and looks up
 again, reporting `geocoded: true` when it did.
+
+## Lowe's
+
+Same wall, one extra step. Lowe's runs the same Akamai Bot Manager, and its
+`/search`, `/Search=` and `/store/api/search` routes are all refused with a 403
+edge deny (`errors.edgesuite.net`, `Reference #18.…`) rather than a solvable
+challenge. Ruled out as causes, each measured: profile freshness, cookies, the
+`X11; Linux` User-Agent, client hints overridden via CDP to claim macOS,
+navigation versus in-page XHR, and the egress IP.
+
+What actually matters is **warming with a real click**. A homepage visit alone
+still gets the deny; one organic click into a category first, and `/search`
+returns results. That is why `_lowes_page` clicks a `/pl/` link before serving
+anything, and why a page that never got one is closed rather than cached: keeping
+it would pin every later search to a session the edge refuses.
+
+Results come from `window['__PRELOADED_STATE__']`, not the DOM. The payload is
+~400KB and carries `itemList` with price, per-store on-hand quantity, brand,
+model, rating and review count. Two reasons to prefer it over selectors: it is
+stable against markup changes, and a DOM scrape picks up the "Previously Viewed"
+carousel, which silently returns items from earlier queries.
+
+Store lookup is Home Depot only. Lowe's has no equivalent implemented, and
+SerpApi has no Lowe's engine at all, so there is no fallback for Lowe's search
+either: if the sidecar cannot answer, the tool reports that rather than quietly
+returning Home Depot prices.
 
 ## Connecting Clawbolt
 

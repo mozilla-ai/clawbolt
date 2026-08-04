@@ -47,7 +47,11 @@ RUN apt-get update \
     && patchright install chromium \
     && rm -rf /var/lib/apt/lists/*
 
-COPY sidecar.py search_model.graphql ./
+# Globbed rather than listed. An earlier explicit list omitted lowes.py, which
+# sidecar.py imports at module level, so the image died on `import lowes` before
+# uvicorn bound a port, leaving no /health to ask what went wrong. A glob cannot
+# forget the next module.
+COPY *.py search_model.graphql ./
 
 RUN useradd --create-home --shell /bin/bash sidecar \
     && chown -R sidecar:sidecar /app \
