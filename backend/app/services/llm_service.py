@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from any_llm import LLMProvider, alist_models
+from any_llm import AnyLLMError, LLMProvider, alist_models
 
 from backend.app.config import settings
 from backend.app.schemas import ProviderInfo
@@ -46,6 +46,17 @@ _LOCAL_PROVIDERS = {"ollama", "llamafile", "llamacpp", "lmstudio", "vllm"}
 _HIDDEN_PROVIDERS = {"platform", "gateway"}
 
 
+def is_local_provider(provider: str) -> bool:
+    """True when *provider* runs on the operator's own machine and needs no key.
+
+    Used to decide whether a caller may choose the endpoint a model listing hits.
+    A local provider carries no server-held credential, so pointing one at
+    another URL leaks nothing; a hosted provider does, so it must not be
+    redirectable by a request parameter.
+    """
+    return provider.lower() in _LOCAL_PROVIDERS
+
+
 def get_configured_providers() -> list[ProviderInfo]:
     """Return all known providers. Actual validation happens when listing models."""
     return [
@@ -60,8 +71,21 @@ async def get_models(
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> list[str]:
-    """Fetch available models for a provider."""
-    raw = await alist_models(provider=provider, api_key=api_key, api_base=api_base)
+    """Fetch available models for a provider.
+
+    "This provider cannot enumerate models" surfaces as ``NotImplementedError``,
+    which callers branch on to render a free-text model field instead of an
+    error. any-llm raises that from inside its ``handle_exceptions`` decorator,
+    so with ``ANY_LLM_UNIFIED_EXCEPTIONS`` enabled (see ``config.py``) it arrives
+    wrapped in a ``ProviderError`` and the distinction is lost. Unwrap it so the
+    "unsupported" signal survives the conversion.
+    """
+    try:
+        raw = await alist_models(provider=provider, api_key=api_key, api_base=api_base)
+    except AnyLLMError as exc:
+        if isinstance(exc.original_exception, NotImplementedError):
+            raise exc.original_exception from exc
+        raise
     return [m.id if hasattr(m, "id") else str(m) for m in raw]
 
 

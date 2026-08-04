@@ -47,7 +47,11 @@ from backend.app.schemas import (
     UserProfileResponse,
     UserProfileUpdate,
 )
-from backend.app.services.llm_service import get_configured_providers, get_models
+from backend.app.services.llm_service import (
+    get_configured_providers,
+    get_models,
+    is_local_provider,
+)
 
 router = APIRouter()
 
@@ -477,10 +481,37 @@ async def list_providers(
 @router.get("/user/providers/{provider}/models")
 async def list_provider_models(
     provider: str,
-    api_base: str | None = Query(None),
+    api_base: str | None = Query(
+        None,
+        description=(
+            "Endpoint to enumerate. Local providers only; a hosted provider always"
+            " uses the configured LLM_API_BASE."
+        ),
+    ),
     _current_user: User = Depends(get_current_user),
 ) -> list[str]:
-    """List available models for a provider."""
+    """List available models for a provider.
+
+    ``api_base`` is honored only for a local provider. any-llm resolves a missing
+    ``api_key`` from the server's environment, so honoring a caller-supplied base
+    for a hosted provider would send that provider's key to whatever host the
+    caller named. Local providers are keyless, so there is nothing to send, and
+    they are the only case the settings UI uses the field for: the API-base input
+    and its "Fetch Models" button render only when the selected provider is
+    local, and a hosted provider is always listed with no base.
+
+    This endpoint is gated by ``get_current_user`` alone, which is every user in
+    a single-tenant deployment but every *tenant* under a multi-tenant auth
+    plugin, so the parameter must not be able to redirect a credentialed call.
+    """
+    if api_base and not is_local_provider(provider):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"api_base is only accepted for a local provider; '{provider}' is"
+                " hosted and is listed against the configured LLM_API_BASE."
+            ),
+        )
     try:
         return await get_models(provider, api_base=api_base)
     except Exception as exc:
