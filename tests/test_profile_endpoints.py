@@ -356,3 +356,87 @@ def test_list_provider_models_error_returns_502(
     resp = client.get("/api/user/providers/badprovider/models")
     assert resp.status_code == 502
     assert "Failed to list models" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# api_base is not a caller-controlled destination for a credentialed call
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "gemini", "groq"])
+@patch(
+    "backend.app.routers.user_profile.get_models",
+    new_callable=AsyncMock,
+)
+def test_api_base_rejected_for_hosted_provider(
+    mock_get_models: AsyncMock, client: TestClient, provider: str
+) -> None:
+    """A hosted provider must not be listable against a caller-chosen host.
+
+    any-llm resolves a missing ``api_key`` from the server's environment, so
+    honoring this parameter for a hosted provider makes the server deliver that
+    provider's key to whatever URL the caller names. This endpoint is gated by
+    ``get_current_user`` alone, which under a multi-tenant auth plugin is every
+    tenant, so the parameter must be refused rather than merely ignored.
+    """
+    resp = client.get(
+        f"/api/user/providers/{provider}/models",
+        params={"api_base": "http://attacker.example.com"},
+    )
+    assert resp.status_code == 400
+    assert "local provider" in resp.json()["detail"]
+    mock_get_models.assert_not_awaited()
+
+
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio", "llamacpp", "llamafile", "vllm"])
+@patch(
+    "backend.app.routers.user_profile.get_models",
+    new_callable=AsyncMock,
+)
+def test_api_base_allowed_for_local_provider(
+    mock_get_models: AsyncMock, client: TestClient, provider: str
+) -> None:
+    """Local providers keep the parameter: they are keyless, so there is nothing
+    to leak, and pointing one at a loopback port is the whole point of the field.
+    The settings UI renders the API-base input only when the provider is local.
+    """
+    mock_get_models.return_value = ["local-model"]
+    resp = client.get(
+        f"/api/user/providers/{provider}/models",
+        params={"api_base": "http://localhost:1234/v1"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == ["local-model"]
+    assert mock_get_models.await_args is not None
+    assert mock_get_models.await_args.kwargs["api_base"] == "http://localhost:1234/v1"
+
+
+@patch(
+    "backend.app.routers.user_profile.get_models",
+    new_callable=AsyncMock,
+)
+def test_hosted_provider_without_api_base_still_lists(
+    mock_get_models: AsyncMock, client: TestClient
+) -> None:
+    """The guard only fires when a base is actually supplied, so the normal
+    cloud-provider path (which the UI always calls with no base) is unchanged."""
+    mock_get_models.return_value = ["claude-opus-4-5"]
+    resp = client.get("/api/user/providers/anthropic/models")
+    assert resp.status_code == 200
+    assert mock_get_models.await_args is not None
+    assert mock_get_models.await_args.kwargs["api_base"] is None
+
+
+@patch(
+    "backend.app.routers.user_profile.get_models",
+    new_callable=AsyncMock,
+)
+def test_empty_api_base_is_not_treated_as_supplied(
+    mock_get_models: AsyncMock, client: TestClient
+) -> None:
+    """The OSS settings page sends ``base || undefined``, but a hand-built request
+    can still send ``?api_base=``. An empty value names no host, so it must not
+    trip the guard for a hosted provider."""
+    mock_get_models.return_value = []
+    resp = client.get("/api/user/providers/anthropic/models", params={"api_base": ""})
+    assert resp.status_code == 200

@@ -46,6 +46,17 @@ _LOCAL_PROVIDERS = {"ollama", "llamafile", "llamacpp", "lmstudio", "vllm"}
 _HIDDEN_PROVIDERS = {"platform", "gateway"}
 
 
+def is_local_provider(provider: str) -> bool:
+    """True when *provider* runs on the operator's own machine and needs no key.
+
+    Used to decide whether a caller may choose the endpoint a model listing hits.
+    A local provider carries no server-held credential, so pointing one at
+    another URL leaks nothing; a hosted provider does, so it must not be
+    redirectable by a request parameter.
+    """
+    return provider.lower() in _LOCAL_PROVIDERS
+
+
 def get_configured_providers() -> list[ProviderInfo]:
     """Return all known providers. Actual validation happens when listing models."""
     return [
