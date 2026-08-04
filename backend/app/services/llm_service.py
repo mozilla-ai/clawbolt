@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from any_llm import AnyLLMError, LLMProvider, alist_models
 
@@ -59,18 +60,66 @@ _HIDDEN_PROVIDERS = {"platform", "gateway"}
 # string rather than the provider name. Sending markers we cannot verify fails
 # closed as a 400, while omitting them only forgoes caching, so the fail-safe
 # choice is to omit.
+#
+# Membership here is necessary but not sufficient: ``anthropic`` also has to be
+# reaching Anthropic. See :func:`_api_base_reaches_anthropic`.
+#
+# Provisional. Once any-llm#1228 lands and the floor is raised past it, a marker
+# a provider cannot use is dropped instead of rejected, and this set becomes an
+# optimization rather than a correctness requirement. Tracked in #1484.
 _CACHE_CONTROL_PROVIDERS = {"anthropic", "azureanthropic", "vertexaianthropic"}
+
+# Registrable domain any-llm's ``anthropic`` provider talks to when no
+# ``llm_api_base`` is configured.
+_ANTHROPIC_HOST = "anthropic.com"
+
+
+def _api_base_reaches_anthropic(api_base: str | None) -> bool:
+    """True when an ``anthropic`` request goes to Anthropic and not an intermediary.
+
+    An unset base is Anthropic's own API, which any-llm supplies as the default.
+    Anything else is a proxy or a gateway, and a gateway's real downstream
+    provider rides in the model string rather than the provider name, so it is
+    invisible here: the configured provider reads ``anthropic`` whether the model
+    behind the gateway is Claude or a Fireworks-hosted DeepSeek. The second case
+    400s on a marked request, so an unrecognized base is treated as unverifiable.
+
+    Only the plain ``anthropic`` provider is subject to this. The Azure and Vertex
+    members of :data:`_CACHE_CONTROL_PROVIDERS` always carry a base naming the
+    operator's own resource, so a base being set there is ordinary configuration
+    and says nothing about an intermediary.
+
+    Removable once any-llm#1228 lands: a marker the gateway's downstream cannot use
+    is dropped in conversion rather than rejected, so the endpoint stops mattering
+    and gateway deployments get prompt caching back. Tracked in #1484.
+    """
+    if not api_base:
+        return True
+    host = urlparse(api_base if "://" in api_base else f"https://{api_base}").hostname or ""
+    return host == _ANTHROPIC_HOST or host.endswith(f".{_ANTHROPIC_HOST}")
 
 
 def provider_honors_cache_control(provider: str) -> bool:
-    """True when *provider* delivers Anthropic ``cache_control`` markers to the wire.
+    """True when a ``cache_control`` marker reaches the wire intact for *provider*.
 
-    Gates every cache breakpoint the agent stamps. Marking a prompt for a provider
-    that cannot honor it is never merely wasteful: the ``system`` breakpoint makes
-    the request unserializable for strict OpenAI-compatible backends, so the marker
-    has to be withheld rather than stamped and ignored.
+    Gates every cache breakpoint the agent stamps. Marking a prompt that cannot
+    honor it is never merely wasteful: the ``system`` breakpoint makes the request
+    unserializable for a strict OpenAI-compatible backend, which answers 400
+    rather than ignoring the marker, so an unverifiable marker has to be withheld.
+    Withholding one only forgoes caching, which is why that is the fail-safe side.
+
+    ``llm_prompt_cache`` overrides the endpoint half of the decision: ``"always"``
+    marks through a custom base, ``"never"`` disables caching outright. Neither
+    can mark for a provider that reaches the wire through the bridge.
     """
-    return provider.lower() in _CACHE_CONTROL_PROVIDERS
+    if settings.llm_prompt_cache == "never":
+        return False
+    normalized = provider.lower()
+    if normalized not in _CACHE_CONTROL_PROVIDERS:
+        return False
+    if normalized != "anthropic" or settings.llm_prompt_cache == "always":
+        return True
+    return _api_base_reaches_anthropic(settings.llm_api_base)
 
 
 def is_local_provider(provider: str) -> bool:
