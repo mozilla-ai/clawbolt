@@ -128,7 +128,7 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
             model=model,
             provider=provider,
             api_base=settings.llm_api_base,
-            system=prepare_system_with_caching(VISION_SYSTEM_PROMPT),
+            system=prepare_system_with_caching(VISION_SYSTEM_PROMPT, provider),
             messages=[
                 {"role": "user", "content": user_content},
             ],

@@ -129,7 +129,8 @@ class TestBuildParts:
 
     def test_prepare_system_single_cached_block(self) -> None:
         """prepare_system_with_caching wraps the whole string in one cached block."""
-        blocks = prepare_system_with_caching("Just a plain prompt")
+        blocks = prepare_system_with_caching("Just a plain prompt", "anthropic")
+        assert isinstance(blocks, list)
         assert len(blocks) == 1
         assert "cache_control" in blocks[0]
         assert blocks[0]["text"] == "Just a plain prompt"

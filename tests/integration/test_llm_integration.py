@@ -112,7 +112,7 @@ async def test_prompt_caching_system_format_accepted() -> None:
     # Pad the system prompt to exceed the caching minimum token threshold.
     padding = " ".join(f"word{i}" for i in range(1200))
     system_text = f"You are a helpful assistant. Reply briefly. Context: {padding}"
-    system = prepare_system_with_caching(system_text)
+    system = prepare_system_with_caching(system_text, "anthropic")
 
     # Call should succeed with the cache-marked system format
     resp = await amessages(

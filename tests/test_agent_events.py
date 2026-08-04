@@ -203,6 +203,16 @@ class TestDynamicContentCachePlacement:
     ``system`` param ahead of the history, and the prior history must carry
     an explicit cache breakpoint."""
 
+    @pytest.fixture
+    def agent(self, test_user: User) -> ClawboltAgent:
+        """An agent pinned to a provider that honors ``cache_control``.
+
+        The breakpoints these tests assert on are only stamped for a provider
+        that serves the Messages API natively (any-llm#1228), and the default
+        test settings leave ``llm_provider`` empty.
+        """
+        return ClawboltAgent(user=test_user, llm_provider_override="anthropic")
+
     @pytest.mark.asyncio
     @patch("backend.app.agent.core.amessages")
     @patch(
