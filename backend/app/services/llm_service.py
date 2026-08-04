@@ -45,6 +45,33 @@ _LOCAL_PROVIDERS = {"ollama", "llamafile", "llamacpp", "lmstudio", "vllm"}
 # Meta-providers that proxy to other providers and should not be directly selectable.
 _HIDDEN_PROVIDERS = {"platform", "gateway"}
 
+# Providers that serve the Anthropic Messages API natively, so a ``cache_control``
+# marker survives to the wire. Every other provider goes through any-llm's
+# Messages-to-Completions bridge, which rebuilds user, assistant and tool blocks
+# (silently dropping their markers) and forwards a block-list ``system`` verbatim
+# into ``messages[0].content``, where a strict OpenAI-compatible backend rejects
+# the whole request (Fireworks answers 400 "Input should be a valid string,
+# field: 'messages[0].content.str'"). See any-llm#1228.
+#
+# Gateway providers are deliberately absent even though any-llm's ``otari``
+# provider forwards Messages natively: whether the markers are honored then
+# depends on the gateway's downstream provider, which is encoded in the model
+# string rather than the provider name. Sending markers we cannot verify fails
+# closed as a 400, while omitting them only forgoes caching, so the fail-safe
+# choice is to omit.
+_CACHE_CONTROL_PROVIDERS = {"anthropic", "azureanthropic", "vertexaianthropic"}
+
+
+def provider_honors_cache_control(provider: str) -> bool:
+    """True when *provider* delivers Anthropic ``cache_control`` markers to the wire.
+
+    Gates every cache breakpoint the agent stamps. Marking a prompt for a provider
+    that cannot honor it is never merely wasteful: the ``system`` breakpoint makes
+    the request unserializable for strict OpenAI-compatible backends, so the marker
+    has to be withheld rather than stamped and ignored.
+    """
+    return provider.lower() in _CACHE_CONTROL_PROVIDERS
+
 
 def is_local_provider(provider: str) -> bool:
     """True when *provider* runs on the operator's own machine and needs no key.
@@ -146,7 +173,7 @@ def _cache_control() -> dict[str, Any]:
     return {"type": "ephemeral"}
 
 
-def prepare_system_with_caching(system: str) -> list[dict[str, Any]]:
+def prepare_system_with_caching(system: str, provider: str) -> str | list[dict[str, Any]]:
     """Wrap a system prompt string as a single cache-marked content block.
 
     The whole system string is stable across turns: the agent loop now
@@ -154,14 +181,20 @@ def prepare_system_with_caching(system: str) -> list[dict[str, Any]]:
     message history rather than in the ``system`` param, so there is no
     dynamic suffix to exclude from the cache (#1420).
 
-    Providers that do not support caching silently ignore the
-    ``cache_control`` key.
+    Returns *system* unchanged when *provider* cannot honor the marker. A
+    provider that does not serve the Messages API natively does not merely
+    ignore the ``cache_control`` key: the block-list shape itself reaches the
+    provider as ``messages[0].content`` and a strict OpenAI-compatible backend
+    rejects the request outright. See :func:`provider_honors_cache_control`.
     """
+    if not provider_honors_cache_control(provider):
+        return system
     return [{"type": "text", "text": system, "cache_control": _cache_control()}]
 
 
 def apply_history_cache_breakpoint(
     messages: list[dict[str, Any]],
+    provider: str,
 ) -> list[dict[str, Any]]:
     """Stamp a ``cache_control`` breakpoint on the prior-history tail.
 
@@ -182,8 +215,14 @@ def apply_history_cache_breakpoint(
     content is a plain string; tool-result turns carry list content and
     assistant turns carry block content, so this reliably distinguishes
     it. Returns the list unchanged when there is no prior history to
-    cache.
+    cache, or when *provider* cannot honor the marker.
+
+    Withholding the marker also avoids rewriting a plain-string user message
+    into a block list for a provider that would only flatten it back again.
     """
+    if not provider_honors_cache_control(provider):
+        return messages
+
     current_turn_idx: int | None = None
     for idx in range(len(messages) - 1, -1, -1):
         msg = messages[idx]
@@ -213,6 +252,7 @@ def apply_history_cache_breakpoint(
 
 def apply_in_turn_cache_breakpoint(
     messages: list[dict[str, Any]],
+    provider: str,
 ) -> list[dict[str, Any]]:
     """Stamp a ``cache_control`` breakpoint on a trailing tool-result block.
 
@@ -237,8 +277,10 @@ def apply_in_turn_cache_breakpoint(
     Round 0 ends in the current user turn (plain string content), not
     tool results, so this is a no-op there and the request keeps three
     breakpoints. Returns the list unchanged when there is nothing safe
-    to mark.
+    to mark, or when *provider* cannot honor the marker.
     """
+    if not provider_honors_cache_control(provider):
+        return messages
     if not messages:
         return messages
     last = messages[-1]
@@ -256,13 +298,15 @@ def apply_in_turn_cache_breakpoint(
     return messages
 
 
-def apply_tool_caching(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def apply_tool_caching(tools: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
     """Add a cache_control marker to the last tool definition.
 
     Anthropic caches everything up to and including the marked block, so
     marking the last tool covers the entire tool list. Returns the list
-    unchanged when empty.
+    unchanged when empty, or when *provider* cannot honor the marker.
     """
+    if not provider_honors_cache_control(provider):
+        return tools
     if not tools:
         return tools
     tools[-1] = {**tools[-1], "cache_control": _cache_control()}

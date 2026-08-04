@@ -614,20 +614,20 @@ class ClawboltAgent:
         await self._send_typing_indicator()
         effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
         system_str, msg_dicts = messages_to_messages_api(messages)
-        msg_dicts = apply_history_cache_breakpoint(msg_dicts)
+        effective_model = self._llm_model_override or settings.llm_model
+        effective_provider = self._llm_provider_override or settings.llm_provider
+        msg_dicts = apply_history_cache_breakpoint(msg_dicts, effective_provider)
         # Rounds N > 0 end in tool results: mark the trailing block so the
         # current turn plus prior rounds read from cache instead of being
         # re-sent as fresh input every round (issue #1430). No-op on round 0.
-        msg_dicts = apply_in_turn_cache_breakpoint(msg_dicts)
+        msg_dicts = apply_in_turn_cache_breakpoint(msg_dicts, effective_provider)
         system: str | list[dict[str, Any]] | None = system_str
         if system is not None:
-            system = prepare_system_with_caching(system)
+            system = prepare_system_with_caching(system, effective_provider)
         if tool_schemas:
-            tool_schemas = apply_tool_caching(tool_schemas)
+            tool_schemas = apply_tool_caching(tool_schemas, effective_provider)
         tool_count = len(tool_schemas) if tool_schemas else 0
         thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
-        effective_model = self._llm_model_override or settings.llm_model
-        effective_provider = self._llm_provider_override or settings.llm_provider
         logger.debug(
             "Calling LLM: model=%s provider=%s messages=%d tools=%d max_tokens=%d",
             effective_model,
@@ -758,10 +758,12 @@ class ClawboltAgent:
             len(trim_result.messages),
         )
         retry_system_str, trimmed_dicts = messages_to_messages_api(trim_result.messages)
-        trimmed_dicts = apply_history_cache_breakpoint(trimmed_dicts)
-        trimmed_dicts = apply_in_turn_cache_breakpoint(trimmed_dicts)
+        trimmed_dicts = apply_history_cache_breakpoint(trimmed_dicts, effective_provider)
+        trimmed_dicts = apply_in_turn_cache_breakpoint(trimmed_dicts, effective_provider)
         system = (
-            prepare_system_with_caching(retry_system_str) if retry_system_str is not None else None
+            prepare_system_with_caching(retry_system_str, effective_provider)
+            if retry_system_str is not None
+            else None
         )
         followup_started_at = datetime.now(UTC)
         await emit_llm_request(
