@@ -429,6 +429,73 @@ class TestLowesRouting:
         lowes.search_products.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_lowes_results_are_not_labelled_with_the_users_zip(self) -> None:
+        """Lowe's ignores the zip, so claiming it would mislead about local stock."""
+        lowes = self._backend("lowes")
+        lowes.search_products = AsyncMock(
+            return_value=[
+                ProductResult(
+                    supplier="lowes",
+                    product_id="1",
+                    name="Joint Compound",
+                    price_dollars=13.26,
+                    in_stock=True,
+                    stock_quantity=106,
+                )
+            ]
+        )
+        search = self._tools({"lowes": lowes}, None)["supplier_search_products"]
+
+        result = await search(query="joint compound", zip_code="30301", supplier="lowes")
+
+        assert "zip 30301" not in result.content
+        assert "not localized to your zip" in result.content
+
+    @pytest.mark.asyncio
+    async def test_home_depot_results_keep_the_zip_label(self) -> None:
+        hd = self._backend("homedepot")
+        hd.search_products = AsyncMock(
+            return_value=[
+                ProductResult(
+                    supplier="homedepot",
+                    product_id="1",
+                    name="Joint Compound",
+                    price_dollars=6.98,
+                    in_stock=True,
+                    stock_quantity=24,
+                )
+            ]
+        )
+        search = self._tools({"home_depot": hd}, None)["supplier_search_products"]
+
+        result = await search(query="joint compound", zip_code="30301", supplier="home_depot")
+
+        assert "zip 30301" in result.content
+        assert "not localized" not in result.content
+
+    @pytest.mark.asyncio
+    async def test_lowes_cache_ignores_the_zip(self) -> None:
+        """The zip cannot change a Lowe's answer, so it must not fragment the cache."""
+        lowes = self._backend("lowes")
+        search = self._tools({"lowes": lowes}, None)["supplier_search_products"]
+
+        await search(query="drill", zip_code="30301", supplier="lowes")
+        await search(query="drill", zip_code="99999", supplier="lowes")
+
+        lowes.search_products.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_serpapi_alone_cannot_serve_a_lowes_request(self) -> None:
+        """Falling back would return Home Depot prices labelled as Lowe's."""
+        serpapi = self._backend("homedepot")
+        search = self._tools({}, serpapi)["supplier_search_products"]
+
+        result = await search(query="drill", zip_code="30301", supplier="lowes")
+
+        assert result.is_error
+        serpapi.search_products.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_store_lookup_uses_home_depot_even_when_lowes_present(self) -> None:
         hd, lowes = self._backend("homedepot"), self._backend("lowes")
         hd.find_stores = AsyncMock(return_value=[])

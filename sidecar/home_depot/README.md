@@ -208,7 +208,8 @@ navigation versus in-page XHR, and the egress IP.
 What actually matters is **warming with a real click**. A homepage visit alone
 still gets the deny; one organic click into a category first, and `/search`
 returns results. That is why `_lowes_page` clicks a `/pl/` link before serving
-anything, and why it logs loudly when it cannot find one.
+anything, and why a page that never got one is closed rather than cached: keeping
+it would pin every later search to a session the edge refuses.
 
 Results come from `window['__PRELOADED_STATE__']`, not the DOM. The payload is
 ~400KB and carries `itemList` with price, per-store on-hand quantity, brand,

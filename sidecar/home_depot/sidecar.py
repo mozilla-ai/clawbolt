@@ -170,7 +170,13 @@ class BrowserBackedSearch:
         # is an in-page fetch, so the page has to already be on homedepot.com;
         # sharing a single page would mean re-warming on every site switch.
         self._site_pages: dict[str, Any] = {}
-        self._lock = asyncio.Lock()
+        # A lock per site, not one shared lock. Requests to one retailer must
+        # serialize against each other because they drive that retailer's single
+        # page, but they have no reason to block the other retailer. Sharing one
+        # lock made the Lowe's pre-warm (a homepage load, a click, and two settle
+        # waits, ~17s) hold off every Home Depot request right after startup,
+        # close to the client's 20s timeout.
+        self._locks: dict[str, asyncio.Lock] = {}
         self.state = "starting"
         """One of starting, ready, failed. Reported by /health."""
 
@@ -179,6 +185,18 @@ class BrowserBackedSearch:
 
         self._task: asyncio.Task[None] | None = None
         self._prewarm: asyncio.Task[None] | None = None
+
+    def _lock_for(self, site: str) -> asyncio.Lock:
+        """Return the per-site lock, creating it on first use.
+
+        Safe to create lazily: the event loop is single-threaded, so no two
+        coroutines can interleave between the lookup and the insert.
+        """
+        lock = self._locks.get(site)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[site] = lock
+        return lock
 
     def start_background(self) -> None:
         """Launch the browser without blocking the caller.
@@ -260,7 +278,7 @@ class BrowserBackedSearch:
     async def _prewarm_lowes(self) -> None:
         """Warm the Lowe's page in the background, tolerating failure."""
         try:
-            async with self._lock:
+            async with self._lock_for("lowes"):
                 await self._lowes_page()
         except Exception:
             logger.warning("lowes pre-warm failed; will warm on first use", exc_info=True)
@@ -271,30 +289,38 @@ class BrowserBackedSearch:
         Lowe's needs more than a homepage visit. Navigating to /search from a
         session warmed only by the homepage is refused with a 403 edge deny; one
         organic click into a category first, and the same navigation is served.
-        The click is the load-bearing step, so a failure to find a category link
-        is worth logging rather than swallowing.
+        The click is the load-bearing step, so a page that never got one is not
+        cached: keeping it would pin every later search to a session the edge
+        refuses, with no way back short of a restart. Discard it instead and let
+        the next request try the whole warm again.
         """
         page = self._site_pages.get("lowes")
         if page is not None:
             return page
 
         page = await self._ctx.new_page()
-        await page.goto(f"{lowes.ORIGIN}/", wait_until="domcontentloaded", timeout=90_000)
-        await page.wait_for_timeout(int(WARM_SECONDS * 1000))
-
-        clicked = False
         try:
-            link = page.locator("a[href*='/pl/']").first
-            if await link.count():
-                await link.click()
-                await page.wait_for_timeout(int(WARM_SECONDS * 1000))
-                clicked = True
-        except Exception:
-            logger.warning("lowes: organic warm click failed", exc_info=True)
-        if not clicked:
-            logger.warning("lowes: no category link to click; search will likely be denied")
+            await page.goto(f"{lowes.ORIGIN}/", wait_until="domcontentloaded", timeout=90_000)
+            await page.wait_for_timeout(int(WARM_SECONDS * 1000))
 
-        logger.info("lowes page warmed (clicked=%s): %s", clicked, await page.title())
+            clicked = False
+            try:
+                link = page.locator("a[href*='/pl/']").first
+                if await link.count():
+                    await link.click()
+                    await page.wait_for_timeout(int(WARM_SECONDS * 1000))
+                    clicked = True
+            except Exception:
+                logger.warning("lowes: organic warm click failed", exc_info=True)
+            if not clicked:
+                raise HTTPException(503, "Lowe's warm-up found no category link to click")
+
+            logger.info("lowes page warmed: %s", await page.title())
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await page.close()
+            raise
+
         self._site_pages["lowes"] = page
         return page
 
@@ -306,27 +332,30 @@ class BrowserBackedSearch:
         interval: a blanket wait cost about seven seconds per query for no
         benefit, against Home Depot's sub-second GraphQL call.
         """
-        async with self._lock:
+        async with self._lock_for("home_depot"):
             page = await self._lowes_page()
             await page.goto(
                 lowes.search_url(keyword), wait_until="domcontentloaded", timeout=90_000
             )
             html = await page.content()
+            state = lowes.extract_preloaded_state(html)
             for _ in range(int(LOWES_STATE_POLL_ATTEMPTS)):
-                if lowes.is_denied(html) or lowes.extract_preloaded_state(html) is not None:
+                if state is not None or lowes.is_denied(html):
                     break
                 await page.wait_for_timeout(LOWES_STATE_POLL_MS)
                 html = await page.content()
+                state = lowes.extract_preloaded_state(html)
 
-        if lowes.is_denied(html):
-            raise HTTPException(502, "Lowe's refused the search")
-        state = lowes.extract_preloaded_state(html)
+        # Prefer a payload we actually parsed over the "Access Denied" substring,
+        # which is a heuristic and could appear in legitimate page content.
         if state is None:
+            if lowes.is_denied(html):
+                raise HTTPException(502, "Lowe's refused the search")
             raise HTTPException(502, "Lowe's search page carried no result payload")
 
         return SearchResponse(
             keyword=keyword,
-            total_products=state.get("itemCount"),
+            total_products=lowes.total_products(state),
             used_nav_param=None,
             products=[Product(**p) for p in lowes.parse_products(state, page_size)],
         )
@@ -368,7 +397,7 @@ class BrowserBackedSearch:
         geocoding candidates instead of stores, so the first candidate's
         coordinates drive a second lookup.
         """
-        async with self._lock:
+        async with self._lock_for("home_depot"):
             data = await self._store_call(
                 {"address": near, "radius": str(radius_miles), "pagesize": str(limit)}
             )
@@ -393,7 +422,7 @@ class BrowserBackedSearch:
     async def search(
         self, keyword: str, *, store_id: str, zip_code: str, page_size: int
     ) -> SearchResponse:
-        async with self._lock:
+        async with self._lock_for("lowes"):
             model = await self._call(keyword, None, store_id, zip_code, page_size)
             used_nav: str | None = None
 

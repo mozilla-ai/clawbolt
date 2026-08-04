@@ -30,10 +30,13 @@ from backend.app.integrations.supplier_pricing.protocol import (
 
 logger = logging.getLogger(__name__)
 
-# Measured p100 for a live search is ~1.3s, so anything beyond a few seconds
-# means the sidecar is wedged rather than slow. Fail fast to the next backend
-# instead of stalling the user's turn.
-_DEFAULT_TIMEOUT_SECONDS = 20.0
+# A warm search measures ~1-2s, so a few seconds would normally be plenty. The
+# ceiling is set by the uncommon case instead: if the sidecar has not yet warmed a
+# retailer's page, that request pays the warm (a homepage load, a click, and two
+# settle waits, ~19s for Lowe's). The sidecar pre-warms both retailers at startup,
+# so this should be rare, but at 20s a cold request timed out just short of
+# succeeding and the user saw a failure for work that was about to land.
+_DEFAULT_TIMEOUT_SECONDS = 35.0
 
 
 class SidecarSupplier:
@@ -84,13 +87,17 @@ class SidecarSupplier:
                 payload = resp.json()
         except httpx.HTTPStatusError as exc:
             raise SupplierUnavailableError(
-                f"Home Depot sidecar returned {exc.response.status_code} for {path}"
+                f"{self.display_name} sidecar returned {exc.response.status_code} for {path}"
             ) from exc
         except (httpx.HTTPError, ValueError) as exc:
-            raise SupplierUnavailableError(f"Home Depot sidecar is unreachable: {exc}") from exc
+            raise SupplierUnavailableError(
+                f"{self.display_name} sidecar is unreachable: {exc}"
+            ) from exc
 
         if not isinstance(payload, dict):
-            raise SupplierUnavailableError(f"Home Depot sidecar sent an unexpected body for {path}")
+            raise SupplierUnavailableError(
+                f"{self.display_name} sidecar sent an unexpected body for {path}"
+            )
         return payload
 
     async def search_products(

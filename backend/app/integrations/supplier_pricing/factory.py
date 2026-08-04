@@ -65,14 +65,26 @@ class SupplierFindStoresParams(BaseModel):
 
 
 def _format_results(
-    results: list[ProductResult], query: str, zip_code: str, supplier_name: str = "Home Depot"
+    results: list[ProductResult],
+    query: str,
+    zip_code: str,
+    supplier_name: str = "Home Depot",
+    *,
+    localized: bool = True,
 ) -> str:
-    """Format product results as plain text suitable for SMS/iMessage."""
+    """Format product results as plain text suitable for SMS/iMessage.
+
+    ``localized`` says whether the zip actually shaped these results. Only claim
+    it when it did: Lowe's results come from whichever store the sidecar's own
+    session is pinned to, so labelling them with the user's zip would invite a
+    tradesperson to drive to a store on the strength of someone else's shelf
+    count.
+    """
     if not results:
         return f'No products found for "{query}" at {supplier_name}.'
 
     header = f'Found {len(results)} result(s) for "{query}" at {supplier_name}'
-    if zip_code:
+    if zip_code and localized:
         header += f" (zip {zip_code})"
     has_any_price = any(p.price_dollars is not None for p in results)
     if not has_any_price:
@@ -110,6 +122,12 @@ def _format_results(
         url = p.product_url or "(no link available)"
         lines.append(f"   Link: {url}")
         lines.append("")
+
+    if not localized and any(p.stock_quantity is not None for p in results):
+        lines.append(
+            "Note: these are not localized to your zip. Stock counts are for "
+            f"{supplier_name}'s default store, so confirm before making a trip."
+        )
 
     return "\n".join(lines).rstrip()
 
@@ -197,14 +215,21 @@ def _create_pricing_tools(
 
         resolved_store = store_id.strip()
         label = _SUPPLIER_LABELS.get(supplier, supplier)
-        cache_key = SupplierCache.make_key(
-            supplier,
-            query,
-            f"{resolved_zip}:{resolved_store}" if resolved_store else resolved_zip,
+        # Only Home Depot's search takes the zip and store into account; Lowe's
+        # ignores both, so keying its cache on them would only cause redundant
+        # fetches for answers that cannot differ.
+        localized = supplier == "home_depot"
+        cache_scope = (
+            (f"{resolved_zip}:{resolved_store}" if resolved_store else resolved_zip)
+            if localized
+            else "national"
         )
+        cache_key = SupplierCache.make_key(supplier, query, cache_scope)
         cached = await cache.get(cache_key)
         if cached is not None:
-            return ToolResult(content=_format_results(cached, query, resolved_zip, label))
+            return ToolResult(
+                content=_format_results(cached, query, resolved_zip, label, localized=localized)
+            )
 
         try:
             location = Location(zip_code=resolved_zip, store_id=resolved_store)
@@ -216,9 +241,11 @@ def _create_pricing_tools(
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
                 hint=(
-                    "Do not retry this query; the failure is not caused by the search "
-                    "term. Tell the user the lookup is unavailable right now. Another "
-                    "retailer may still work, so trying the other supplier is reasonable."
+                    "The failure is not caused by the search term, so rewording will "
+                    "not help. One retry is worth it: the backend warms a browser "
+                    "session lazily and the second attempt often succeeds. If it fails "
+                    "again, tell the user the lookup is unavailable and offer the other "
+                    "retailer, which may still work."
                 ),
             )
         except httpx.TimeoutException:
@@ -258,7 +285,9 @@ def _create_pricing_tools(
             )
 
         await cache.set(cache_key, results)
-        return ToolResult(content=_format_results(results, query, resolved_zip, label))
+        return ToolResult(
+            content=_format_results(results, query, resolved_zip, label, localized=localized)
+        )
 
     async def supplier_find_stores(near: str, radius_miles: int = 25) -> ToolResult:
         resolved_near = near.strip()
@@ -394,15 +423,17 @@ def _register() -> None:
         "supplier_pricing",
         _pricing_factory,
         core=False,
-        summary="Search product prices and find stores at Home Depot",
-        display_name="Home Depot pricing",
-        dashboard_description="Search product prices and find stores at Home Depot",
+        summary="Search product prices at Home Depot and Lowe's, and find Home Depot stores",
+        display_name="Supplier pricing",
+        dashboard_description=(
+            "Search product prices at Home Depot and Lowe's, and find Home Depot stores"
+        ),
         dashboard_group="Integrations",
         dashboard_group_order=3,
         sub_tools=[
             SubToolInfo(
                 ToolName.SUPPLIER_SEARCH_PRODUCTS,
-                "Search products by keyword at Home Depot",
+                "Search products by keyword at Home Depot or Lowe's",
                 default_permission="always",
             ),
             SubToolInfo(

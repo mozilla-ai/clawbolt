@@ -142,6 +142,66 @@ class TestParseProducts:
         assert lowes.parse_products({"itemList": []}, 5) == []
 
 
+class TestPayloadShapeChanges:
+    """Guards for the ways a payload change could break this quietly."""
+
+    @pytest.mark.parametrize(
+        "assignment",
+        [
+            "window['__PRELOADED_STATE__'] = ",
+            'window["__PRELOADED_STATE__"] = ',
+            "window.__PRELOADED_STATE__ = ",
+        ],
+    )
+    def test_all_assignment_forms_are_accepted(self, assignment: str) -> None:
+        """A minifier switching quote style must not silently break search."""
+        html = f"<script>{assignment}{json.dumps(_state())};</script>"
+        got = lowes.extract_preloaded_state(html)
+        assert got is not None and got["itemCount"] == 39
+
+    @pytest.mark.parametrize("bad", ["not-a-number", None, True, [], {}])
+    def test_total_products_coerces_unusable_values_to_none(self, bad: object) -> None:
+        """Reaches a pydantic model, so junk must not 500 the sidecar."""
+        assert lowes.total_products({"itemCount": bad}) is None
+
+    def test_total_products_accepts_a_numeric_string(self) -> None:
+        """Lowe's ships some numbers as strings, so those must survive."""
+        assert lowes.total_products({"itemCount": "39"}) == 39
+
+    def test_total_products_reads_a_real_count(self) -> None:
+        assert lowes.total_products({"itemCount": 39}) == 39
+
+    @pytest.mark.parametrize("bad", ["n/a", None, True, {}])
+    def test_rating_and_reviews_coerce_unusable_values(self, bad: object) -> None:
+        state = _state()
+        state["itemList"][0]["product"]["rating"] = bad
+        state["itemList"][0]["product"]["reviewCount"] = bad
+        product = lowes.parse_products(state, 5)[0]
+        assert product["rating"] is None
+        assert product["review_count"] is None
+
+    def test_rating_and_reviews_arrive_as_strings_in_the_real_payload(self) -> None:
+        """Lowe's really does send these as strings; rejecting them lost real data."""
+        state = _state()
+        state["itemList"][0]["product"]["rating"] = "4.7"
+        state["itemList"][0]["product"]["reviewCount"] = "4076"
+        product = lowes.parse_products(state, 5)[0]
+        assert product["rating"] == 4.7
+        assert product["review_count"] == 4076
+
+    def test_stock_quantity_survives_a_string_count(self) -> None:
+        state = _state()
+        state["itemList"][0]["location"]["itemInventory"]["itemAvailList"] = [
+            {"fullMtdMsg": "Pickup", "isAvlSts": True, "onhandQty": "106"}
+        ]
+        assert lowes.parse_products(state, 5)[0]["stock_quantity"] == 106
+
+    def test_review_count_from_a_float_becomes_an_int(self) -> None:
+        state = _state()
+        state["itemList"][0]["product"]["reviewCount"] = 1284.0
+        assert lowes.parse_products(state, 5)[0]["review_count"] == 1284
+
+
 class TestHelpers:
     @pytest.mark.parametrize(
         "keyword,expected",
