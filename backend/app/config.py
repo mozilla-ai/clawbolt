@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import logging
 import os
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings
@@ -205,6 +205,20 @@ class Settings(BaseSettings):
     # Set to ``False`` to opt back into the default 5-minute TTL,
     # e.g. if a non-Anthropic provider rejects the ttl field.
     llm_cache_extended_ttl: bool = True
+    # Whether the agent may stamp Anthropic ``cache_control`` breakpoints.
+    #   "auto"   (default) stamp them when the provider serves the Messages API
+    #            natively AND the request is reaching that provider rather than
+    #            an intermediary that may forward it to something else.
+    #   "always" stamp them for any natively-Messages provider, including
+    #            through a custom ``llm_api_base``. Correct only when that
+    #            endpoint is known to be Anthropic-backed for every model it
+    #            serves; a gateway fronting a non-Anthropic model rejects a
+    #            marked request outright rather than ignoring the marker.
+    #   "never"  never stamp them, forgoing prompt caching entirely.
+    # ``provider_honors_cache_control`` in ``services/llm_service.py`` owns the
+    # decision this feeds; see its docstring for why the failure is a 400 and
+    # not a silent no-op.
+    llm_prompt_cache: Literal["auto", "always", "never"] = "auto"
 
     # Conversation & memory
     conversation_history_limit: int = Field(default=500, ge=1)

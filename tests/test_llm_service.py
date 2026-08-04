@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
-from unittest.mock import patch
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 import pytest
 from any_llm.exceptions import ProviderError
@@ -22,6 +23,26 @@ from backend.app.services.llm_service import (
 
 # Any provider that serves the Messages API natively, so the markers are stamped.
 _CACHING_PROVIDER = "anthropic"
+
+
+@contextmanager
+def _patched_settings(
+    *,
+    extended_ttl: bool = True,
+    api_base: str | None = None,
+    prompt_cache: str = "auto",
+) -> Iterator[MagicMock]:
+    """Patch the module's settings with every field the cache gate reads.
+
+    All three have to be set explicitly: an auto-specced attribute is a
+    ``MagicMock``, which is truthy, so leaving ``api_base`` alone would read as a
+    custom endpoint and silently withhold the markers under test.
+    """
+    with patch("backend.app.services.llm_service.settings") as mock_settings:
+        mock_settings.llm_cache_extended_ttl = extended_ttl
+        mock_settings.llm_api_base = api_base
+        mock_settings.llm_prompt_cache = prompt_cache
+        yield mock_settings
 
 
 def test_prepare_system_with_caching_returns_content_block() -> None:
@@ -95,8 +116,7 @@ def test_prepare_system_uses_1h_ttl_by_default() -> None:
     turn after any user gap >5 min, because the ephemeral cache had
     expired. Switching to 1h TTL covers typical re-engage windows.
     """
-    with patch("backend.app.services.llm_service.settings") as mock_settings:
-        mock_settings.llm_cache_extended_ttl = True
+    with _patched_settings(extended_ttl=True):
         result = prepare_system_with_caching("hello", _CACHING_PROVIDER)
     assert isinstance(result, list)
     assert result[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
@@ -106,8 +126,7 @@ def test_prepare_system_falls_back_to_5min_when_disabled() -> None:
     """Setting ``llm_cache_extended_ttl=False`` opts back into the
     default Anthropic 5-minute TTL. Provided as an escape hatch in case
     a non-Anthropic provider rejects the ttl field."""
-    with patch("backend.app.services.llm_service.settings") as mock_settings:
-        mock_settings.llm_cache_extended_ttl = False
+    with _patched_settings(extended_ttl=False):
         result = prepare_system_with_caching("hello", _CACHING_PROVIDER)
     assert isinstance(result, list)
     assert result[0]["cache_control"] == {"type": "ephemeral"}
@@ -115,8 +134,7 @@ def test_prepare_system_falls_back_to_5min_when_disabled() -> None:
 
 def test_apply_tool_caching_uses_1h_ttl_by_default() -> None:
     """Tool list cache_control marker also picks up the extended TTL."""
-    with patch("backend.app.services.llm_service.settings") as mock_settings:
-        mock_settings.llm_cache_extended_ttl = True
+    with _patched_settings(extended_ttl=True):
         result = apply_tool_caching(
             [{"name": "t", "description": "", "input_schema": {}}],
             _CACHING_PROVIDER,
@@ -125,8 +143,7 @@ def test_apply_tool_caching_uses_1h_ttl_by_default() -> None:
 
 
 def test_apply_tool_caching_falls_back_to_5min_when_disabled() -> None:
-    with patch("backend.app.services.llm_service.settings") as mock_settings:
-        mock_settings.llm_cache_extended_ttl = False
+    with _patched_settings(extended_ttl=False):
         result = apply_tool_caching(
             [{"name": "t", "description": "", "input_schema": {}}],
             _CACHING_PROVIDER,
@@ -138,8 +155,7 @@ def test_prepare_system_wraps_whole_string_in_one_cached_block() -> None:
     """The whole system string is stable now (dynamic content moved to the
     user turn, #1420), so it is a single cache-marked block."""
     text = "stable prefix\n\ndynamic suffix"
-    with patch("backend.app.services.llm_service.settings") as mock_settings:
-        mock_settings.llm_cache_extended_ttl = True
+    with _patched_settings(extended_ttl=True):
         result = prepare_system_with_caching(text, _CACHING_PROVIDER)
     assert isinstance(result, list)
     assert len(result) == 1
@@ -388,6 +404,17 @@ class TestCacheControlProviderGate:
     is therefore not a harmless no-op, it breaks the request.
     """
 
+    @pytest.fixture(autouse=True)
+    def _default_settings(self) -> Iterator[None]:
+        """Pin the endpoint half of the gate so these cases isolate the provider half.
+
+        Without this a developer whose ``.env`` sets ``LLM_API_BASE`` (an LM Studio
+        URL, say) would see the honored-provider cases fail for the wrong reason.
+        ``TestCacheControlEndpointGate`` below covers the endpoint half.
+        """
+        with _patched_settings():
+            yield
+
     @pytest.mark.parametrize("provider", ["anthropic", "azureanthropic", "vertexaianthropic"])
     def test_native_messages_providers_are_honored(self, provider: str) -> None:
         assert provider_honors_cache_control(provider) is True
@@ -473,6 +500,121 @@ class TestCacheControlProviderGate:
             [{"name": "t", "description": "", "input_schema": {}}], "fireworks"
         )
         system = prepare_system_with_caching("system prompt", "fireworks")
+
+        assert isinstance(system, str)
+        assert all("cache_control" not in tool for tool in tools)
+        for msg in result:
+            content = msg.get("content")
+            if isinstance(content, list):
+                assert all("cache_control" not in block for block in content)
+
+
+# ---------------------------------------------------------------------------
+# A native-Messages provider also has to be reaching Anthropic
+# ---------------------------------------------------------------------------
+
+_GATEWAY_BASE = "https://gateway.example.com"
+
+
+class TestCacheControlEndpointGate:
+    """``anthropic`` plus a custom ``llm_api_base`` is not necessarily Anthropic.
+
+    Pointing the ``anthropic`` provider at a gateway is the supported way to keep
+    the native Messages pass-through, but the gateway chooses its own downstream
+    provider from the model string, which this layer cannot read. A gateway
+    fronting a Fireworks-hosted model answered the marked request with
+    ``Extra inputs are not permitted, field:
+    'messages[0].content.list[ChatMessageContent][0].cache_control'``, so an
+    unrecognized endpoint is treated as unverifiable and the markers are withheld.
+    """
+
+    def test_unset_base_is_anthropic_itself(self) -> None:
+        with _patched_settings(api_base=None):
+            assert provider_honors_cache_control("anthropic") is True
+
+    @pytest.mark.parametrize(
+        "api_base",
+        [
+            "https://api.anthropic.com",
+            "https://api.anthropic.com/",
+            "api.anthropic.com",
+            "https://eu.api.anthropic.com/v1",
+        ],
+    )
+    def test_anthropics_own_endpoint_still_marks(self, api_base: str) -> None:
+        with _patched_settings(api_base=api_base):
+            assert provider_honors_cache_control("anthropic") is True
+
+    @pytest.mark.parametrize(
+        "api_base",
+        [
+            _GATEWAY_BASE,
+            "http://localhost:4000",
+            # Host-based, not substring-based: a lookalike domain that merely
+            # contains the real one must not be read as Anthropic.
+            "https://api.anthropic.com.lookalike.test",
+        ],
+    )
+    def test_unverifiable_endpoint_withholds(self, api_base: str) -> None:
+        with _patched_settings(api_base=api_base):
+            assert provider_honors_cache_control("anthropic") is False
+
+    @pytest.mark.parametrize("provider", ["azureanthropic", "vertexaianthropic"])
+    def test_azure_and_vertex_are_unaffected_by_a_custom_base(self, provider: str) -> None:
+        """Their base names the operator's own resource, so it is not a redirect.
+
+        Both are required to carry one, so applying the endpoint check to them
+        would disable caching for every Azure and Vertex deployment.
+        """
+        with _patched_settings(api_base="https://my-resource.services.ai.azure.com"):
+            assert provider_honors_cache_control(provider) is True
+
+    def test_always_marks_through_a_custom_base(self) -> None:
+        """The escape hatch for a base known to be Anthropic-backed throughout."""
+        with _patched_settings(api_base=_GATEWAY_BASE, prompt_cache="always"):
+            assert provider_honors_cache_control("anthropic") is True
+
+    def test_always_does_not_rescue_a_bridge_provider(self) -> None:
+        """The setting overrides the endpoint half of the decision, not the provider half.
+
+        A ``BaseOpenAIProvider`` still converts locally, so marking would break
+        the request no matter how the endpoint is vouched for.
+        """
+        with _patched_settings(api_base=_GATEWAY_BASE, prompt_cache="always"):
+            assert provider_honors_cache_control("gateway") is False
+            assert provider_honors_cache_control("fireworks") is False
+
+    def test_never_withholds_against_anthropic_direct(self) -> None:
+        with _patched_settings(api_base=None, prompt_cache="never"):
+            assert provider_honors_cache_control("anthropic") is False
+            assert provider_honors_cache_control("azureanthropic") is False
+
+    def test_system_stays_a_plain_string_behind_a_gateway(self) -> None:
+        """The reported failure: the block list is what the downstream rejected."""
+        with _patched_settings(api_base=_GATEWAY_BASE):
+            result = prepare_system_with_caching("You are an assistant.", "anthropic")
+        assert result == "You are an assistant."
+        assert isinstance(result, str)
+
+    def test_no_marker_survives_anywhere_behind_a_gateway(self) -> None:
+        """End to end over all four breakpoints, with the provider named ``anthropic``."""
+        messages = [
+            {"role": "user", "content": "older question"},
+            {"role": "assistant", "content": [{"type": "text", "text": "older answer"}]},
+            {"role": "user", "content": "current turn"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "a", "name": "t"}]},
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "a", "content": "x"}],
+            },
+        ]
+        with _patched_settings(api_base=_GATEWAY_BASE):
+            result = apply_history_cache_breakpoint(messages, "anthropic")
+            result = apply_in_turn_cache_breakpoint(result, "anthropic")
+            tools = apply_tool_caching(
+                [{"name": "t", "description": "", "input_schema": {}}], "anthropic"
+            )
+            system = prepare_system_with_caching("system prompt", "anthropic")
 
         assert isinstance(system, str)
         assert all("cache_control" not in tool for tool in tools)
