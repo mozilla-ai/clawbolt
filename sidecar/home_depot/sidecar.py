@@ -6,9 +6,8 @@ it.
 
 Home Depot's bot manager rejects plain HTTP clients, and also rejects a stock
 Playwright Chromium. What it accepts is a browser with no automation tells:
-patchright (which patches the CDP ``Runtime.enable`` leak), the real Chromium
-sandbox (so: not running as root, no ``--no-sandbox``), and a persistent profile
-that accumulates normal cookies. Requests must be issued *by that browser*.
+patchright (which patches the CDP ``Runtime.enable`` leak) and a persistent
+profile that accumulates normal cookies. Requests must be issued *by that browser*.
 Exporting its cookies to a plain HTTP client does not work, which is why this is
 a long-lived process rather than a cookie vendor.
 
@@ -197,9 +196,10 @@ class BrowserBackedSearch:
             self.state = "ready"
             self.error = None
         except Exception as exc:
-            # Chromium's sandbox needs unprivileged user namespaces, and a host
-            # that forbids them fails here. Keep the message: it is the only
-            # signal a remote operator gets.
+            # Chromium failing to launch lands here. Keep the message verbatim:
+            # it is the only signal a remote operator gets, and the causes are
+            # unobvious (an unwritable HOME breaks the crashpad handler, for
+            # instance).
             self.state = "failed"
             self.error = f"{type(exc).__name__}: {exc}"
             logger.exception("browser startup failed")

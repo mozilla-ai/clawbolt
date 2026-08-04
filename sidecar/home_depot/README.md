@@ -21,8 +21,6 @@ all measured rather than assumed:
 What works is a browser with no automation tells, which is what this runs:
 
 - **patchright** instead of playwright, which patches the `Runtime.enable` leak.
-- **A non-root user**, so Chromium's real sandbox is on and `--no-sandbox` (a
-  strong bot signal) is not needed.
 - **A persistent profile**, so the session looks like a returning visitor.
 
 None of this is IP-related. It was all measured from a residential connection.
@@ -37,7 +35,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 patchright install chromium
 
-# Chromium's sandbox refuses to run as root; use an unprivileged user.
+# Run as a normal user, not root.
 export HD_SIDECAR_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
 xvfb-run -a python -m uvicorn sidecar:app --host 0.0.0.0 --port 8899
 ```
@@ -78,11 +76,15 @@ because Railway's builder rejects it, so persistence is always the deployer's
 call.
 
 The container starts as root purely to take ownership of that mount, then drops
-to an unprivileged user before starting Chromium. Chromium running as root
-disables its own sandbox, which is one of the signals this whole approach
-depends on avoiding, so this is not optional. It does mean the host has to allow
-unprivileged user namespaces; where it does not, Chromium refuses to start
-rather than quietly downgrading.
+to an unprivileged user before starting Chromium. That handover also has to set
+`HOME`: `setpriv` changes uid but leaves the environment alone, and a `HOME` the
+new user cannot write makes Chromium's crashpad handler fail with `--database is
+required` and kill the browser with SIGTRAP before it opens a page. It cost a
+deploy to find, because `su` sets `HOME` and local testing used `su`.
+
+Running as a normal user is hygiene rather than a bot-detection requirement.
+patchright passes `--no-sandbox` by default, so Chromium's sandbox is off either
+way, and every working measurement here was taken that way.
 
 ### Railway
 
