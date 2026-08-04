@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -7,12 +8,14 @@ from any_llm import (
     AuthenticationError,
     ContentFilterError,
     ContextLengthExceededError,
+    InvalidRequestError,
     RateLimitError,
 )
 from pydantic import BaseModel
 
 from backend.app.agent.core import (
     ClawboltAgent,
+    _is_context_overflow,
 )
 from backend.app.agent.messages import (
     AgentMessage,
@@ -3066,3 +3069,122 @@ async def test_duplicate_tool_call_within_round_emits_telemetry(
     ]
     assert duplicate_logs, "expected a duplicate_tool_call_within_turn warning"
     assert any("search_thing" in rec.getMessage() for rec in duplicate_logs)
+
+
+# ---------------------------------------------------------------------------
+# Unified any-llm exceptions + context overflows any-llm fails to classify
+# ---------------------------------------------------------------------------
+
+
+def test_unified_any_llm_exceptions_are_enabled() -> None:
+    """any-llm only converts raw provider SDK errors into its unified exception
+    family when this variable is truthy. Without it every ``except RateLimitError``
+    / ``ContextLengthExceededError`` / ``ContentFilterError`` / ``AuthenticationError``
+    in the agent loop and in ``run_agent`` is dead code, because an
+    ``anthropic.RateLimitError`` is not an ``any_llm.RateLimitError``. Observed in
+    production: an upstream 400 reached ``run_agent``'s generic handler as a raw
+    ``anthropic.BadRequestError``, so the user got the "having trouble thinking"
+    fallback with no retry.
+    """
+    assert os.environ.get("ANY_LLM_UNIFIED_EXCEPTIONS") == "1"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "prompt is too long: 214231 tokens > 200000 maximum",
+        "Input is too long for requested model.",
+        "This model's maximum context length is 128000 tokens. Please reduce your prompt.",
+        "context_length_exceeded",
+        "Please reduce the length of the messages.",
+    ],
+)
+def test_is_context_overflow_matches_overflow_messages(message: str) -> None:
+    """Every real overflow wording is recognized.
+
+    The first two are the ones that matter: any-llm's own classifier matches
+    ``context.*length`` / ``token limit`` / ``maximum.*length``, and Anthropic's
+    real wording hits none of those, so an overflow arrives as a generic
+    ``InvalidRequestError``. The remaining three any-llm would already have
+    classified as ``ContextLengthExceededError``, so they cannot reach this
+    branch today; they are covered as defense in depth against a provider
+    rewording around that regex.
+    """
+    assert _is_context_overflow(InvalidRequestError(message)) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "messages.3: tool_use ids were found without tool_result blocks",
+        "max_tokens must be greater than thinking.budget_tokens",
+        "The provider rejected the request as invalid (check the model name and parameters)",
+        "A maximum of 4 blocks with cache_control may be provided",
+    ],
+)
+def test_is_context_overflow_ignores_other_invalid_requests(message: str) -> None:
+    """A genuinely malformed request must not be mistaken for an overflow: retrying
+    it with a shorter prompt would hide the real error and burn a second call. The
+    third case is a gateway that strips the upstream message (otari); there is no
+    signal left to match, so it correctly does not claim an overflow."""
+    assert _is_context_overflow(InvalidRequestError(message)) is False
+
+
+def test_is_context_overflow_reads_the_original_exception() -> None:
+    """any-llm's unified wrapper keeps the raw provider error on
+    ``original_exception``, so the useful text may live only there."""
+    raw = Exception("prompt is too long: 214231 tokens > 200000 maximum")
+    wrapped = InvalidRequestError("Invalid request", original_exception=raw)
+    assert _is_context_overflow(wrapped) is True
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_trims_on_overflow_reported_as_invalid_request(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """An overflow that any-llm classifies as ``InvalidRequestError`` (because
+    Anthropic's wording misses its regex) takes the same trim-and-retry recovery
+    as ``ContextLengthExceededError``, instead of failing the turn."""
+    mock_amessages.side_effect = [
+        InvalidRequestError("prompt is too long: 214231 tokens > 200000 maximum"),
+        make_text_response("Trimmed and retried!"),
+    ]
+
+    big_content = "x" * 4000
+    long_history: list[AgentMessage] = [
+        UserMessage(content=f"Message {i}: {big_content}")
+        if i % 2 == 0
+        else AssistantMessage(content=f"Message {i}: {big_content}")
+        for i in range(150)
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    response = await agent.process_message("Current message", conversation_history=long_history)
+
+    assert response.reply_text == "Trimmed and retried!"
+    assert mock_amessages.call_count == 2
+    retry_call = mock_amessages.call_args_list[1]
+    assert retry_call.kwargs["system"] is not None
+    assert len(retry_call.kwargs["messages"]) < 150
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_does_not_retry_a_non_overflow_invalid_request(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """A malformed request is not silently retried with a shorter prompt. It
+    propagates so the caller can surface an error rather than masking the real
+    problem behind a second call."""
+    mock_amessages.side_effect = InvalidRequestError(
+        "messages.3: tool_use ids were found without tool_result blocks"
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    with pytest.raises(InvalidRequestError):
+        await agent.process_message("Current message")
+
+    assert mock_amessages.call_count == 1

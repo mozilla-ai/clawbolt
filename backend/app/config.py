@@ -9,6 +9,43 @@ from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
+# Opt in to any-llm's unified exception family.
+#
+# any-llm still defaults to re-raising the raw provider SDK exception and only
+# converts to ``any_llm.exceptions`` types when this variable is truthy (see
+# ``any_llm.utils.exception_handler._handle_exception``). Without it, every
+# unified-exception handler in this codebase is dead code, because an
+# ``anthropic.RateLimitError`` is not an ``any_llm.RateLimitError``:
+#
+#   * ``core.py::_call_llm_with_retry`` never backs off on a rate limit, never
+#     trims and retries on a context overflow, and never logs the specific
+#     content-filter or auth diagnostics.
+#   * ``router.py::run_agent`` never returns ``CONTENT_FILTER_FALLBACK`` or
+#     ``AUTH_ERROR_FALLBACK``.
+#
+# Every failure instead lands in the generic ``except Exception`` and the user
+# gets "I'm having trouble thinking right now" with no retry. Observed in
+# production: an upstream 400 arrived as a raw ``anthropic.BadRequestError`` and
+# reached ``run_agent``'s generic handler.
+#
+# ``setdefault`` so an operator can opt out with
+# ``ANY_LLM_UNIFIED_EXCEPTIONS=0``, but note that has to be a real environment
+# variable: pydantic-settings reads ``.env`` into the ``Settings`` model without
+# writing it back to ``os.environ``, so a ``.env`` entry is invisible here. It
+# does work via ``docker compose`` ``env_file`` and on a platform's env config,
+# both of which inject real variables.
+#
+# any-llm reads the variable inside ``_handle_exception``, i.e. per raise rather
+# than at import time, so this does not depend on import ordering; config is
+# nonetheless imported by every module that calls ``amessages``.
+#
+# One conversion is load-bearing elsewhere: with this on, a provider that cannot
+# enumerate models raises ``NotImplementedError`` from inside any-llm's decorator
+# and arrives wrapped, which would silently kill the ``except
+# NotImplementedError`` branch callers use to render a free-text model field.
+# ``llm_service.get_models`` unwraps it so that signal survives.
+os.environ.setdefault("ANY_LLM_UNIFIED_EXCEPTIONS", "1")
+
 # Default hysteresis buffer for the turn-count trim backstop: when
 # ``context_trim_trigger_turns`` is unset, the trigger resolves to
 # ``context_trim_target_turns + CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS``
