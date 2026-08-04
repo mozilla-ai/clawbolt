@@ -6,12 +6,14 @@ from collections.abc import Generator
 from unittest.mock import patch
 
 import pytest
+from any_llm.exceptions import ProviderError
 
 from backend.app.services.llm_service import (
     _cache_control,
     apply_history_cache_breakpoint,
     apply_in_turn_cache_breakpoint,
     apply_tool_caching,
+    get_models,
     prepare_system_with_caching,
     resolve_user_llm_override,
     set_user_llm_resolver,
@@ -316,3 +318,44 @@ async def test_resolve_user_llm_override_passes_through_none() -> None:
 
     set_user_llm_resolver(fake_resolver)
     assert await resolve_user_llm_override("user-xyz") is None
+
+
+# ---------------------------------------------------------------------------
+# get_models: preserve the "provider cannot list models" signal
+# ---------------------------------------------------------------------------
+
+
+async def test_get_models_unwraps_not_implemented_from_unified_error() -> None:
+    """A provider that cannot enumerate models must still raise NotImplementedError.
+
+    any-llm raises ``NotImplementedError`` from inside its ``handle_exceptions``
+    decorator, so with ``ANY_LLM_UNIFIED_EXCEPTIONS`` enabled it arrives wrapped
+    in a ``ProviderError``. Callers (the OSS profile endpoint and the premium
+    admin LLM picker) branch on ``NotImplementedError`` to render a free-text
+    model field instead of a listing failure, so the signal has to survive.
+    """
+    raw = NotImplementedError("Provider doesn't support listing models.")
+    wrapped = ProviderError(
+        message="Provider doesn't support listing models.",
+        original_exception=raw,
+        provider_name="voyage",
+    )
+    with (
+        patch("backend.app.services.llm_service.alist_models", side_effect=wrapped),
+        pytest.raises(NotImplementedError),
+    ):
+        await get_models("voyage")
+
+
+async def test_get_models_reraises_other_unified_errors() -> None:
+    """A real listing failure is not mistaken for "unsupported"."""
+    wrapped = ProviderError(
+        message="upstream 503",
+        original_exception=RuntimeError("upstream 503"),
+        provider_name="openai",
+    )
+    with (
+        patch("backend.app.services.llm_service.alist_models", side_effect=wrapped),
+        pytest.raises(ProviderError),
+    ):
+        await get_models("openai")

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from any_llm import LLMProvider, alist_models
+from any_llm import AnyLLMError, LLMProvider, alist_models
 
 from backend.app.config import settings
 from backend.app.schemas import ProviderInfo
@@ -60,8 +60,21 @@ async def get_models(
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> list[str]:
-    """Fetch available models for a provider."""
-    raw = await alist_models(provider=provider, api_key=api_key, api_base=api_base)
+    """Fetch available models for a provider.
+
+    "This provider cannot enumerate models" surfaces as ``NotImplementedError``,
+    which callers branch on to render a free-text model field instead of an
+    error. any-llm raises that from inside its ``handle_exceptions`` decorator,
+    so with ``ANY_LLM_UNIFIED_EXCEPTIONS`` enabled (see ``config.py``) it arrives
+    wrapped in a ``ProviderError`` and the distinction is lost. Unwrap it so the
+    "unsupported" signal survives the conversion.
+    """
+    try:
+        raw = await alist_models(provider=provider, api_key=api_key, api_base=api_base)
+    except AnyLLMError as exc:
+        if isinstance(exc.original_exception, NotImplementedError):
+            raise exc.original_exception from exc
+        raise
     return [m.id if hasattr(m, "id") else str(m) for m in raw]
 
 
