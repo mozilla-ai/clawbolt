@@ -125,8 +125,8 @@ def _format_results(
 
     if not localized and any(p.stock_quantity is not None for p in results):
         lines.append(
-            "Note: these are not localized to your zip. Stock counts are for "
-            f"{supplier_name}'s default store, so confirm before making a trip."
+            "Note: these are not localized to your zip. Stock counts are for the "
+            f"default {supplier_name} store, so confirm before making a trip."
         )
 
     return "\n".join(lines).rstrip()

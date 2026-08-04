@@ -170,6 +170,12 @@ class BrowserBackedSearch:
         # is an in-page fetch, so the page has to already be on homedepot.com;
         # sharing a single page would mean re-warming on every site switch.
         self._site_pages: dict[str, Any] = {}
+        # Consecutive Lowe's failures. A warmed page can go stale later (the edge
+        # starts denying, or stops embedding the payload), and keeping it would
+        # 502 every subsequent search until the process restarts. Discard after
+        # two in a row rather than one, so a single transient hiccup does not cost
+        # a ~20s re-warm.
+        self._lowes_failures = 0
         # A lock per site, not one shared lock. Requests to one retailer must
         # serialize against each other because they drive that retailer's single
         # page, but they have no reason to block the other retailer. Sharing one
@@ -275,6 +281,24 @@ class BrowserBackedSearch:
         await self._page.wait_for_timeout(int(WARM_SECONDS * 1000))
         logger.info("browser warmed: %s", await self._page.title())
 
+    async def _note_lowes_failure(self) -> None:
+        """Drop a Lowe's session that has failed repeatedly so the next call re-warms.
+
+        Without this, a page that warmed successfully but later went stale pins
+        every subsequent search to a 502 until the process restarts. The threshold
+        is two rather than one because a re-warm costs roughly twenty seconds, and
+        a lone transient failure is not worth paying that for.
+        """
+        self._lowes_failures += 1
+        if self._lowes_failures < 2:
+            return
+        page = self._site_pages.pop("lowes", None)
+        self._lowes_failures = 0
+        if page is not None:
+            logger.warning("lowes: discarding a stale session after repeated failures")
+            with contextlib.suppress(Exception):
+                await page.close()
+
     async def _prewarm_lowes(self) -> None:
         """Warm the Lowe's page in the background, tolerating failure."""
         try:
@@ -332,14 +356,14 @@ class BrowserBackedSearch:
         interval: a blanket wait cost about seven seconds per query for no
         benefit, against Home Depot's sub-second GraphQL call.
         """
-        async with self._lock_for("home_depot"):
+        async with self._lock_for("lowes"):
             page = await self._lowes_page()
             await page.goto(
                 lowes.search_url(keyword), wait_until="domcontentloaded", timeout=90_000
             )
             html = await page.content()
             state = lowes.extract_preloaded_state(html)
-            for _ in range(int(LOWES_STATE_POLL_ATTEMPTS)):
+            for _ in range(LOWES_STATE_POLL_ATTEMPTS):
                 if state is not None or lowes.is_denied(html):
                     break
                 await page.wait_for_timeout(LOWES_STATE_POLL_MS)
@@ -349,10 +373,12 @@ class BrowserBackedSearch:
         # Prefer a payload we actually parsed over the "Access Denied" substring,
         # which is a heuristic and could appear in legitimate page content.
         if state is None:
+            await self._note_lowes_failure()
             if lowes.is_denied(html):
                 raise HTTPException(502, "Lowe's refused the search")
             raise HTTPException(502, "Lowe's search page carried no result payload")
 
+        self._lowes_failures = 0
         return SearchResponse(
             keyword=keyword,
             total_products=lowes.total_products(state),
@@ -422,7 +448,7 @@ class BrowserBackedSearch:
     async def search(
         self, keyword: str, *, store_id: str, zip_code: str, page_size: int
     ) -> SearchResponse:
-        async with self._lock_for("lowes"):
+        async with self._lock_for("home_depot"):
             model = await self._call(keyword, None, store_id, zip_code, page_size)
             used_nav: str | None = None
 

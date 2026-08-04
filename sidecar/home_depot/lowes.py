@@ -22,6 +22,7 @@ otherwise contaminates a DOM scrape with items from earlier queries.
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 from urllib.parse import quote_plus
@@ -91,17 +92,26 @@ def _as_float(value: Any) -> float | None:
     dropped every rating and review count, so accept both representations and
     reject only what cannot be read as a number. bool is excluded deliberately,
     since True would otherwise coerce to 1.0.
+
+    NaN and the infinities are rejected as unusable too. ``json.loads`` accepts
+    both as bare literals, and a page-state serialiser can emit them, so they do
+    reach here: unguarded, NaN makes ``_as_int`` raise ValueError and infinity
+    makes it raise OverflowError, and a NaN that survives as a float fails
+    Starlette's ``allow_nan=False`` encoder. Either way the whole search 500s,
+    which is the outcome these helpers exist to prevent.
     """
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
+        number = float(value)
+    elif isinstance(value, str):
         try:
-            return float(value.strip())
+            number = float(value.strip())
         except ValueError:
             return None
-    return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _as_int(value: Any) -> int | None:

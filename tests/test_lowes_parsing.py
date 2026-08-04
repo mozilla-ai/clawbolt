@@ -196,6 +196,23 @@ class TestPayloadShapeChanges:
         ]
         assert lowes.parse_products(state, 5)[0]["stock_quantity"] == 106
 
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), "NaN", "Infinity", "-Infinity"])
+    def test_non_finite_numbers_are_rejected(self, bad: object) -> None:
+        """json.loads accepts bare NaN/Infinity, and both used to 500 the search."""
+        assert lowes.total_products({"itemCount": bad}) is None
+        state = _state()
+        state["itemList"][0]["product"]["rating"] = bad
+        state["itemList"][0]["product"]["reviewCount"] = bad
+        state["itemList"][0]["location"]["price"]["sellingPrice"] = bad
+        state["itemList"][0]["location"]["itemInventory"]["itemAvailList"] = [
+            {"fullMtdMsg": "Pickup", "isAvlSts": True, "onhandQty": bad}
+        ]
+        product = lowes.parse_products(state, 5)[0]
+        assert product["rating"] is None
+        assert product["review_count"] is None
+        assert product["price_dollars"] is None
+        assert product["stock_quantity"] is None
+
     def test_review_count_from_a_float_becomes_an_int(self) -> None:
         state = _state()
         state["itemList"][0]["product"]["reviewCount"] = 1284.0
