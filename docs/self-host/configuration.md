@@ -274,7 +274,8 @@ ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per
 |----------|---------|-------------|
 | `SERPAPI_API_KEY` | | Optional fallback for product search only. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
 
-The agent gets two specialist tools here: `supplier_search_products` (prices, ratings, stock, and links by keyword and zip code) and `supplier_find_stores` (store number, address, phone, and distance near a zip code, city, or address). Feed a store number from the second into the first to get that store's price and shelf count instead of regional pricing.
+The agent gets two specialist tools here: `supplier_search_products` (prices, ratings, stock, and links by keyword and zip code, at **Home Depot or Lowe's** via its `supplier` argument) and `supplier_find_stores` (store number, address, phone, and distance near a zip code, city, or address). Feed a store number from the second into the first to get that store's price and shelf count instead of regional pricing; Home Depot only.
+
 
 
 **Store lookup** requires the sidecar. SerpApi has no equivalent endpoint, so without a sidecar `supplier_find_stores` reports being unavailable.
