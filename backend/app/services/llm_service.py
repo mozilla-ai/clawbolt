@@ -63,6 +63,10 @@ _HIDDEN_PROVIDERS = {"platform", "gateway"}
 #
 # Membership here is necessary but not sufficient: ``anthropic`` also has to be
 # reaching Anthropic. See :func:`_api_base_reaches_anthropic`.
+#
+# Provisional. Once any-llm#1228 lands and the floor is raised past it, a marker
+# a provider cannot use is dropped instead of rejected, and this set becomes an
+# optimization rather than a correctness requirement. Tracked in #1484.
 _CACHE_CONTROL_PROVIDERS = {"anthropic", "azureanthropic", "vertexaianthropic"}
 
 # Registrable domain any-llm's ``anthropic`` provider talks to when no
@@ -84,6 +88,10 @@ def _api_base_reaches_anthropic(api_base: str | None) -> bool:
     members of :data:`_CACHE_CONTROL_PROVIDERS` always carry a base naming the
     operator's own resource, so a base being set there is ordinary configuration
     and says nothing about an intermediary.
+
+    Removable once any-llm#1228 lands: a marker the gateway's downstream cannot use
+    is dropped in conversion rather than rejected, so the endpoint stops mattering
+    and gateway deployments get prompt caching back. Tracked in #1484.
     """
     if not api_base:
         return True
