@@ -1,8 +1,13 @@
-"""Home Depot product search and store lookup via the browser sidecar.
+"""Client for the retail browser sidecar.
 
-Home Depot's bot manager refuses plain HTTP clients, so the only way to reach it
-is to have a real browser issue the request. ``sidecar/home_depot/`` is that
-browser, wrapped in a small HTTP API, and this module is the client for it.
+Home Depot and Lowe's both refuse plain HTTP clients, so the only way to reach
+either is to have a real browser issue the request. ``sidecar/home_depot/`` is
+that browser, wrapped in a small HTTP API, and this module is the client for it.
+
+One class serves both retailers because the sidecar hides the differences. Behind
+its ``site`` parameter, Home Depot answers a GraphQL call made from inside the
+page while Lowe's results are read out of its search page's embedded state, but
+both come back in the same shape.
 
 The sidecar is ordinary infrastructure from this side: our own service, plain
 JSON, no bot protection, so ``httpx`` is the right tool. Run it wherever a
@@ -31,18 +36,26 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT_SECONDS = 20.0
 
 
-class HomeDepotSidecarSupplier:
-    """Home Depot search and store lookup delegated to the browser sidecar."""
+class SidecarSupplier:
+    """A retailer served by the browser sidecar.
+
+    ``site`` selects the retailer inside the sidecar. Store lookup is Home Depot
+    only, since that is the only locator implemented there.
+    """
 
     def __init__(
         self,
         base_url: str,
         *,
+        site: str = "home_depot",
+        name: str = "homedepot",
+        display_name: str = "Home Depot",
         token: str = "",
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self.name = "homedepot"
-        self.display_name = "Home Depot"
+        self.name = name
+        self.display_name = display_name
+        self.site = site
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout_seconds
@@ -83,7 +96,7 @@ class HomeDepotSidecarSupplier:
     async def search_products(
         self, query: str, location: Location, *, max_results: int = 5
     ) -> list[ProductResult]:
-        """Search Home Depot through the sidecar.
+        """Search this supplier's retailer through the sidecar.
 
         Raises:
             SupplierUnavailableError: the sidecar is unreachable or errored, so
@@ -93,17 +106,18 @@ class HomeDepotSidecarSupplier:
             "/search",
             {
                 "q": query,
+                "site": self.site,
                 "zip": location.zip_code,
                 "store_id": location.store_id,
                 "limit": str(max_results),
             },
         )
-        return [_to_product(p) for p in (payload.get("products") or [])[:max_results]]
+        return [_to_product(p, self.name) for p in (payload.get("products") or [])[:max_results]]
 
     async def find_stores(
         self, near: str, *, radius_miles: int = 25, max_results: int = 5
     ) -> list[StoreResult]:
-        """Find Home Depot stores near a zip code, city, or address.
+        """Find stores near a zip code, city, or address (Home Depot only).
 
         Raises:
             SupplierUnavailableError: the sidecar is unreachable or errored.
@@ -115,10 +129,10 @@ class HomeDepotSidecarSupplier:
         return [_to_store(s) for s in (payload.get("stores") or [])[:max_results]]
 
 
-def _to_product(raw: dict[str, Any]) -> ProductResult:
+def _to_product(raw: dict[str, Any], supplier: str) -> ProductResult:
     """Map a sidecar product onto the shared :class:`ProductResult`."""
     return ProductResult(
-        supplier="homedepot",
+        supplier=supplier,
         product_id=str(raw.get("item_id") or ""),
         name=raw.get("name") or "Unknown product",
         brand=raw.get("brand") or "",

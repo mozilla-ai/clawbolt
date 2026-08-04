@@ -35,6 +35,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import lowes
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from patchright.async_api import async_playwright
 from pydantic import BaseModel
@@ -49,6 +50,11 @@ SEARCH_MODEL_QUERY = QUERY_PATH.read_text()
 PROFILE_DIR = os.environ.get("HD_PROFILE_DIR", str(Path.home() / ".hd-sidecar-profile"))
 AUTH_TOKEN = os.environ.get("HD_SIDECAR_TOKEN", "")
 WARM_SECONDS = float(os.environ.get("HD_WARM_SECONDS", "7"))
+
+# Lowe's results are server-rendered into the page, so the wait is a poll for the
+# payload rather than a fixed settle. Roughly 6s of headroom in total.
+LOWES_STATE_POLL_MS = 400
+LOWES_STATE_POLL_ATTEMPTS = 15
 
 # Home Depot maps some keywords to a category browse page instead of a keyword
 # result set. The redirect path carries an "N-<token>" that has to be replayed
@@ -160,6 +166,10 @@ class BrowserBackedSearch:
         self._pw: Any = None
         self._ctx: Any = None
         self._page: Any = None
+        # One page per site, each parked on its own origin. Home Depot's search
+        # is an in-page fetch, so the page has to already be on homedepot.com;
+        # sharing a single page would mean re-warming on every site switch.
+        self._site_pages: dict[str, Any] = {}
         self._lock = asyncio.Lock()
         self.state = "starting"
         """One of starting, ready, failed. Reported by /health."""
@@ -168,6 +178,7 @@ class BrowserBackedSearch:
         """Why startup failed, surfaced over HTTP so a broken deploy is diagnosable."""
 
         self._task: asyncio.Task[None] | None = None
+        self._prewarm: asyncio.Task[None] | None = None
 
     def start_background(self) -> None:
         """Launch the browser without blocking the caller.
@@ -192,9 +203,16 @@ class BrowserBackedSearch:
                 timezone_id="America/New_York",
             )
             self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+            self._site_pages["home_depot"] = self._page
             await self._warm()
             self.state = "ready"
             self.error = None
+            # Pre-warm Lowe's too. Its warm costs a homepage load plus a click, so
+            # the first Lowe's query would otherwise pay ~19s while Home Depot
+            # answers in one. Doing it after state=ready keeps Home Depot
+            # available immediately, and a failure here is not fatal: the lazy
+            # path in _lowes_page still runs on demand.
+            self._prewarm = asyncio.create_task(self._prewarm_lowes())
         except Exception as exc:
             # Chromium failing to launch lands here. Keep the message verbatim:
             # it is the only signal a remote operator gets, and the causes are
@@ -223,10 +241,11 @@ class BrowserBackedSearch:
             return False
 
     async def stop(self) -> None:
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._task
+        for task in (self._prewarm, self._task):
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
         for closer in (self._ctx, self._pw):
             if closer is not None:
                 with contextlib.suppress(Exception):
@@ -237,6 +256,80 @@ class BrowserBackedSearch:
         await self._page.goto(f"{ORIGIN}/", wait_until="domcontentloaded", timeout=90_000)
         await self._page.wait_for_timeout(int(WARM_SECONDS * 1000))
         logger.info("browser warmed: %s", await self._page.title())
+
+    async def _prewarm_lowes(self) -> None:
+        """Warm the Lowe's page in the background, tolerating failure."""
+        try:
+            async with self._lock:
+                await self._lowes_page()
+        except Exception:
+            logger.warning("lowes pre-warm failed; will warm on first use", exc_info=True)
+
+    async def _lowes_page(self) -> Any:
+        """Return a page warmed for Lowe's, creating and warming it on first use.
+
+        Lowe's needs more than a homepage visit. Navigating to /search from a
+        session warmed only by the homepage is refused with a 403 edge deny; one
+        organic click into a category first, and the same navigation is served.
+        The click is the load-bearing step, so a failure to find a category link
+        is worth logging rather than swallowing.
+        """
+        page = self._site_pages.get("lowes")
+        if page is not None:
+            return page
+
+        page = await self._ctx.new_page()
+        await page.goto(f"{lowes.ORIGIN}/", wait_until="domcontentloaded", timeout=90_000)
+        await page.wait_for_timeout(int(WARM_SECONDS * 1000))
+
+        clicked = False
+        try:
+            link = page.locator("a[href*='/pl/']").first
+            if await link.count():
+                await link.click()
+                await page.wait_for_timeout(int(WARM_SECONDS * 1000))
+                clicked = True
+        except Exception:
+            logger.warning("lowes: organic warm click failed", exc_info=True)
+        if not clicked:
+            logger.warning("lowes: no category link to click; search will likely be denied")
+
+        logger.info("lowes page warmed (clicked=%s): %s", clicked, await page.title())
+        self._site_pages["lowes"] = page
+        return page
+
+    async def search_lowes(self, keyword: str, *, page_size: int) -> SearchResponse:
+        """Search Lowe's by reading the search page's embedded state.
+
+        The payload is server-rendered into the HTML, so there is nothing to wait
+        for once the document arrives. Poll for it rather than sleeping a fixed
+        interval: a blanket wait cost about seven seconds per query for no
+        benefit, against Home Depot's sub-second GraphQL call.
+        """
+        async with self._lock:
+            page = await self._lowes_page()
+            await page.goto(
+                lowes.search_url(keyword), wait_until="domcontentloaded", timeout=90_000
+            )
+            html = await page.content()
+            for _ in range(int(LOWES_STATE_POLL_ATTEMPTS)):
+                if lowes.is_denied(html) or lowes.extract_preloaded_state(html) is not None:
+                    break
+                await page.wait_for_timeout(LOWES_STATE_POLL_MS)
+                html = await page.content()
+
+        if lowes.is_denied(html):
+            raise HTTPException(502, "Lowe's refused the search")
+        state = lowes.extract_preloaded_state(html)
+        if state is None:
+            raise HTTPException(502, "Lowe's search page carried no result payload")
+
+        return SearchResponse(
+            keyword=keyword,
+            total_products=state.get("itemCount"),
+            used_nav_param=None,
+            products=[Product(**p) for p in lowes.parse_products(state, page_size)],
+        )
 
     async def _call(
         self, keyword: str, nav_param: str | None, store_id: str, zip_code: str, page_size: int
@@ -461,11 +554,22 @@ async def health() -> dict[str, Any]:
 @app.get("/search", response_model=SearchResponse, dependencies=[Depends(require_token)])
 async def search(
     q: str = Query(min_length=1, description="Product search keyword"),
+    site: str = Query(default="home_depot", pattern="^(home_depot|lowes)$"),
     zip_code: str = Query(default="", alias="zip"),
     store_id: str = Query(default=""),
     limit: int = Query(default=5, ge=1, le=24),
 ) -> SearchResponse:
+    """Search a retailer for `q`.
+
+    The two sites are reached differently. Home Depot answers a GraphQL call made
+    from inside the page, so `zip` and `store_id` localize the result. Lowe's has
+    no reachable product API, so its results are read out of the search page's
+    embedded state and localization rides on the session's own store rather than
+    on parameters.
+    """
     _engine.require_ready()
+    if site == "lowes":
+        return await _engine.search_lowes(q, page_size=limit)
     return await _engine.search(q, store_id=store_id, zip_code=zip_code, page_size=limit)
 
 
@@ -475,5 +579,6 @@ async def stores(
     radius_miles: int = Query(default=25, ge=1, le=100),
     limit: int = Query(default=5, ge=1, le=25),
 ) -> StoresResponse:
+    """Find Home Depot stores. Lowe's store lookup is not implemented."""
     _engine.require_ready()
     return await _engine.find_stores(near, radius_miles=radius_miles, limit=limit)

@@ -276,7 +276,9 @@ ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per
 | `HOME_DEPOT_SIDECAR_TOKEN` | | Bearer token for the sidecar. Must match its `HD_SIDECAR_TOKEN`. |
 | `SERPAPI_API_KEY` | | Optional fallback for product search only. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
 
-The agent gets two specialist tools here: `supplier_search_products` (prices, ratings, stock, and links by keyword and zip code) and `supplier_find_stores` (store number, address, phone, and distance near a zip code, city, or address). Feed a store number from the second into the first to get that store's price and shelf count instead of regional pricing.
+The agent gets two specialist tools here: `supplier_search_products` (prices, ratings, stock, and links by keyword and zip code, at **Home Depot or Lowe's** via its `supplier` argument) and `supplier_find_stores` (store number, address, phone, and distance near a zip code, city, or address). Feed a store number from the second into the first to get that store's price and shelf count instead of regional pricing; Home Depot only.
+
+Both retailers are served by the same sidecar process, so one `HOME_DEPOT_SIDECAR_URL` covers both. SerpApi is a fallback for Home Depot only, because it has no Lowe's engine; a Lowe's lookup that the sidecar cannot serve reports the failure rather than silently returning Home Depot prices.
 
 Home Depot has no public API and its bot manager refuses plain HTTP clients on both product and store routes, so everything here goes through the sidecar (`sidecar/home_depot/`), which drives a real browser. See its README for how to run it and how to point Clawbolt at one on a different host.
 
