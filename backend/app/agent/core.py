@@ -12,9 +12,11 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from any_llm import (
+    AnyLLMError,
     AuthenticationError,
     ContentFilterError,
     ContextLengthExceededError,
+    InvalidRequestError,
     RateLimitError,
     amessages,
 )
@@ -113,6 +115,51 @@ MAX_INPUT_TOKENS = settings.max_input_tokens
 _VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "stop_sequence", None}
 
 _LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
+
+# Provider phrasings for "this prompt is longer than the model's context window"
+# that any-llm does NOT classify as ``ContextLengthExceededError``. Its
+# ``convert_exception`` matches ``context.*length``, ``length.*context``,
+# ``token limit``, and ``maximum.*length``; Anthropic's actual message,
+# "prompt is too long: 214231 tokens > 200000 maximum", matches none of them, so
+# a real overflow arrives as the more generic ``InvalidRequestError`` and would
+# skip the trim-and-retry recovery entirely.
+#
+# Kept narrow on purpose. A false positive here turns a genuinely malformed
+# request (an orphaned tool_use block, a bad tool schema) into a silent retry
+# with a shorter prompt, which hides the real error and burns a second call.
+#
+# Not every probe is strictly required: any-llm's regex already catches the two
+# entries containing "context_length" / "length of the messages", so those can
+# only arrive here if a provider rewords around it. They stay as defense in
+# depth. The first two are the ones any-llm genuinely misses today.
+_CONTEXT_OVERFLOW_PROBES = (
+    "prompt is too long",  # anthropic
+    "input is too long",  # anthropic, older wording
+    "context_length_exceeded",  # openai error code
+    "reduce the length of the messages",  # openai
+    "please reduce your prompt",  # openai
+)
+
+
+def _is_context_overflow(exc: AnyLLMError) -> bool:
+    """True when *exc* is a context overflow any-llm failed to classify as one.
+
+    Reads both the unified exception and its ``original_exception``, since
+    any-llm keeps the raw provider error on that attribute and the useful text
+    may live on either.
+
+    A gateway that strips upstream error messages (otari replaces every provider
+    400 body with a fixed string) defeats this by design: there is no signal left
+    to match, so an overflow behind such a gateway still surfaces as an error.
+    The proactive trim in ``process_message`` is the defense there; this is the
+    reactive backstop for when the provider message survives.
+    """
+    parts = [exc.message, str(exc)]
+    if exc.original_exception is not None:
+        parts.append(str(exc.original_exception))
+    haystack = " ".join(parts).lower()
+    return any(probe in haystack for probe in _CONTEXT_OVERFLOW_PROBES)
+
 
 # Last API-reported prompt size per user (input + cache-read +
 # cache-creation tokens, since ``usage.input_tokens`` alone excludes the
@@ -643,64 +690,35 @@ class ClawboltAgent:
                 )
                 await asyncio.sleep(delay)
             except ContextLengthExceededError:
-                trim_result = trim_messages(
+                return await self._trim_and_retry(
                     messages,
-                    input_tokens=self._last_input_tokens or MAX_INPUT_TOKENS,
+                    tool_schemas=tool_schemas,
+                    effective_model=effective_model,
+                    effective_provider=effective_provider,
+                    effective_max_tokens=effective_max_tokens,
+                    thinking=thinking,
                 )
-                self._reactive_trim_dropped.extend(trim_result.dropped)
+            except InvalidRequestError as exc:
+                # any-llm only reaches ``ContextLengthExceededError`` when the
+                # provider message matches its own regex, which several real
+                # overflow messages do not (see ``_is_context_overflow``). Treat a
+                # recognized overflow the same way; re-raise anything else so a
+                # genuinely malformed request still surfaces as an error instead of
+                # being silently retried with a shorter prompt.
+                if not _is_context_overflow(exc):
+                    raise
                 logger.warning(
-                    "Context length exceeded, trimmed from %d to %d messages and retrying",
-                    len(messages),
-                    len(trim_result.messages),
+                    "Provider reported a context overflow as a generic invalid request;"
+                    " trimming and retrying"
                 )
-                retry_system_str, trimmed_dicts = messages_to_messages_api(trim_result.messages)
-                trimmed_dicts = apply_history_cache_breakpoint(trimmed_dicts)
-                trimmed_dicts = apply_in_turn_cache_breakpoint(trimmed_dicts)
-                system = (
-                    prepare_system_with_caching(retry_system_str)
-                    if retry_system_str is not None
-                    else None
+                return await self._trim_and_retry(
+                    messages,
+                    tool_schemas=tool_schemas,
+                    effective_model=effective_model,
+                    effective_provider=effective_provider,
+                    effective_max_tokens=effective_max_tokens,
+                    thinking=thinking,
                 )
-                followup_started_at = datetime.now(UTC)
-                await emit_llm_request(
-                    LLMRequestPayload(
-                        schema_version=1,
-                        purpose=PURPOSE_AGENT_FOLLOWUP,
-                        user_id=self.user.id,
-                        session_id=self._session_id or None,
-                        request_id=self._request_id or None,
-                        model=effective_model,
-                        provider=effective_provider,
-                        max_tokens=effective_max_tokens,
-                        thinking=thinking,
-                        system=system,
-                        messages=trimmed_dicts,
-                        tools=tool_schemas,
-                        min_message_seq_in_prompt=compute_min_message_seq(trim_result.messages),
-                        started_at=followup_started_at,
-                    )
-                )
-                followup_response = cast(
-                    MessageResponse,
-                    await amessages(
-                        model=effective_model,
-                        provider=effective_provider,
-                        api_base=settings.llm_api_base,
-                        system=system,
-                        messages=trimmed_dicts,
-                        tools=tool_schemas,
-                        max_tokens=effective_max_tokens,
-                        thinking=thinking,
-                    ),
-                )
-                await self._emit_response(
-                    followup_response,
-                    purpose=PURPOSE_AGENT_FOLLOWUP,
-                    model=effective_model,
-                    provider=effective_provider,
-                    started_at=followup_started_at,
-                )
-                return followup_response
             except ContentFilterError:
                 logger.warning("Content blocked by provider safety filter")
                 raise
@@ -709,6 +727,82 @@ class ClawboltAgent:
                 raise
         # This should be unreachable, but satisfies the type checker.
         raise RuntimeError("LLM retry loop exited without returning")
+
+    async def _trim_and_retry(
+        self,
+        messages: list[AgentMessage],
+        *,
+        tool_schemas: list[Any] | None,
+        effective_model: str,
+        effective_provider: str,
+        effective_max_tokens: int,
+        thinking: dict[str, Any] | None,
+    ) -> MessageResponse:
+        """Drop the oldest history, then re-issue the call once as a followup.
+
+        The recovery path for a prompt the provider refused as too long, shared by
+        the ``ContextLengthExceededError`` handler and the ``InvalidRequestError``
+        handler that catches the overflow messages any-llm fails to classify.
+        Deliberately single-shot: if the trimmed prompt is still refused the error
+        propagates, because a loop here would re-trim toward an empty prompt while
+        the user waits.
+        """
+        trim_result = trim_messages(
+            messages,
+            input_tokens=self._last_input_tokens or MAX_INPUT_TOKENS,
+        )
+        self._reactive_trim_dropped.extend(trim_result.dropped)
+        logger.warning(
+            "Context length exceeded, trimmed from %d to %d messages and retrying",
+            len(messages),
+            len(trim_result.messages),
+        )
+        retry_system_str, trimmed_dicts = messages_to_messages_api(trim_result.messages)
+        trimmed_dicts = apply_history_cache_breakpoint(trimmed_dicts)
+        trimmed_dicts = apply_in_turn_cache_breakpoint(trimmed_dicts)
+        system = (
+            prepare_system_with_caching(retry_system_str) if retry_system_str is not None else None
+        )
+        followup_started_at = datetime.now(UTC)
+        await emit_llm_request(
+            LLMRequestPayload(
+                schema_version=1,
+                purpose=PURPOSE_AGENT_FOLLOWUP,
+                user_id=self.user.id,
+                session_id=self._session_id or None,
+                request_id=self._request_id or None,
+                model=effective_model,
+                provider=effective_provider,
+                max_tokens=effective_max_tokens,
+                thinking=thinking,
+                system=system,
+                messages=trimmed_dicts,
+                tools=tool_schemas,
+                min_message_seq_in_prompt=compute_min_message_seq(trim_result.messages),
+                started_at=followup_started_at,
+            )
+        )
+        followup_response = cast(
+            MessageResponse,
+            await amessages(
+                model=effective_model,
+                provider=effective_provider,
+                api_base=settings.llm_api_base,
+                system=system,
+                messages=trimmed_dicts,
+                tools=tool_schemas,
+                max_tokens=effective_max_tokens,
+                thinking=thinking,
+            ),
+        )
+        await self._emit_response(
+            followup_response,
+            purpose=PURPOSE_AGENT_FOLLOWUP,
+            model=effective_model,
+            provider=effective_provider,
+            started_at=followup_started_at,
+        )
+        return followup_response
 
     def _validate_tool_args(
         self, tool: Tool, tool_args: dict[str, Any]
