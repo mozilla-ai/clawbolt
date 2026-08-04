@@ -367,7 +367,7 @@ async def compact_session(
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "\n".join(user_prompt_parts)},
     ]
-    compaction_system = prepare_system_with_caching(COMPACTION_SYSTEM_PROMPT)
+    compaction_system = prepare_system_with_caching(COMPACTION_SYSTEM_PROMPT, provider)
     compaction_thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
 
     started_at = datetime.datetime.now(UTC)

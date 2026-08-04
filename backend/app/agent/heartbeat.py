@@ -456,7 +456,7 @@ async def evaluate_heartbeat_need(
     time_context = build_time_user_context(user)
     max_retries = settings.llm_max_retries
     response: MessageResponse | None = None
-    heartbeat_system = prepare_system_with_caching(prompt)
+    heartbeat_system = prepare_system_with_caching(prompt, provider)
     heartbeat_messages: list[dict[str, Any]] = [
         {
             "role": "user",
