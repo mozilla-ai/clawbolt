@@ -1,25 +1,21 @@
 # Home Depot sidecar: FastAPI + patchright Chromium.
 #
-# UNTESTED: built by reading the platform docs, not by running it. The steps it
-# performs are each verified on a live host (patchright install, non-root
-# Chromium under Xvfb, the app itself), but this exact image has never been
-# built. Expect to iterate on the first deploy.
+# Two things here are load-bearing because Home Depot's bot manager reads them:
 #
-# Three things here are load-bearing rather than stylistic, because Home Depot's
-# bot manager reads all of them:
-#
-#   1. Chromium runs as a NON-ROOT user so its own sandbox stays enabled.
-#      Running it as root would force --no-sandbox, a strong bot signal. This
-#      needs unprivileged user namespaces on the host; if the platform forbids
-#      them Chromium refuses to start, which is a deliberate hard failure rather
-#      than a silent downgrade.
+#   1. patchright, not playwright, for the patched CDP Runtime.enable leak.
 #   2. The browser profile lives on a mounted volume so it survives redeploys.
 #      A brand-new profile every boot looks like a first-time visitor every time.
-#   3. patchright, not playwright, for the patched CDP Runtime.enable leak.
+#
+# Running Chromium as a NON-ROOT user is hygiene, not a bot-detection
+# requirement. patchright passes --no-sandbox by default, so the sandbox is off
+# regardless of the user, and every working measurement was taken that way. Do
+# not add chromium_sandbox=True expecting an improvement: it would add a
+# user-namespace requirement the host may not grant, for no observed benefit.
 #
 # The container starts as root purely to fix volume ownership (platform volumes
 # mount root-owned, so a plain USER directive leaves the app unable to write its
 # profile), then drops to the unprivileged user with setpriv before exec'ing.
+# The entrypoint has to set HOME across that handover; see the comment there.
 #
 # Build and run locally:
 #   docker build -t hd-sidecar sidecar/home_depot

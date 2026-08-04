@@ -5,8 +5,9 @@
 # Platform volumes (Railway, Fly, plain `docker run -v`) mount root-owned and
 # empty, so a bare USER directive in the Dockerfile leaves the app unable to
 # write its browser profile. Start as root, hand the volume to the runtime user,
-# and drop privileges before exec'ing: Chromium must not run as root or its
-# sandbox is disabled, which is exactly the signal we are avoiding.
+# and drop privileges before exec'ing. Running the browser as a normal user is
+# ordinary hygiene here rather than a requirement: patchright passes
+# --no-sandbox by default, so Chromium's sandbox is off either way.
 #
 # Every step announces itself. A container that dies silently between "Starting
 # Container" and the first uvicorn line is otherwise undiagnosable from a
@@ -60,5 +61,19 @@ if [ "$(id -u)" -ne 0 ]; then
     exec python -m uvicorn sidecar:app --host 0.0.0.0 --port "$PORT"
 fi
 
+# setpriv switches uid/gid but leaves the environment alone, so HOME would stay
+# /root: a directory the unprivileged user cannot write. Chromium's crashpad
+# handler then fails with "--database is required" and the browser dies with
+# SIGTRAP before it ever opens a page. `su` sets HOME, which is why this only
+# broke under setpriv. XDG_* follow HOME for the same reason.
+RUN_HOME="$(getent passwd "$RUN_AS" | cut -d: -f6)"
+RUN_HOME="${RUN_HOME:-/home/$RUN_AS}"
+mkdir -p "$RUN_HOME"
+chown "$RUN_AS:$RUN_AS" "$RUN_HOME"
+log "handing over with HOME=$RUN_HOME"
+
 exec setpriv --reuid "$RUN_AS" --regid "$RUN_AS" --init-groups \
-    python -m uvicorn sidecar:app --host 0.0.0.0 --port "$PORT"
+    env HOME="$RUN_HOME" \
+        XDG_CACHE_HOME="$RUN_HOME/.cache" \
+        XDG_CONFIG_HOME="$RUN_HOME/.config" \
+        python -m uvicorn sidecar:app --host 0.0.0.0 --port "$PORT"
