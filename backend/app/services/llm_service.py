@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
-from urllib.parse import urlparse
 
 from any_llm import AnyLLMError, LLMProvider, alist_models
 
@@ -47,79 +46,59 @@ _LOCAL_PROVIDERS = {"ollama", "llamafile", "llamacpp", "lmstudio", "vllm"}
 _HIDDEN_PROVIDERS = {"platform", "gateway"}
 
 # Providers that serve the Anthropic Messages API natively, so a ``cache_control``
-# marker survives to the wire. Every other provider goes through any-llm's
-# Messages-to-Completions bridge, which rebuilds user, assistant and tool blocks
-# (silently dropping their markers) and forwards a block-list ``system`` verbatim
-# into ``messages[0].content``, where a strict OpenAI-compatible backend rejects
-# the whole request (Fireworks answers 400 "Input should be a valid string,
-# field: 'messages[0].content.str'"). See any-llm#1228.
+# marker survives to the wire. Every other provider reaches the wire through
+# any-llm's Messages-to-Completions bridge, which rebuilds every block and drops
+# the markers in the process, so stamping one for them buys nothing.
 #
-# Gateway providers are deliberately absent even though any-llm's ``otari``
-# provider forwards Messages natively: whether the markers are honored then
-# depends on the gateway's downstream provider, which is encoded in the model
-# string rather than the provider name. Sending markers we cannot verify fails
-# closed as a 400, while omitting them only forgoes caching, so the fail-safe
-# choice is to omit.
+# This is an optimization, not a correctness requirement. It used to be the
+# latter: the bridge forwarded a block-list ``system`` verbatim into
+# ``messages[0].content`` and a strict OpenAI-compatible backend answered 400
+# ("Input should be a valid string, field: 'messages[0].content.str'") rather
+# than ignoring a marker it could not use. any-llm#1228 fixed that in 1.24.0 by
+# flattening ``system`` to a plain string, which is why the floor in
+# pyproject.toml is >=1.24: below it, an unhonored marker is fatal rather than
+# wasteful. Keep the set anyway, since serializing markers a provider will
+# discard is pointless work.
 #
-# Membership here is necessary but not sufficient: ``anthropic`` also has to be
-# reaching Anthropic. See :func:`_api_base_reaches_anthropic`.
+# Gateway provider names (``otari``, ``gateway``, ``mzai``) stay out, which is now
+# an inconsistency worth naming rather than a rule. any-llm's otari provider
+# forwards Messages natively (it exists to preserve exactly these markers), so a
+# marker would reach the gateway intact, the same as it does for ``anthropic``
+# pointed at a gateway base, which this set does mark. The two paths end at the
+# same place and are treated differently.
 #
-# Provisional. Once any-llm#1228 lands and the floor is raised past it, a marker
-# a provider cannot use is dropped instead of rejected, and this set becomes an
-# optimization rather than a correctness requirement. Tracked in #1484.
+# Left as-is because #1484 scoped itself to dropping the endpoint check, and
+# widening the set is a behavior change that deserves its own measurement: it
+# would start marking for every operator who names a gateway provider directly.
+# Revisit once gateway deployments have real cache-hit numbers from the
+# ``anthropic``-plus-base path.
 _CACHE_CONTROL_PROVIDERS = {"anthropic", "azureanthropic", "vertexaianthropic"}
-
-# Registrable domain any-llm's ``anthropic`` provider talks to when no
-# ``llm_api_base`` is configured.
-_ANTHROPIC_HOST = "anthropic.com"
-
-
-def _api_base_reaches_anthropic(api_base: str | None) -> bool:
-    """True when an ``anthropic`` request goes to Anthropic and not an intermediary.
-
-    An unset base is Anthropic's own API, which any-llm supplies as the default.
-    Anything else is a proxy or a gateway, and a gateway's real downstream
-    provider rides in the model string rather than the provider name, so it is
-    invisible here: the configured provider reads ``anthropic`` whether the model
-    behind the gateway is Claude or a Fireworks-hosted DeepSeek. The second case
-    400s on a marked request, so an unrecognized base is treated as unverifiable.
-
-    Only the plain ``anthropic`` provider is subject to this. The Azure and Vertex
-    members of :data:`_CACHE_CONTROL_PROVIDERS` always carry a base naming the
-    operator's own resource, so a base being set there is ordinary configuration
-    and says nothing about an intermediary.
-
-    Removable once any-llm#1228 lands: a marker the gateway's downstream cannot use
-    is dropped in conversion rather than rejected, so the endpoint stops mattering
-    and gateway deployments get prompt caching back. Tracked in #1484.
-    """
-    if not api_base:
-        return True
-    host = urlparse(api_base if "://" in api_base else f"https://{api_base}").hostname or ""
-    return host == _ANTHROPIC_HOST or host.endswith(f".{_ANTHROPIC_HOST}")
 
 
 def provider_honors_cache_control(provider: str) -> bool:
-    """True when a ``cache_control`` marker reaches the wire intact for *provider*.
+    """True when the agent should stamp a ``cache_control`` marker for *provider*.
 
-    Gates every cache breakpoint the agent stamps. Marking a prompt that cannot
-    honor it is never merely wasteful: the ``system`` breakpoint makes the request
-    unserializable for a strict OpenAI-compatible backend, which answers 400
-    rather than ignoring the marker, so an unverifiable marker has to be withheld.
-    Withholding one only forgoes caching, which is why that is the fail-safe side.
+    Gates every cache breakpoint the agent stamps. A marker a provider cannot use
+    is now discarded in conversion rather than rejected (any-llm#1228, released in
+    1.24.0), so this is a cost decision and no longer a correctness one.
 
-    ``llm_prompt_cache`` overrides the endpoint half of the decision: ``"always"``
-    marks through a custom base, ``"never"`` disables caching outright. Neither
-    can mark for a provider that reaches the wire through the bridge.
+    The endpoint is deliberately not consulted. It used to be: a ``custom
+    llm_api_base`` on the ``anthropic`` provider meant a proxy or gateway, whose
+    real downstream is encoded in the model string and unreadable from here, and a
+    gateway fronting a non-Anthropic model answered a marked request with
+    ``Extra inputs are not permitted, field: 'messages[0].content.list[...]
+    .cache_control'``. That is a gateway-side conversion failure, not any-llm's, so
+    it needs the *gateway* to be running any-llm >= 1.24 to be fixed. Once it is,
+    an Anthropic downstream honors the marker and any other downstream drops it in
+    the same bridge, so the endpoint stops carrying information and gateway
+    deployments get prompt caching back.
+
+    ``llm_prompt_cache`` is a kill switch: ``"never"`` disables marking outright,
+    for an operator whose gateway is older than that and 400s on a marked request.
     """
     if settings.llm_prompt_cache == "never":
         return False
-    normalized = provider.lower()
-    if normalized not in _CACHE_CONTROL_PROVIDERS:
-        return False
-    if normalized != "anthropic" or settings.llm_prompt_cache == "always":
-        return True
-    return _api_base_reaches_anthropic(settings.llm_api_base)
+    return provider.lower() in _CACHE_CONTROL_PROVIDERS
 
 
 def is_local_provider(provider: str) -> bool:
@@ -230,11 +209,10 @@ def prepare_system_with_caching(system: str, provider: str) -> str | list[dict[s
     message history rather than in the ``system`` param, so there is no
     dynamic suffix to exclude from the cache (#1420).
 
-    Returns *system* unchanged when *provider* cannot honor the marker. A
-    provider that does not serve the Messages API natively does not merely
-    ignore the ``cache_control`` key: the block-list shape itself reaches the
-    provider as ``messages[0].content`` and a strict OpenAI-compatible backend
-    rejects the request outright. See :func:`provider_honors_cache_control`.
+    Returns *system* unchanged when *provider* cannot honor the marker, which
+    keeps a plain string plain rather than wrapping it in a block list that
+    any-llm's bridge would only flatten back again. See
+    :func:`provider_honors_cache_control`.
     """
     if not provider_honors_cache_control(provider):
         return system

@@ -206,19 +206,20 @@ class Settings(BaseSettings):
     # e.g. if a non-Anthropic provider rejects the ttl field.
     llm_cache_extended_ttl: bool = True
     # Whether the agent may stamp Anthropic ``cache_control`` breakpoints.
-    #   "auto"   (default) stamp them when the provider serves the Messages API
-    #            natively AND the request is reaching that provider rather than
-    #            an intermediary that may forward it to something else.
-    #   "always" stamp them for any natively-Messages provider, including
-    #            through a custom ``llm_api_base``. Correct only when that
-    #            endpoint is known to be Anthropic-backed for every model it
-    #            serves; a gateway fronting a non-Anthropic model rejects a
-    #            marked request outright rather than ignoring the marker.
+    #   "auto"   (default) stamp them for providers that serve the Messages API
+    #            natively, including through a custom ``llm_api_base``.
     #   "never"  never stamp them, forgoing prompt caching entirely.
+    # A kill switch rather than a tuning knob: a marker the downstream cannot use
+    # is discarded in conversion, so "auto" is safe against a gateway whose
+    # models are not all Anthropic-backed. The one case that still needs "never"
+    # is a gateway running any-llm < 1.24, which rejects a marked request instead
+    # of dropping the marker (any-llm#1228).
+    # The former "always" value is gone: it existed only to override an endpoint
+    # check that no longer exists. It was never anything but a widening of
+    # "auto", so "auto" is the drop-in replacement.
     # ``provider_honors_cache_control`` in ``services/llm_service.py`` owns the
-    # decision this feeds; see its docstring for why the failure is a 400 and
-    # not a silent no-op.
-    llm_prompt_cache: Literal["auto", "always", "never"] = "auto"
+    # decision this feeds.
+    llm_prompt_cache: Literal["auto", "never"] = "auto"
 
     # Conversation & memory
     conversation_history_limit: int = Field(default=500, ge=1)
