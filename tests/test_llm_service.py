@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
+from typing import get_args
 from unittest.mock import MagicMock, patch
 
 import pytest
 from any_llm.exceptions import ProviderError
+from pydantic import ValidationError
 
+from backend.app.config import Settings
 from backend.app.services.llm_service import (
     _cache_control,
     apply_history_cache_breakpoint,
@@ -34,9 +37,10 @@ def _patched_settings(
 ) -> Iterator[MagicMock]:
     """Patch the module's settings with every field the cache gate reads.
 
-    All three have to be set explicitly: an auto-specced attribute is a
-    ``MagicMock``, which is truthy, so leaving ``api_base`` alone would read as a
-    custom endpoint and silently withhold the markers under test.
+    ``api_base`` no longer feeds the decision (see
+    ``TestCacheControlIgnoresEndpoint``), but it is still patched so the cases
+    that assert its irrelevance can vary it, and so a developer whose ``.env``
+    sets it cannot influence any test here.
     """
     with patch("backend.app.services.llm_service.settings") as mock_settings:
         mock_settings.llm_cache_extended_ttl = extended_ttl
@@ -397,21 +401,18 @@ class TestCacheControlProviderGate:
     """Only providers that serve the Messages API natively get cache markers.
 
     Every other provider reaches the wire through any-llm's
-    Messages-to-Completions bridge. That bridge rebuilds user, assistant and
-    tool blocks (dropping their markers) but forwards a block-list ``system``
-    verbatim into ``messages[0].content``, which a strict OpenAI-compatible
-    backend rejects with a 400. Stamping a marker such a provider cannot honor
-    is therefore not a harmless no-op, it breaks the request.
+    Messages-to-Completions bridge, which rebuilds every block and drops the
+    markers along the way, so stamping one is wasted serialization.
+
+    This is now a cost decision rather than a correctness one. The bridge used to
+    forward a block-list ``system`` verbatim into ``messages[0].content``, which a
+    strict OpenAI-compatible backend rejected with a 400 instead of ignoring;
+    any-llm#1228 flattens it as of 1.24, which is why pyproject pins ``>=1.24``.
     """
 
     @pytest.fixture(autouse=True)
     def _default_settings(self) -> Iterator[None]:
-        """Pin the endpoint half of the gate so these cases isolate the provider half.
-
-        Without this a developer whose ``.env`` sets ``LLM_API_BASE`` (an LM Studio
-        URL, say) would see the honored-provider cases fail for the wrong reason.
-        ``TestCacheControlEndpointGate`` below covers the endpoint half.
-        """
+        """Pin the settings the gate reads so a developer's ``.env`` cannot leak in."""
         with _patched_settings():
             yield
 
@@ -441,11 +442,13 @@ class TestCacheControlProviderGate:
         assert provider_honors_cache_control("FIREWORKS") is False
 
     def test_system_stays_a_plain_string_for_bridge_provider(self) -> None:
-        """The regression: a block-list system is what Fireworks rejected.
+        """A plain string in stays a plain string out, with no round trip.
 
-        Fireworks answered 400 "Input should be a valid string, field:
-        'messages[0].content.str'" because the block list arrived as the
-        converted system message.
+        This was the original 400: Fireworks answered "Input should be a valid
+        string, field: 'messages[0].content.str'" because a block-list system
+        arrived as the converted system message. any-llm >= 1.24 flattens it, so
+        the assertion now guards against pointless work rather than a broken
+        request.
         """
         result = prepare_system_with_caching("You are a helpful assistant.", "fireworks")
         assert result == "You are a helpful assistant."
@@ -510,94 +513,88 @@ class TestCacheControlProviderGate:
 
 
 # ---------------------------------------------------------------------------
-# A native-Messages provider also has to be reaching Anthropic
+# The endpoint no longer gates marking
 # ---------------------------------------------------------------------------
 
 _GATEWAY_BASE = "https://gateway.example.com"
 
 
-class TestCacheControlEndpointGate:
-    """``anthropic`` plus a custom ``llm_api_base`` is not necessarily Anthropic.
+class TestCacheControlIgnoresEndpoint:
+    """``llm_api_base`` must not change the decision, for any provider.
 
-    Pointing the ``anthropic`` provider at a gateway is the supported way to keep
-    the native Messages pass-through, but the gateway chooses its own downstream
-    provider from the model string, which this layer cannot read. A gateway
-    fronting a Fireworks-hosted model answered the marked request with
-    ``Extra inputs are not permitted, field:
-    'messages[0].content.list[ChatMessageContent][0].cache_control'``, so an
-    unrecognized endpoint is treated as unverifiable and the markers are withheld.
+    This inverts what the gate used to assert. A custom base on the ``anthropic``
+    provider used to withhold the markers, because a gateway picks its downstream
+    provider from the model string and one fronting a Fireworks-hosted model
+    answered a marked request with ``Extra inputs are not permitted, field:
+    'messages[0].content.list[ChatMessageContent][0].cache_control'``.
+
+    That is a conversion failure inside the *gateway*, so the fix is the gateway
+    running any-llm >= 1.24 (any-llm#1228), where an Anthropic downstream honors
+    the marker and any other downstream drops it in the Messages-to-Completions
+    bridge. The endpoint therefore carries no information about whether marking is
+    safe, and consulting it only cost gateway deployments their prompt caching
+    (#1484). Operators still on an older gateway use ``LLM_PROMPT_CACHE=never``.
     """
-
-    def test_unset_base_is_anthropic_itself(self) -> None:
-        with _patched_settings(api_base=None):
-            assert provider_honors_cache_control("anthropic") is True
 
     @pytest.mark.parametrize(
         "api_base",
         [
+            None,
             "https://api.anthropic.com",
             "https://api.anthropic.com/",
             "api.anthropic.com",
             "https://eu.api.anthropic.com/v1",
-        ],
-    )
-    def test_anthropics_own_endpoint_still_marks(self, api_base: str) -> None:
-        with _patched_settings(api_base=api_base):
-            assert provider_honors_cache_control("anthropic") is True
-
-    @pytest.mark.parametrize(
-        "api_base",
-        [
+            # The cases that used to withhold. A gateway, a local proxy, and a
+            # lookalike domain are now all marked: none of them can make an
+            # unhonored marker fatal any more.
             _GATEWAY_BASE,
             "http://localhost:4000",
-            # Host-based, not substring-based: a lookalike domain that merely
-            # contains the real one must not be read as Anthropic.
             "https://api.anthropic.com.lookalike.test",
         ],
     )
-    def test_unverifiable_endpoint_withholds(self, api_base: str) -> None:
+    def test_every_endpoint_marks_for_a_native_provider(self, api_base: str | None) -> None:
         with _patched_settings(api_base=api_base):
-            assert provider_honors_cache_control("anthropic") is False
+            assert provider_honors_cache_control("anthropic") is True
 
     @pytest.mark.parametrize("provider", ["azureanthropic", "vertexaianthropic"])
-    def test_azure_and_vertex_are_unaffected_by_a_custom_base(self, provider: str) -> None:
-        """Their base names the operator's own resource, so it is not a redirect.
-
-        Both are required to carry one, so applying the endpoint check to them
-        would disable caching for every Azure and Vertex deployment.
-        """
+    def test_azure_and_vertex_mark_through_their_own_resource(self, provider: str) -> None:
+        """Both are required to carry a base naming the operator's own resource."""
         with _patched_settings(api_base="https://my-resource.services.ai.azure.com"):
             assert provider_honors_cache_control(provider) is True
 
-    def test_always_marks_through_a_custom_base(self) -> None:
-        """The escape hatch for a base known to be Anthropic-backed throughout."""
-        with _patched_settings(api_base=_GATEWAY_BASE, prompt_cache="always"):
-            assert provider_honors_cache_control("anthropic") is True
+    @pytest.mark.parametrize("api_base", [None, _GATEWAY_BASE])
+    def test_endpoint_does_not_rescue_a_bridge_provider(self, api_base: str | None) -> None:
+        """The provider half of the decision still stands on its own.
 
-    def test_always_does_not_rescue_a_bridge_provider(self) -> None:
-        """The setting overrides the endpoint half of the decision, not the provider half.
-
-        A ``BaseOpenAIProvider`` still converts locally, so marking would break
-        the request no matter how the endpoint is vouched for.
+        A bridge provider discards the markers during conversion, so stamping one
+        is wasted work no matter what the endpoint is.
         """
-        with _patched_settings(api_base=_GATEWAY_BASE, prompt_cache="always"):
+        with _patched_settings(api_base=api_base):
             assert provider_honors_cache_control("gateway") is False
             assert provider_honors_cache_control("fireworks") is False
 
-    def test_never_withholds_against_anthropic_direct(self) -> None:
-        with _patched_settings(api_base=None, prompt_cache="never"):
+    @pytest.mark.parametrize("api_base", [None, _GATEWAY_BASE])
+    def test_never_is_the_kill_switch_regardless_of_endpoint(self, api_base: str | None) -> None:
+        """The one escape hatch left, for a gateway older than any-llm 1.24."""
+        with _patched_settings(api_base=api_base, prompt_cache="never"):
             assert provider_honors_cache_control("anthropic") is False
             assert provider_honors_cache_control("azureanthropic") is False
 
-    def test_system_stays_a_plain_string_behind_a_gateway(self) -> None:
-        """The reported failure: the block list is what the downstream rejected."""
+    def test_system_is_marked_behind_a_gateway(self) -> None:
+        """Inverted by #1484: the gateway case is what regained the marker."""
         with _patched_settings(api_base=_GATEWAY_BASE):
             result = prepare_system_with_caching("You are an assistant.", "anthropic")
-        assert result == "You are an assistant."
-        assert isinstance(result, str)
+        assert isinstance(result, list)
+        assert result[0]["text"] == "You are an assistant."
+        assert result[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
-    def test_no_marker_survives_anywhere_behind_a_gateway(self) -> None:
-        """End to end over all four breakpoints, with the provider named ``anthropic``."""
+    def test_every_breakpoint_is_stamped_behind_a_gateway(self) -> None:
+        """End to end over all four breakpoints, with the provider named ``anthropic``.
+
+        The counterpart of the old ``test_no_marker_survives_anywhere_behind_a_
+        gateway``. Restoring these four markers for gateway deployments is the
+        entire point of #1484, so assert they are present rather than absent.
+        """
         messages = [
             {"role": "user", "content": "older question"},
             {"role": "assistant", "content": [{"type": "text", "text": "older answer"}]},
@@ -616,9 +613,30 @@ class TestCacheControlEndpointGate:
             )
             system = prepare_system_with_caching("system prompt", "anthropic")
 
-        assert isinstance(system, str)
-        assert all("cache_control" not in tool for tool in tools)
-        for msg in result:
-            content = msg.get("content")
-            if isinstance(content, list):
-                assert all("cache_control" not in block for block in content)
+        assert isinstance(system, list)
+        assert "cache_control" in system[0]
+        assert "cache_control" in tools[-1]
+        marked_blocks = [
+            block
+            for msg in result
+            if isinstance(msg.get("content"), list)
+            for block in msg["content"]
+            if "cache_control" in block
+        ]
+        assert marked_blocks, "expected at least one marked message block behind a gateway"
+
+
+def test_prompt_cache_setting_rejects_the_removed_always_value() -> None:
+    """``always`` is gone: it only ever overrode the endpoint check.
+
+    Pinned so the literal cannot be widened back without a deliberate decision.
+    An operator who had it set gets a startup validation error rather than
+    silently different behavior, and ``auto`` is the drop-in replacement.
+    """
+    assert get_args(Settings.model_fields["llm_prompt_cache"].annotation) == ("auto", "never")
+
+    # ``model_validate`` and not ``Settings(llm_prompt_cache="always")``: the
+    # literal is the point of the test, so passing it positionally is a type
+    # error the checker would flag before pydantic ever rejected it.
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"llm_prompt_cache": "always"})
