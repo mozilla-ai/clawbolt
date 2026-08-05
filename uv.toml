@@ -1,1 +1,21 @@
+# Reject packages published less than 7 days ago, so a compromised release of a
+# third-party dependency has time to be caught and yanked before we install it
+# (#889).
 exclude-newer = "7 days"
+
+# Scoped exemptions to the window above. Both of these are mozilla.ai's own
+# packages, published from repos we control by the same people who review this
+# one, so the delay does not buy the protection it buys for a third-party
+# dependency: there is no upstream maintainer account to compromise that is not
+# already ours. Waiting a week here only means clawbolt ships a week behind our
+# own LLM layer.
+#
+# "0 days" and not a fixed date on purpose. A date would exempt today's release
+# and then silently exclude every *later* one, turning a resolution failure into
+# a dependency that quietly stops advancing.
+#
+# Add a package here only if it is first-party. Everything else waits 7 days.
+[exclude-newer-package]
+any-llm-sdk = "0 days"
+# Pulled in by any-llm-sdk >= 1.24 for compaction normalization (any-llm#1235).
+openresponses-types = "0 days"
