@@ -14,6 +14,7 @@ from any_llm import (
 from pydantic import BaseModel
 
 from backend.app.agent.core import (
+    MAX_TOOL_ROUNDS,
     ClawboltAgent,
     _is_context_overflow,
 )
@@ -34,6 +35,7 @@ from tests.mocks.llm import (
     make_error_response,
     make_text_response,
     make_tool_call_response,
+    make_truncated_text_response,
     make_truncated_tool_call_response,
 )
 
@@ -2645,8 +2647,13 @@ async def test_tool_errors_still_returned_to_llm_in_loop(
 async def test_valid_stop_reasons_not_treated_as_error(
     mock_amessages: object, test_user: User
 ) -> None:
-    """Responses with valid stop_reasons should be processed normally."""
-    for stop_reason in ("end_turn", "max_tokens", "stop_sequence"):
+    """Responses with valid stop_reasons should be processed normally.
+
+    ``max_tokens`` is deliberately excluded: a truncated turn that produced no
+    tool call is a partial emission rather than a reply, and is covered by the
+    truncation guard tests below.
+    """
+    for stop_reason in ("end_turn", "stop_sequence"):
         from any_llm.types.messages import MessageResponse, MessageUsage, TextBlock
 
         mock_amessages.return_value = MessageResponse(  # type: ignore[union-attr]
@@ -2817,6 +2824,145 @@ async def test_truncated_response_increases_max_tokens(
     first_max = first_call.kwargs["max_tokens"]
     second_max = second_call.kwargs["max_tokens"]
     assert second_max > first_max
+
+
+# Truncated-with-no-tool-calls guard. A provider that renders tool calls as
+# markup in the completion text needs the closing token to parse them; cut the
+# generation short and the raw markup arrives as ordinary content with
+# stop_reason=max_tokens and zero tool_use blocks. Shipping that both exposes
+# provider internals to the user and, once persisted, teaches the model on the
+# next turn that markup-as-text is in-distribution here.
+_LEAKED_MARKUP = '<|DSML|tool_calls>\n<|DSML|invoke name="calendar_create_event">\n<|DSML|para'
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_truncated_no_tool_calls_retries_with_larger_budget(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """A truncated, tool-call-less turn retries with more room instead of shipping."""
+    mock_amessages.side_effect = [
+        make_truncated_text_response(_LEAKED_MARKUP),
+        make_text_response("Added both events."),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    response = await agent.process_message("Add two events", system_prompt_override="system")
+
+    assert response.is_error_fallback is False
+    assert response.reply_text == "Added both events."
+    assert "DSML" not in response.reply_text
+    first_max = mock_amessages.call_args_list[0].kwargs["max_tokens"]
+    second_max = mock_amessages.call_args_list[1].kwargs["max_tokens"]
+    assert second_max == first_max * 2
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_truncated_no_tool_calls_never_delivered_at_ceiling(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """Partial markup is discarded, not delivered, once the budget ladder tops out."""
+    mock_amessages.return_value = make_truncated_text_response(_LEAKED_MARKUP)
+
+    agent = ClawboltAgent(user=test_user)
+    response = await agent.process_message("Add two events", system_prompt_override="system")
+
+    assert response.is_error_fallback is True
+    assert "DSML" not in response.reply_text
+    assert response.reply_text != _LEAKED_MARKUP
+    # The ladder climbs and then stops rather than retrying forever.
+    budgets = [c.kwargs["max_tokens"] for c in mock_amessages.call_args_list]
+    assert budgets[-1] == 16384
+    assert budgets == sorted(budgets)
+    assert len(budgets) < MAX_TOOL_ROUNDS
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_truncated_response_increases_max_tokens_without_validation_errors(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """Truncation alone raises the budget; it is not gated on a tool error.
+
+    A truncated round whose tool calls happened to validate is just as likely
+    to truncate again on the next round, so the recovery must not require
+    ``any(r.is_error for r in tool_results)``.
+    """
+
+    async def create_entity(**kwargs: object) -> ToolResult:
+        return ToolResult(content="created")
+
+    class CreateParams(BaseModel):
+        entity_type: str
+
+    tool = Tool(
+        name="qb_create",
+        description="Create an entity",
+        function=create_entity,
+        params_model=CreateParams,
+    )
+
+    mock_amessages.side_effect = [
+        # Valid args, so the tool round produces no error -- but still truncated.
+        make_truncated_tool_call_response(
+            [{"name": "qb_create", "arguments": {"entity_type": "Invoice"}}]
+        ),
+        make_text_response("Done."),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    await agent.process_message("Create an invoice", system_prompt_override="system")
+
+    first_max = mock_amessages.call_args_list[0].kwargs["max_tokens"]
+    second_max = mock_amessages.call_args_list[1].kwargs["max_tokens"]
+    assert second_max == first_max * 2
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_truncation_ladder_never_lowers_a_budget_above_the_ceiling(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """The ceiling caps growth; it must not claw back a caller's larger budget.
+
+    ``min(effective * 2, _MAX_TOKENS_CEILING)`` alone turns the "increase"
+    into a decrease whenever an operator configures ``llm_max_tokens_agent``
+    (or the heartbeat caller passes a ``max_tokens``) above the ceiling.
+    """
+
+    async def create_entity(**kwargs: object) -> ToolResult:
+        return ToolResult(content="created")
+
+    class CreateParams(BaseModel):
+        entity_type: str
+
+    tool = Tool(
+        name="qb_create",
+        description="Create an entity",
+        function=create_entity,
+        params_model=CreateParams,
+    )
+
+    mock_amessages.side_effect = [
+        make_truncated_tool_call_response(
+            [{"name": "qb_create", "arguments": {"entity_type": "Invoice"}}]
+        ),
+        make_text_response("Done."),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    with patch("backend.app.agent.core.settings.llm_max_tokens_agent", 32000):
+        await agent.process_message("Create an invoice", system_prompt_override="system")
+
+    budgets = [c.kwargs["max_tokens"] for c in mock_amessages.call_args_list]
+    assert budgets == [32000, 32000]
 
 
 def _tool_stub(name: str) -> Tool:
