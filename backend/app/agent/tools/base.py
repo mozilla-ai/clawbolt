@@ -115,10 +115,39 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return resolve(schema)
 
 
-def _strip_titles(obj: Any) -> Any:
-    """Recursively remove all 'title' keys from a schema dict."""
+# JSON Schema containers whose *keys* are caller-chosen names rather than
+# schema keywords. A parameter literally named ``title`` lives in one of these
+# and must survive ``_strip_titles``; only annotation-level ``title`` keys are
+# noise worth dropping. ``$defs`` / ``definitions`` are normally gone by the
+# time we run (``_inline_refs`` pops them), and are listed for safety.
+_NAME_KEYED_SCHEMA_CONTAINERS = frozenset(
+    {"properties", "patternProperties", "$defs", "definitions"}
+)
+
+
+def _strip_titles(obj: Any, *, _in_name_map: bool = False) -> Any:
+    """Recursively remove Pydantic's ``title`` annotations from a schema.
+
+    Pydantic stamps a ``title`` onto every schema node, which is pure noise in
+    the tool definitions we send on each request, so dropping it saves tokens.
+
+    The subtlety is that ``title`` is only noise when it is a schema *keyword*.
+    Inside ``properties`` the keys are parameter names, and a tool with a
+    parameter named ``title`` (``calendar_create_event``) had that parameter
+    deleted from the schema while ``required`` kept listing it. The model was
+    then told ``title`` was mandatory and given no definition for it, so it had
+    nowhere to put the value and the call could never validate. ``_in_name_map``
+    tracks that context so parameter names are never filtered.
+    """
     if isinstance(obj, dict):
-        return {k: _strip_titles(v) for k, v in obj.items() if k != "title"}
+        if _in_name_map:
+            # Keys here are caller-chosen names, not schema keywords.
+            return {k: _strip_titles(v) for k, v in obj.items()}
+        return {
+            k: _strip_titles(v, _in_name_map=k in _NAME_KEYED_SCHEMA_CONTAINERS)
+            for k, v in obj.items()
+            if k != "title"
+        }
     if isinstance(obj, list):
         return [_strip_titles(item) for item in obj]
     return obj
