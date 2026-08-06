@@ -30,7 +30,11 @@ from backend.app.agent.approval import (
     get_approval_gate,
     get_approval_store,
 )
-from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
+from backend.app.agent.context import (
+    StoredToolInteraction,
+    StoredToolReceipt,
+    trigger_compaction_for_dropped,
+)
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentEvent,
@@ -1495,8 +1499,6 @@ class ClawboltAgent:
                 all_dropped.extend(self._reactive_trim_dropped)
                 self._reactive_trim_dropped = []
             if all_dropped:
-                from backend.app.agent.context import trigger_compaction_for_dropped
-
                 await trigger_compaction_for_dropped(self.user.id, all_dropped)
 
             await self._emit(
@@ -1691,10 +1693,13 @@ class ClawboltAgent:
             # say, and a truncated round whose tool calls happened to validate
             # is just as likely to truncate again on the next one. The
             # ``_MAX_TOKENS_CEILING`` cap bounds the ladder
-            # (8192 -> 16384) before we give up.
+            # (8192 -> 16384) before we give up. The outer ``max`` keeps the
+            # cap from *lowering* a budget an operator (or the heartbeat
+            # caller) deliberately set above the ceiling: this branch only
+            # ever raises.
             if response_truncated:
                 effective = max_tokens or settings.llm_max_tokens_agent
-                max_tokens = min(effective * 2, _MAX_TOKENS_CEILING)
+                max_tokens = max(effective, min(effective * 2, _MAX_TOKENS_CEILING))
                 logger.info(
                     "Response truncated, increasing max_tokens to %d",
                     max_tokens,
@@ -1726,8 +1731,6 @@ class ClawboltAgent:
 
         # Trigger background compaction for all dropped messages
         if all_dropped:
-            from backend.app.agent.context import trigger_compaction_for_dropped
-
             await trigger_compaction_for_dropped(self.user.id, all_dropped)
 
         total_duration = (time.monotonic() - agent_start_time) * 1000

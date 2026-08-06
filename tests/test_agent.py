@@ -2923,6 +2923,48 @@ async def test_truncated_response_increases_max_tokens_without_validation_errors
     assert second_max == first_max * 2
 
 
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_truncation_ladder_never_lowers_a_budget_above_the_ceiling(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """The ceiling caps growth; it must not claw back a caller's larger budget.
+
+    ``min(effective * 2, _MAX_TOKENS_CEILING)`` alone turns the "increase"
+    into a decrease whenever an operator configures ``llm_max_tokens_agent``
+    (or the heartbeat caller passes a ``max_tokens``) above the ceiling.
+    """
+
+    async def create_entity(**kwargs: object) -> ToolResult:
+        return ToolResult(content="created")
+
+    class CreateParams(BaseModel):
+        entity_type: str
+
+    tool = Tool(
+        name="qb_create",
+        description="Create an entity",
+        function=create_entity,
+        params_model=CreateParams,
+    )
+
+    mock_amessages.side_effect = [
+        make_truncated_tool_call_response(
+            [{"name": "qb_create", "arguments": {"entity_type": "Invoice"}}]
+        ),
+        make_text_response("Done."),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    with patch("backend.app.agent.core.settings.llm_max_tokens_agent", 32000):
+        await agent.process_message("Create an invoice", system_prompt_override="system")
+
+    budgets = [c.kwargs["max_tokens"] for c in mock_amessages.call_args_list]
+    assert budgets == [32000, 32000]
+
+
 def _tool_stub(name: str) -> Tool:
     async def _noop(**_: object) -> ToolResult:
         return ToolResult(content="")
