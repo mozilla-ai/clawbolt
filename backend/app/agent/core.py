@@ -30,7 +30,11 @@ from backend.app.agent.approval import (
     get_approval_gate,
     get_approval_store,
 )
-from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
+from backend.app.agent.context import (
+    StoredToolInteraction,
+    StoredToolReceipt,
+    trigger_compaction_for_dropped,
+)
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentEvent,
@@ -113,6 +117,19 @@ MAX_INPUT_TOKENS = settings.max_input_tokens
 # response should *not* be persisted to session history to avoid
 # context poisoning.
 _VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "stop_sequence", None}
+
+# Ceiling for the truncation auto-recovery ladder. A turn that keeps hitting
+# ``max_tokens`` doubles its budget each round (8192 -> 16384) and then gives
+# up rather than growing without bound.
+#
+# The bound is a *latency* budget, not a cost one: ``max_tokens`` is a ceiling
+# rather than a spend, so raising it is free on turns that finish early (the
+# common case runs 300-800 output tokens). It is only ever reached by a
+# degenerate turn that generates until something stops it, and there the cap
+# is the whole bill. Measured against a DeepSeek-family model: a runaway takes
+# ~30s to fill 8192 tokens and ~78s to fill 16384. Two rungs is therefore the
+# most a user should be asked to wait before we give up on the turn.
+_MAX_TOKENS_CEILING = 16384
 
 _LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
 
@@ -1465,6 +1482,51 @@ class ClawboltAgent:
         _total_output_tokens = 0
         _total_cache_creation_tokens = 0
         _total_cache_read_tokens = 0
+        parsed_raw: list[ParsedToolCall] = []
+
+        async def _abort_without_persisting(response: MessageResponse) -> AgentResponse:
+            """Return the error fallback, discarding the model's output.
+
+            Used for responses that must never reach the user or the session
+            history: provider-level error stop reasons, and truncated turns
+            whose partial output is not a reply (see the ``max_tokens``
+            guard in the loop). ``persist_outbound`` short-circuits on
+            ``is_error_fallback``, so returning this keeps the bad text out
+            of ``messages`` and therefore out of the next prompt.
+            """
+            # Compact any messages already dropped before early return
+            if self._reactive_trim_dropped:
+                all_dropped.extend(self._reactive_trim_dropped)
+                self._reactive_trim_dropped = []
+            if all_dropped:
+                await trigger_compaction_for_dropped(self.user.id, all_dropped)
+
+            await self._emit(
+                AgentEndEvent(
+                    reply_text=_LLM_ERROR_FALLBACK,
+                    actions_taken=actions_taken,
+                    total_duration_ms=(time.monotonic() - agent_start_time) * 1000,
+                )
+            )
+            return AgentResponse(
+                reply_text=_LLM_ERROR_FALLBACK,
+                actions_taken=actions_taken,
+                memories_saved=memories_saved,
+                tool_calls=tool_call_records,
+                is_error_fallback=True,
+                total_input_tokens=_total_input_tokens,
+                total_output_tokens=_total_output_tokens,
+                total_cache_creation_input_tokens=_total_cache_creation_tokens,
+                total_cache_read_input_tokens=_total_cache_read_tokens,
+                system_prompt=system_prompt,
+                # Surface any reasoning that preceded the abort so downstream
+                # observers (and a future persistence policy that records
+                # error fallbacks) can see what the model was working through
+                # before it bailed. Today ``persist_outbound`` short-circuits
+                # on ``is_error_fallback``, so this rides along the in-memory
+                # response only.
+                thinking_text=get_response_thinking(response),
+            )
 
         for _round in range(MAX_TOOL_ROUNDS):
             logger.debug(
@@ -1525,46 +1587,41 @@ class ClawboltAgent:
                     _round,
                     response.stop_reason,
                 )
-                # Compact any messages already dropped before early return
-                if self._reactive_trim_dropped:
-                    all_dropped.extend(self._reactive_trim_dropped)
-                    self._reactive_trim_dropped = []
-                if all_dropped:
-                    from backend.app.agent.context import trigger_compaction_for_dropped
-
-                    await trigger_compaction_for_dropped(self.user.id, all_dropped)
-
-                total_duration = (time.monotonic() - agent_start_time) * 1000
-                await self._emit(
-                    AgentEndEvent(
-                        reply_text=_LLM_ERROR_FALLBACK,
-                        actions_taken=actions_taken,
-                        total_duration_ms=total_duration,
-                    )
-                )
-                return AgentResponse(
-                    reply_text=_LLM_ERROR_FALLBACK,
-                    actions_taken=actions_taken,
-                    memories_saved=memories_saved,
-                    tool_calls=tool_call_records,
-                    is_error_fallback=True,
-                    total_input_tokens=_total_input_tokens,
-                    total_output_tokens=_total_output_tokens,
-                    total_cache_creation_input_tokens=_total_cache_creation_tokens,
-                    total_cache_read_input_tokens=_total_cache_read_tokens,
-                    system_prompt=system_prompt,
-                    # Surface any reasoning that preceded the error stop so
-                    # downstream observers (and a future persistence policy
-                    # that records error fallbacks) can see what the model
-                    # was working through before it bailed. Today
-                    # ``persist_outbound`` short-circuits on
-                    # ``is_error_fallback``, so this rides along the in-memory
-                    # response only.
-                    thinking_text=get_response_thinking(response),
-                )
+                return await _abort_without_persisting(response)
 
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)
+
+            # Guard: a turn truncated by ``max_tokens`` that yielded no tool
+            # call is a partial emission, not a reply. Providers that render
+            # tool calls as markup in the completion text (rather than as
+            # structured tool_call objects) rely on a server-side parser to
+            # extract them; when generation is cut before the block closes,
+            # that parser fails open and the raw markup arrives as ordinary
+            # content. Shipping it would both show the user provider
+            # internals and, once persisted, teach the model on the next turn
+            # that emitting markup-as-text is in-distribution here. Retry with
+            # a larger budget instead, and discard the partial output if the
+            # ceiling is already reached.
+            if not parsed_raw and response.stop_reason == "max_tokens":
+                effective = max_tokens or settings.llm_max_tokens_agent
+                if effective < _MAX_TOKENS_CEILING:
+                    max_tokens = min(effective * 2, _MAX_TOKENS_CEILING)
+                    logger.warning(
+                        "Round %d: truncated with no tool calls; retrying with max_tokens=%d",
+                        _round,
+                        max_tokens,
+                    )
+                    continue
+                logger.warning(
+                    "Round %d: truncated with no tool calls at the max_tokens "
+                    "ceiling (%d); discarding %d chars of partial output",
+                    _round,
+                    _MAX_TOKENS_CEILING,
+                    len(get_response_text(response)),
+                )
+                return await _abort_without_persisting(response)
+
             if not parsed_raw:
                 reply_text = get_response_text(response)
                 # Capture thinking from the final response only. Earlier
@@ -1629,24 +1686,40 @@ class ClawboltAgent:
                 response_truncated=response_truncated,
             )
 
-            # If the response was truncated and produced validation errors,
-            # auto-increase max_tokens for the next round so the LLM has
-            # enough room to generate the full tool call payload. The
-            # 8192 cap leaves one further recovery step beyond the
-            # current 2048 default (2048 -> 4096 -> 8192) before we
-            # give up and surface the truncation to the user.
-            if response_truncated and any(r.is_error for r in tool_results):
+            # If the response was truncated, auto-increase max_tokens for the
+            # next round so the LLM has enough room to finish the tool call
+            # payload. This is deliberately not gated on the round producing a
+            # validation error: truncation always means the model had more to
+            # say, and a truncated round whose tool calls happened to validate
+            # is just as likely to truncate again on the next one. The
+            # ``_MAX_TOKENS_CEILING`` cap bounds the ladder
+            # (8192 -> 16384) before we give up. The outer ``max`` keeps the
+            # cap from *lowering* a budget an operator (or the heartbeat
+            # caller) deliberately set above the ceiling: this branch only
+            # ever raises.
+            if response_truncated:
                 effective = max_tokens or settings.llm_max_tokens_agent
-                max_tokens = min(effective * 2, 8192)
+                max_tokens = max(effective, min(effective * 2, _MAX_TOKENS_CEILING))
                 logger.info(
-                    "Response truncated with errors, increasing max_tokens to %d",
+                    "Response truncated, increasing max_tokens to %d",
                     max_tokens,
                 )
 
             messages.extend(tool_results)
             await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))
         else:
-            # Max rounds reached -- use last response content
+            # Max rounds reached -- use last response content. If that last
+            # response was a truncated turn with no tool call, the same
+            # reasoning as the in-loop guard applies: it is a partial
+            # emission, not a reply, so discard it rather than let the
+            # round budget running out become a delivery path for it.
+            if not parsed_raw and response.stop_reason == "max_tokens":
+                logger.warning(
+                    "Max tool rounds (%d) reached on a truncated response with "
+                    "no tool calls; discarding partial output",
+                    MAX_TOOL_ROUNDS,
+                )
+                return await _abort_without_persisting(response)
             reply_text = get_response_text(response)
             thinking_text = get_response_thinking(response)
             logger.debug("Max tool rounds (%d) reached, using last response", MAX_TOOL_ROUNDS)
@@ -1658,8 +1731,6 @@ class ClawboltAgent:
 
         # Trigger background compaction for all dropped messages
         if all_dropped:
-            from backend.app.agent.context import trigger_compaction_for_dropped
-
             await trigger_compaction_for_dropped(self.user.id, all_dropped)
 
         total_duration = (time.monotonic() - agent_start_time) * 1000

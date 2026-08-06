@@ -99,14 +99,30 @@ class Settings(BaseSettings):
     vision_model: str = ""  # empty = fall back to llm_model
     vision_provider: str = ""  # empty = fall back to llm_provider
     reasoning_effort: str = "auto"  # none, minimal, low, medium, high, xhigh, auto
-    # 2048 is sized to fit a typical multi-tool turn (one ~200-token reply
-    # plus a tool call whose JSON args can run 500-1500 tokens for nested
-    # entity payloads in the QuickBooks / CompanyCam tools). The previous
-    # 1024 default truncated mid-tool-call on real workloads, leaving the
-    # validator to catch the malformed args; auto-recovery in
-    # ``core.py:_call_llm_with_retry`` doubles ``max_tokens`` on the next
-    # round, but a higher floor avoids the wasted round entirely.
-    llm_max_tokens_agent: int = Field(default=2048, ge=1)
+    # Sized to fit a typical multi-tool turn (one ~200-token reply plus a tool
+    # call whose JSON args can run 500-1500 tokens for nested entity payloads
+    # in the QuickBooks / CompanyCam tools) *plus* the reasoning tokens a
+    # thinking-by-default model spends before it emits anything at all.
+    #
+    # Raised 2048 -> 8192: reasoning models bill their chain-of-thought against
+    # this same budget, so 2048 left almost no headroom, and this path had the
+    # tightest budget in the file despite being the most tool-heavy one
+    # (heartbeat already gets 12000, compaction 16000).
+    #
+    # Truncation is not a benign "reply got cut short": a provider that renders
+    # tool calls as markup in the completion text needs the closing token to
+    # parse them, so a cut mid-block yields zero tool calls and leaks the raw
+    # markup as content (the ``core.py`` guard now discards that rather than
+    # delivering it). Measured against a DeepSeek-family model on a two-event
+    # calendar request: at 2048, 3 of 6 turns truncated and leaked; a
+    # *successful* turn consumed 1817 output tokens; and one turn needed more
+    # than 4096, recovering only on the ladder's second rung.
+    #
+    # Raising this is close to free. ``max_tokens`` is a ceiling, not a spend,
+    # and healthy turns here run 300-800 output tokens, so the higher default
+    # changes nothing about what they cost. It is only reached by a degenerate
+    # turn, which is what ``_MAX_TOKENS_CEILING`` bounds.
+    llm_max_tokens_agent: int = Field(default=8192, ge=1)
     llm_max_tokens_heartbeat: int = Field(default=12000, ge=1)
     llm_max_tokens_vision: int = Field(default=1000, ge=1)
 

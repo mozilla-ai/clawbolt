@@ -111,6 +111,26 @@ def make_truncated_tool_call_response(
     )
 
 
+def make_truncated_text_response(text: str) -> MessageResponse:
+    """Build a text-only MessageResponse with ``stop_reason='max_tokens'``.
+
+    Simulates a turn cut off before it produced any tool_use block. Providers
+    that render tool calls as markup in the completion text and parse them
+    server-side fail open in exactly this way: the closing token never
+    arrives, the parser extracts nothing, and the partial markup is returned
+    as ordinary content.
+    """
+    return MessageResponse(
+        id="msg_mock",
+        content=[TextBlock(type="text", text=text)],
+        model="mock-model",
+        role="assistant",
+        type="message",
+        stop_reason="max_tokens",
+        usage=MessageUsage(input_tokens=0, output_tokens=0),
+    )
+
+
 def make_error_response(
     stop_reason: str = "error",
     content: str = "",
