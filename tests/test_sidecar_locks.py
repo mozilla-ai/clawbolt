@@ -18,6 +18,7 @@ Two properties matter, and one of them is not obvious:
 import ast
 import asyncio
 import sys
+import time
 import types
 from pathlib import Path
 from typing import Any
@@ -184,3 +185,62 @@ class TestStaleSessionRecovery:
         await engine._note_lowes_failure()
 
         assert "lowes" not in engine._site_pages
+
+
+class TestIdleBrowserRecycling:
+    @pytest.mark.asyncio
+    async def test_idle_browser_context_is_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        engine = sidecar.BrowserBackedSearch()
+        closed: list[bool] = []
+
+        class FakeContext:
+            async def close(self) -> None:
+                closed.append(True)
+
+        monkeypatch.setattr(sidecar, "IDLE_SECONDS", 60)
+        engine.state = "ready"
+        engine._ctx = FakeContext()
+        engine._page = object()
+        engine._site_pages["home_depot"] = engine._page
+        engine._site_pages["lowes"] = object()
+        engine._lowes_failures = 1
+        engine._last_used = time.monotonic() - 61
+
+        assert await engine._evict_if_idle() is True
+        assert engine.state == "idle"
+        assert closed == [True]
+        assert engine._ctx is None
+        assert engine._page is None
+        assert engine._site_pages == {}
+        assert engine._lowes_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_active_search_prevents_idle_eviction(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = sidecar.BrowserBackedSearch()
+        monkeypatch.setattr(sidecar, "IDLE_SECONDS", 60)
+        engine.state = "ready"
+        engine._active_requests = 1
+        engine._last_used = time.monotonic() - 61
+
+        assert await engine._evict_if_idle() is False
+        assert engine.state == "ready"
+
+    @pytest.mark.asyncio
+    async def test_next_request_restarts_an_idle_browser(self) -> None:
+        engine = sidecar.BrowserBackedSearch()
+        started: list[bool] = []
+
+        async def launch() -> None:
+            started.append(True)
+            engine.state = "ready"
+
+        engine.state = "idle"
+        engine._launch_browser = launch
+
+        async with engine._use_browser():
+            assert engine._active_requests == 1
+
+        assert started == [True]
+        assert engine._active_requests == 0

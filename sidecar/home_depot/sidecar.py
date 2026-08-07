@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import secrets
+import time
 import urllib.parse
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -50,6 +51,10 @@ SEARCH_MODEL_QUERY = QUERY_PATH.read_text()
 PROFILE_DIR = os.environ.get("HD_PROFILE_DIR", str(Path.home() / ".hd-sidecar-profile"))
 AUTH_TOKEN = os.environ.get("HD_SIDECAR_TOKEN", "")
 WARM_SECONDS = float(os.environ.get("HD_WARM_SECONDS", "7"))
+# Keeping retailer pages open lets their JavaScript keep allocating even when no
+# one is searching. Close Chromium after an idle period and warm a fresh context
+# only when the next request arrives. Set to 0 to keep the browser open.
+IDLE_SECONDS = float(os.environ.get("HD_IDLE_SECONDS", "3600"))
 
 # Lowe's results are server-rendered into the page, so the wait is a poll for the
 # payload rather than a fixed settle. Roughly 6s of headroom in total.
@@ -183,14 +188,22 @@ class BrowserBackedSearch:
         # waits, ~17s) hold off every Home Depot request right after startup,
         # close to the client's 20s timeout.
         self._locks: dict[str, asyncio.Lock] = {}
+        # Lifecycle changes must wait for all active searches, but searches for
+        # different retailers must remain concurrent. This lock protects only
+        # the active count and context replacement, never a whole search.
+        self._lifecycle_lock = asyncio.Lock()
+        self._active_requests = 0
+        self._last_used = time.monotonic()
+        self._idle_changed = asyncio.Event()
         self.state = "starting"
-        """One of starting, ready, failed. Reported by /health."""
+        """One of starting, ready, idle, failed. Reported by /health."""
 
         self.error: str | None = None
         """Why startup failed, surfaced over HTTP so a broken deploy is diagnosable."""
 
         self._task: asyncio.Task[None] | None = None
         self._prewarm: asyncio.Task[None] | None = None
+        self._idle_task: asyncio.Task[None] | None = None
 
     def _lock_for(self, site: str) -> asyncio.Lock:
         """Return the per-site lock, creating it on first use.
@@ -216,35 +229,111 @@ class BrowserBackedSearch:
         self._task = asyncio.create_task(self._start())
 
     async def _start(self) -> None:
-        try:
+        async with self._lifecycle_lock:
+            try:
+                await self._launch_browser()
+            except Exception as exc:
+                # Chromium failing to launch lands here. Keep the message verbatim:
+                # it is the only signal a remote operator gets, and the causes are
+                # unobvious (an unwritable HOME breaks the crashpad handler, for
+                # instance).
+                await self._close_browser()
+                self.state = "failed"
+                self.error = f"{type(exc).__name__}: {exc}"
+                logger.exception("browser startup failed")
+
+    async def _launch_browser(self) -> None:
+        """Launch and warm a fresh persistent browser context."""
+        if self._pw is None:
             self._pw = await async_playwright().start()
-            self._ctx = await self._pw.chromium.launch_persistent_context(
-                user_data_dir=PROFILE_DIR,
-                channel="chromium",
-                headless=False,
-                no_viewport=True,
-                locale="en-US",
-                timezone_id="America/New_York",
+        self._ctx = await self._pw.chromium.launch_persistent_context(
+            user_data_dir=PROFILE_DIR,
+            channel="chromium",
+            headless=False,
+            no_viewport=True,
+            locale="en-US",
+            timezone_id="America/New_York",
+        )
+        self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+        self._site_pages["home_depot"] = self._page
+        await self._warm()
+        self.state = "ready"
+        self.error = None
+        self._last_used = time.monotonic()
+        self._idle_changed.set()
+        # Pre-warm Lowe's too. Its warm costs a homepage load plus a click, so
+        # the first Lowe's query would otherwise pay ~19s while Home Depot
+        # answers in one. Doing it after state=ready keeps Home Depot available
+        # immediately, and a failure here is not fatal: the lazy path in
+        # _lowes_page still runs on demand.
+        self._prewarm = asyncio.create_task(self._prewarm_lowes())
+        if IDLE_SECONDS > 0:
+            self._idle_task = asyncio.create_task(self._idle_recycler())
+
+    async def _close_browser(self) -> None:
+        """Close the current Chromium context while retaining the Playwright driver."""
+        context, self._ctx = self._ctx, None
+        self._page = None
+        self._site_pages.clear()
+        self._lowes_failures = 0
+        if context is not None:
+            with contextlib.suppress(Exception):
+                await context.close()
+
+    @contextlib.asynccontextmanager
+    async def _use_browser(self) -> AsyncIterator[None]:
+        """Reserve the current browser, lazily recreating it after idle eviction."""
+        async with self._lifecycle_lock:
+            if self.state == "idle":
+                self.state = "starting"
+                try:
+                    await self._launch_browser()
+                except Exception as exc:
+                    await self._close_browser()
+                    self.state = "failed"
+                    self.error = f"{type(exc).__name__}: {exc}"
+                    logger.exception("browser restart failed")
+                    raise HTTPException(503, f"browser unavailable: {self.error}") from exc
+            self.require_ready()
+            self._active_requests += 1
+        try:
+            yield
+        finally:
+            async with self._lifecycle_lock:
+                self._active_requests -= 1
+                if self._active_requests == 0:
+                    self._last_used = time.monotonic()
+                    self._idle_changed.set()
+
+    async def _evict_if_idle(self) -> bool:
+        """Close Chromium when no search has used it for the configured interval."""
+        async with self._lifecycle_lock:
+            if (
+                self.state != "ready"
+                or self._active_requests != 0
+                or time.monotonic() - self._last_used < IDLE_SECONDS
+            ):
+                return False
+            await self._close_browser()
+            self.state = "idle"
+            logger.info(
+                "browser closed after %.0fs idle; it will warm on the next request", IDLE_SECONDS
             )
-            self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
-            self._site_pages["home_depot"] = self._page
-            await self._warm()
-            self.state = "ready"
-            self.error = None
-            # Pre-warm Lowe's too. Its warm costs a homepage load plus a click, so
-            # the first Lowe's query would otherwise pay ~19s while Home Depot
-            # answers in one. Doing it after state=ready keeps Home Depot
-            # available immediately, and a failure here is not fatal: the lazy
-            # path in _lowes_page still runs on demand.
-            self._prewarm = asyncio.create_task(self._prewarm_lowes())
-        except Exception as exc:
-            # Chromium failing to launch lands here. Keep the message verbatim:
-            # it is the only signal a remote operator gets, and the causes are
-            # unobvious (an unwritable HOME breaks the crashpad handler, for
-            # instance).
-            self.state = "failed"
-            self.error = f"{type(exc).__name__}: {exc}"
-            logger.exception("browser startup failed")
+            return True
+
+    async def _idle_recycler(self) -> None:
+        """Wait for idle time to elapse, then release Chromium's memory."""
+        while True:
+            async with self._lifecycle_lock:
+                if self.state != "ready":
+                    return
+                timeout = max(0.0, IDLE_SECONDS - (time.monotonic() - self._last_used))
+                self._idle_changed.clear()
+            try:
+                await asyncio.wait_for(self._idle_changed.wait(), timeout=timeout)
+            except TimeoutError:
+                if await self._evict_if_idle():
+                    return
 
     def require_ready(self) -> None:
         """Reject work with a useful reason while the browser is not usable."""
@@ -265,15 +354,16 @@ class BrowserBackedSearch:
             return False
 
     async def stop(self) -> None:
-        for task in (self._prewarm, self._task):
+        for task in (self._idle_task, self._prewarm, self._task):
             if task is not None and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
-        for closer in (self._ctx, self._pw):
-            if closer is not None:
-                with contextlib.suppress(Exception):
-                    await (closer.close() if closer is self._ctx else closer.stop())
+        await self._close_browser()
+        if self._pw is not None:
+            with contextlib.suppress(Exception):
+                await self._pw.stop()
+            self._pw = None
 
     async def _warm(self) -> None:
         """Land on the homepage so the bot manager sees a normal entry point."""
@@ -302,7 +392,7 @@ class BrowserBackedSearch:
     async def _prewarm_lowes(self) -> None:
         """Warm the Lowe's page in the background, tolerating failure."""
         try:
-            async with self._lock_for("lowes"):
+            async with self._use_browser(), self._lock_for("lowes"):
                 await self._lowes_page()
         except Exception:
             logger.warning("lowes pre-warm failed; will warm on first use", exc_info=True)
@@ -356,35 +446,36 @@ class BrowserBackedSearch:
         interval: a blanket wait cost about seven seconds per query for no
         benefit, against Home Depot's sub-second GraphQL call.
         """
-        async with self._lock_for("lowes"):
-            page = await self._lowes_page()
-            await page.goto(
-                lowes.search_url(keyword), wait_until="domcontentloaded", timeout=90_000
-            )
-            html = await page.content()
-            state = lowes.extract_preloaded_state(html)
-            for _ in range(LOWES_STATE_POLL_ATTEMPTS):
-                if state is not None or lowes.is_denied(html):
-                    break
-                await page.wait_for_timeout(LOWES_STATE_POLL_MS)
+        async with self._use_browser():
+            async with self._lock_for("lowes"):
+                page = await self._lowes_page()
+                await page.goto(
+                    lowes.search_url(keyword), wait_until="domcontentloaded", timeout=90_000
+                )
                 html = await page.content()
                 state = lowes.extract_preloaded_state(html)
+                for _ in range(LOWES_STATE_POLL_ATTEMPTS):
+                    if state is not None or lowes.is_denied(html):
+                        break
+                    await page.wait_for_timeout(LOWES_STATE_POLL_MS)
+                    html = await page.content()
+                    state = lowes.extract_preloaded_state(html)
 
-        # Prefer a payload we actually parsed over the "Access Denied" substring,
-        # which is a heuristic and could appear in legitimate page content.
-        if state is None:
-            await self._note_lowes_failure()
-            if lowes.is_denied(html):
-                raise HTTPException(502, "Lowe's refused the search")
-            raise HTTPException(502, "Lowe's search page carried no result payload")
+            # Prefer a payload we actually parsed over the "Access Denied" substring,
+            # which is a heuristic and could appear in legitimate page content.
+            if state is None:
+                await self._note_lowes_failure()
+                if lowes.is_denied(html):
+                    raise HTTPException(502, "Lowe's refused the search")
+                raise HTTPException(502, "Lowe's search page carried no result payload")
 
-        self._lowes_failures = 0
-        return SearchResponse(
-            keyword=keyword,
-            total_products=lowes.total_products(state),
-            used_nav_param=None,
-            products=[Product(**p) for p in lowes.parse_products(state, page_size)],
-        )
+            self._lowes_failures = 0
+            return SearchResponse(
+                keyword=keyword,
+                total_products=lowes.total_products(state),
+                used_nav_param=None,
+                products=[Product(**p) for p in lowes.parse_products(state, page_size)],
+            )
 
     async def _call(
         self, keyword: str, nav_param: str | None, store_id: str, zip_code: str, page_size: int
@@ -423,52 +514,54 @@ class BrowserBackedSearch:
         geocoding candidates instead of stores, so the first candidate's
         coordinates drive a second lookup.
         """
-        async with self._lock_for("home_depot"):
-            data = await self._store_call(
-                {"address": near, "radius": str(radius_miles), "pagesize": str(limit)}
-            )
-            geocoded = False
-            if "stores" not in data and "ambiguousAddresses" in data:
-                point = _first_geocode_point(data)
-                if point is None:
-                    return StoresResponse(near=near, geocoded=False, stores=[])
-                geocoded = True
+        async with self._use_browser():
+            async with self._lock_for("home_depot"):
                 data = await self._store_call(
-                    {
-                        "latitude": str(point[0]),
-                        "longitude": str(point[1]),
-                        "radius": str(radius_miles),
-                        "pagesize": str(limit),
-                    }
+                    {"address": near, "radius": str(radius_miles), "pagesize": str(limit)}
                 )
+                geocoded = False
+                if "stores" not in data and "ambiguousAddresses" in data:
+                    point = _first_geocode_point(data)
+                    if point is None:
+                        return StoresResponse(near=near, geocoded=False, stores=[])
+                    geocoded = True
+                    data = await self._store_call(
+                        {
+                            "latitude": str(point[0]),
+                            "longitude": str(point[1]),
+                            "radius": str(radius_miles),
+                            "pagesize": str(limit),
+                        }
+                    )
 
-        stores = [_parse_store(s) for s in (data.get("stores") or [])[:limit]]
-        return StoresResponse(near=near, geocoded=geocoded, stores=stores)
+            stores = [_parse_store(s) for s in (data.get("stores") or [])[:limit]]
+            return StoresResponse(near=near, geocoded=geocoded, stores=stores)
 
     async def search(
         self, keyword: str, *, store_id: str, zip_code: str, page_size: int
     ) -> SearchResponse:
-        async with self._lock_for("home_depot"):
-            model = await self._call(keyword, None, store_id, zip_code, page_size)
-            used_nav: str | None = None
+        async with self._use_browser():
+            async with self._lock_for("home_depot"):
+                model = await self._call(keyword, None, store_id, zip_code, page_size)
+                used_nav: str | None = None
 
-            # Category redirect: retry once with the bare N- token.
-            if not model.get("products"):
-                redirect = (model.get("metadata") or {}).get("searchRedirect") or ""
-                match = _NAV_RE.search(redirect.split("?")[0])
-                if match:
-                    used_nav = match.group(1)
-                    logger.info("keyword %r redirected to navParam %s", keyword, used_nav)
-                    model = await self._call(keyword, used_nav, store_id, zip_code, page_size)
+                # Category redirect: retry once with the bare N- token.
+                if not model.get("products"):
+                    redirect = (model.get("metadata") or {}).get("searchRedirect") or ""
+                    match = _NAV_RE.search(redirect.split("?")[0])
+                    if match:
+                        used_nav = match.group(1)
+                        logger.info("keyword %r redirected to navParam %s", keyword, used_nav)
+                        model = await self._call(keyword, used_nav, store_id, zip_code, page_size)
 
-        report = model.get("searchReport") or {}
-        products = [_parse_product(p) for p in (model.get("products") or [])[:page_size]]
-        return SearchResponse(
-            keyword=keyword,
-            total_products=report.get("totalProducts"),
-            used_nav_param=used_nav,
-            products=products,
-        )
+            report = model.get("searchReport") or {}
+            products = [_parse_product(p) for p in (model.get("products") or [])[:page_size]]
+            return SearchResponse(
+                keyword=keyword,
+                total_products=report.get("totalProducts"),
+                used_nav_param=used_nav,
+                products=products,
+            )
 
 
 def _parse_product(raw: dict[str, Any]) -> Product:
@@ -622,7 +715,6 @@ async def search(
     embedded state and localization rides on the session's own store rather than
     on parameters.
     """
-    _engine.require_ready()
     if site == "lowes":
         return await _engine.search_lowes(q, page_size=limit)
     return await _engine.search(q, store_id=store_id, zip_code=zip_code, page_size=limit)
@@ -635,5 +727,4 @@ async def stores(
     limit: int = Query(default=5, ge=1, le=25),
 ) -> StoresResponse:
     """Find Home Depot stores. Lowe's store lookup is not implemented."""
-    _engine.require_ready()
     return await _engine.find_stores(near, radius_miles=radius_miles, limit=limit)

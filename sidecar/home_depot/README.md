@@ -66,6 +66,7 @@ that a search costs roughly a second.
 | `HD_SIDECAR_TOKEN` | | Shared bearer token. Empty disables auth, which is only safe on loopback. |
 | `HD_PROFILE_DIR` | `~/.hd-sidecar-profile` | Persistent browser profile. Keep it between runs. |
 | `HD_WARM_SECONDS` | `7` | Homepage settle time before serving. |
+| `HD_IDLE_SECONDS` | `3600` | Close Chromium after this many idle seconds. The next request warms a fresh browser. Set to `0` to keep it open. |
 
 ## Running it in a container
 
@@ -126,11 +127,13 @@ answering.
 ## API
 
 `GET /health` binds and answers immediately, before the browser is ready, and
-reports what state it is in:
+reports what state it is in. After the idle interval it reports `idle`; the next
+search or store lookup waits for a fresh warm-up before running:
 
 ```json
 {"ok": true,  "state": "ready",    "error": null}
 {"ok": false, "state": "starting", "error": null}
+{"ok": false, "state": "idle",     "error": null}
 {"ok": false, "state": "failed",   "error": "Error: Failed to move to new namespace..."}
 ```
 
