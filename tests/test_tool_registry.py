@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
+import pkgutil
+import sys
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel, Field
 
 import backend.app.agent.tools.registry as _reg
-from backend.app.agent.tools.base import Tool, ToolTags
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags, tool_to_function_schema
 from backend.app.agent.tools.registry import (
     ToolContext,
     default_registry,
@@ -253,6 +257,108 @@ async def test_ask_sub_tools_have_approval_policy() -> None:
         "Tools with default_permission='ask' must have an ApprovalPolicy "
         "on the Tool object so the runtime enforces permissions:\n" + "\n".join(missing)
     )
+
+
+def _all_tool_params_models() -> dict[str, type[BaseModel]]:
+    """Every ``*Params`` model that backs a tool, keyed by qualified name.
+
+    Deliberately discovered by walking imported modules rather than by building
+    tools through their factories. Most integration factories are auth-gated and
+    return nothing without OAuth credentials, so a factory-driven sweep silently
+    skips them: at the time of writing it reaches 18 of the ~62 tools an agent
+    actually sees, and ``calendar_create_event`` is not among them. A schema
+    invariant that cannot see the tool it was written for is worse than no test.
+    """
+    ensure_tool_modules_imported()
+
+    import backend.app.integrations as integrations_pkg
+
+    for mod_info in pkgutil.walk_packages(
+        integrations_pkg.__path__, integrations_pkg.__name__ + "."
+    ):
+        with contextlib.suppress(Exception):
+            importlib.import_module(mod_info.name)
+
+    found: dict[str, type[BaseModel]] = {}
+    for mod_name, module in list(sys.modules.items()):
+        if not mod_name.startswith("backend.app") or module is None:
+            continue
+        for attr in vars(module).values():
+            if (
+                isinstance(attr, type)
+                and issubclass(attr, BaseModel)
+                and attr is not BaseModel
+                and attr.__name__.endswith("Params")
+            ):
+                found[f"{attr.__module__}.{attr.__name__}"] = attr
+    return found
+
+
+def test_every_required_param_is_defined_in_properties() -> None:
+    """No tool may require a parameter its schema never defines.
+
+    ``required`` naming a key absent from ``properties`` is an unsatisfiable
+    contract: the model is told the parameter is mandatory and given nowhere to
+    put it, so the call can never validate no matter how the model responds.
+
+    This shipped for real. ``_strip_titles`` dropped every key named ``title``,
+    including the ``title`` *parameter* of ``calendar_create_event``, while
+    ``required`` kept listing it. Measured against a non-Claude model, 10 of 12
+    calls came back with the title stuffed into ``location`` and no ``title``
+    field, and every one failed validation. Lenient models papered over it; a
+    strict one rejected the schema outright with a 400.
+    """
+    models = _all_tool_params_models()
+    assert len(models) > 40, f"discovery looks broken, only found {len(models)} params models"
+    assert any(name.endswith("CalendarCreateEventParams") for name in models), (
+        "CalendarCreateEventParams must be covered; it is the model this test exists for"
+    )
+
+    async def _noop(**_: object) -> ToolResult:
+        return ToolResult(content="")
+
+    broken: list[str] = []
+    for qualname, model in sorted(models.items()):
+        tool = Tool(name="probe", description="", function=_noop, params_model=model)
+        schema = tool_to_function_schema(tool)["input_schema"]
+        declared = set(schema.get("properties") or {})
+        required = set(schema.get("required") or [])
+        undefined = required - declared
+        if undefined:
+            broken.append(f"{qualname}: required but undefined in properties: {sorted(undefined)}")
+
+    assert not broken, (
+        "Every name in a tool's `required` list must also appear in `properties`, "
+        "or the model is asked for a parameter it has no way to supply:\n" + "\n".join(broken)
+    )
+
+
+def test_strip_titles_keeps_a_parameter_named_title() -> None:
+    """A parameter named ``title`` survives; annotation titles still go."""
+
+    class ParamsWithTitle(BaseModel):
+        title: str = Field(description="Event title.")
+        start: str = Field(description="ISO 8601 start.")
+
+    async def _noop(**_: object) -> ToolResult:
+        return ToolResult(content="")
+
+    tool = Tool(
+        name="thing_create",
+        description="Create a thing.",
+        function=_noop,
+        params_model=ParamsWithTitle,
+    )
+    schema = tool_to_function_schema(tool)["input_schema"]
+
+    assert "title" in schema["properties"], "the `title` parameter was stripped from properties"
+    assert set(schema["required"]) <= set(schema["properties"])
+    assert schema["properties"]["title"]["type"] == "string"
+    # The token-saving behaviour is preserved: Pydantic's annotation-level
+    # ``title`` on the model and on each property is still removed.
+    assert "title" not in schema
+    assert "title" not in schema["properties"]["start"]
+    assert "title" not in schema["properties"]["title"]
 
 
 @pytest.mark.asyncio()
