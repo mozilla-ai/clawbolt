@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { Outlet, NavLink, Navigate } from 'react-router-dom';
+import { useState, useCallback, useEffect, type ComponentType } from 'react';
+import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { ToastProvider } from '@heroui/toast';
 import { useQueryClient } from '@tanstack/react-query';
 import Button from '@/components/ui/button';
@@ -11,7 +11,7 @@ import { ChatActivityProvider } from '@/contexts/ChatActivityContext';
 import { Tooltip } from '@heroui/tooltip';
 import { Link } from '@heroui/link';
 import { Divider } from '@heroui/divider';
-import { getFeatureRequestUrl, getReportIssueUrl, getDocsUrl, getExtraNavItems, renderSidebarFooter, renderHeaderBadge } from '@/extensions';
+import { getFeatureRequestUrl, getReportIssueUrl, getDocsUrl, getExtraNavItems, renderSidebarFooter, renderHeaderBadge, type NavExtensionItem } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import { useProfile } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
@@ -46,6 +46,135 @@ const NAV_BOTTOM = [
   { to: '/app/chat', label: 'Chat', icon: ChatIcon, end: false },
 ] as const;
 
+// ---------------------------------------------------------------------------
+// Nav primitives
+// ---------------------------------------------------------------------------
+
+/** Row styling for every sidebar link, so top-level and nested rows stay in sync. */
+function navRowClass(isActive: boolean, indented = false): string {
+  return `flex items-center gap-3 px-3 ${indented ? 'pl-6' : ''} py-2 rounded-md text-sm transition-all duration-150 ${
+    isActive
+      ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+      : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+  }`;
+}
+
+function NavItemLink({
+  item,
+  indented = false,
+  end = false,
+  onNavigate,
+}: {
+  item: NavExtensionItem;
+  indented?: boolean;
+  end?: boolean;
+  onNavigate: () => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={item.to}
+      end={end}
+      onClick={() => {
+        item.onClick?.();
+        onNavigate();
+      }}
+      className={({ isActive }) => navRowClass(isActive, indented)}
+    >
+      <Icon />
+      {item.label}
+    </NavLink>
+  );
+}
+
+/** True when ``pathname`` is ``to`` or a descendant of it. */
+function isWithin(pathname: string, to: string): boolean {
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+/**
+ * Collapsible sidebar fold. Two shapes, one implementation:
+ *
+ * - No ``to``: the header is a pure toggle (the built-in "Personalize" group).
+ * - With ``to``: the header is a real link plus a separate chevron button, so
+ *   clicking the label navigates to the section landing page while the chevron
+ *   expands/collapses without navigating.
+ *
+ * The fold auto-opens whenever the current URL is inside the group, so a deep
+ * link lands with the group already open. It stays collapsible after that.
+ */
+function NavGroup({
+  label,
+  icon: Icon,
+  to,
+  items,
+  onNavigate,
+}: {
+  label: string;
+  icon?: ComponentType;
+  to?: string;
+  items: NavExtensionItem[];
+  onNavigate: () => void;
+}) {
+  const { pathname } = useLocation();
+  const containsActive =
+    (to != null && isWithin(pathname, to)) ||
+    items.some(child => isWithin(pathname, child.to));
+  const [open, setOpen] = useState(containsActive);
+
+  useEffect(() => {
+    if (containsActive) setOpen(true);
+  }, [containsActive]);
+
+  const toggle = useCallback(() => setOpen(v => !v), []);
+
+  return (
+    <>
+      {to == null ? (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground transition-all duration-150 w-full"
+        >
+          <ChevronIcon open={open} />
+          {label}
+        </button>
+      ) : (
+        <div className="flex items-center">
+          <NavLink
+            to={to}
+            end
+            onClick={onNavigate}
+            // Collapsed, the children are hidden, so the parent has to carry
+            // the "you are here" highlight for the whole section. Expanded,
+            // the active child carries it and the parent stays quiet.
+            className={({ isActive }) =>
+              `${navRowClass(isActive || (!open && containsActive))} flex-1 min-w-0`
+            }
+          >
+            {Icon && <Icon />}
+            {label}
+          </NavLink>
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={open}
+            aria-label={`${open ? 'Collapse' : 'Expand'} ${label}`}
+            className="p-1 mr-1 rounded-md text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground transition-all duration-150"
+          >
+            <ChevronIcon open={open} />
+          </button>
+        </div>
+      )}
+      {open &&
+        items.map(child => (
+          <NavItemLink key={child.to} item={child} indented onNavigate={onNavigate} />
+        ))}
+    </>
+  );
+}
+
 export default function AppShell() {
   const { authState, currentAuthUser, isPremium, handleLogout } = useAuth();
   const queryClient = useQueryClient();
@@ -60,7 +189,6 @@ export default function AppShell() {
     refetch: refetchProfile,
   } = useProfile({ enabled: authState === 'ready' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [personalizeOpen, setPersonalizeOpen] = useState(false);
 
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
@@ -141,109 +269,31 @@ export default function AppShell() {
         </div>
 
         <nav className="p-2 space-y-0.5">
-          {NAV_TOP.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              onClick={closeSidebar}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
-                  isActive
-                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
-                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
-                }`
-              }
-            >
-              <Icon />
-              {label}
-            </NavLink>
+          {NAV_TOP.map(item => (
+            <NavItemLink key={item.to} item={item} end={item.end} onNavigate={closeSidebar} />
           ))}
           <Divider className="my-1" />
-          {NAV_MAIN.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              onClick={closeSidebar}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
-                  isActive
-                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
-                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
-                }`
-              }
-            >
-              <Icon />
-              {label}
-            </NavLink>
+          {NAV_MAIN.map(item => (
+            <NavItemLink key={item.to} item={item} end={item.end} onNavigate={closeSidebar} />
           ))}
-          {extraNavItems.map(({ to, label, icon: Icon, onClick: onExtensionClick }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={() => {
-                onExtensionClick?.();
-                closeSidebar();
-              }}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
-                  isActive
-                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
-                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
-                }`
-              }
-            >
-              <Icon />
-              {label}
-            </NavLink>
-          ))}
-          <button
-            type="button"
-            onClick={() => setPersonalizeOpen((v) => !v)}
-            aria-expanded={personalizeOpen}
-            className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground transition-all duration-150 w-full"
-          >
-            <ChevronIcon open={personalizeOpen} />
-            Personalize
-          </button>
-          {personalizeOpen &&
-            NAV_PERSONALIZE.map(({ to, label, icon: Icon, end }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={end}
-                onClick={closeSidebar}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2 pl-6 rounded-md text-sm transition-all duration-150 ${
-                    isActive
-                      ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
-                      : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
-                  }`
-                }
-              >
-                <Icon />
-                {label}
-              </NavLink>
-            ))}
+          {extraNavItems.map(item =>
+            item.children && item.children.length > 0 ? (
+              <NavGroup
+                key={item.to}
+                label={item.label}
+                icon={item.icon}
+                to={item.to}
+                items={item.children}
+                onNavigate={closeSidebar}
+              />
+            ) : (
+              <NavItemLink key={item.to} item={item} onNavigate={closeSidebar} />
+            ),
+          )}
+          <NavGroup label="Personalize" items={[...NAV_PERSONALIZE]} onNavigate={closeSidebar} />
           <Divider className="my-1" />
-          {NAV_BOTTOM.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              onClick={closeSidebar}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
-                  isActive
-                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
-                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
-                }`
-              }
-            >
-              <Icon />
-              {label}
-            </NavLink>
+          {NAV_BOTTOM.map(item => (
+            <NavItemLink key={item.to} item={item} end={item.end} onNavigate={closeSidebar} />
           ))}
         </nav>
 

@@ -6,6 +6,14 @@ export interface NavExtensionItem {
   icon: ComponentType;
   /** Fired in addition to navigation, so extensions can reset internal state (e.g. hash-routed tabs). */
   onClick?: () => void;
+  /**
+   * Sub-pages rendered as an indented, collapsible fold under this item,
+   * matching the built-in "Personalize" group. The parent stays a real link:
+   * clicking it navigates AND expands. The fold auto-opens whenever the
+   * current URL is inside the parent's path, so a deep link lands with the
+   * group already open.
+   */
+  children?: NavExtensionItem[];
 }
 
 function AdminIcon() {

@@ -9,6 +9,7 @@ import {
   getDefaultSettingsTab,
   shouldRedirectRootToApp,
   getAdminPageElement,
+  getDefaultAppPath,
 } from '@/extensions';
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
@@ -31,7 +32,14 @@ const GetStartedPage = lazy(() => import('@/pages/GetStartedPage'));
  * its BOOTSTRAP.md conversation.
  */
 function DefaultRedirect() {
-  const { profile } = useOutletContext<AppShellContext>();
+  const { profile, isAdmin } = useOutletContext<AppShellContext>();
+  // Extensions may claim the landing slot for a role (premium sends admins to
+  // the admin overview). Onboarding still wins: a half-configured account
+  // needs the wizard before anything else.
+  const extensionPath = getDefaultAppPath(isAdmin);
+  if (extensionPath && profile?.onboarding_complete) {
+    return <Navigate to={extensionPath} replace />;
+  }
   if (profile && !profile.onboarding_complete) {
     let dismissed = false;
     try { dismissed = sessionStorage.getItem('getStartedDismissed') === '1'; } catch { /* ignore */ }
@@ -93,7 +101,10 @@ export default function App() {
           <Route path="permissions" element={<PermissionsPage />} />
           <Route path="tools" element={<ToolsPage />} />
           <Route path="oauth/callback" element={<OAuthCallbackPage />} />
-          <Route path="admin" element={<AdminRoute />} />
+          {/* Wildcard: the admin surface owns its own sub-routes (Users,
+              Config, Access, ...) so each one can be a real URL with a
+              sidebar entry rather than a hash fragment. */}
+          <Route path="admin/*" element={<AdminRoute />} />
           {/* Approvals moved out of Settings to its own sidebar page; redirect old bookmarks. */}
           <Route path="settings/approvals" element={<Navigate to="/app/permissions" replace />} />
           <Route path="settings/:tab" element={<SettingsPage />} />
