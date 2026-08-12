@@ -17,10 +17,12 @@ from backend.app.integrations.appfolio_vendor.params import (
     AppFolioSearchWorkOrdersParams,
 )
 from backend.app.integrations.appfolio_vendor.service import (
+    KNOWN_WO_LIST_ENVELOPES,
     AppFolioError,
     AppFolioVendorService,
     AuthExpiredError,
     AuthScopeError,
+    normalize_work_order_list,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,27 +87,6 @@ def _fmt_work_order_line(wo: dict[str, Any]) -> str:
     if summary:
         pieces.append(str(summary)[:100])
     return f"- ID: {wo_id} | " + " | ".join(pieces)
-
-
-_KNOWN_WO_LIST_ENVELOPES = ("work_orders", "workOrders", "results", "data")
-
-
-def _normalize_list(payload: Any) -> list[dict[str, Any]]:
-    """Return a list of work-order dicts from whichever envelope AppFolio used.
-
-    Returns ``[]`` when the response shape is not one we recognize; the
-    *caller* is responsible for logging that case via
-    :func:`log_unexpected_response_shape` so the empty-list semantics
-    stay simple and the diagnostic carries the calling tool's label.
-    """
-    if isinstance(payload, list):
-        return [w for w in payload if isinstance(w, dict)]
-    if isinstance(payload, dict):
-        for key in _KNOWN_WO_LIST_ENVELOPES:
-            value = payload.get(key)
-            if isinstance(value, list):
-                return [w for w in value if isinstance(w, dict)]
-    return []
 
 
 def _normalize_search_hit(hit: dict[str, Any]) -> dict[str, Any]:
@@ -176,7 +157,7 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
         except Exception as exc:
             return _service_error("listing work orders", exc)
 
-        items = _normalize_list(payload)
+        items = normalize_work_order_list(payload)
         if not items:
             # An empty list is a legitimate result, but if the response
             # was a non-empty dict the shape is probably the issue (we
@@ -188,7 +169,7 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
                     payload,
                     expected=(
                         "list of work-order dicts, or a dict with one of "
-                        f"{list(_KNOWN_WO_LIST_ENVELOPES)} containing the list"
+                        f"{list(KNOWN_WO_LIST_ENVELOPES)} containing the list"
                     ),
                 )
             return ToolResult(content="No matching work orders.")
@@ -207,7 +188,7 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
         # The search endpoint returns its own hit schema (result_text,
         # customer_ids); remap each hit to the work-order shape so the
         # display number and customer_id surface instead of the bare id.
-        items = [_normalize_search_hit(hit) for hit in _normalize_list(payload)]
+        items = [_normalize_search_hit(hit) for hit in normalize_work_order_list(payload)]
         if not items:
             if isinstance(payload, dict) and payload:
                 log_unexpected_response_shape(
@@ -215,7 +196,7 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
                     payload,
                     expected=(
                         "list of work-order dicts, or a dict with one of "
-                        f"{list(_KNOWN_WO_LIST_ENVELOPES)} containing the list"
+                        f"{list(KNOWN_WO_LIST_ENVELOPES)} containing the list"
                     ),
                 )
             return ToolResult(

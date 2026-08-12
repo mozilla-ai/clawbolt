@@ -97,9 +97,9 @@ _AUTH_EXPIRED_HINT = (
 # the user for a fresh magic link they do not need.
 _AUTH_SCOPE_HINT = (
     "Do not ask the user to reconnect. The AppFolio session is valid;"
-    " the request just used a customer_id the JWT is not authorized for."
-    " Resolve the right customer_id (e.g. via appfolio_list_work_orders)"
-    " and retry."
+    " AppFolio rejected this particular request, most often because the"
+    " customer_id is one the JWT is not authorized for. Resolve the right"
+    " customer_id (e.g. via appfolio_list_work_orders) and retry."
 )
 
 
