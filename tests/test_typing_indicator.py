@@ -354,6 +354,46 @@ async def test_typing_keepalive_stops_when_tool_raises(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
 @patch("backend.app.agent.core.amessages")
+async def test_typing_keepalive_stops_when_the_wrapped_await_raises(
+    mock_amessages: object,
+    test_user: User,
+) -> None:
+    """An exception out of the covered await must still cancel the keepalive.
+
+    ``_execute_single_tool`` converts every tool exception into an error result,
+    so a raising tool exits the keepalive by the normal path. An exception from
+    the LLM call is the one that unwinds through the context manager, which is
+    the path that would strand a phantom bubble if the ``finally`` were missing.
+    """
+
+    async def slow_then_raise(**kwargs: object) -> object:
+        await asyncio.sleep(0.05)
+        msg = "provider exploded"
+        raise RuntimeError(msg)
+
+    mock_amessages.side_effect = slow_then_raise  # type: ignore[union-attr]
+
+    mock_publish = AsyncMock()
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=mock_publish,
+        chat_id="+15551234567",
+    )
+    with pytest.raises(RuntimeError, match="provider exploded"):
+        await agent.process_message("Do the thing")
+
+    # Refreshes happened while the call was in flight, and then stopped.
+    assert len(_typing_calls(mock_publish)) >= 2
+    settled = len(_typing_calls(mock_publish))
+    await asyncio.sleep(0.05)
+    assert len(_typing_calls(mock_publish)) == settled, "keepalive survived a raising LLM call"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
+@patch("backend.app.agent.core.amessages")
 async def test_typing_keepalive_noop_without_chat_id(
     mock_amessages: object,
     test_user: User,

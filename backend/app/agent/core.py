@@ -135,13 +135,20 @@ _MAX_TOKENS_CEILING = 16384
 _LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
 
 # How often to re-send the typing indicator while the agent is blocked on a
-# slow operation. Messaging clients expire a typing bubble on their own after a
-# short idle period, so the single indicator fired before an LLM call or tool
-# round goes stale partway through and the user is left with no signal for the
-# rest of the wait. Well under the shortest client expiry observed on iMessage
-# so a dropped refresh is not user-visible; also short enough that a self-hosted
-# bridge dropping one request self-heals on the next tick.
-_TYPING_KEEPALIVE_SECONDS = 8.0
+# slow operation. Clients that render an indicator expire it on their own once
+# refreshes stop, so the single indicator fired before an LLM call or tool round
+# goes stale partway through and the user is left with no signal for the rest of
+# the wait.
+#
+# The keepalive is channel-agnostic, so the interval has to stay under the
+# shortest expiry of any channel that renders one. Telegram is both the tightest
+# and the only one that documents a number: ``sendChatAction`` holds the status
+# for "5 seconds or less". iMessage sits at the other end and clears slowly
+# rather than promptly, which is why ``stop_typing_indicator`` exists to cancel
+# it explicitly; its expiry has not been measured, so Telegram is the binding
+# constraint here. Also short enough that a self-hosted bridge dropping one
+# request self-heals on the next tick.
+_TYPING_KEEPALIVE_SECONDS = 4.0
 
 # Provider phrasings for "this prompt is longer than the model's context window"
 # that any-llm does NOT classify as ``ContextLengthExceededError``. Its
@@ -481,13 +488,19 @@ class ClawboltAgent:
             yield
             return
 
-        task = asyncio.create_task(self._typing_keepalive_loop())
+        task = asyncio.create_task(self._typing_keepalive_loop(), name="typing-keepalive")
         try:
             yield
         finally:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            # ``gather(return_exceptions=True)`` rather than
+            # ``suppress(CancelledError)`` around ``await task``: the latter also
+            # swallows a cancellation aimed at *this* task when one lands while
+            # we are suspended here, which silently defeats the surrounding
+            # ``asyncio.timeout`` in the ingestion pipeline (no truncation and no
+            # ``TimeoutError``, since ``Timeout.__aexit__`` only converts a
+            # ``CancelledError`` that actually reaches it).
+            await asyncio.gather(task, return_exceptions=True)
 
     async def _get_tool_permission(
         self,
