@@ -56,6 +56,12 @@ def _load_sidecar() -> Any:
 sidecar = _load_sidecar()
 
 
+# Request paths take their lock through `_timed_lock`, which adds the deadline
+# and the timing log; the background pre-warm still takes it directly. Both name
+# their retailer as a literal first argument, which is the property under test.
+_LOCK_TAKING_CALLS = ("_lock_for", "_timed_lock")
+
+
 def _lock_site_by_function() -> dict[str, str]:
     """Read which site each method locks, straight from the source.
 
@@ -74,7 +80,7 @@ def _lock_site_by_function() -> dict[str, str]:
                 call = inner
             if call is None or not isinstance(call.func, ast.Attribute):
                 continue
-            if call.func.attr != "_lock_for" or not call.args:
+            if call.func.attr not in _LOCK_TAKING_CALLS or not call.args:
                 continue
             arg = call.args[0]
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
@@ -185,6 +191,174 @@ class TestStaleSessionRecovery:
         await engine._note_lowes_failure()
 
         assert "lowes" not in engine._site_pages
+
+
+class TestRequestBudget:
+    """A retailer that goes quiet must not park the lock (issue #1496).
+
+    The in-page fetch had no abort signal and `page.evaluate` takes no timeout,
+    so a connection that was accepted and never answered left the coroutine
+    pending forever while holding the retailer's lock. Everything queued behind
+    it then timed out client-side waiting for a page nobody was driving.
+    """
+
+    @staticmethod
+    def _hanging_page() -> Any:
+        class HangingPage:
+            async def evaluate(self, _script: str, _args: list) -> dict:
+                await asyncio.Event().wait()  # never resolves, like the real hang
+                raise AssertionError("unreachable")
+
+        return HangingPage()
+
+    @pytest.mark.asyncio
+    async def test_a_hung_page_gives_up_instead_of_pending_forever(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sidecar, "_EVALUATE_GRACE_SECONDS", 0.05)
+        engine = sidecar.BrowserBackedSearch()
+
+        with pytest.raises(sidecar.HTTPException) as caught:
+            await engine._evaluate(
+                self._hanging_page(),
+                "script",
+                ["arg"],
+                what="Home Depot search",
+                deadline=time.monotonic() + 0.1,
+            )
+
+        assert caught.value.status_code == 504
+
+    @pytest.mark.asyncio
+    async def test_a_hung_request_releases_the_lock_for_the_next_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The property that actually mattered: one bad request, not a cascade."""
+        monkeypatch.setattr(sidecar, "_EVALUATE_GRACE_SECONDS", 0.05)
+        monkeypatch.setattr(sidecar, "REQUEST_BUDGET_SECONDS", 0.1)
+        engine = sidecar.BrowserBackedSearch()
+        page = self._hanging_page()
+
+        async def one_request() -> None:
+            async with engine._timed_lock("home_depot", "hd") as deadline:
+                await engine._evaluate(page, "s", [], what="hd", deadline=deadline)
+
+        with pytest.raises(sidecar.HTTPException):
+            await one_request()
+
+        # The lock has to be free the instant the first request gives up.
+        await asyncio.wait_for(engine._lock_for("home_depot").acquire(), timeout=0.5)
+
+    @pytest.mark.asyncio
+    async def test_an_expired_budget_is_refused_rather_than_extended(self) -> None:
+        """The redirect retry shares one budget; it cannot mint a fresh slice."""
+        engine = sidecar.BrowserBackedSearch()
+
+        with pytest.raises(sidecar.HTTPException) as caught:
+            await engine._evaluate(
+                self._hanging_page(),
+                "script",
+                [],
+                what="Home Depot search",
+                deadline=time.monotonic() - 1,
+            )
+
+        assert caught.value.status_code == 504
+        assert "ran out of budget" in caught.value.detail
+
+    @pytest.mark.asyncio
+    async def test_an_aborted_fetch_becomes_a_gateway_timeout(self) -> None:
+        """The script reports its own abort in the payload rather than throwing."""
+        engine = sidecar.BrowserBackedSearch()
+
+        class AbortingPage:
+            async def evaluate(self, _script: str, _args: list) -> dict:
+                return {"status": 0, "body": "", "error": "TimeoutError"}
+
+        with pytest.raises(sidecar.HTTPException) as caught:
+            await engine._evaluate(
+                AbortingPage(),
+                "script",
+                [],
+                what="Home Depot search",
+                deadline=time.monotonic() + 5,
+            )
+
+        assert caught.value.status_code == 504
+        assert "TimeoutError" in caught.value.detail
+
+    @pytest.mark.asyncio
+    async def test_the_remaining_budget_is_handed_to_the_script(self) -> None:
+        """The script cannot abort itself without being told how long it has."""
+        engine = sidecar.BrowserBackedSearch()
+        seen: list[list] = []
+
+        class RecordingPage:
+            async def evaluate(self, _script: str, args: list) -> dict:
+                seen.append(args)
+                return {"status": 200, "body": "{}"}
+
+        await engine._evaluate(
+            RecordingPage(),
+            "script",
+            ["first", "second"],
+            what="Home Depot search",
+            deadline=time.monotonic() + 4,
+        )
+
+        assert seen[0][:2] == ["first", "second"]
+        timeout_ms = seen[0][-1]
+        assert isinstance(timeout_ms, int)
+        assert 3_000 < timeout_ms <= 4_000, "the script gets what is left, in milliseconds"
+
+    @pytest.mark.asyncio
+    async def test_the_budget_stays_under_the_clients_own_timeout(self) -> None:
+        """The sidecar has to fail first, or its caller is gone before it answers.
+
+        The client waits 35s (`_DEFAULT_TIMEOUT_SECONDS` in sidecar_client.py).
+        Budget plus grace is the worst case one request can take, and it has to
+        land below that with room to spare.
+        """
+        from backend.app.integrations.supplier_pricing.sidecar_client import (
+            _DEFAULT_TIMEOUT_SECONDS,
+        )
+
+        worst_case = sidecar.REQUEST_BUDGET_SECONDS + sidecar._EVALUATE_GRACE_SECONDS
+        assert worst_case < _DEFAULT_TIMEOUT_SECONDS
+
+
+class TestRequestTiming:
+    @pytest.mark.asyncio
+    async def test_queue_and_work_time_are_logged_separately(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A slow search and a queued one are different problems, and the logs
+        could not tell them apart before (issue #1496)."""
+        engine = sidecar.BrowserBackedSearch()
+
+        with caplog.at_level("INFO", logger="hd-sidecar"):
+            async with engine._timed_lock("home_depot", "home_depot search 'drill'"):
+                pass
+
+        assert any(
+            "home_depot search 'drill'" in r.message
+            and "queued" in r.message
+            and "working" in r.message
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_timing_is_logged_even_when_the_request_fails(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failed request is the one whose duration you most want to see."""
+        engine = sidecar.BrowserBackedSearch()
+
+        with caplog.at_level("INFO", logger="hd-sidecar"), pytest.raises(RuntimeError):
+            async with engine._timed_lock("home_depot", "home_depot search 'drill'"):
+                raise RuntimeError("boom")
+
+        assert any("queued" in r.message for r in caplog.records)
 
 
 class TestIdleBrowserRecycling:

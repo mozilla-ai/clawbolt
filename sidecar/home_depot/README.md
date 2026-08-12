@@ -67,6 +67,7 @@ that a search costs roughly a second.
 | `HD_PROFILE_DIR` | `~/.hd-sidecar-profile` | Persistent browser profile. Keep it between runs. |
 | `HD_WARM_SECONDS` | `7` | Homepage settle time before serving. |
 | `HD_IDLE_SECONDS` | `3600` | Close Chromium after this many idle seconds. The next request warms a fresh browser. Set to `0` to keep it open. |
+| `HD_REQUEST_BUDGET_SECONDS` | `25` | How long one request may drive a retailer's page once it holds that retailer's lock. Must stay below the client's 35s timeout: a request that outlives its caller holds the lock with nobody waiting for the answer. |
 
 ## Running it in a container
 
