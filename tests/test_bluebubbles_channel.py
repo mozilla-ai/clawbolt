@@ -1057,29 +1057,37 @@ async def test_start_checks_reachability_even_with_paas_webhook_registered() -> 
 
 
 async def test_check_server_reachable_success() -> None:
-    """_check_server_reachable returns True when server responds."""
+    """_check_server_reachable returns True when the server answers an authenticated 200.
+
+    Uses a real response rather than an ``AsyncMock``: the check now parses the
+    ``/api/v1/server/info`` body, so a mock that only carries ``status_code``
+    would pass without exercising the parse. Deeper coverage of the probe
+    itself lives in test_bluebubbles_health.py.
+    """
     channel = BlueBubblesChannel()
 
-    mock_resp = AsyncMock()
-    mock_resp.status_code = 200
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"status": 200, "data": {"server_version": "1.9.8", "private_api": True}}
+        )
 
+    real_client = httpx.AsyncClient
     with (
         patch(
             "backend.app.channels.bluebubbles.settings.bluebubbles_server_url",
             "https://my-mac.example.com",
         ),
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", "test-pw"),
-        patch("backend.app.channels.bluebubbles.httpx.AsyncClient") as mock_cls,
+        patch(
+            "backend.app.channels.bluebubbles.httpx.AsyncClient",
+            lambda **_kw: real_client(transport=httpx.MockTransport(handler)),
+        ),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get.return_value = mock_resp
-        mock_cls.return_value = mock_client
-
         result = await channel._check_server_reachable()
 
     assert result is True
+    assert channel.last_health is not None
+    assert channel.last_health.server_version == "1.9.8"
 
 
 async def test_check_server_reachable_connect_error() -> None:

@@ -4,9 +4,12 @@ import asyncio
 import datetime
 import hashlib
 import hmac
+import json
 import logging
 import uuid
-from urllib.parse import quote
+from dataclasses import dataclass
+from typing import cast
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -69,6 +72,17 @@ _TRANSIENT_HTTP_EXCEPTIONS = (
     httpx.PoolTimeout,
     httpx.RemoteProtocolError,
 )
+
+
+# Path the BlueBubbles server POSTs inbound messages to, and the single event
+# we subscribe to. Both the registration path and the health check that
+# verifies registration read these, so the two can never drift apart.
+INBOUND_WEBHOOK_PATH = "/api/webhooks/bluebubbles"
+INBOUND_WEBHOOK_EVENT = "new-message"
+
+# Timeout for the server-info probe. Deliberately short: this runs on a timer
+# against a residential Mac, and a slow answer is itself a bad sign.
+_SERVER_INFO_TIMEOUT_SECONDS = 5.0
 
 
 def _derive_webhook_token(password: str) -> str:
@@ -136,6 +150,110 @@ class BBWebhookPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class RegisteredWebhook:
+    """One webhook subscription as the BlueBubbles server reports it."""
+
+    id: str
+    url: str
+    # Empty when the server's event list could not be parsed. Callers must
+    # treat that as "unknown", never as "not subscribed": guessing wrong
+    # would report a working bridge as broken.
+    events: tuple[str, ...] = ()
+
+
+def _parse_webhook_events(raw: object) -> tuple[str, ...]:
+    """Normalize the ``events`` field, which BlueBubbles has shipped three ways.
+
+    Depending on server version it arrives as a JSON-encoded string, a list of
+    plain strings, or a list of ``{"label": ..., "value": ...}`` objects.
+    Anything unrecognized yields an empty tuple, meaning "unknown".
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return (raw,) if raw else ()
+    if not isinstance(raw, list):
+        return ()
+    events: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            events.append(item)
+        elif isinstance(item, dict):
+            entry = cast("dict[str, object]", item)
+            value = entry.get("value") or entry.get("label")
+            if isinstance(value, str):
+                events.append(value)
+    return tuple(events)
+
+
+async def list_bluebubbles_webhooks(
+    server_url: str, password: str = ""
+) -> list[RegisteredWebhook] | None:
+    """List webhook subscriptions registered on the BlueBubbles server.
+
+    Returns ``None`` when the list could not be retrieved at all, which is
+    distinct from an empty list: "the server told us there are no webhooks"
+    is an actionable finding, "we could not ask" is not.
+
+    Catches broadly on purpose. This feeds a health check and a cleanup pass,
+    and both want "unknown" rather than an exception when a third-party server
+    answers with something unexpected.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{server_url}/api/v1/webhook",
+                params={"password": password or settings.bluebubbles_password},
+                timeout=settings.http_timeout_seconds,
+            )
+            if resp.status_code >= 400:
+                return None
+            data = resp.json()
+    except Exception:
+        logger.debug("Could not list BlueBubbles webhooks", exc_info=True)
+        return None
+
+    raw_hooks = data if isinstance(data, list) else data.get("data", [])
+    if not isinstance(raw_hooks, list):
+        return None
+
+    hooks: list[RegisteredWebhook] = []
+    for wh in raw_hooks:
+        if not isinstance(wh, dict):
+            continue
+        wh_id = wh.get("id")
+        wh_url = wh.get("url")
+        if wh_id is None or not isinstance(wh_url, str):
+            continue
+        hooks.append(
+            RegisteredWebhook(
+                id=str(wh_id), url=wh_url, events=_parse_webhook_events(wh.get("events"))
+            )
+        )
+    return hooks
+
+
+def _webhook_matches(candidate_url: str, expected_url: str) -> bool:
+    """True when a registered webhook URL is the one we would register now.
+
+    Compares scheme, host, path, and the ``token`` query parameter rather than
+    the raw strings, so a server that re-encodes the query on read-back still
+    matches. The token is part of the comparison on purpose: a registration
+    carrying a token derived from an old password is delivered to us and then
+    rejected at the door, which looks identical to no registration at all.
+    """
+    candidate, expected = urlparse(candidate_url), urlparse(expected_url)
+    if (candidate.scheme, candidate.netloc, candidate.path.rstrip("/")) != (
+        expected.scheme,
+        expected.netloc,
+        expected.path.rstrip("/"),
+    ):
+        return False
+    return parse_qs(candidate.query).get("token") == parse_qs(expected.query).get("token")
+
+
 async def _cleanup_stale_webhooks(server_url: str, our_endpoint: str) -> None:
     """Remove existing BlueBubbles webhooks that point to our endpoint.
 
@@ -143,28 +261,20 @@ async def _cleanup_stale_webhooks(server_url: str, our_endpoint: str) -> None:
     lists all registered webhooks and deletes any whose URL contains our
     endpoint path, preventing duplicate deliveries.
     """
+    webhooks = await list_bluebubbles_webhooks(server_url)
+    if not webhooks:
+        return
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{server_url}/api/v1/webhook",
-                params={"password": settings.bluebubbles_password},
-                timeout=settings.http_timeout_seconds,
-            )
-            if resp.status_code >= 400:
-                return
-            data = resp.json()
-            webhooks = data if isinstance(data, list) else data.get("data", [])
             for wh in webhooks:
-                wh_url = wh.get("url", "")
-                wh_id = wh.get("id")
-                if not wh_id or our_endpoint not in wh_url:
+                if our_endpoint not in wh.url:
                     continue
                 await client.delete(
-                    f"{server_url}/api/v1/webhook/{wh_id}",
+                    f"{server_url}/api/v1/webhook/{wh.id}",
                     params={"password": settings.bluebubbles_password},
                     timeout=settings.http_timeout_seconds,
                 )
-                logger.info("Removed stale BlueBubbles webhook %s", wh_id)
+                logger.info("Removed stale BlueBubbles webhook %s", wh.id)
     except Exception:
         logger.debug("Could not clean up stale BlueBubbles webhooks", exc_info=True)
 
@@ -212,6 +322,221 @@ async def register_bluebubbles_webhook(server_url: str, webhook_url: str) -> boo
         return False
 
 
+def build_webhook_url(base_url: str, password: str = "") -> str:
+    """Build the inbound webhook URL to register for *base_url*.
+
+    Single definition shared by the code that registers the webhook and the
+    health check that verifies it is still registered. If these were built
+    separately, a change to either would make the check quietly compare
+    against a URL nobody registers.
+    """
+    token = _derive_webhook_token(password or settings.bluebubbles_password)
+    return f"{base_url.rstrip('/')}{INBOUND_WEBHOOK_PATH}?token={quote(token, safe='')}"
+
+
+@dataclass(frozen=True)
+class WebhookCheck:
+    """Whether the BlueBubbles server will actually deliver inbound messages."""
+
+    ok: bool
+    detail: str = ""
+    # False when the webhook list could not be retrieved, so ``ok=False`` means
+    # "unknown" rather than "missing" and callers should not try to repair it.
+    listed: bool = False
+    registered_endpoints: tuple[str, ...] = ()
+
+
+async def verify_webhook_registration(
+    server_url: str, expected_webhook_url: str, password: str = ""
+) -> WebhookCheck:
+    """Check that *expected_webhook_url* is registered for new-message events.
+
+    This closes the gap that nothing else covers. Registration happens once at
+    startup; if the Mac was asleep or slow at that moment the attempt fails,
+    logs a warning, and is never retried. The bridge then comes back online,
+    every reachability check goes green, and inbound iMessage stays dead until
+    somebody redeploys. The same silence follows a base-URL change, which
+    leaves the old registration pointing at a URL that no longer answers.
+    """
+    webhooks = await list_bluebubbles_webhooks(server_url, password)
+    if webhooks is None:
+        return WebhookCheck(
+            ok=False,
+            detail="could not list webhooks on the BlueBubbles server",
+            listed=False,
+        )
+
+    endpoints = tuple(sorted({wh.url.split("?")[0] for wh in webhooks}))
+    expected_endpoint = expected_webhook_url.split("?")[0]
+
+    for wh in webhooks:
+        if not _webhook_matches(wh.url, expected_webhook_url):
+            continue
+        # An empty event tuple means the server's format was unrecognized.
+        # Unknown is not a failure.
+        if wh.events and INBOUND_WEBHOOK_EVENT not in wh.events:
+            return WebhookCheck(
+                ok=False,
+                detail=(
+                    f"webhook is registered but subscribed to {', '.join(wh.events)} "
+                    f"rather than {INBOUND_WEBHOOK_EVENT}"
+                ),
+                listed=True,
+                registered_endpoints=endpoints,
+            )
+        return WebhookCheck(ok=True, listed=True, registered_endpoints=endpoints)
+
+    if any(endpoint == expected_endpoint for endpoint in endpoints):
+        detail = (
+            f"a webhook for {expected_endpoint} is registered but its token does not "
+            "match the current server password, so deliveries are rejected on arrival"
+        )
+    elif endpoints:
+        detail = (
+            f"no webhook registered for {expected_endpoint}; the server has "
+            f"{len(webhooks)} registered instead: {', '.join(endpoints)}"
+        )
+    else:
+        detail = (
+            f"no webhooks are registered on the BlueBubbles server (expected {expected_endpoint})"
+        )
+    return WebhookCheck(ok=False, detail=detail, listed=True, registered_endpoints=endpoints)
+
+
+# ---------------------------------------------------------------------------
+# Server health probing
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BlueBubblesHealth:
+    """Outcome of one ``/api/v1/server/info`` probe.
+
+    ``reachable`` and ``authenticated`` are separate fields because they fail
+    for different reasons and need different fixes: an unreachable host is a
+    sleeping Mac or a dead tunnel and may resolve itself, while a rejected
+    password is a configuration error that waiting will never fix. A single
+    ``status_code < 500`` boolean could not tell them apart and reported an
+    HTTP 401 as a healthy bridge.
+
+    The readiness flags are tri-state. ``None`` means the server did not report
+    that field, which older BlueBubbles builds do; a missing field must never
+    manufacture an outage.
+    """
+
+    reachable: bool
+    authenticated: bool
+    detail: str = ""
+    server_version: str = ""
+    private_api: bool | None = None
+    helper_connected: bool | None = None
+    # Whether the Mac is signed in to iMessage. Stored as a bool rather than
+    # the account address the server reports, so the operator's iCloud email
+    # never reaches a log line, an alert email, or the admin UI.
+    imessage_signed_in: bool | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.reachable and self.authenticated
+
+
+def _optional_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+async def probe_bluebubbles_server(
+    server_url: str,
+    password: str,
+    timeout: float = _SERVER_INFO_TIMEOUT_SECONDS,
+) -> BlueBubblesHealth:
+    """Probe ``/api/v1/server/info`` and report what the answer proves.
+
+    Never raises: an exception here is itself the health signal.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{server_url}/api/v1/server/info",
+                params={"password": password},
+                timeout=timeout,
+            )
+    except httpx.HTTPError as exc:
+        # The exception text can carry the request URL, and the URL carries
+        # the password. Report the type only.
+        return BlueBubblesHealth(
+            reachable=False,
+            authenticated=False,
+            detail=f"{type(exc).__name__} contacting the BlueBubbles server",
+        )
+
+    if resp.status_code in (401, 403):
+        return BlueBubblesHealth(
+            reachable=True,
+            authenticated=False,
+            detail=(
+                f"BlueBubbles rejected the server password (HTTP {resp.status_code}); "
+                "check BLUEBUBBLES_PASSWORD"
+            ),
+        )
+    if resp.status_code >= 500:
+        return BlueBubblesHealth(
+            reachable=False,
+            authenticated=False,
+            detail=f"BlueBubbles server returned HTTP {resp.status_code}",
+        )
+    if resp.status_code != 200:
+        return BlueBubblesHealth(
+            reachable=True,
+            authenticated=False,
+            detail=(
+                f"unexpected HTTP {resp.status_code} from /api/v1/server/info; "
+                "check BLUEBUBBLES_SERVER_URL points at a BlueBubbles server"
+            ),
+        )
+
+    try:
+        body = resp.json()
+    except ValueError:
+        return BlueBubblesHealth(
+            reachable=True,
+            authenticated=False,
+            detail="/api/v1/server/info returned a non-JSON body",
+        )
+    payload = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(payload, dict):
+        payload = {}
+
+    account = payload.get("detected_icloud")
+    return BlueBubblesHealth(
+        reachable=True,
+        authenticated=True,
+        server_version=str(payload.get("server_version") or ""),
+        private_api=_optional_bool(payload.get("private_api")),
+        helper_connected=_optional_bool(payload.get("helper_connected")),
+        imessage_signed_in=bool(account) if "detected_icloud" in payload else None,
+    )
+
+
+def describe_send_readiness(health: BlueBubblesHealth, send_method: str = "") -> str:
+    """Return why outbound iMessage would fail, or ``""`` when nothing is wrong.
+
+    ``/api/v1/server/info`` answering proves the bridge process is alive. It
+    does not prove the Mac can still send: Messages.app signed out of iMessage,
+    or a private-api send method whose helper is not connected, both leave the
+    server perfectly reachable and every send failing.
+    """
+    if health.imessage_signed_in is False:
+        return "the Mac is not signed in to iMessage (BlueBubbles reports no iCloud account)"
+    if (send_method or settings.bluebubbles_send_method) == "private-api":
+        if health.private_api is False:
+            return "send method is private-api but the BlueBubbles Private API is disabled"
+        if health.helper_connected is False:
+            return (
+                "send method is private-api but the BlueBubbles Private API helper is not connected"
+            )
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # BlueBubbles channel implementation
 # ---------------------------------------------------------------------------
@@ -224,8 +549,14 @@ class BlueBubblesChannel(BaseChannel):
         self._client: httpx.AsyncClient | None = None
         # In-memory cache: sender_address -> chat_guid
         self._chat_cache: dict[str, str] = {}
-        # Set to True once the BlueBubbles server is confirmed reachable.
+        # Set to True once the BlueBubbles server is confirmed reachable and
+        # answering authenticated requests.
         self.server_reachable: bool = False
+        # Full result of the most recent probe, kept so monitoring can report
+        # *why* the bridge is unhealthy and check send readiness without
+        # running a second poller against the operator's Mac. ``None`` until
+        # the first probe completes.
+        self.last_health: BlueBubblesHealth | None = None
         # Background tasks owned by this channel: periodic health check
         # and recurring backfill. Started in ``start()`` and cancelled in
         # ``stop()`` so the lifespan shutdown is clean.
@@ -250,20 +581,23 @@ class BlueBubblesChannel(BaseChannel):
 
     # -- Lifecycle -------------------------------------------------------------
 
+    async def check_health(self) -> BlueBubblesHealth:
+        """Probe the server, remember the result, and return it."""
+        health = await probe_bluebubbles_server(
+            settings.bluebubbles_server_url, settings.bluebubbles_password
+        )
+        self.last_health = health
+        return health
+
     async def _check_server_reachable(self) -> bool:
-        """Ping the BlueBubbles server to verify connectivity."""
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{settings.bluebubbles_server_url}/api/v1/server/info",
-                    params={"password": settings.bluebubbles_password},
-                    timeout=5,
-                )
-                return resp.status_code < 500
-        except httpx.ConnectError:
-            return False
-        except httpx.HTTPError:
-            return False
+        """Ping the BlueBubbles server to verify connectivity.
+
+        "Reachable" requires an authenticated 200, not merely a non-5xx.
+        A wrong password answers 401 while delivering nothing, and treating
+        that as reachable put a green light on a bridge that could not pass a
+        single message.
+        """
+        return (await self.check_health()).ok
 
     async def start(self) -> None:
         """Discover tunnel URL and auto-register BlueBubbles webhook."""
@@ -303,8 +637,7 @@ class BlueBubblesChannel(BaseChannel):
             )
             return
 
-        token = _derive_webhook_token(settings.bluebubbles_password)
-        webhook_url = f"{tunnel_url}/api/webhooks/bluebubbles?token={token}"
+        webhook_url = build_webhook_url(tunnel_url)
 
         if not await wait_for_dns(tunnel_url):
             logger.warning(
@@ -351,22 +684,23 @@ class BlueBubblesChannel(BaseChannel):
             while True:
                 await asyncio.sleep(interval)
                 try:
-                    reachable = await self._check_server_reachable()
+                    health = await self.check_health()
                 except Exception:
                     logger.exception("BlueBubbles periodic health check failed")
                     continue
-                if reachable != self.server_reachable:
-                    if reachable:
+                if health.ok != self.server_reachable:
+                    if health.ok:
                         logger.info(
-                            "BlueBubbles server reachable again at %s",
+                            "BlueBubbles server healthy again at %s",
                             settings.bluebubbles_server_url,
                         )
                     else:
                         logger.warning(
-                            "BlueBubbles server went unreachable at %s",
+                            "BlueBubbles server went unhealthy at %s: %s",
                             settings.bluebubbles_server_url,
+                            health.detail,
                         )
-                    self.server_reachable = reachable
+                    self.server_reachable = health.ok
         except asyncio.CancelledError:
             return
 
@@ -395,8 +729,7 @@ class BlueBubblesChannel(BaseChannel):
         """Register BlueBubbles webhook using a stable PaaS base URL."""
         if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
             return None
-        token = _derive_webhook_token(settings.bluebubbles_password)
-        webhook_url = f"{base_url}/api/webhooks/bluebubbles?token={quote(token, safe='')}"
+        webhook_url = build_webhook_url(base_url)
         return await register_bluebubbles_webhook(settings.bluebubbles_server_url, webhook_url)
 
     async def stop(self) -> None:
