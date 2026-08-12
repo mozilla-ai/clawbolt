@@ -2,7 +2,7 @@
 
 The sidecar lives outside the installed package because it carries the browser
 stack, and it was previously assumed untestable for that reason. It is not:
-stubbing ``patchright.async_api`` in ``sys.modules`` is enough to import it with
+stubbing ``camoufox.async_api`` in ``sys.modules`` is enough to import it with
 no browser and no extra dependency. That assumption is what let a transposed
 lock mapping ship, so the mapping is asserted here directly.
 
@@ -11,8 +11,8 @@ Two properties matter, and one of them is not obvious:
 * Requests for one retailer must serialize against each other, because they
   drive that retailer's single page.
 * Requests for different retailers must not, or the Lowe's pre-warm (a homepage
-  load, a click, and two settle waits) blocks every Home Depot request for
-  roughly 20 seconds right after startup.
+  load and a humanized settle) blocks every Home Depot request for roughly 20
+  seconds right after startup.
 """
 
 import ast
@@ -29,15 +29,20 @@ _SIDECAR_DIR = Path(__file__).resolve().parents[1] / "sidecar" / "home_depot"
 
 
 def _load_sidecar() -> Any:
-    """Import the sidecar module with the browser stack stubbed out."""
-    stub_root = types.ModuleType("patchright")
-    stub_api = types.ModuleType("patchright.async_api")
-    stub_api.async_playwright = lambda: None  # type: ignore[attr-defined]
+    """Import the sidecar module with the browser stack stubbed out.
+
+    Stubbing ``camoufox.async_api`` in ``sys.modules`` is enough to import the
+    sidecar with no browser and no heavy dependency, which is what lets the
+    locking and budget behaviour be tested without launching Firefox.
+    """
+    stub_root = types.ModuleType("camoufox")
+    stub_api = types.ModuleType("camoufox.async_api")
+    stub_api.AsyncCamoufox = object  # type: ignore[attr-defined]
     stub_root.async_api = stub_api  # type: ignore[attr-defined]
 
-    saved = {k: sys.modules.get(k) for k in ("patchright", "patchright.async_api")}
-    sys.modules["patchright"] = stub_root
-    sys.modules["patchright.async_api"] = stub_api
+    saved = {k: sys.modules.get(k) for k in ("camoufox", "camoufox.async_api")}
+    sys.modules["camoufox"] = stub_root
+    sys.modules["camoufox.async_api"] = stub_api
     sys.path.insert(0, str(_SIDECAR_DIR))
     try:
         import importlib
@@ -132,6 +137,99 @@ class TestLockIsolation:
         async with engine._lock_for("home_depot"):
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(engine._lock_for("home_depot").acquire(), timeout=0.1)
+
+
+class _WarmFakeMouse:
+    def __init__(self, record: dict[str, list]) -> None:
+        self._record = record
+
+    async def move(self, x: int, y: int, steps: int | None = None) -> None:
+        self._record["moves"].append((x, y))
+
+    async def wheel(self, dx: int, dy: int) -> None:
+        self._record["wheels"].append((dx, dy))
+
+
+class _WarmFakePage:
+    """A page that records the calls the warm makes, so the behavioral warm can
+    be asserted without a browser."""
+
+    def __init__(self, *, move_raises: bool = False) -> None:
+        self.record: dict[str, list] = {"moves": [], "wheels": [], "gotos": [], "order": []}
+        self.mouse = _WarmFakeMouse(self.record)
+        self._move_raises = move_raises
+        if move_raises:
+
+            async def _boom(*_a: Any, **_k: Any) -> None:
+                raise RuntimeError("pointer move failed")
+
+            self.mouse.move = _boom  # type: ignore[method-assign]
+
+    async def goto(self, url: str, **_kwargs: Any) -> None:
+        self.record["gotos"].append(url)
+        self.record["order"].append("goto")
+
+    async def wait_for_timeout(self, _ms: int) -> None:
+        return None
+
+    async def title(self) -> str:
+        return "Fake Retailer"
+
+
+class TestHumanizedWarm:
+    """The humanized warm is what validates Akamai's sensor for both retailers.
+
+    A bare homepage load without pointer movement leaves the session unvalidated
+    and every search is denied (issue #1498), so the warm moving the mouse is the
+    load-bearing behaviour and is asserted directly.
+    """
+
+    @pytest.mark.asyncio
+    async def test_humanize_moves_the_pointer_and_scrolls(self) -> None:
+        page = _WarmFakePage()
+        await sidecar.BrowserBackedSearch._humanize(page)
+        assert len(page.record["moves"]) >= 3, "the warm must move the pointer along a path"
+        assert page.record["wheels"], "the warm must scroll"
+
+    @pytest.mark.asyncio
+    async def test_humanize_survives_a_failing_move(self) -> None:
+        """A single failed pointer move must not abort the warm."""
+        page = _WarmFakePage(move_raises=True)
+        await sidecar.BrowserBackedSearch._humanize(page)  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_warm_page_loads_the_homepage_then_humanizes(self) -> None:
+        """Order matters: the pointer has to move on a loaded page, not before."""
+        engine = sidecar.BrowserBackedSearch()
+        page = _WarmFakePage()
+        await engine._warm_page(page, "https://example.com", "example")
+        assert page.record["gotos"] == ["https://example.com/"]
+        assert page.record["order"][0] == "goto"
+        assert page.record["moves"], "the warm must humanize after loading"
+
+    @pytest.mark.asyncio
+    async def test_lowes_page_uses_the_shared_warm(self) -> None:
+        """Lowe's and Home Depot must warm through the same path, on Lowe's origin."""
+        engine = sidecar.BrowserBackedSearch()
+        warmed: list[tuple[str, str]] = []
+
+        async def fake_warm(page: Any, origin: str, label: str) -> None:
+            warmed.append((origin, label))
+
+        new_page = _WarmFakePage()
+
+        class FakeCtx:
+            async def new_page(self) -> Any:
+                return new_page
+
+        engine._ctx = FakeCtx()
+        engine._warm_page = fake_warm
+
+        page = await engine._lowes_page()
+
+        assert page is new_page
+        assert warmed == [(sidecar.lowes.ORIGIN, "lowes")]
+        assert engine._site_pages["lowes"] is new_page
 
 
 class TestStaleSessionRecovery:
