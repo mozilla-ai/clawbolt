@@ -56,6 +56,22 @@ WARM_SECONDS = float(os.environ.get("HD_WARM_SECONDS", "7"))
 # only when the next request arrives. Set to 0 to keep the browser open.
 IDLE_SECONDS = float(os.environ.get("HD_IDLE_SECONDS", "3600"))
 
+# How long one request may spend driving a retailer's page once it holds that
+# retailer's lock. This has to stay under the client's own timeout (35s, see
+# backend/app/integrations/supplier_pricing/sidecar_client.py). A request that
+# outlives its caller is worse than useless: it holds the lock with nobody left
+# to receive the answer, and everything queued behind it spends its own budget
+# waiting for a reply that will be thrown away. Eight failed lookups in one
+# conversation traced back to exactly that (issue #1496).
+REQUEST_BUDGET_SECONDS = float(os.environ.get("HD_REQUEST_BUDGET_SECONDS", "25"))
+
+# The in-page fetch aborts itself at the remaining budget, which is the clean
+# path: it returns a structured error and leaves the page healthy. This grace is
+# for the case where the page never runs the script at all, a wedged renderer
+# being the obvious one, so `evaluate` itself has to be cut loose. Kept small
+# enough that budget plus grace still lands under the client's 35s.
+_EVALUATE_GRACE_SECONDS = 5.0
+
 # Lowe's results are server-rendered into the page, so the wait is a poll for the
 # payload rather than a fixed settle. Roughly 6s of headroom in total.
 LOWES_STATE_POLL_MS = 400
@@ -68,19 +84,34 @@ _NAV_RE = re.compile(r"/(N-[A-Za-z0-9]+)")
 
 # Executed inside the page so the request carries the browser's own TLS
 # fingerprint, cookies, and bot-manager state.
+#
+# Both scripts take a timeout in milliseconds as their last argument and hand it
+# to AbortSignal.timeout. Without it a retailer that accepts the connection and
+# then goes quiet, which is what a throttle or a bot-detection blackhole looks
+# like from here, leaves the fetch pending forever. `page.evaluate` has no
+# timeout of its own, so that pending promise used to park the whole request
+# while it held the retailer's lock. Errors come back in the return value rather
+# than as a thrown exception so the caller can tell an abort from a bad status
+# without matching on message text.
 _STORE_JS = """
-async ([query]) => {
-  const r = await fetch("/StoreSearchServices/v2/storesearch?" + query,
-                        {credentials: "include"});
-  return {status: r.status, body: await r.text()};
+async ([query, timeoutMs]) => {
+  try {
+    const r = await fetch("/StoreSearchServices/v2/storesearch?" + query,
+                          {credentials: "include", signal: AbortSignal.timeout(timeoutMs)});
+    return {status: r.status, body: await r.text()};
+  } catch (e) {
+    return {status: 0, body: "", error: String((e && e.name) || e)};
+  }
 }
 """
 
 _FETCH_JS = """
-async ([query, keyword, navParam, currentUrl, storeId, zipCode, pageSize]) => {
+async ([query, keyword, navParam, currentUrl, storeId, zipCode, pageSize, timeoutMs]) => {
+ try {
   const r = await fetch("/federation-gateway/graphql?opname=searchModel", {
     method: "POST",
     credentials: "include",
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       "content-type": "application/json",
       "accept": "*/*",
@@ -119,6 +150,9 @@ async ([query, keyword, navParam, currentUrl, storeId, zipCode, pageSize]) => {
     }),
   });
   return {status: r.status, body: await r.text()};
+ } catch (e) {
+  return {status: 0, body: "", error: String((e && e.name) || e)};
+ }
 }
 """
 
@@ -216,6 +250,60 @@ class BrowserBackedSearch:
             lock = asyncio.Lock()
             self._locks[site] = lock
         return lock
+
+    @contextlib.asynccontextmanager
+    async def _timed_lock(self, site: str, what: str) -> AsyncIterator[float]:
+        """Hold a retailer's lock for one request, yielding its work deadline.
+
+        The two durations logged here answer different questions. Time queued
+        says this retailer's single page is the bottleneck and requests are
+        stacking up behind each other; time working says the retailer itself is
+        slow. Neither was recorded before, so a search that took thirty seconds
+        and one that took two looked identical in the logs and there was no way
+        to tell a hang from a queue (issue #1496).
+        """
+        queued = time.monotonic()
+        async with self._lock_for(site):
+            started = time.monotonic()
+            try:
+                yield started + REQUEST_BUDGET_SECONDS
+            finally:
+                logger.info(
+                    "%s: %.1fs queued, %.1fs working",
+                    what,
+                    started - queued,
+                    time.monotonic() - started,
+                )
+
+    async def _evaluate(
+        self, page: Any, script: str, args: list[Any], *, what: str, deadline: float
+    ) -> dict[str, Any]:
+        """Run one in-page fetch, bounded by the request's remaining budget.
+
+        Two layers, because they fail differently. The script aborts its own
+        fetch at the remaining budget and returns a structured error, which
+        leaves the page healthy and reusable. `asyncio.wait_for` is the backstop
+        for a page that never runs the script at all; cancelling unwinds the
+        `async with` blocks above, so the retailer's lock is released either way
+        and the next request is not punished for this one.
+        """
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            # Refuse rather than granting a fresh slice. A second call inside one
+            # request (the category-redirect retry) must not be able to push the
+            # total past the budget, or budget plus grace stops being the bound
+            # this whole design rests on.
+            raise HTTPException(504, f"{what} ran out of budget before it could start")
+        try:
+            res = await asyncio.wait_for(
+                page.evaluate(script, [*args, int(remaining * 1000)]),
+                timeout=remaining + _EVALUATE_GRACE_SECONDS,
+            )
+        except TimeoutError as exc:
+            raise HTTPException(504, f"{what} did not respond within {remaining:.0f}s") from exc
+        if res.get("error"):
+            raise HTTPException(504, f"{what} failed in the page: {res['error']}")
+        return res
 
     def start_background(self) -> None:
         """Launch the browser without blocking the caller.
@@ -447,10 +535,16 @@ class BrowserBackedSearch:
         benefit, against Home Depot's sub-second GraphQL call.
         """
         async with self._use_browser():
-            async with self._lock_for("lowes"):
+            async with self._timed_lock("lowes", f"lowes search {keyword!r}"):
                 page = await self._lowes_page()
+                # The warm above keeps its own generous timeout: it runs once per
+                # session and a re-warm is expensive. This navigation runs on
+                # every search, so it gets the per-request budget instead of the
+                # old 90s, which was nearly three times the client's patience.
                 await page.goto(
-                    lowes.search_url(keyword), wait_until="domcontentloaded", timeout=90_000
+                    lowes.search_url(keyword),
+                    wait_until="domcontentloaded",
+                    timeout=int(REQUEST_BUDGET_SECONDS * 1000),
                 )
                 html = await page.content()
                 state = lowes.extract_preloaded_state(html)
@@ -478,30 +572,61 @@ class BrowserBackedSearch:
             )
 
     async def _call(
-        self, keyword: str, nav_param: str | None, store_id: str, zip_code: str, page_size: int
+        self,
+        keyword: str,
+        nav_param: str | None,
+        store_id: str,
+        zip_code: str,
+        page_size: int,
+        deadline: float,
     ) -> dict[str, Any]:
         encoded = urllib.parse.quote(keyword)
         current_url = f"/b/{nav_param}" if nav_param else f"/s/{encoded}"
-        res = await self._page.evaluate(
+        res = await self._evaluate(
+            self._page,
             _FETCH_JS,
             [SEARCH_MODEL_QUERY, encoded, nav_param, current_url, store_id, zip_code, page_size],
+            what="Home Depot search",
+            deadline=deadline,
         )
         if res["status"] != 200:
+            # The status and the head of the body are the only evidence of why
+            # Home Depot refused, and neither was recorded. A run of 502s in the
+            # logs was just a run of 502s, when the useful question is whether
+            # the session is being bot-checked or the payload is malformed.
+            logger.warning(
+                "home_depot refused the search: status=%s body=%.300s",
+                res["status"],
+                res["body"],
+            )
             raise HTTPException(502, f"Home Depot returned {res['status']}")
         try:
             payload = json.loads(res["body"])
         except ValueError as exc:
+            logger.warning("home_depot returned a non-JSON body: %.300s", res["body"])
             raise HTTPException(502, "Home Depot returned a non-JSON body") from exc
         return (payload.get("data") or {}).get("searchModel") or {}
 
-    async def _store_call(self, params: dict[str, str]) -> dict[str, Any]:
+    async def _store_call(self, params: dict[str, str], deadline: float) -> dict[str, Any]:
         query = urllib.parse.urlencode(params)
-        res = await self._page.evaluate(_STORE_JS, [query])
+        res = await self._evaluate(
+            self._page,
+            _STORE_JS,
+            [query],
+            what="Home Depot store locator",
+            deadline=deadline,
+        )
         if res["status"] != 200:
+            logger.warning(
+                "home_depot store locator refused the lookup: status=%s body=%.300s",
+                res["status"],
+                res["body"],
+            )
             raise HTTPException(502, f"Home Depot store locator returned {res['status']}")
         try:
             payload = json.loads(res["body"])
         except ValueError as exc:
+            logger.warning("home_depot store locator returned a non-JSON body: %.300s", res["body"])
             raise HTTPException(502, "Store locator returned a non-JSON body") from exc
         if "GenericError" in res["body"] and "stores" not in payload:
             raise HTTPException(502, "Home Depot refused the store lookup")
@@ -515,9 +640,10 @@ class BrowserBackedSearch:
         coordinates drive a second lookup.
         """
         async with self._use_browser():
-            async with self._lock_for("home_depot"):
+            async with self._timed_lock("home_depot", f"home_depot stores {near!r}") as deadline:
                 data = await self._store_call(
-                    {"address": near, "radius": str(radius_miles), "pagesize": str(limit)}
+                    {"address": near, "radius": str(radius_miles), "pagesize": str(limit)},
+                    deadline,
                 )
                 geocoded = False
                 if "stores" not in data and "ambiguousAddresses" in data:
@@ -531,7 +657,8 @@ class BrowserBackedSearch:
                             "longitude": str(point[1]),
                             "radius": str(radius_miles),
                             "pagesize": str(limit),
-                        }
+                        },
+                        deadline,
                     )
 
             stores = [_parse_store(s) for s in (data.get("stores") or [])[:limit]]
@@ -541,18 +668,22 @@ class BrowserBackedSearch:
         self, keyword: str, *, store_id: str, zip_code: str, page_size: int
     ) -> SearchResponse:
         async with self._use_browser():
-            async with self._lock_for("home_depot"):
-                model = await self._call(keyword, None, store_id, zip_code, page_size)
+            async with self._timed_lock("home_depot", f"home_depot search {keyword!r}") as deadline:
+                model = await self._call(keyword, None, store_id, zip_code, page_size, deadline)
                 used_nav: str | None = None
 
-                # Category redirect: retry once with the bare N- token.
+                # Category redirect: retry once with the bare N- token. The
+                # deadline is shared with the first call rather than restarted,
+                # so a slow first attempt cannot buy the retry a fresh budget.
                 if not model.get("products"):
                     redirect = (model.get("metadata") or {}).get("searchRedirect") or ""
                     match = _NAV_RE.search(redirect.split("?")[0])
                     if match:
                         used_nav = match.group(1)
                         logger.info("keyword %r redirected to navParam %s", keyword, used_nav)
-                        model = await self._call(keyword, used_nav, store_id, zip_code, page_size)
+                        model = await self._call(
+                            keyword, used_nav, store_id, zip_code, page_size, deadline
+                        )
 
             report = model.get("searchReport") or {}
             products = [_parse_product(p) for p in (model.get("products") or [])[:page_size]]
