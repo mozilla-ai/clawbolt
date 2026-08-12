@@ -32,6 +32,18 @@ async def test_analyze_image_returns_description(mock_amessages: object) -> None
 
 @pytest.mark.asyncio()
 @patch("backend.app.media.vision.amessages")
+async def test_analyze_image_disables_thinking(mock_amessages: object) -> None:
+    """Vision output should never compete with reasoning for the token budget."""
+    mock_amessages.return_value = make_vision_response("A damaged roof.")  # type: ignore[union-attr]
+
+    await analyze_image(b"fake-jpeg-bytes", "image/jpeg")
+
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    assert call_args.kwargs["thinking"] == {"type": "disabled"}
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.media.vision.amessages")
 async def test_analyze_image_includes_context(mock_amessages: object) -> None:
     """analyze_image should include context in the request."""
     mock_amessages.return_value = make_vision_response("Deck damage visible.")  # type: ignore[union-attr]
