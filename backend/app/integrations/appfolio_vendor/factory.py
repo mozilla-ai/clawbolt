@@ -71,10 +71,26 @@ async def _appfolio_vendor_factory(ctx: ToolContext) -> list[Tool]:
             refresh_token=refresh_token,
         )
 
+    async def _persist_customer_ids(customer_ids: list[str]) -> None:
+        # The OAuth2 exchange does not return customer IDs, so the service
+        # discovers them on the first write and hands them here. Persisting
+        # makes it a one-time cost instead of a discovery round-trip on
+        # every turn. ``cred`` is the object the service mutates, so the
+        # JWT and refresh token read here are current even when a token
+        # refresh happened earlier in this same turn.
+        await save_credential(
+            user_id=user_id,
+            jwt=cred.jwt,
+            fingerprint=cred.fingerprint,
+            customer_ids=customer_ids,
+            refresh_token=cred.refresh_token,
+        )
+
     service = build_service(
         cred,
         api_base=settings.appfolio_vendor_api_base,
         on_token_refresh=_persist_refreshed,
+        on_customer_ids_resolved=_persist_customer_ids,
     )
     tools: list[Tool] = []
     tools.extend(build_work_order_tools(service))
