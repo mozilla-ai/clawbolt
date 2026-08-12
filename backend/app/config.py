@@ -124,7 +124,7 @@ class Settings(BaseSettings):
     # turn, which is what ``_MAX_TOKENS_CEILING`` bounds.
     llm_max_tokens_agent: int = Field(default=8192, ge=1)
     llm_max_tokens_heartbeat: int = Field(default=12000, ge=1)
-    llm_max_tokens_vision: int = Field(default=1000, ge=1)
+    llm_max_tokens_vision: int = Field(default=12000, ge=1)
 
     # Storage: per-user Google Drive via OAuth. The deployment supplies the
     # OAuth client credentials; each user grants ``drive.file`` scope through
