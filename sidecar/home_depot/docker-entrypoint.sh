@@ -1,13 +1,11 @@
 #!/bin/sh
-# Take ownership of the mounted profile volume, start a display, then run the
-# app unprivileged.
+# Start a display, then run the app unprivileged.
 #
-# Platform volumes (Railway, Fly, plain `docker run -v`) mount root-owned and
-# empty, so a bare USER directive in the Dockerfile leaves the app unable to
-# write its browser profile. Start as root, hand the volume to the runtime user,
-# and drop privileges before exec'ing. Running the browser as a normal user is
-# ordinary hygiene here rather than a requirement: patchright passes
-# --no-sandbox by default, so Chromium's sandbox is off either way.
+# There is no profile volume any more: Camoufox runs a fresh browser each launch
+# and validates the session with a humanized warm, so there is nothing to mount
+# or chown. The container still starts as root only to drop to the runtime user
+# with a writable HOME before exec'ing (see the setpriv handover below); running
+# the browser as a normal user is hygiene, not a bot-detection requirement.
 #
 # Every step announces itself. A container that dies silently between "Starting
 # Container" and the first uvicorn line is otherwise undiagnosable from a
@@ -26,22 +24,15 @@ set -eu
 # (xvfb-run's) showed up while nothing else did.
 log() { echo "[entrypoint] $*" >&2; }
 
-PROFILE_DIR="${HD_PROFILE_DIR:-/data/profile}"
 RUN_AS="${HD_RUN_AS_USER:-sidecar}"
 PORT="${PORT:-8899}"
 DISPLAY_NUM="${HD_DISPLAY:-99}"
 
-log "uid=$(id -u) run_as=$RUN_AS port=$PORT profile=$PROFILE_DIR"
-
-mkdir -p "$PROFILE_DIR"
-log "profile dir present"
-
-if [ "$(id -u)" -eq 0 ]; then
-    chown -R "$RUN_AS:$RUN_AS" "$(dirname "$PROFILE_DIR")"
-    log "volume ownership handed to $RUN_AS"
-else
-    log "not root, skipping chown"
-fi
+# No persistent profile to own: Camoufox runs a fresh browser each launch and
+# validates the session with a humanized warm, so there is no volume to mount or
+# chown. The runtime user still needs a writable HOME; that is set at the
+# privilege drop below.
+log "uid=$(id -u) run_as=$RUN_AS port=$PORT"
 
 log "python: $(python --version 2>&1)"
 
@@ -74,10 +65,11 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # setpriv switches uid/gid but leaves the environment alone, so HOME would stay
-# /root: a directory the unprivileged user cannot write. Chromium's crashpad
-# handler then fails with "--database is required" and the browser dies with
-# SIGTRAP before it ever opens a page. `su` sets HOME, which is why this only
-# broke under setpriv. XDG_* follow HOME for the same reason.
+# /root: a directory the unprivileged user cannot write, which breaks Firefox
+# startup. `su` sets HOME, which is why this kind of bug only shows up under
+# setpriv. XDG_CACHE_HOME follows HOME because that is where Camoufox looks for
+# the browser fetched at build time (~/.cache/camoufox); the image fetches it as
+# this same user, so the paths line up.
 RUN_HOME="$(getent passwd "$RUN_AS" | cut -d: -f6)"
 RUN_HOME="${RUN_HOME:-/home/$RUN_AS}"
 mkdir -p "$RUN_HOME"

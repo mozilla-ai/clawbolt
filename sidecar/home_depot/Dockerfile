@@ -1,50 +1,42 @@
-# Home Depot sidecar: FastAPI + patchright Chromium.
+# Retail sidecar: FastAPI + Camoufox (a hardened Firefox).
 #
-# Two things here are load-bearing because Home Depot's bot manager reads them:
+# Camoufox, not patchright/Chromium, is load-bearing: Home Depot's advanced
+# Akamai tier fingerprints the CDP automation protocol every Chromium driver
+# speaks over, and answers a 206 no matter how clean the fingerprint otherwise
+# is (issue #1498). Camoufox is a patched Firefox with a consistent
+# non-automated fingerprint and no CDP surface, which clears both retailers.
 #
-#   1. patchright, not playwright, for the patched CDP Runtime.enable leak.
-#   2. The browser profile lives on a mounted volume so it survives redeploys.
-#      A brand-new profile every boot looks like a first-time visitor every time.
-#
-# Running Chromium as a NON-ROOT user is hygiene, not a bot-detection
-# requirement. patchright passes --no-sandbox by default, so the sandbox is off
-# regardless of the user, and every working measurement was taken that way. Do
-# not add chromium_sandbox=True expecting an improvement: it would add a
-# user-namespace requirement the host may not grant, for no observed benefit.
-#
-# The container starts as root purely to fix volume ownership (platform volumes
-# mount root-owned, so a plain USER directive leaves the app unable to write its
-# profile), then drops to the unprivileged user with setpriv before exec'ing.
-# The entrypoint has to set HOME across that handover; see the comment there.
+# No persistent profile and no volume. The browser is fetched fresh each launch
+# and the session is validated by a humanized warm, so there is nothing to
+# mount. The container still starts as root to drop to an unprivileged user with
+# setpriv (running the browser as non-root is hygiene), and the entrypoint sets
+# HOME across that handover; see the comment there.
 #
 # Build and run locally:
 #   docker build -t hd-sidecar sidecar/home_depot
 #   docker run --rm -p 8899:8899 -e HD_SIDECAR_TOKEN=secret hd-sidecar
 
-# Pinned to bookworm: patchright's install-deps only knows how to provision
-# Chromium's system libraries on the Debian releases Playwright supports, and
-# it fails outright on newer ones.
+# Pinned to bookworm: Playwright (Camoufox's driver dependency) only knows how
+# to provision Firefox's system libraries on the Debian releases it supports,
+# and install-deps fails outright on newer ones.
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/browsers \
-    HD_PROFILE_DIR=/data/profile
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# xvfb supplies the display a non-headless Chromium needs; the entrypoint starts
-# Xvfb directly rather than via xvfb-run, so xauth is no longer required and is
-# kept only so the wrapper still works if anyone reaches for it. util-linux
-# supplies setpriv for the privilege drop. patchright pulls Chromium's own
-# shared libraries.
+# xvfb supplies the display Camoufox needs when run headful (HD_HEADLESS unset);
+# the entrypoint starts Xvfb directly rather than via xvfb-run, so xauth is kept
+# only so the wrapper still works if anyone reaches for it. util-linux supplies
+# setpriv/runuser for the privilege drop. `playwright install-deps firefox`
+# pulls Firefox's shared libraries; playwright ships as a Camoufox dependency.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends xvfb xauth util-linux \
-    && patchright install-deps chromium \
-    && patchright install chromium \
+    && playwright install-deps firefox \
     && rm -rf /var/lib/apt/lists/*
 
 # Globbed rather than listed. An earlier explicit list omitted lowes.py, which
@@ -53,19 +45,20 @@ RUN apt-get update \
 # forget the next module.
 COPY *.py search_model.graphql ./
 
+# Fetch the Camoufox browser AS the runtime user, so it lands in that user's
+# cache (~/.cache/camoufox) where the app finds it after the privilege drop.
+# The entrypoint sets XDG_CACHE_HOME=$HOME/.cache, so the paths line up. Fetching
+# as root would put it under /root, unreadable by sidecar.
 RUN useradd --create-home --shell /bin/bash sidecar \
     && chown -R sidecar:sidecar /app \
-    && chmod -R a+rX /opt/browsers
+    && runuser -u sidecar -- python -m camoufox fetch
 
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# No VOLUME instruction: Railway's builder rejects it outright ("docker VOLUME
-# is not supported, use Railway Volumes"), and persistence is the deployer's
-# call regardless. Mount something at /data or the profile is rebuilt on every
-# restart, which makes each boot look like a first-time visitor:
-#   Railway: add a volume with mount path /data
-#   docker:  -v hd-profile:/data
+# No VOLUME instruction and nothing to mount: the sidecar keeps no state between
+# runs. A fresh browser plus the humanized warm looks like a first-time visitor
+# every boot, which is fine, so there is no profile to persist.
 EXPOSE 8899
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

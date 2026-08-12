@@ -1,24 +1,28 @@
-"""Home Depot sidecar: product search and store lookup, via a real browser.
+"""Retail sidecar: product search and store lookup, via a real browser.
 
-Runs a browser and exposes Home Depot over a small HTTP API so a remotely
-hosted Clawbolt can query it. See README.md for why this exists and how to run
-it.
+Runs a browser and exposes Home Depot and Lowe's over a small HTTP API so a
+remotely hosted Clawbolt can query it. See README.md for why this exists and how
+to run it.
 
-Home Depot's bot manager rejects plain HTTP clients, and also rejects a stock
-Playwright Chromium. What it accepts is a browser with no automation tells:
-patchright (which patches the CDP ``Runtime.enable`` leak) and a persistent
-profile that accumulates normal cookies. Requests must be issued *by that browser*.
-Exporting its cookies to a plain HTTP client does not work, which is why this is
-a long-lived process rather than a cookie vendor.
+Both retailers reject plain HTTP clients and a stock Playwright Chromium. They
+run Akamai Bot Manager, and Home Depot runs its *advanced* tier, which
+fingerprints the CDP automation protocol every Chromium driver speaks over,
+patchright included: it validated Akamai's behavioral sensor and still answered a
+``206`` wrapping ``{"GenericError": null}`` on every product and store call
+(issue #1498). What clears both is Camoufox, a hardened Firefox that is not
+driven over CDP, so the tell is absent. A persistent profile that accumulates
+normal cookies and a warm-up that moves the mouse are what let the behavioral
+sensor validate the session. Requests must be issued *by that browser*: exporting
+its cookies to a plain HTTP client does not work, which is why this is a
+long-lived process rather than a cookie vendor.
 
-The store locator served a TLS-impersonating HTTP client for a while, so an
-earlier version of this integration queried it directly and skipped the browser.
-That stopped working: the locator now answers such clients with a ``206``
-carrying ``{"GenericError": null}`` while serving the browser normally from the
-same address. Store lookup therefore goes through here too.
+The two retailers differ only in the final fetch, because Home Depot exposes a
+GraphQL gateway reachable from inside the page while Lowe's does not: Home Depot
+answers an in-page GraphQL call (and the store locator the same way), and Lowe's
+results are read out of the search page's embedded state. The warm-up is shared.
 
 The browser is warmed once on startup and reused, so a request costs about a
-second rather than the seven a cold start takes.
+second rather than the seconds a cold start takes.
 """
 
 from __future__ import annotations
@@ -37,8 +41,8 @@ from pathlib import Path
 from typing import Any
 
 import lowes
+from camoufox.async_api import AsyncCamoufox
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from patchright.async_api import async_playwright
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -48,12 +52,11 @@ ORIGIN = "https://www.homedepot.com"
 QUERY_PATH = Path(__file__).with_name("search_model.graphql")
 SEARCH_MODEL_QUERY = QUERY_PATH.read_text()
 
-PROFILE_DIR = os.environ.get("HD_PROFILE_DIR", str(Path.home() / ".hd-sidecar-profile"))
 AUTH_TOKEN = os.environ.get("HD_SIDECAR_TOKEN", "")
 WARM_SECONDS = float(os.environ.get("HD_WARM_SECONDS", "7"))
 # Keeping retailer pages open lets their JavaScript keep allocating even when no
-# one is searching. Close Chromium after an idle period and warm a fresh context
-# only when the next request arrives. Set to 0 to keep the browser open.
+# one is searching. Close the browser after an idle period and warm a fresh
+# context only when the next request arrives. Set to 0 to keep the browser open.
 IDLE_SECONDS = float(os.environ.get("HD_IDLE_SECONDS", "3600"))
 
 # How long one request may spend driving a retailer's page once it holds that
@@ -71,6 +74,12 @@ REQUEST_BUDGET_SECONDS = float(os.environ.get("HD_REQUEST_BUDGET_SECONDS", "25")
 # being the obvious one, so `evaluate` itself has to be cut loose. Kept small
 # enough that budget plus grace still lands under the client's 35s.
 _EVALUATE_GRACE_SECONDS = 5.0
+
+# Camoufox runs headful against a display (Xvfb in the container). Its behavioral
+# engine (humanize) turns the pointer moves the warm-up issues into realistic
+# curves, which is what validates Akamai's sensor; a teleported cursor does not.
+# Set HD_HEADLESS=1 only for local fingerprint debugging, never in production.
+HEADLESS: bool | str = os.environ.get("HD_HEADLESS", "").lower() in ("1", "true", "yes")
 
 # Lowe's results are server-rendered into the page, so the wait is a poll for the
 # payload rather than a fixed settle. Roughly 6s of headroom in total.
@@ -202,7 +211,10 @@ class BrowserBackedSearch:
     """Owns the long-lived browser and serializes searches through it."""
 
     def __init__(self) -> None:
-        self._pw: Any = None
+        # The AsyncCamoufox handle owns the Playwright driver and the Firefox
+        # process; entering it yields the persistent context. Kept so shutdown and
+        # idle eviction can tear the whole thing down and rebuild it.
+        self._cf: AsyncCamoufox | None = None
         self._ctx: Any = None
         self._page: Any = None
         # One page per site, each parked on its own origin. Home Depot's search
@@ -218,9 +230,9 @@ class BrowserBackedSearch:
         # A lock per site, not one shared lock. Requests to one retailer must
         # serialize against each other because they drive that retailer's single
         # page, but they have no reason to block the other retailer. Sharing one
-        # lock made the Lowe's pre-warm (a homepage load, a click, and two settle
-        # waits, ~17s) hold off every Home Depot request right after startup,
-        # close to the client's 20s timeout.
+        # lock made the Lowe's pre-warm (a homepage load and a humanized settle,
+        # ~17s) hold off every Home Depot request right after startup, close to
+        # the client's 20s timeout.
         self._locks: dict[str, asyncio.Lock] = {}
         # Lifecycle changes must wait for all active searches, but searches for
         # different retailers must remain concurrent. This lock protects only
@@ -308,7 +320,7 @@ class BrowserBackedSearch:
     def start_background(self) -> None:
         """Launch the browser without blocking the caller.
 
-        Startup takes 15-25s: Chromium has to launch and load the homepage. Doing
+        Startup takes 15-25s: Firefox has to launch and load the homepage. Doing
         that inside the ASGI lifespan means the port is not listening yet, so a
         platform healthcheck sees a dead container and a failure produces no HTTP
         response at all, only container logs. Binding first and reporting status
@@ -321,36 +333,42 @@ class BrowserBackedSearch:
             try:
                 await self._launch_browser()
             except Exception as exc:
-                # Chromium failing to launch lands here. Keep the message verbatim:
+                # Firefox failing to launch lands here. Keep the message verbatim:
                 # it is the only signal a remote operator gets, and the causes are
-                # unobvious (an unwritable HOME breaks the crashpad handler, for
-                # instance).
+                # unobvious (a missing display, an unwritable HOME).
                 await self._close_browser()
                 self.state = "failed"
                 self.error = f"{type(exc).__name__}: {exc}"
                 logger.exception("browser startup failed")
 
     async def _launch_browser(self) -> None:
-        """Launch and warm a fresh persistent browser context."""
-        if self._pw is None:
-            self._pw = await async_playwright().start()
-        self._ctx = await self._pw.chromium.launch_persistent_context(
-            user_data_dir=PROFILE_DIR,
-            channel="chromium",
-            headless=False,
-            no_viewport=True,
-            locale="en-US",
-            timezone_id="America/New_York",
-        )
-        self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+        """Launch and warm a fresh browser.
+
+        Camoufox is a hardened Firefox with a consistent, non-automated
+        fingerprint and no CDP surface, which is what gets past Home Depot's
+        advanced bot tier (issue #1498). ``humanize`` turns the pointer moves the
+        warm-up issues into realistic curves, which is what validates the
+        behavioral sensor.
+
+        Deliberately not a persistent context. Camoufox's fingerprint injection
+        is weaker in ``persistent_context`` mode, enough that Lowe's standard
+        Akamai denies it while Home Depot's stricter tier still passes. The
+        humanized warm validates a first-time session on its own, so the returning
+        visitor a profile used to buy is no longer needed, and dropping it removes
+        the profile volume entirely. Each retailer's page is a separate one-off
+        context, so their cookies stay isolated.
+        """
+        self._cf = AsyncCamoufox(headless=HEADLESS, humanize=True, locale="en-US")
+        self._ctx = await self._cf.__aenter__()
+        self._page = await self._ctx.new_page()
         self._site_pages["home_depot"] = self._page
         await self._warm()
         self.state = "ready"
         self.error = None
         self._last_used = time.monotonic()
         self._idle_changed.set()
-        # Pre-warm Lowe's too. Its warm costs a homepage load plus a click, so
-        # the first Lowe's query would otherwise pay ~19s while Home Depot
+        # Pre-warm Lowe's too. Its warm costs a second homepage load and settle,
+        # so the first Lowe's query would otherwise pay ~19s while Home Depot
         # answers in one. Doing it after state=ready keeps Home Depot available
         # immediately, and a failure here is not fatal: the lazy path in
         # _lowes_page still runs on demand.
@@ -359,12 +377,23 @@ class BrowserBackedSearch:
             self._idle_task = asyncio.create_task(self._idle_recycler())
 
     async def _close_browser(self) -> None:
-        """Close the current Chromium context while retaining the Playwright driver."""
+        """Tear down the Firefox context and its driver.
+
+        Entering ``AsyncCamoufox`` started the Playwright driver, so exiting it is
+        what stops the driver process; there is no lighter close that keeps the
+        driver alive across an idle eviction, unlike the old Chromium path. The
+        ``_ctx`` fallback is for tests that inject a context directly without a
+        camoufox handle.
+        """
+        handle, self._cf = self._cf, None
         context, self._ctx = self._ctx, None
         self._page = None
         self._site_pages.clear()
         self._lowes_failures = 0
-        if context is not None:
+        if handle is not None:
+            with contextlib.suppress(Exception):
+                await handle.__aexit__(None, None, None)
+        elif context is not None:
             with contextlib.suppress(Exception):
                 await context.close()
 
@@ -394,7 +423,7 @@ class BrowserBackedSearch:
                     self._idle_changed.set()
 
     async def _evict_if_idle(self) -> bool:
-        """Close Chromium when no search has used it for the configured interval."""
+        """Close the browser when no search has used it for the configured interval."""
         async with self._lifecycle_lock:
             if (
                 self.state != "ready"
@@ -410,7 +439,7 @@ class BrowserBackedSearch:
             return True
 
     async def _idle_recycler(self) -> None:
-        """Wait for idle time to elapse, then release Chromium's memory."""
+        """Wait for idle time to elapse, then release the browser's memory."""
         while True:
             async with self._lifecycle_lock:
                 if self.state != "ready":
@@ -447,17 +476,46 @@ class BrowserBackedSearch:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
+        # Tears down the context and the Playwright driver in one step; there is
+        # no separate driver handle to stop under Camoufox.
         await self._close_browser()
-        if self._pw is not None:
+
+    @staticmethod
+    async def _humanize(page: Any) -> None:
+        """Move the pointer and scroll so Akamai's behavioral sensor validates.
+
+        Both retailers keep their session unvalidated, and refuse protected paths
+        (Home Depot's GraphQL, Lowe's /search), until the sensor has seen
+        human-like input. A homepage load that never touches the mouse leaves it
+        unvalidated. Camoufox's ``humanize`` renders these moves as realistic
+        curves, so issuing a handful along a path is what actually flips the
+        session; a teleported cursor is not enough. Cheap and side-effect-free,
+        so it runs on every warm.
+        """
+        for x, y in ((300, 250), (620, 400), (880, 300), (500, 520), (700, 220)):
             with contextlib.suppress(Exception):
-                await self._pw.stop()
-            self._pw = None
+                await page.mouse.move(x, y)
+                await page.wait_for_timeout(200)
+        with contextlib.suppress(Exception):
+            await page.mouse.wheel(0, 700)
+            await page.wait_for_timeout(400)
+
+    async def _warm_page(self, page: Any, origin: str, label: str) -> None:
+        """Land on a retailer's homepage and validate the session with movement.
+
+        Shared by both retailers: Home Depot on its page, Lowe's on its own. The
+        homepage sits outside the strict bot rule, so it loads for an unvalidated
+        session; the humanized movement then validates it, which is what lets the
+        follow-up search through.
+        """
+        await page.goto(f"{origin}/", wait_until="domcontentloaded", timeout=90_000)
+        await page.wait_for_timeout(int(WARM_SECONDS * 1000))
+        await self._humanize(page)
+        logger.info("%s page warmed: %s", label, await page.title())
 
     async def _warm(self) -> None:
-        """Land on the homepage so the bot manager sees a normal entry point."""
-        await self._page.goto(f"{ORIGIN}/", wait_until="domcontentloaded", timeout=90_000)
-        await self._page.wait_for_timeout(int(WARM_SECONDS * 1000))
-        logger.info("browser warmed: %s", await self._page.title())
+        """Warm the Home Depot page on startup."""
+        await self._warm_page(self._page, ORIGIN, "home_depot")
 
     async def _note_lowes_failure(self) -> None:
         """Drop a Lowe's session that has failed repeatedly so the next call re-warms.
@@ -488,13 +546,12 @@ class BrowserBackedSearch:
     async def _lowes_page(self) -> Any:
         """Return a page warmed for Lowe's, creating and warming it on first use.
 
-        Lowe's needs more than a homepage visit. Navigating to /search from a
-        session warmed only by the homepage is refused with a 403 edge deny; one
-        organic click into a category first, and the same navigation is served.
-        The click is the load-bearing step, so a page that never got one is not
-        cached: keeping it would pin every later search to a session the edge
-        refuses, with no way back short of a restart. Discard it instead and let
-        the next request try the whole warm again.
+        Under Chromium, Lowe's needed an organic click into a category before it
+        would serve /search; the humanized warm replaces that. A homepage load
+        plus pointer movement validates the session, and the same /search that a
+        cold session is denied is then served. The page is cached; a session that
+        later goes stale is dropped by ``_note_lowes_failure`` so the next call
+        re-warms.
         """
         page = self._site_pages.get("lowes")
         if page is not None:
@@ -502,22 +559,7 @@ class BrowserBackedSearch:
 
         page = await self._ctx.new_page()
         try:
-            await page.goto(f"{lowes.ORIGIN}/", wait_until="domcontentloaded", timeout=90_000)
-            await page.wait_for_timeout(int(WARM_SECONDS * 1000))
-
-            clicked = False
-            try:
-                link = page.locator("a[href*='/pl/']").first
-                if await link.count():
-                    await link.click()
-                    await page.wait_for_timeout(int(WARM_SECONDS * 1000))
-                    clicked = True
-            except Exception:
-                logger.warning("lowes: organic warm click failed", exc_info=True)
-            if not clicked:
-                raise HTTPException(503, "Lowe's warm-up found no category link to click")
-
-            logger.info("lowes page warmed: %s", await page.title())
+            await self._warm_page(page, lowes.ORIGIN, "lowes")
         except BaseException:
             with contextlib.suppress(Exception):
                 await page.close()

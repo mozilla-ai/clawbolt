@@ -9,26 +9,35 @@ a name.
 
 ## Why this exists
 
-Home Depot has no public API, and every product route (`/s/`, `/b/`, `/p/`, and
-the GraphQL gateway) sits behind their bot manager. Things that do **not** work,
-all measured rather than assumed:
+Neither retailer has a public API, and every product route sits behind Akamai
+Bot Manager. Home Depot additionally runs Akamai's **advanced** tier. Things
+that do **not** work, all measured rather than assumed:
 
 - `httpx` or `requests`: rejected on the TLS handshake.
 - `curl_cffi` with Chrome TLS impersonation: product routes return `403` or a
-  `206` wrapping `{"GenericError": null}`. The store locator served this client
-  for a while and then stopped, answering `206` while the browser kept getting
-  `200` from the same address. Do not assume a working endpoint stays working.
-- Stock Playwright Chromium, headless or headful: same `403`. The CDP
+  `206` wrapping `{"GenericError": null}`.
+- Stock Playwright Chromium, headless or headful: `403`. The CDP
   `Runtime.enable` leak gives it away.
-- Exporting a trusted browser's cookies into `curl_cffi`: still `206`. The
-  request has to come from the browser itself, so cookies alone are not enough.
+- **patchright** (Chromium with the CDP leaks patched): cleared Lowe's, but Home
+  Depot's advanced tier still answered `206` on every product and store call. It
+  fingerprints the CDP automation protocol itself, which every Chromium driver
+  speaks over, so patching the individual leaks is not enough (issue #1498). The
+  behavioral sensor validated and the block held regardless.
 
-What works is a browser with no automation tells, which is what this runs:
+What works is **Camoufox**, a hardened Firefox that is not driven over CDP, so
+that tell is absent. Two things carry the session past the behavioral sensor:
 
-- **patchright** instead of playwright, which patches the `Runtime.enable` leak.
-- **A persistent profile**, so the session looks like a returning visitor.
+- **A humanized warm.** Both retailers keep the session unvalidated until the
+  Akamai sensor sees human-like input, so the warm-up moves the pointer and
+  scrolls. Camoufox renders those moves as realistic curves; a teleported cursor
+  is not enough.
+- **No persistent profile.** The humanized warm validates a first-time session
+  on its own, so the "returning visitor" a saved profile used to buy is no
+  longer needed, and Camoufox's fingerprint is in fact weaker in persistent-context
+  mode (enough that Lowe's denies it). Each launch is a fresh browser.
 
-None of this is IP-related. It was all measured from a residential connection.
+This is not IP-related: it reproduces from a residential connection and a
+datacenter one alike, and the fix is the browser, not the egress.
 
 ## Running it
 
@@ -38,23 +47,16 @@ Requires Python 3.11+ and a Linux box with a display or Xvfb.
 cd sidecar/home_depot
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-patchright install chromium
+python -m camoufox fetch          # downloads the patched Firefox
 
 # Run as a normal user, not root.
 export HD_SIDECAR_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
 xvfb-run -a python -m uvicorn sidecar:app --host 0.0.0.0 --port 8899
 ```
 
-On a headless arm64 box, Playwright has no official build. Force the Ubuntu
-24.04 arm64 one:
-
-```bash
-PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-arm64 patchright install chromium
-PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-arm64 patchright install-deps chromium
-PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-arm64 \
-  PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 \
-  xvfb-run -a python -m uvicorn sidecar:app --host 0.0.0.0 --port 8899
-```
+Camoufox publishes arm64 builds, so an arm64 box needs no platform override. If
+`python -m camoufox fetch` reports an unsupported OS, it still downloads a
+working fallback build.
 
 Startup warms the browser on the homepage, which takes a few seconds. After
 that a search costs roughly a second.
@@ -64,34 +66,28 @@ that a search costs roughly a second.
 | Variable | Default | Purpose |
 |---|---|---|
 | `HD_SIDECAR_TOKEN` | | Shared bearer token. Empty disables auth, which is only safe on loopback. |
-| `HD_PROFILE_DIR` | `~/.hd-sidecar-profile` | Persistent browser profile. Keep it between runs. |
 | `HD_WARM_SECONDS` | `7` | Homepage settle time before serving. |
-| `HD_IDLE_SECONDS` | `3600` | Close Chromium after this many idle seconds. The next request warms a fresh browser. Set to `0` to keep it open. |
+| `HD_IDLE_SECONDS` | `3600` | Close the browser after this many idle seconds. The next request warms a fresh one. Set to `0` to keep it open. |
 | `HD_REQUEST_BUDGET_SECONDS` | `25` | How long one request may drive a retailer's page once it holds that retailer's lock. Must stay below the client's 35s timeout: a request that outlives its caller holds the lock with nobody waiting for the answer. |
+| `HD_HEADLESS` | | Set to `1` to run Camoufox headless (no display). For local fingerprint debugging only; leave unset in production, where the humanized warm needs a real display via Xvfb. |
 
 ## Running it in a container
 
 ```bash
 docker build -t hd-sidecar sidecar/home_depot
-docker run --rm -p 8899:8899 -v hd-profile:/data -e HD_SIDECAR_TOKEN=secret hd-sidecar
+docker run --rm -p 8899:8899 -e HD_SIDECAR_TOKEN=secret hd-sidecar
 ```
 
-Mount something at `/data`. The browser profile lives there, and without a mount
-it is rebuilt on every restart, which makes each boot look like a first-time
-visitor to Home Depot. There is no `VOLUME` instruction in the Dockerfile
-because Railway's builder rejects it, so persistence is always the deployer's
-call.
+Nothing to mount: the sidecar keeps no state between runs. A fresh browser plus
+the humanized warm looks like a first-time visitor every boot, which is fine.
+The Camoufox browser is baked into the image at build time.
 
-The container starts as root purely to take ownership of that mount, then drops
-to an unprivileged user before starting Chromium. That handover also has to set
-`HOME`: `setpriv` changes uid but leaves the environment alone, and a `HOME` the
-new user cannot write makes Chromium's crashpad handler fail with `--database is
-required` and kill the browser with SIGTRAP before it opens a page. It cost a
-deploy to find, because `su` sets `HOME` and local testing used `su`.
-
-Running as a normal user is hygiene rather than a bot-detection requirement.
-patchright passes `--no-sandbox` by default, so Chromium's sandbox is off either
-way, and every working measurement here was taken that way.
+The container starts as root only to drop to an unprivileged user before
+starting the browser. That handover has to set `HOME`: `setpriv` changes uid but
+leaves the environment alone, and a `HOME` the new user cannot write breaks
+Firefox startup. `XDG_CACHE_HOME` follows `HOME` for the same reason, and it is
+where Camoufox looks for the browser fetched at build time, so the two have to
+agree. Running as a normal user is hygiene, not a bot-detection requirement.
 
 ### Railway
 
@@ -113,13 +109,14 @@ public once or give Railway a registry credential.
 
 Then, on the service:
 
-- Add a volume with mount path `/data`.
 - Set `HD_SIDECAR_TOKEN`, and set `PORT=8899` so the listening port is
   predictable. Railway injects its own `PORT`, which the entrypoint honours, so
   without pinning it the internal URL below will not match.
 - Give it ~1GB of memory and point the healthcheck at `/health`.
 - Do not assign a public domain. Reach it over the private network instead:
   `http://<service>.railway.internal:8899`.
+
+No volume is needed: the sidecar is stateless.
 
 Confirm `/search` returns products before wiring the app to it: `/health` going
 green only means the port is up and the browser launched, not that Home Depot is
@@ -135,7 +132,7 @@ search or store lookup waits for a fresh warm-up before running:
 {"ok": true,  "state": "ready",    "error": null}
 {"ok": false, "state": "starting", "error": null}
 {"ok": false, "state": "idle",     "error": null}
-{"ok": false, "state": "failed",   "error": "Error: Failed to move to new namespace..."}
+{"ok": false, "state": "failed",   "error": "Error: Failed to launch: no DISPLAY..."}
 ```
 
 `ok` round-trips an expression through the page, so a crashed browser reports
@@ -202,18 +199,13 @@ again, reporting `geocoded: true` when it did.
 
 ## Lowe's
 
-Same wall, one extra step. Lowe's runs the same Akamai Bot Manager, and its
-`/search`, `/Search=` and `/store/api/search` routes are all refused with a 403
-edge deny (`errors.edgesuite.net`, `Reference #18.…`) rather than a solvable
-challenge. Ruled out as causes, each measured: profile freshness, cookies, the
-`X11; Linux` User-Agent, client hints overridden via CDP to claim macOS,
-navigation versus in-page XHR, and the egress IP.
-
-What actually matters is **warming with a real click**. A homepage visit alone
-still gets the deny; one organic click into a category first, and `/search`
-returns results. That is why `_lowes_page` clicks a `/pl/` link before serving
-anything, and why a page that never got one is closed rather than cached: keeping
-it would pin every later search to a session the edge refuses.
+Lowe's runs Akamai's standard tier only, so it never needed the Camoufox switch
+that Home Depot's advanced tier forced; patchright cleared it. It shares the
+migration anyway, because the humanized warm is what validates the session for
+both. A homepage visit that never touches the mouse is refused with a 403 edge
+deny at `/search`; the pointer movement in the warm flips it, and the same
+navigation is served. Under Chromium this took an organic click into a `/pl/`
+category first; the humanized warm replaces that step.
 
 Results come from `window['__PRELOADED_STATE__']`, not the DOM. The payload is
 ~400KB and carries `itemList` with price, per-store on-hand quantity, brand,
@@ -254,3 +246,9 @@ validate a rewrite against, so do not hand-trim it. To refresh, capture the
 
 Expect this to need occasional attention. Bot detection changes, and when it
 does the symptom is product search returning blocks while `/health` stays green.
+When it comes to that, the levers are: bump the `camoufox` pin (its fingerprint
+tracks Firefox releases), lengthen `HD_WARM_SECONDS` so the humanized warm feeds
+the sensor more, or, if a retailer escalates its tier the way Home Depot did, a
+different browser engine. Do not "fix" a `206` by accepting it: the body parses
+as valid JSON, so relaxing the status check turns a visible failure into a silent
+"No products found" for every search.
