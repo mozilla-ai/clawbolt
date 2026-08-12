@@ -15,9 +15,10 @@ Key request conventions captured from the SPA bundle:
 
 There is no CSRF token, no request signing, and no per-request nonce.
 A 401 response carries ``{"login_url": "..."}`` in the body, which the
-SPA uses to redirect the user back through the magic-link flow; we
-surface that as :class:`AuthExpiredError` so tools can prompt the user
-for a fresh link.
+SPA uses to redirect the user back through the magic-link flow. Note
+that *every* unauthenticated 401 carries it, including on routes that
+reject a JWT the data APIs accept, so it is not a usable expiry signal;
+see the classification comment in ``AppFolioVendorService._request``.
 """
 
 from __future__ import annotations
@@ -98,13 +99,16 @@ class AppFolioUnavailableError(AppFolioError):
 
 
 class AuthExpiredError(AppFolioError):
-    """JWT was rejected because the credential genuinely expired.
+    """The credential is dead and the user must supply a new magic link.
 
-    The caller must prompt the user for a new magic link. AppFolio
-    signals this by returning HTTP 401 with a ``login_url`` field in
-    the body that the SPA would redirect the user to.
+    Raised when the OAuth endpoint rejects the refresh grant, and as the
+    default verdict on a 401 we have no evidence to classify. Note that
+    the ``login_url`` in a 401 body is *not* that evidence: AppFolio
+    returns it on every unauthenticated 401, whatever the cause. See
+    ``AppFolioVendorService._request``.
 
-    ``login_url`` is that URL; tools relay it to the user.
+    ``login_url`` is the URL the SPA would redirect to; tools relay it
+    to the user when AppFolio supplied one.
     """
 
     def __init__(self, login_url: str = "") -> None:
@@ -113,19 +117,17 @@ class AuthExpiredError(AppFolioError):
 
 
 class AuthScopeError(AppFolioError):
-    """JWT is valid but not authorized for the customer in the request.
+    """The credential is live but AppFolio rejected this request with a 401.
 
-    AppFolio reuses HTTP 401 for two distinct cases: the JWT itself
-    expired (``AuthExpiredError`` above, with a ``login_url`` payload),
-    and the JWT is fine but the path's customer scope (or the body's
-    ``customer_id``) does not match what the JWT was minted for. The
-    second case is signalled by a 401 with no ``login_url`` in the
-    body, and reconnecting will not help: the caller must retry with
-    the correct customer instead.
+    Raised when the session is provably good (a 2xx already seen on this
+    credential, or a refresh the OAuth endpoint honoured) and a 401 comes
+    back anyway. Usually the request carries a ``customer_id`` the JWT is
+    not authorized for, but some routes reject the bearer JWT outright no
+    matter which customer is named. Either way reconnecting does not help.
 
-    Tools that synthesize a customer_id (e.g. by guessing from a
-    search response) catch this to fall back to the canonical
-    ``/profiles/me`` value before surfacing the failure to the user.
+    Tools that synthesize a customer_id (e.g. by guessing from a search
+    response) catch this to retry with the canonical value before
+    surfacing the failure to the user.
     """
 
 
@@ -425,6 +427,59 @@ def _log_raw_response(method: str, path: str, status: int, byte_len: int, parsed
     )
 
 
+KNOWN_WO_LIST_ENVELOPES = ("work_orders", "workOrders", "results", "data")
+"""Envelope keys AppFolio has been observed wrapping work-order lists in."""
+
+
+def normalize_work_order_list(payload: Any) -> list[dict[str, Any]]:
+    """Return a list of work-order dicts from whichever envelope AppFolio used.
+
+    Returns ``[]`` when the response shape is not one we recognize; the
+    *caller* is responsible for logging that case via
+    ``log_unexpected_response_shape`` so the empty-list semantics stay
+    simple and the diagnostic carries the calling tool's label.
+
+    Lives here rather than in the tool module because customer-ID
+    discovery (:meth:`AppFolioVendorService._discover_customer_ids`)
+    parses the same payload, and the read tools and the service must not
+    keep two copies of the envelope list.
+    """
+    if isinstance(payload, list):
+        return [w for w in payload if isinstance(w, dict)]
+    if isinstance(payload, dict):
+        for key in KNOWN_WO_LIST_ENVELOPES:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [w for w in value if isinstance(w, dict)]
+    return []
+
+
+def _collect_customer_ids(items: list[dict[str, Any]]) -> list[str]:
+    """Harvest unique customer IDs from work-order-shaped dicts.
+
+    Accepts both spellings AppFolio uses: the maintenance work-order
+    schema carries a scalar ``customer_id``, the universal search schema
+    a ``customer_ids`` list. Order is preserved so the first work order's
+    customer stays the primary one.
+    """
+    ids: list[str] = []
+    for item in items:
+        candidates: list[Any] = []
+        scalar = item.get("customer_id") or item.get("customerId")
+        if scalar is not None:
+            candidates.append(scalar)
+        plural = item.get("customer_ids") or item.get("customerIds")
+        if isinstance(plural, list):
+            candidates.extend(plural)
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            text = str(candidate)
+            if text and text not in ids:
+                ids.append(text)
+    return ids
+
+
 class AppFolioVendorService:
     """Async REST client bound to one user's credential.
 
@@ -439,12 +494,21 @@ class AppFolioVendorService:
         api_base: str,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
         on_token_refresh: Callable[[str, str], Awaitable[None]] | None = None,
+        on_customer_ids_resolved: Callable[[list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self._credential = credential
         self._api_base = api_base.rstrip("/")
         self._timeout = timeout_seconds
         self._on_token_refresh = on_token_refresh
+        self._on_customer_ids_resolved = on_customer_ids_resolved
         self._refreshed_once = False
+        # Evidence that the credential is live, used to tell an expired
+        # session apart from a request AppFolio rejects for another
+        # reason. Both start False and only ever flip to True: a 2xx on
+        # any path, or a token refresh the OAuth endpoint honoured,
+        # proves the credential itself is good.
+        self._saw_success = False
+        self._refresh_succeeded = False
 
     @property
     def credential(self) -> AppFolioCredential:
@@ -518,9 +582,25 @@ class AppFolioVendorService:
                         refresh_token=self._credential.refresh_token,
                         timeout_seconds=self._timeout,
                     )
-                except AppFolioError:
-                    pass
+                except AuthExpiredError:
+                    # The OAuth endpoint rejected the refresh grant itself.
+                    # That is the one unambiguous expiry signal we get: the
+                    # whole credential is dead and only a new magic link
+                    # recovers it. refresh_access_token already logged the
+                    # status and body.
+                    raise
+                except AppFolioError as exc:
+                    # Could not reach the token endpoint. Says nothing about
+                    # whether the credential is still valid, so fall through
+                    # to the evidence-based classification below.
+                    logger.warning(
+                        "AppFolio %s %s: token refresh failed transiently: %s",
+                        method,
+                        path,
+                        exc,
+                    )
                 else:
+                    self._refresh_succeeded = True
                     self._credential.jwt = refreshed.jwt
                     self._credential.refresh_token = (
                         refreshed.refresh_token or self._credential.refresh_token
@@ -551,22 +631,28 @@ class AppFolioVendorService:
                     body_for_log,
                     resp.text[:_LOG_BODY_PREVIEW_LIMIT],
                 )
-                # AppFolio returns 401 for two distinct cases. When the
-                # JWT itself expired the body carries a ``login_url`` for
-                # the SPA to redirect the user to. When the JWT is valid
-                # but the path's customer scope or body ``customer_id``
-                # does not match the JWT's bound customer, the body has
-                # no ``login_url`` and reconnecting will not help. Tell
-                # the caller which one happened so they can react
-                # accordingly: write tools that guess customer_id (e.g.
-                # from a search response) catch the scope variant and
-                # retry with the canonical ``/profiles/me`` value.
-                if login_url:
-                    raise AuthExpiredError(login_url=login_url)
-                raise AuthScopeError(
-                    f"AppFolio {method} {path} rejected the request scope (401);"
-                    " the JWT is valid but not authorized for this customer."
-                )
+                # AppFolio returns 401 both when the credential is dead and
+                # when a live credential is not accepted on this particular
+                # route. ``login_url`` does NOT separate them: every
+                # unauthenticated 401 from vendor.appf.io carries the same
+                # ``login_url`` body, including on routes that reject a JWT
+                # the data APIs accept. Classifying on it told users their
+                # session had expired while other calls in the same turn were
+                # returning 200 (#1503).
+                #
+                # Decide on evidence instead. A 2xx already seen on this
+                # credential, or a refresh the OAuth endpoint honoured, proves
+                # the credential is live, so this 401 is about the request.
+                # With no such evidence we cannot tell, and reconnecting is
+                # the user's only available recovery, so keep the expiry
+                # verdict as the default.
+                if self._saw_success or self._refresh_succeeded:
+                    raise AuthScopeError(
+                        f"AppFolio {method} {path} rejected the request (401)"
+                        " although the session is valid; the route or the"
+                        " customer_id is not authorized for this credential."
+                    )
+                raise AuthExpiredError(login_url=login_url)
         if resp.status_code >= 400:
             response_text = resp.text[:_LOG_BODY_PREVIEW_LIMIT]
             logger.warning(
@@ -585,6 +671,10 @@ class AppFolioVendorService:
                 f"AppFolio {method} {path} failed: HTTP {resp.status_code}",
                 status_code=resp.status_code,
             )
+        # AppFolio answered on this credential, so it is live. Recorded for
+        # the 401 classification above, which must not call a session expired
+        # while other calls on the same credential are succeeding.
+        self._saw_success = True
         byte_len = len(resp.content or b"")
         logger.debug(
             "AppFolio %s %s ok (%d, %d bytes)",
@@ -667,6 +757,39 @@ class AppFolioVendorService:
     async def get_profile(self) -> Any:
         return await self.get("/profiles/me", params={"viewed": "true"})
 
+    async def _discover_customer_ids(self) -> list[str]:
+        """Find the vendor's customer IDs from whatever AppFolio will answer.
+
+        The work-order list is tried first because it is a route the
+        credential demonstrably works on: every read tool calls it, and
+        each work order carries the ``customer_id`` of the property
+        manager that raised it.
+
+        ``/profiles/me`` is the documented source but it rejects the
+        OAuth2 bearer JWT that the data APIs accept, so it is the
+        fallback rather than the primary, and its failure is swallowed:
+        by the time we ask, the work-order list has already answered on
+        this same credential, so a 401 here says nothing about the
+        session and must not be re-raised as one (#1503).
+        """
+        # Widest net: a vendor whose only visible work is already closed
+        # still has to be able to invoice it.
+        payload = await self.list_work_orders(include_completed=True)
+        ids = _collect_customer_ids(normalize_work_order_list(payload))
+        if ids:
+            return ids
+        try:
+            profile = await self.get_profile()
+        except AppFolioError as exc:
+            logger.warning("AppFolio /profiles/me unusable for customer_id discovery: %s", exc)
+            return []
+        if not isinstance(profile, dict):
+            return []
+        customers = profile.get("customers")
+        if not isinstance(customers, list):
+            return []
+        return _collect_customer_ids([c for c in customers if isinstance(c, dict)])
+
     async def _resolve_primary_customer_id(self) -> str:
         """Return the vendor's primary customer ID.
 
@@ -674,10 +797,11 @@ class AppFolioVendorService:
         ``customer_id`` (the property manager's ID) at the request level.
         The legacy ``/access`` exchange returned this in the body and we
         cached it on the credential; the new OAuth2 endpoint does not, so
-        existing connected users have ``customer_ids=[]`` on their
-        persisted credential. Fall back to ``/profiles/me`` for those
-        cases and stash the result on the credential so we don't refetch
-        every call within the same service-instance lifetime.
+        every OAuth2-connected user starts with ``customer_ids=[]`` and
+        reaches :meth:`_discover_customer_ids`. What we find is cached on
+        the in-memory credential and handed to
+        ``on_customer_ids_resolved`` so it is persisted once rather than
+        rediscovered every turn.
 
         Single-customer vendors (the common case) get the lone customer
         back. Multi-customer vendors get the first one; tools that need
@@ -686,25 +810,16 @@ class AppFolioVendorService:
         """
         if self._credential.customer_ids:
             return str(self._credential.customer_ids[0])
-        profile = await self.get_profile()
-        ids: list[str] = []
-        if isinstance(profile, dict):
-            customers = profile.get("customers") or []
-            if isinstance(customers, list):
-                for c in customers:
-                    if isinstance(c, dict):
-                        cid = c.get("customer_id") or c.get("customerId")
-                        if cid is not None:
-                            s = str(cid)
-                            if s not in ids:
-                                ids.append(s)
+        ids = await self._discover_customer_ids()
         if not ids:
             raise AppFolioError(
-                "AppFolio /profiles/me returned no customer IDs; cannot make this request"
+                "Could not determine the AppFolio customer (property manager) ID"
+                " for this vendor: no work orders were visible and the profile"
+                " endpoint did not supply one."
             )
-        # Cache on the in-memory credential for the rest of this turn.
-        # Persistence to oauth_tokens.extra_json happens at next refresh.
         self._credential.customer_ids = ids
+        if self._on_customer_ids_resolved is not None:
+            await self._on_customer_ids_resolved(ids)
         return ids[0]
 
     async def update_work_order_status(
@@ -893,6 +1008,7 @@ def build_service(
     api_base: str,
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     on_token_refresh: Callable[[str, str], Awaitable[None]] | None = None,
+    on_customer_ids_resolved: Callable[[list[str]], Awaitable[None]] | None = None,
 ) -> AppFolioVendorService:
     """Construct an :class:`AppFolioVendorService` for a credential."""
     if not credential.jwt:
@@ -904,6 +1020,7 @@ def build_service(
         api_base=api_base,
         timeout_seconds=timeout_seconds,
         on_token_refresh=on_token_refresh,
+        on_customer_ids_resolved=on_customer_ids_resolved,
     )
 
 

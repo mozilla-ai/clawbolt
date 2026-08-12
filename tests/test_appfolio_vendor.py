@@ -24,6 +24,7 @@ from backend.app.integrations.appfolio_vendor.params import (
     AppFolioListWorkOrdersParams,
 )
 from backend.app.integrations.appfolio_vendor.service import (
+    AccessExchangeResult,
     AppFolioError,
     AppFolioVendorService,
     AuthExpiredError,
@@ -38,6 +39,12 @@ from backend.app.integrations.appfolio_vendor.work_orders import (
     _normalize_search_hit,
     build_work_order_tools,
 )
+
+
+async def _record(sink: list[list[str]], ids: list[str]) -> None:
+    """Stand-in for the factory's persistence hook, capturing what it was handed."""
+    sink.append(list(ids))
+
 
 # ---------------------------------------------------------------------------
 # Magic-link parsing
@@ -372,12 +379,12 @@ async def test_service_get_returns_json() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_service_401_with_login_url_raises_auth_expired() -> None:
-    """401 + ``login_url`` body means the JWT actually expired.
+async def test_service_401_with_no_evidence_raises_auth_expired() -> None:
+    """A 401 we cannot classify defaults to expired, and relays login_url.
 
-    AppFolio's contract: the SPA sees this and redirects the user to
-    re-auth. We mirror that signal as :class:`AuthExpiredError` so
-    tools can prompt the user for a fresh magic link.
+    Nothing has succeeded on this credential yet, so the session really
+    may be dead. Reconnecting is the user's only available recovery, so
+    the expiry verdict stays the default in the no-evidence case.
     """
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={"login_url": "https://login/here"}, status_code=401)
@@ -389,24 +396,71 @@ async def test_service_401_with_login_url_raises_auth_expired() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_service_401_without_login_url_raises_auth_scope() -> None:
-    """401 without a ``login_url`` body means the request scope is wrong.
+async def test_service_401_after_a_success_raises_auth_scope_despite_login_url() -> None:
+    """A 401 on a credential that just returned 200 is not an expired session.
 
-    The JWT itself is fine; the request's ``customer_id`` (in the path
-    or the body) is not in this credential's authorized set.
-    Reconnecting will not help, so we must NOT raise
-    :class:`AuthExpiredError` and tell the user to log in again.
+    Regression test for #1503. Every unauthenticated 401 from
+    vendor.appf.io carries a ``login_url`` body, including on routes that
+    reject a JWT the data APIs accept, so classifying on ``login_url``
+    told users to reconnect while other calls in the same turn were
+    returning 200. The 200 is proof the credential is live; the 401 must
+    come back as a scope error even though ``login_url`` is present.
     """
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
-    response = _mock_response(json_data={}, status_code=401)
+    ok = _mock_response(json_data={"hello": "world"})
+    denied = _mock_response(json_data={"login_url": "https://login/here"}, status_code=401)
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
-        cls.return_value = _patch_async_client("request", response)
+        client = AsyncMock()
+        client.request = AsyncMock(side_effect=[ok, denied])
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        assert await service.get("/works") == {"hello": "world"}
         with pytest.raises(AuthScopeError) as exc_info:
-            await service.get("/anything")
+            await service.get("/denied")
     # AuthScopeError must NOT be a misclassified AuthExpiredError; the
     # tool layer checks isinstance() and would tell the user to
     # reconnect (the trust-eroding bug we're fixing).
     assert not isinstance(exc_info.value, AuthExpiredError)
+
+
+@pytest.mark.asyncio()
+async def test_service_401_after_successful_refresh_raises_auth_scope() -> None:
+    """A refresh the OAuth endpoint honoured also proves the credential is live."""
+    cred = _credential()
+    cred.refresh_token = "refresh-1"
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    denied = _mock_response(json_data={"login_url": "https://login/here"}, status_code=401)
+    with (
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+        patch(
+            "backend.app.integrations.appfolio_vendor.service.refresh_access_token",
+            AsyncMock(return_value=AccessExchangeResult(jwt="jwt-2", customer_ids=[], raw={})),
+        ),
+    ):
+        cls.return_value = _patch_async_client("request", denied)
+        with pytest.raises(AuthScopeError):
+            await service.get("/denied")
+
+
+@pytest.mark.asyncio()
+async def test_service_401_with_rejected_refresh_grant_raises_auth_expired() -> None:
+    """The OAuth endpoint refusing the refresh grant is the one true expiry signal."""
+    cred = _credential()
+    cred.refresh_token = "refresh-dead"
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    denied = _mock_response(json_data={"login_url": "https://login/here"}, status_code=401)
+    with (
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+        patch(
+            "backend.app.integrations.appfolio_vendor.service.refresh_access_token",
+            AsyncMock(side_effect=AuthExpiredError()),
+        ),
+    ):
+        cls.return_value = _patch_async_client("request", denied)
+        with pytest.raises(AuthExpiredError):
+            await service.get("/anything")
 
 
 @pytest.mark.asyncio()
@@ -632,10 +686,13 @@ async def test_add_work_order_note_includes_customer_id_in_body() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_add_work_order_note_resolves_customer_id_when_missing() -> None:
-    """A credential persisted before the customer_id backfill landed has
-    ``customer_ids=[]``. The service must lazy-fetch ``/profiles/me`` so
-    existing connected users don't have to disconnect/reconnect.
+async def test_add_work_order_note_resolves_customer_id_from_work_order_list() -> None:
+    """Every OAuth2-connected credential starts with ``customer_ids=[]``.
+
+    Regression test for #1503. The write must source the customer_id from
+    the work-order list, a route the credential demonstrably works on,
+    rather than ``/profiles/me``, which rejects the bearer JWT and turned
+    every AppFolio write into a bogus "session expired".
     """
     cred = AppFolioCredential(
         user_id="u1",
@@ -644,41 +701,96 @@ async def test_add_work_order_note_resolves_customer_id_when_missing() -> None:
         customer_ids=[],
         extra={},
     )
-    service = AppFolioVendorService(cred, api_base="https://api.test")
-
-    profile_response = _mock_response(
-        json_data={"customers": [{"customer_id": "cust-9001", "customer_name": "Acme Properties"}]}
+    persisted: list[list[str]] = []
+    service = AppFolioVendorService(
+        cred,
+        api_base="https://api.test",
+        on_customer_ids_resolved=lambda ids: _record(persisted, ids),
     )
+
+    list_response = _mock_response(json_data=[{"id": 1, "customer_id": "cust-9001"}])
     note_response = _mock_response(json_data={"id": 42})
 
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
         client = AsyncMock()
-        client.request = AsyncMock(side_effect=[profile_response, note_response])
+        client.request = AsyncMock(side_effect=[list_response, note_response])
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=client)
         cm.__aexit__ = AsyncMock(return_value=False)
         cls.return_value = cm
         await service.add_work_order_note("999001", body_text="status update")
 
-    # First call: GET /profiles/me to discover customer_id
+    # First call: the work-order list, never /profiles/me.
     first_args, _ = client.request.call_args_list[0]
     assert first_args[0] == "GET"
-    assert "/profiles/me" in first_args[1]
+    assert "/maintenance/api/work_orders.json" in first_args[1]
+    assert not any("/profiles/me" in c.args[1] for c in client.request.call_args_list)
     # Second call: POST /notes with the resolved customer_id
     second_args, second_kwargs = client.request.call_args_list[1]
     assert second_args[0] == "POST"
     assert "/notes" in second_args[1]
     assert second_kwargs["json"]["customer_id"] == "cust-9001"
-    # The credential should be backfilled in-memory so subsequent calls
-    # don't refetch.
+    # Backfilled in-memory so the rest of the turn doesn't refetch, and
+    # handed to the persistence hook so later turns don't either.
+    assert cred.customer_ids == ["cust-9001"]
+    assert persisted == [["cust-9001"]]
+
+
+@pytest.mark.asyncio()
+async def test_resolve_customer_id_falls_back_to_profile_when_list_is_empty() -> None:
+    """A vendor with no open work orders still resolves via ``/profiles/me``."""
+    cred = AppFolioCredential(
+        user_id="u1", jwt="jwt-1", fingerprint="fp-1", customer_ids=[], extra={}
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    responses = [
+        _mock_response(json_data=[]),
+        _mock_response(json_data={"customers": [{"customer_id": "cust-9001"}]}),
+        _mock_response(json_data={"id": 42}),
+    ]
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(side_effect=responses)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        await service.add_work_order_note("999001", body_text="x")
     assert cred.customer_ids == ["cust-9001"]
 
 
 @pytest.mark.asyncio()
-async def test_resolve_customer_id_raises_when_profile_has_none() -> None:
-    """A credential with no customers and a profile that returns no
-    customers should raise rather than silently succeed with bad data.
+async def test_resolve_customer_id_does_not_report_profile_401_as_expired() -> None:
+    """A 401 from the ``/profiles/me`` fallback is not an expired session.
+
+    Regression test for #1503. The work-order list answered 200 on this
+    same credential moments earlier, so the fallback's 401 says nothing
+    about the session and must surface as a customer_id problem instead
+    of sending the user off to reconnect.
     """
+    cred = AppFolioCredential(
+        user_id="u1", jwt="jwt-1", fingerprint="fp-1", customer_ids=[], extra={}
+    )
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    responses = [
+        _mock_response(json_data=[]),
+        _mock_response(json_data={"login_url": "https://login/here"}, status_code=401),
+    ]
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        client = AsyncMock()
+        client.request = AsyncMock(side_effect=responses)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        cls.return_value = cm
+        with pytest.raises(AppFolioError, match="Could not determine") as exc_info:
+            await service.add_work_order_note("999001", body_text="x")
+    assert not isinstance(exc_info.value, AuthExpiredError)
+
+
+@pytest.mark.asyncio()
+async def test_resolve_customer_id_raises_when_nothing_yields_one() -> None:
+    """No customer IDs anywhere should raise rather than succeed with bad data."""
     cred = AppFolioCredential(
         user_id="u1",
         jwt="jwt-1",
@@ -690,7 +802,7 @@ async def test_resolve_customer_id_raises_when_profile_has_none() -> None:
     response = _mock_response(json_data={"customers": []})
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
         cls.return_value = _patch_async_client("request", response)
-        with pytest.raises(AppFolioError, match="no customer IDs"):
+        with pytest.raises(AppFolioError, match="Could not determine"):
             await service.add_work_order_note("999001", body_text="x")
 
 
@@ -1587,10 +1699,10 @@ async def test_create_invoice_tool_falls_back_when_customer_id_scope_rejected() 
     Reproduces the production failure mode: the agent extracted a
     ``customer_id`` from a search response (which carries a different
     field than the write endpoints expect), passed it in, and the
-    work-order GET answered HTTP 401 with no ``login_url``. The fix
-    catches :class:`AuthScopeError`, resolves the canonical customer
-    via ``/profiles/me``, retries the GET, and uses the canonical
-    value for the subsequent ``create_invoice`` POST.
+    work-order GET answered HTTP 401. The fix catches
+    :class:`AuthScopeError`, resolves the canonical customer, retries
+    the GET, and uses the canonical value for the subsequent
+    ``create_invoice`` POST.
     """
     from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
 
@@ -1598,8 +1710,7 @@ async def test_create_invoice_tool_falls_back_when_customer_id_scope_rejected() 
         user_id="u1",
         jwt="jwt-1",
         fingerprint="fp-1",
-        # No cached customer_ids: forces the resolver down the
-        # ``/profiles/me`` path so we exercise it end-to-end.
+        # No cached customer_ids: forces the resolver to discover one.
         customer_ids=[],
         extra={"fingerprint": "fp-1"},
     )
@@ -1614,9 +1725,12 @@ async def test_create_invoice_tool_falls_back_when_customer_id_scope_rejected() 
         ]
     )
     create_invoice = AsyncMock(return_value={"id": "inv-1"})
+    # Empty work-order list so discovery exercises the /profiles/me fallback.
+    list_wos = AsyncMock(return_value=[])
     get_profile = AsyncMock(return_value={"customers": [{"customer_id": "canonical-cust"}]})
     service.get_work_order = get_wo  # type: ignore[method-assign]
     service.create_invoice = create_invoice  # type: ignore[method-assign]
+    service.list_work_orders = list_wos  # type: ignore[method-assign]
     service.get_profile = get_profile  # type: ignore[method-assign]
 
     ctx = MagicMock()
@@ -1649,8 +1763,8 @@ async def test_get_work_order_tool_falls_back_when_customer_id_scope_rejected() 
 
     Same production failure mode as the invoice tool: the agent guesses a
     ``customer_id`` (a name, or a stale id from an earlier turn), the GET
-    answers 401 with no ``login_url``, and without the retry the agent
-    dead-ends and falls back to scanning the full work-order list.
+    answers 401, and without the retry the agent dead-ends and falls back
+    to scanning the full work-order list.
     """
     from backend.app.integrations.appfolio_vendor.work_orders import build_work_order_tools
 
@@ -1675,6 +1789,8 @@ async def test_get_work_order_tool_falls_back_when_customer_id_scope_rejected() 
     get_profile = AsyncMock(return_value={"customers": [{"customer_id": "canonical-cust"}]})
     get_details = AsyncMock(return_value={})
     service.get_work_order = get_wo  # type: ignore[method-assign]
+    # Empty work-order list so discovery exercises the /profiles/me fallback.
+    service.list_work_orders = AsyncMock(return_value=[])  # type: ignore[method-assign]
     service.get_profile = get_profile  # type: ignore[method-assign]
     service.get_work_order_details = get_details  # type: ignore[method-assign]
 
@@ -2058,6 +2174,60 @@ async def test_disconnected_data_factory_reports_not_connected_and_returns_no_to
         data_tools = await _appfolio_vendor_factory(ctx)
     data_names = {t.name for t in data_tools}
     assert ToolName.APPFOLIO_LIST_WORK_ORDERS not in data_names
+
+
+@pytest.mark.asyncio()
+async def test_factory_persists_discovered_customer_ids() -> None:
+    """Customer IDs discovered mid-turn are written back to the credential.
+
+    Regression test for #1503. Without persistence every turn repeats
+    discovery, so the write path keeps paying a round-trip and keeps
+    depending on discovery succeeding again next time.
+    """
+    from backend.app.agent.tools.registry import ToolContext
+    from backend.app.integrations.appfolio_vendor.factory import _appfolio_vendor_factory
+    from backend.app.models import User
+
+    cred = AppFolioCredential(
+        user_id="u1",
+        jwt="jwt-1",
+        fingerprint="fp-1",
+        customer_ids=[],
+        extra={},
+        refresh_token="refresh-1",
+    )
+    saved = AsyncMock()
+    captured: dict[str, Any] = {}
+
+    def _capture(_cred: AppFolioCredential, **kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return MagicMock()
+
+    ctx = ToolContext(user=User(id="u1", user_id="test"))
+    with (
+        patch(
+            "backend.app.integrations.appfolio_vendor.factory.load_credential",
+            new=AsyncMock(return_value=cred),
+        ),
+        patch("backend.app.integrations.appfolio_vendor.factory.save_credential", new=saved),
+        patch(
+            "backend.app.integrations.appfolio_vendor.factory.build_service",
+            side_effect=_capture,
+        ),
+    ):
+        await _appfolio_vendor_factory(ctx)
+        await captured["on_customer_ids_resolved"](["cust-9001"])
+
+    saved.assert_awaited_once()
+    assert saved.await_args is not None
+    kwargs = saved.await_args.kwargs
+    assert kwargs["customer_ids"] == ["cust-9001"]
+    assert kwargs["user_id"] == "u1"
+    # The JWT and refresh token come off the live credential, so a token
+    # refresh earlier in the same turn is not overwritten with stale values.
+    assert kwargs["jwt"] == "jwt-1"
+    assert kwargs["refresh_token"] == "refresh-1"
+    assert kwargs["fingerprint"] == "fp-1"
 
 
 @pytest.mark.asyncio()
