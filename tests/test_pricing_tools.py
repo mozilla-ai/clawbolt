@@ -430,8 +430,9 @@ class TestSupplierSearchTool:
 
         from backend.app.integrations.supplier_pricing.factory import _create_pricing_tools
 
-        # Drive the SerpApi backend directly by configuring no sidecars.
-        tools = _create_pricing_tools({}, mock_supplier, cache)
+        # Drive the SerpApi backend directly by configuring no sidecars. Fresh
+        # caches per tool set so one test's failures cannot suppress the next.
+        tools = _create_pricing_tools({}, mock_supplier, cache, SupplierCache())
         tool_fn = tools[0].function
         return tool_fn, mock_supplier, cache
 
@@ -497,6 +498,22 @@ class TestSupplierSearchTool:
         assert "timed out" in result.content.lower()
 
     @pytest.mark.asyncio
+    async def test_timeout_never_tells_the_model_to_reword(self) -> None:
+        """Regression for #1496.
+
+        The timeout branch used to answer "Try a simpler search term" with no
+        hint at all. A model that took the advice spent eight calls rewording
+        one query while every attempt sat through the full backend timeout. The
+        search term is never why a lookup times out, so the copy has to say so.
+        """
+        tool_fn, _, _ = self._make_tool(side_effect=httpx.TimeoutException("timeout"))
+        result = await tool_fn(query="test", zip_code="15213")
+
+        advice = f"{result.content} {result.hint}".lower()
+        assert "simpler search term" not in advice
+        assert "rewording will not help" in result.hint
+
+    @pytest.mark.asyncio
     async def test_401_error(self) -> None:
         exc = httpx.HTTPStatusError(
             "401",
@@ -529,6 +546,59 @@ class TestSupplierSearchTool:
 
         assert not result.is_error
         assert "No products found" in result.content
+
+    @pytest.mark.asyncio
+    async def test_repeated_failures_stop_reaching_the_backend(self) -> None:
+        """Regression for #1496.
+
+        Each query differs, exactly as it did in production: the model reworded
+        after every failure, so the positive cache (keyed on the query string)
+        never absorbed a single retry. One retry gets through, then the streak
+        suppresses the rest.
+        """
+        tool_fn, mock_supplier, _ = self._make_tool(side_effect=httpx.TimeoutException("timeout"))
+
+        for query in ("BR30 LED bulb", "BR30 LED flood bulb", "LED BR30 flood light bulb"):
+            result = await tool_fn(query=query, zip_code="15213")
+
+        assert mock_supplier.search_products.call_count == 2
+        assert result.is_error
+        assert "was not sent" in result.content
+        assert "Retrying and rewording will both fail" in result.hint
+
+    @pytest.mark.asyncio
+    async def test_an_answer_ends_the_failure_streak(self) -> None:
+        """A recovered supplier must be reachable again on the next query."""
+        product = ProductResult(
+            supplier="homedepot",
+            product_id="1",
+            name="Recovered Item",
+            price_dollars=1.0,
+            product_url="https://homedepot.com/p/1",
+        )
+        tool_fn, mock_supplier, _ = self._make_tool()
+        mock_supplier.search_products = AsyncMock(
+            side_effect=[httpx.TimeoutException("timeout"), [product], [product]]
+        )
+
+        await tool_fn(query="first", zip_code="15213")
+        await tool_fn(query="second", zip_code="15213")
+        result = await tool_fn(query="third", zip_code="15213")
+
+        assert mock_supplier.search_products.call_count == 3
+        assert not result.is_error
+        assert "Recovered Item" in result.content
+
+    @pytest.mark.asyncio
+    async def test_failure_streak_is_scoped_to_one_zip(self) -> None:
+        """A dead store lookup in one zip must not blind the tool everywhere."""
+        tool_fn, mock_supplier, _ = self._make_tool(side_effect=httpx.TimeoutException("timeout"))
+
+        await tool_fn(query="a", zip_code="15213")
+        await tool_fn(query="b", zip_code="15213")
+        await tool_fn(query="c", zip_code="30301")
+
+        assert mock_supplier.search_products.call_count == 3
 
 
 # ---------------------------------------------------------------------------

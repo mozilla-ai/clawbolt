@@ -34,9 +34,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Shared across all users; the sidecar client is stateless so only the cache
-# needs to be a singleton.
+# Shared across all users; the sidecar client is stateless so only the caches
+# need to be singletons.
 _cache = SupplierCache()
+
+# Consecutive failures per (supplier, zip), so a retailer that just went down
+# stops being asked. The positive cache cannot do this job: it is keyed on the
+# exact query string, so a model that rewords its search misses it every time
+# and each miss pays a full round trip through every backend.
+_OUTAGE_TTL_SECONDS = 90
+_outages = SupplierCache(maxsize=500, ttl_seconds=_OUTAGE_TTL_SECONDS)
+
+# Let one retry through before suppressing. The sidecar warms its browser lazily
+# and evicts it when idle, so a second attempt genuinely does often succeed, and
+# _BACKEND_RETRY_HINT tells the model to make it. Suppression starts at the point
+# where retrying has stopped being evidence-gathering and started being a storm.
+_OUTAGE_STREAK_BEFORE_SUPPRESSING = 2
+
+# Both failure modes are infrastructure, never the search term. Saying so is the
+# whole point of the hint: the timeout copy used to read "Try a simpler search
+# term", and a model that believed it spent eight calls rewording one query,
+# every attempt waiting out two stacked timeouts (issue #1496).
+_BACKEND_RETRY_HINT = (
+    "The failure is not caused by the search term, so rewording will not help. "
+    "One retry is worth it: the backend warms a browser session lazily and the "
+    "second attempt often succeeds. If it fails again, tell the user the lookup "
+    "is unavailable and offer the other retailer, which may still work."
+)
+
+_OUTAGE_HINT = (
+    "This retailer has failed repeatedly in the last minute, so no request was "
+    "sent. Retrying and rewording will both fail. Tell the user the lookup is "
+    "unavailable and offer the other retailer, which may still work."
+)
 
 
 class SupplierSearchParams(BaseModel):
@@ -162,6 +192,7 @@ def _create_pricing_tools(
     sidecars: dict[str, SidecarSupplier],
     fallback: HomeDepotSupplier | None,
     cache: SupplierCache,
+    outages: SupplierCache,
 ) -> list[Tool]:
     """Build the pricing tool list.
 
@@ -169,6 +200,11 @@ def _create_pricing_tools(
     tries the requested retailer's sidecar and falls through to ``fallback``
     (SerpApi) when it cannot answer, which only helps Home Depot: SerpApi has no
     Lowe's engine. Store lookup is Home Depot sidecar only.
+
+    ``outages`` counts consecutive search failures per (supplier, zip) so a
+    retailer that is already down is not asked again on every reworded query.
+    It is passed in rather than built here because the factory runs per tool
+    context, and a per-context counter would never see a streak.
     """
 
     async def _search_with_fallback(
@@ -188,11 +224,17 @@ def _create_pricing_tools(
         for index, (name, backend) in enumerate(chain):
             try:
                 return await backend.search_products(query, location, max_results=max_results)
-            except SupplierUnavailableError:
+            except SupplierUnavailableError as exc:
                 if index == len(chain) - 1:
                     raise
-                logger.info(
-                    "%s %s backend unavailable, trying %s", supplier, name, chain[index + 1][0]
+                # Warning, not info: this is the only line that says which
+                # backend failed and why, and the root logger sits at warning.
+                logger.warning(
+                    "%s %s backend unavailable (%s), trying %s",
+                    supplier,
+                    name,
+                    exc,
+                    chain[index + 1][0],
                 )
         raise SupplierUnavailableError(f"No backend answered for {supplier}")
 
@@ -230,29 +272,47 @@ def _create_pricing_tools(
                 content=_format_results(cached, query, resolved_zip, label, localized=localized)
             )
 
+        outage_key = f"{supplier}:{cache_scope}"
+        failures: int = await outages.get(outage_key) or 0
+        if failures >= _OUTAGE_STREAK_BEFORE_SUPPRESSING:
+            logger.warning(
+                "%s search suppressed after %d consecutive failures: query=%r zip=%s",
+                label,
+                failures,
+                query,
+                resolved_zip,
+            )
+            return ToolResult(
+                content=f"{label} pricing is still down, so this lookup was not sent.",
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+                hint=_OUTAGE_HINT,
+            )
+
         try:
             location = Location(zip_code=resolved_zip, store_id=resolved_store)
             results = await _search_with_fallback(supplier, query, location, 5)
-        except SupplierUnavailableError:
-            logger.warning("%s refused the search: query=%r", label, query)
+        except SupplierUnavailableError as exc:
+            await outages.set(outage_key, failures + 1)
+            logger.warning("%s refused the search: query=%r reason=%s", label, query, exc)
             return ToolResult(
                 content=f"Couldn't reach {label} to look up pricing.",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
-                hint=(
-                    "The failure is not caused by the search term, so rewording will "
-                    "not help. One retry is worth it: the backend warms a browser "
-                    "session lazily and the second attempt often succeeds. If it fails "
-                    "again, tell the user the lookup is unavailable and offer the other "
-                    "retailer, which may still work."
-                ),
+                hint=_BACKEND_RETRY_HINT,
             )
         except httpx.TimeoutException:
+            # Only the SerpApi fallback reaches this: the sidecar client maps its
+            # own timeouts to SupplierUnavailableError so the chain keeps falling
+            # through. Either way the term is not what timed out, so the hint has
+            # to match the branch above rather than send the model off rewording.
+            await outages.set(outage_key, failures + 1)
             logger.warning("%s search timed out: query=%r zip=%s", label, query, resolved_zip)
             return ToolResult(
-                content="The price lookup timed out. Try a simpler search term.",
+                content=f"{label} pricing timed out.",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
+                hint=_BACKEND_RETRY_HINT,
             )
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
@@ -284,6 +344,9 @@ def _create_pricing_tools(
             )
 
         await cache.set(cache_key, results)
+        # The streak counts consecutive failures, so an answer ends it.
+        if failures:
+            await outages.set(outage_key, 0)
         return ToolResult(
             content=_format_results(results, query, resolved_zip, label, localized=localized)
         )
@@ -403,7 +466,7 @@ def _pricing_factory(ctx: ToolContext) -> list[Tool]:
         sorted(sidecars) or "none",
         fallback is not None,
     )
-    return _create_pricing_tools(sidecars, fallback, _cache)
+    return _create_pricing_tools(sidecars, fallback, _cache, _outages)
 
 
 async def _pricing_auth_check(ctx: ToolContext) -> str | None:
