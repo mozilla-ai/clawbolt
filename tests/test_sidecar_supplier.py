@@ -191,6 +191,31 @@ class TestSidecarClient:
             await supplier.search_products("drill", Location(zip_code="30301"))
 
     @pytest.mark.asyncio
+    async def test_timeout_names_itself_in_the_error(self) -> None:
+        """Regression for #1496.
+
+        `httpx.TimeoutException` subclasses `HTTPError`, so the catch-all clause
+        used to swallow it and report a timed-out sidecar as "unreachable". The
+        two mean different things operationally and the message has to keep them
+        apart. It stays a SupplierUnavailableError either way, so the caller
+        still falls through to the next backend.
+        """
+        client = MagicMock()
+        client.get = AsyncMock(side_effect=httpx.ReadTimeout("too slow"))
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        supplier = SidecarSupplier(SIDECAR_URL, timeout_seconds=35.0)
+
+        with (
+            patch(
+                "backend.app.integrations.supplier_pricing.sidecar_client.httpx.AsyncClient",
+                return_value=client,
+            ),
+            pytest.raises(SupplierUnavailableError, match="timed out after 35s"),
+        ):
+            await supplier.search_products("drill", Location(zip_code="30301"))
+
+    @pytest.mark.asyncio
     async def test_error_status_raises_blocked(self) -> None:
         client = _client_returning(_response(502, {"detail": "browser died"}))
         supplier = SidecarSupplier(SIDECAR_URL)
@@ -236,7 +261,14 @@ class TestBackendChain:
     @staticmethod
     def _tools(sidecar: object, serpapi: object) -> dict[str, Callable[..., Awaitable[ToolResult]]]:
         sidecars = {"home_depot": sidecar} if sidecar is not None else {}
-        tools = _create_pricing_tools(sidecars, serpapi, SupplierCache())  # type: ignore[arg-type]
+        # Fresh caches per tool set: a shared outage counter would let one test's
+        # failures suppress the next test's search.
+        tools = _create_pricing_tools(
+            sidecars,  # type: ignore[arg-type]
+            serpapi,  # type: ignore[arg-type]
+            SupplierCache(),
+            SupplierCache(),
+        )
         return {t.name: t.function for t in tools}
 
     @classmethod
@@ -345,7 +377,12 @@ class TestLowesRouting:
 
     @staticmethod
     def _tools(sidecars: dict, serpapi: object) -> dict[str, Callable[..., Awaitable[ToolResult]]]:
-        tools = _create_pricing_tools(sidecars, serpapi, SupplierCache())  # type: ignore[arg-type]
+        tools = _create_pricing_tools(
+            sidecars,
+            serpapi,  # type: ignore[arg-type]
+            SupplierCache(),
+            SupplierCache(),
+        )
         return {t.name: t.function for t in tools}
 
     @staticmethod

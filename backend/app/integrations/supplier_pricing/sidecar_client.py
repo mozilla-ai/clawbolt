@@ -89,6 +89,20 @@ class SidecarSupplier:
             raise SupplierUnavailableError(
                 f"{self.display_name} sidecar returned {exc.response.status_code} for {path}"
             ) from exc
+        except httpx.TimeoutException as exc:
+            # A timeout is still an unavailable backend, so the caller keeps
+            # falling through, but it has to name itself on the way out.
+            # `httpx.TimeoutException` subclasses `HTTPError`, so without this
+            # clause the generic handler below swallowed it and every sidecar
+            # timeout read as "unreachable" in the logs. A sidecar that runs out
+            # the clock is warming a browser or wedged; one that refuses the
+            # connection is down. Those are different pages to go look at.
+            logger.warning(
+                "%s sidecar timed out after %.0fs for %s", self.display_name, self._timeout, path
+            )
+            raise SupplierUnavailableError(
+                f"{self.display_name} sidecar timed out after {self._timeout:.0f}s for {path}"
+            ) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise SupplierUnavailableError(
                 f"{self.display_name} sidecar is unreachable: {exc}"
