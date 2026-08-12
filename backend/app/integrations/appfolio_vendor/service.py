@@ -119,11 +119,13 @@ class AuthExpiredError(AppFolioError):
 class AuthScopeError(AppFolioError):
     """The credential is live but AppFolio rejected this request with a 401.
 
-    Raised when the session is provably good (a 2xx already seen on this
-    credential, or a refresh the OAuth endpoint honoured) and a 401 comes
-    back anyway. Usually the request carries a ``customer_id`` the JWT is
-    not authorized for, but some routes reject the bearer JWT outright no
-    matter which customer is named. Either way reconnecting does not help.
+    Two triggers, both meaning reconnecting will not help:
+
+    * A 401 whose body has no ``login_url``. AppFolio accepted the
+      credential and refused the request's customer scope (#1288).
+    * A 401 that does carry a ``login_url`` on a credential already
+      proven live by a 2xx or an honoured refresh. The route will not
+      take this credential no matter which customer is named (#1503).
 
     Tools that synthesize a customer_id (e.g. by guessing from a search
     response) catch this to retry with the canonical value before
@@ -455,29 +457,45 @@ def normalize_work_order_list(payload: Any) -> list[dict[str, Any]]:
 
 
 def _collect_customer_ids(items: list[dict[str, Any]]) -> list[str]:
-    """Harvest unique customer IDs from work-order-shaped dicts.
+    """Harvest unique customer IDs from the scalar ``customer_id`` field.
 
-    Accepts both spellings AppFolio uses: the maintenance work-order
-    schema carries a scalar ``customer_id``, the universal search schema
-    a ``customer_ids`` list. Order is preserved so the first work order's
-    customer stays the primary one.
+    Order is preserved so the first work order's customer stays the
+    primary one.
+
+    Deliberately reads only the scalar spelling, which is what both
+    discovery sources use: the maintenance work-order list and the
+    ``customers`` array on ``/profiles/me``. Universal-search hits are
+    NOT a valid input here. Their ids have burned us twice: the scalar
+    ``customer_id`` on a search hit carried a value the write endpoints
+    reject (prod saw ``1`` from search against ``1963538`` from the list
+    endpoint, #1288), and the usable id lives in a separate
+    ``customer_ids`` list (#1445). Accepting either spelling here would
+    quietly re-open #1288 the first time a payload carried both.
     """
     ids: list[str] = []
     for item in items:
-        candidates: list[Any] = []
-        scalar = item.get("customer_id") or item.get("customerId")
-        if scalar is not None:
-            candidates.append(scalar)
-        plural = item.get("customer_ids") or item.get("customerIds")
-        if isinstance(plural, list):
-            candidates.extend(plural)
-        for candidate in candidates:
-            if candidate is None:
-                continue
-            text = str(candidate)
-            if text and text not in ids:
-                ids.append(text)
+        value = item.get("customer_id") or item.get("customerId")
+        if value is None:
+            continue
+        text = str(value)
+        if text and text not in ids:
+            ids.append(text)
     return ids
+
+
+def _extract_login_url(resp: httpx.Response) -> str:
+    """Return the ``login_url`` from a 401 body, or ``""`` when absent.
+
+    Its presence separates "AppFolio would not accept this credential
+    here" from "AppFolio accepted the credential and refused the
+    customer scope" (#1288). It does not, on its own, mean the session
+    expired; see the classification in :meth:`_request`.
+    """
+    with contextlib.suppress(Exception):
+        payload = resp.json()
+        if isinstance(payload, dict):
+            return str(payload.get("login_url") or "")
+    return ""
 
 
 class AppFolioVendorService:
@@ -574,6 +592,26 @@ class AppFolioVendorService:
             ) from exc
 
         if resp.status_code == 401:
+            # A 401 with no ``login_url`` means AppFolio accepted the
+            # credential and refused the request's customer scope (#1288,
+            # observed in prod when the agent guesses a customer_id). The
+            # credential is fine, so do not burn the one-shot refresh on it
+            # and never report it as an expired session: the invoice and
+            # work-order tools catch AuthScopeError here and retry with the
+            # canonical customer.
+            if not _extract_login_url(resp):
+                logger.warning(
+                    "AppFolio %s %s rejected the request scope (401, no login_url)"
+                    " | params=%r body=%r",
+                    method,
+                    path,
+                    params,
+                    body_for_log,
+                )
+                raise AuthScopeError(
+                    f"AppFolio {method} {path} rejected the request scope (401);"
+                    " the JWT is valid but not authorized for this customer."
+                )
             # One-shot refresh-and-retry when we have a refresh_token on file.
             if self._credential.refresh_token and not self._refreshed_once:
                 self._refreshed_once = True
@@ -618,9 +656,13 @@ class AppFolioVendorService:
                             json=json_body,
                         )
             if resp.status_code == 401:
-                login_url = ""
-                with contextlib.suppress(Exception):
-                    login_url = resp.json().get("login_url") or ""
+                login_url = _extract_login_url(resp)
+                if not login_url:
+                    # The refresh swapped an expired-JWT 401 for a scope 401.
+                    raise AuthScopeError(
+                        f"AppFolio {method} {path} rejected the request scope (401);"
+                        " the JWT is valid but not authorized for this customer."
+                    )
                 logger.warning(
                     "AppFolio %s %s rejected the JWT (401) | login_url=%r"
                     " | params=%r body=%r response=%s",
@@ -631,26 +673,24 @@ class AppFolioVendorService:
                     body_for_log,
                     resp.text[:_LOG_BODY_PREVIEW_LIMIT],
                 )
-                # AppFolio returns 401 both when the credential is dead and
-                # when a live credential is not accepted on this particular
-                # route. ``login_url`` does NOT separate them: every
-                # unauthenticated 401 from vendor.appf.io carries the same
-                # ``login_url`` body, including on routes that reject a JWT
-                # the data APIs accept. Classifying on it told users their
-                # session had expired while other calls in the same turn were
-                # returning 200 (#1503).
+                # A ``login_url`` means AppFolio did not accept the credential
+                # on this route, which is NOT the same as the credential being
+                # dead: every unauthenticated 401 from vendor.appf.io carries
+                # one, including from routes that reject a JWT the data APIs
+                # accept. Treating it as proof of expiry told users their
+                # session had expired while other calls on the same credential
+                # were returning 200 (#1503).
                 #
-                # Decide on evidence instead. A 2xx already seen on this
-                # credential, or a refresh the OAuth endpoint honoured, proves
-                # the credential is live, so this 401 is about the request.
-                # With no such evidence we cannot tell, and reconnecting is
-                # the user's only available recovery, so keep the expiry
-                # verdict as the default.
+                # A 2xx already seen on this credential, or a refresh the OAuth
+                # endpoint honoured, proves the credential is live, so this 401
+                # is about the route. With no such evidence we cannot tell, and
+                # reconnecting is the user's only available recovery, so keep
+                # the expiry verdict as the default.
                 if self._saw_success or self._refresh_succeeded:
                     raise AuthScopeError(
                         f"AppFolio {method} {path} rejected the request (401)"
-                        " although the session is valid; the route or the"
-                        " customer_id is not authorized for this credential."
+                        " although the session is valid; this route does not"
+                        " accept the credential."
                     )
                 raise AuthExpiredError(login_url=login_url)
         if resp.status_code >= 400:

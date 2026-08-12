@@ -379,6 +379,71 @@ async def test_service_get_returns_json() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_service_401_without_login_url_raises_auth_scope() -> None:
+    """401 without a ``login_url`` body means the request scope is wrong.
+
+    Regression test for #1288. The JWT itself is fine; the request's
+    ``customer_id`` (in the path or the body) is not in this credential's
+    authorized set. Reconnecting will not help, so we must NOT raise
+    :class:`AuthExpiredError` and tell the user to log in again, and the
+    invoice and work-order tools depend on catching the scope variant to
+    retry with the canonical customer.
+    """
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    response = _mock_response(json_data={}, status_code=401)
+    with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
+        cls.return_value = _patch_async_client("request", response)
+        with pytest.raises(AuthScopeError) as exc_info:
+            await service.get("/anything")
+    # AuthScopeError must NOT be a misclassified AuthExpiredError; the
+    # tool layer checks isinstance() and would tell the user to
+    # reconnect (the trust-eroding bug #1288 fixed).
+    assert not isinstance(exc_info.value, AuthExpiredError)
+
+
+@pytest.mark.asyncio()
+async def test_service_scope_401_does_not_spend_the_one_shot_refresh() -> None:
+    """A scope 401 must not burn the refresh: the credential is already good.
+
+    Guards the #1288 path against the evidence-based classification added
+    in #1503. Refreshing here would be wasted, and a refresh that failed
+    for its own reasons could turn a scope error back into a bogus
+    "session expired".
+    """
+    cred = _credential()
+    cred.refresh_token = "refresh-1"
+    service = AppFolioVendorService(cred, api_base="https://api.test")
+    response = _mock_response(json_data={}, status_code=401)
+    refresh = AsyncMock(side_effect=AuthExpiredError())
+    with (
+        patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls,
+        patch("backend.app.integrations.appfolio_vendor.service.refresh_access_token", refresh),
+    ):
+        cls.return_value = _patch_async_client("request", response)
+        with pytest.raises(AuthScopeError):
+            await service.get("/anything")
+    refresh.assert_not_awaited()
+
+
+def test_collect_customer_ids_ignores_the_search_hit_plural_field() -> None:
+    """Discovery reads the scalar ``customer_id`` only.
+
+    Guards #1288: universal-search hits carry a scalar ``customer_id``
+    the write endpoints reject alongside a separate ``customer_ids``
+    list (#1445). Accepting either spelling in one helper would let a
+    payload carrying both hand back the wrong id.
+    """
+    from backend.app.integrations.appfolio_vendor.service import _collect_customer_ids
+
+    assert _collect_customer_ids([{"customer_ids": ["1963538"]}]) == []
+    assert _collect_customer_ids([{"customer_id": "1963538"}]) == ["1963538"]
+    # Order preserved, duplicates collapsed.
+    assert _collect_customer_ids(
+        [{"customer_id": 42}, {"customer_id": 42}, {"customer_id": 7}]
+    ) == ["42", "7"]
+
+
+@pytest.mark.asyncio()
 async def test_service_401_with_no_evidence_raises_auth_expired() -> None:
     """A 401 we cannot classify defaults to expired, and relays login_url.
 
@@ -1077,7 +1142,12 @@ async def test_service_request_refreshes_on_401_and_retries() -> None:
     refreshed_resp = _mock_response(
         json_data={"access_token": "new-jwt", "refresh_token": "rt-2", "expires_in": 7200}
     )
-    api_resp_401 = _mock_response(json_data={"login_url": ""}, status_code=401)
+    # A rejected-credential 401 always carries a real login_url in prod; a
+    # 401 with none means the credential was accepted and the customer
+    # scope was refused (#1288), which deliberately skips the refresh.
+    api_resp_401 = _mock_response(
+        json_data={"login_url": "https://passport.appf.io/authorize"}, status_code=401
+    )
     api_resp_ok = _mock_response(json_data={"ok": True})
 
     persisted: list[tuple[str, str]] = []
