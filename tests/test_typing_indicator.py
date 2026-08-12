@@ -1,5 +1,6 @@
 """Tests for typing indicator integration with the agent loop, heartbeat, and ingestion."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -231,6 +232,205 @@ async def test_agent_sends_one_typing_indicator_per_tool_round(
     ]
     # 1 before initial LLM + 1 before the tool round + 1 before second LLM = 3
     assert len(typing_calls) == 3
+
+
+def _typing_calls(mock_publish: AsyncMock) -> list[OutboundMessage]:
+    """Extract the typing-indicator messages published to the bus."""
+    return [
+        c.args[0]
+        for c in mock_publish.call_args_list
+        if c.args and isinstance(c.args[0], OutboundMessage) and c.args[0].is_typing_indicator
+    ]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
+@patch("backend.app.agent.core.amessages")
+async def test_agent_refreshes_typing_indicator_during_slow_tool_call(
+    mock_amessages: object,
+    test_user: User,
+) -> None:
+    """A slow tool round should keep refreshing the typing indicator.
+
+    Regression test: indicators used to fire only *before* the tool round, so a
+    tool that ran for minutes (a supplier price lookup) left the user's typing
+    bubble to expire with no further signal for the rest of the wait. The user
+    reported the agent looked broken during exactly the turns that were slowest.
+    """
+
+    async def slow_tool_fn(**kwargs: object) -> ToolResult:
+        # ~10 keepalive intervals, so the refresh count has wide headroom and
+        # the assertion below does not race the event loop.
+        await asyncio.sleep(0.1)
+        return ToolResult(content="tool result")
+
+    tool = Tool(
+        name="slow_tool",
+        description="A slow tool",
+        function=slow_tool_fn,
+        params_model=_InputParams,
+    )
+
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(
+            [{"name": "slow_tool", "arguments": json.dumps({"input": "test"})}],
+            content=None,
+        ),
+        make_text_response("Done!"),
+    ]
+
+    mock_publish = AsyncMock()
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=mock_publish,
+        chat_id="+15551234567",
+    )
+    agent.register_tools([tool])
+    response = await agent.process_message("Look up a price")
+
+    assert response.reply_text == "Done!"
+
+    # Without the keepalive this is exactly 3 (initial LLM, tool round, second
+    # LLM). The refreshes during the slow tool push it well past that.
+    calls = _typing_calls(mock_publish)
+    assert len(calls) >= 5, f"expected keepalive refreshes during the slow tool, got {len(calls)}"
+    assert all(c.chat_id == "+15551234567" for c in calls)
+    assert all(c.channel == "bluebubbles" for c in calls)
+
+    # The keepalive must not outlive the turn, or the user is left with a
+    # phantom bubble after the reply has already landed.
+    settled = len(_typing_calls(mock_publish))
+    await asyncio.sleep(0.05)
+    assert len(_typing_calls(mock_publish)) == settled, "keepalive outlived the agent turn"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
+@patch("backend.app.agent.core.amessages")
+async def test_typing_keepalive_stops_when_tool_raises(
+    mock_amessages: object,
+    test_user: User,
+) -> None:
+    """A tool that raises must still cancel the keepalive on the way out."""
+
+    async def exploding_tool_fn(**kwargs: object) -> ToolResult:
+        await asyncio.sleep(0.03)
+        msg = "tool exploded"
+        raise RuntimeError(msg)
+
+    tool = Tool(
+        name="exploding_tool",
+        description="A tool that raises",
+        function=exploding_tool_fn,
+        params_model=_InputParams,
+    )
+
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(
+            [{"name": "exploding_tool", "arguments": json.dumps({"input": "test"})}],
+            content=None,
+        ),
+        make_text_response("Recovered."),
+    ]
+
+    mock_publish = AsyncMock()
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=mock_publish,
+        chat_id="+15551234567",
+    )
+    agent.register_tools([tool])
+    await agent.process_message("Do the thing")
+
+    settled = len(_typing_calls(mock_publish))
+    await asyncio.sleep(0.05)
+    assert len(_typing_calls(mock_publish)) == settled, "keepalive survived a raising tool"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
+@patch("backend.app.agent.core.amessages")
+async def test_typing_keepalive_stops_when_the_wrapped_await_raises(
+    mock_amessages: object,
+    test_user: User,
+) -> None:
+    """An exception out of the covered await must still cancel the keepalive.
+
+    ``_execute_single_tool`` converts every tool exception into an error result,
+    so a raising tool exits the keepalive by the normal path. An exception from
+    the LLM call is the one that unwinds through the context manager, which is
+    the path that would strand a phantom bubble if the ``finally`` were missing.
+    """
+
+    async def slow_then_raise(**kwargs: object) -> object:
+        await asyncio.sleep(0.05)
+        msg = "provider exploded"
+        raise RuntimeError(msg)
+
+    mock_amessages.side_effect = slow_then_raise  # type: ignore[union-attr]
+
+    mock_publish = AsyncMock()
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=mock_publish,
+        chat_id="+15551234567",
+    )
+    with pytest.raises(RuntimeError, match="provider exploded"):
+        await agent.process_message("Do the thing")
+
+    # Refreshes happened while the call was in flight, and then stopped.
+    assert len(_typing_calls(mock_publish)) >= 2
+    settled = len(_typing_calls(mock_publish))
+    await asyncio.sleep(0.05)
+    assert len(_typing_calls(mock_publish)) == settled, "keepalive survived a raising LLM call"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
+@patch("backend.app.agent.core.amessages")
+async def test_typing_keepalive_noop_without_chat_id(
+    mock_amessages: object,
+    test_user: User,
+) -> None:
+    """With no chat_id there is nowhere to send, so the keepalive stays idle."""
+
+    async def slow_tool_fn(**kwargs: object) -> ToolResult:
+        await asyncio.sleep(0.05)
+        return ToolResult(content="ok")
+
+    tool = Tool(
+        name="slow_tool",
+        description="A slow tool",
+        function=slow_tool_fn,
+        params_model=_InputParams,
+    )
+
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(
+            [{"name": "slow_tool", "arguments": json.dumps({"input": "test"})}],
+            content=None,
+        ),
+        make_text_response("Done!"),
+    ]
+
+    mock_publish = AsyncMock()
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="telegram",
+        publish_outbound=mock_publish,
+        chat_id=None,
+    )
+    agent.register_tools([tool])
+    await agent.process_message("Do something")
+
+    assert _typing_calls(mock_publish) == []
 
 
 # ---------------------------------------------------------------------------
