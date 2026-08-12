@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.appfolio_vendor.concurrency import work_order_concurrency_key
 from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
 from backend.app.integrations.appfolio_vendor.media_resolver import resolve_staged_files
 from backend.app.integrations.appfolio_vendor.params import (
@@ -399,6 +400,7 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
             ),
             function=appfolio_create_invoice,
             params_model=AppFolioCreateInvoiceParams,
+            concurrency_group=work_order_concurrency_key,
             usage_hint=(
                 "Confirm each line item's description, quantity, and amount"
                 " with the user before submitting; this is a billing action."
@@ -415,6 +417,7 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
             ),
             function=appfolio_upload_invoice_pdf,
             params_model=AppFolioUploadInvoicePdfParams,
+            concurrency_group=work_order_concurrency_key,
             usage_hint=(
                 "Use when the user has already prepared an invoice document."
                 " For line-item entry, use appfolio_create_invoice instead."

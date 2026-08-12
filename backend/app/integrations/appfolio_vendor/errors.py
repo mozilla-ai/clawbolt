@@ -137,10 +137,15 @@ def service_error_to_tool_result(method_label: str, exc: BaseException) -> ToolR
             hint=_AUTH_SCOPE_HINT,
         )
     if isinstance(exc, AppFolioError):
+        # A 404 is not an outage. SERVICE tells the model an external
+        # service is temporarily unavailable and to try a different
+        # approach; for a missing work order or note the useful recovery
+        # is to look the id up, which is what NOT_FOUND steers toward.
+        kind = ToolErrorKind.NOT_FOUND if exc.status_code == 404 else ToolErrorKind.SERVICE
         return ToolResult(
             content=f"AppFolio error while {method_label}: {exc}",
             is_error=True,
-            error_kind=ToolErrorKind.SERVICE,
+            error_kind=kind,
         )
     logger.exception("Unexpected AppFolio failure %s", method_label)
     return ToolResult(

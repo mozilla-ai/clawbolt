@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.appfolio_vendor.concurrency import work_order_concurrency_key
 from backend.app.integrations.appfolio_vendor.errors import (
     log_unexpected_response_shape,
     service_error_to_tool_result,
@@ -49,6 +50,18 @@ def _normalize_notes(payload: Any) -> list[dict[str, Any]]:
 
 def build_note_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[Tool]:
     """Return the AppFolio work-order note tools."""
+
+    # Note ids created during this agent run, keyed by work order. The tool
+    # list is rebuilt per inbound message, so this is scoped to one user
+    # turn (spanning every LLM round of that turn) and never leaks between
+    # messages or users.
+    #
+    # appfolio_update_note consults it to refuse a note_id the model
+    # predicted rather than read back from an appfolio_add_note result.
+    # Serializing the two writes fixes the ordering, but a predicted id
+    # that lands on a different real note overwrites that note's body,
+    # which the PM sees and the vendor does not.
+    added_note_ids: dict[str, set[str]] = {}
 
     async def appfolio_list_notes(work_order_id: str) -> ToolResult:
         try:
@@ -100,6 +113,8 @@ def build_note_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[T
         note_id = ""
         if isinstance(result, dict):
             note_id = str(result.get("id") or result.get("note", {}).get("id") or "")
+        if note_id:
+            added_note_ids.setdefault(work_order_id, set()).add(note_id)
         photo_count = len(files)
         photo_phrase = f" with {photo_count} photo(s)" if photo_count else ""
         return ToolResult(
@@ -123,6 +138,30 @@ def build_note_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[T
         if not text:
             return ToolResult(
                 content="Note body cannot be empty.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        # When this turn added notes to this work order, the only ids the
+        # model can legitimately edit are the ones add_note handed back.
+        # Anything else is a prediction. Only enforced when we actually
+        # captured an id: AppFolio does not always return one, and an
+        # empty set must not block a legitimate edit.
+        turn_added = added_note_ids.get(work_order_id)
+        if turn_added and note_id.strip() not in turn_added:
+            known = ", ".join(sorted(turn_added))
+            logger.warning(
+                "appfolio_update_note_unverified_id work_order=%s requested=%s added=%s",
+                work_order_id,
+                note_id,
+                known,
+            )
+            return ToolResult(
+                content=(
+                    f"Refusing to edit note {note_id} on work order {work_order_id}: "
+                    f"this turn added note {known}, and {note_id} is not among them. "
+                    "Edit one of the ids returned by appfolio_add_note, or list the "
+                    "notes with appfolio_list_notes to find the right one."
+                ),
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
@@ -159,6 +198,7 @@ def build_note_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[T
             description=("Add a note (text + optional photos) to an AppFolio work order."),
             function=appfolio_add_note,
             params_model=AppFolioAddNoteParams,
+            concurrency_group=work_order_concurrency_key,
             usage_hint=(
                 "Pass photos by their original_url from the conversation or by"
                 " media handle from analyze_photo. Notes are visible to the PM."
@@ -178,9 +218,13 @@ def build_note_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[T
         ),
         Tool(
             name=ToolName.APPFOLIO_UPDATE_NOTE,
-            description="Edit an existing AppFolio work-order note.",
+            description=(
+                "Edit an existing AppFolio work-order note. Pass the note_id returned"
+                " by appfolio_add_note or appfolio_list_notes; never predict one."
+            ),
             function=appfolio_update_note,
             params_model=AppFolioUpdateNoteParams,
+            concurrency_group=work_order_concurrency_key,
             usage_hint="Only use when the user wants to fix the text or attach more photos.",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,

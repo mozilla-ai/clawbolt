@@ -2341,3 +2341,251 @@ def test_summarize_response_for_log_redacts_business_and_freetext_pii() -> None:
         "description",
     ):
         assert out[key] == "<redacted>", key
+
+
+# ---------------------------------------------------------------------------
+# Write-tool serialization and predicted-id guards.
+#
+# The agent runs every approved call from one model turn concurrently. Every
+# AppFolio write targets a work order, so two writes emitted together against
+# the same work order raced: status vs undo-status left a nondeterministic
+# final status, and update_note reached AppFolio before the add_note whose id
+# it was editing had landed.
+# ---------------------------------------------------------------------------
+
+
+def _write_tool_ctx() -> Any:
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+    return ctx
+
+
+def _all_appfolio_tools() -> list[Any]:
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+    from backend.app.integrations.appfolio_vendor.work_order_writes import (
+        build_work_order_write_tools,
+    )
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    ctx = _write_tool_ctx()
+    return [
+        *build_work_order_write_tools(service),
+        *build_note_tools(service, ctx),
+        *build_invoice_tools(service, ctx),
+    ]
+
+
+_WRITE_TOOL_NAMES = {
+    "appfolio_update_work_order_status",
+    "appfolio_undo_work_order_status",
+    "appfolio_add_note",
+    "appfolio_update_note",
+    "appfolio_create_invoice",
+    "appfolio_upload_invoice_pdf",
+}
+
+
+def test_appfolio_write_tools_declare_a_concurrency_group() -> None:
+    """Every work-order write must serialize against the others."""
+    tools = {t.name: t for t in _all_appfolio_tools()}
+    missing = [name for name in _WRITE_TOOL_NAMES if tools[name].concurrency_group is None]
+    assert not missing, f"AppFolio write tools missing concurrency_group: {missing}"
+
+
+def test_appfolio_read_tools_have_no_concurrency_group() -> None:
+    """Reads must stay parallelizable."""
+    tools = {t.name: t for t in _all_appfolio_tools()}
+    assert tools["appfolio_list_notes"].concurrency_group is None
+
+
+def test_appfolio_write_tools_serialize_per_work_order() -> None:
+    """Same work order shares a key; different work orders do not."""
+    tools = {t.name: t for t in _all_appfolio_tools()}
+    status = tools["appfolio_update_work_order_status"].concurrency_group
+    undo = tools["appfolio_undo_work_order_status"].concurrency_group
+    note = tools["appfolio_add_note"].concurrency_group
+
+    same_a = status({"work_order_id": "wo-1", "status_code": 3})
+    same_b = undo({"work_order_id": "wo-1", "previous_status": "2"})
+    same_c = note({"work_order_id": "wo-1", "body": "hi", "media_refs": []})
+    other = status({"work_order_id": "wo-2", "status_code": 3})
+
+    assert same_a == same_b == same_c, "writes to one work order must share a key"
+    assert same_a != other, "writes to different work orders must stay parallel"
+
+
+def test_appfolio_concurrency_key_is_none_without_work_order_id() -> None:
+    """An id-less call stays unserialized rather than joining a catch-all bucket."""
+    from backend.app.integrations.appfolio_vendor.concurrency import (
+        work_order_concurrency_key,
+    )
+
+    assert work_order_concurrency_key({}) is None
+    assert work_order_concurrency_key({"work_order_id": ""}) is None
+    assert work_order_concurrency_key({"work_order_id": "  "}) is None
+    assert work_order_concurrency_key({"work_order_id": "wo-1"}) == "appfolio_work_order:wo-1"
+
+
+@pytest.mark.asyncio()
+async def test_update_note_accepts_id_returned_by_add_note() -> None:
+    """The normal add-then-edit flow must still work."""
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    update_mock = AsyncMock(return_value={})
+    service.add_work_order_note = AsyncMock(return_value={"id": "note-77"})  # type: ignore[method-assign]
+    service.update_work_order_note = update_mock  # type: ignore[method-assign]
+
+    tools = {t.name: t for t in build_note_tools(service, _write_tool_ctx())}
+    await tools["appfolio_add_note"].function(work_order_id="wo-1", body="on site", media_refs=[])
+    result = await tools["appfolio_update_note"].function(
+        work_order_id="wo-1", note_id="note-77", body="on site, fixed", media_refs=[]
+    )
+
+    assert result.is_error is False
+    update_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio()
+async def test_update_note_refuses_predicted_id_after_add_in_same_turn() -> None:
+    """A predicted note id would overwrite a different real note's body."""
+    from backend.app.agent.tools.base import ToolErrorKind
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    update_mock = AsyncMock(return_value={})
+    service.add_work_order_note = AsyncMock(return_value={"id": "note-77"})  # type: ignore[method-assign]
+    service.update_work_order_note = update_mock  # type: ignore[method-assign]
+
+    tools = {t.name: t for t in build_note_tools(service, _write_tool_ctx())}
+    await tools["appfolio_add_note"].function(work_order_id="wo-1", body="on site", media_refs=[])
+    result = await tools["appfolio_update_note"].function(
+        work_order_id="wo-1", note_id="note-78", body="oops", media_refs=[]
+    )
+
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "note-77" in result.content
+    update_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio()
+async def test_update_note_guard_is_scoped_per_work_order() -> None:
+    """Adding a note on one work order must not restrict edits on another."""
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    service.add_work_order_note = AsyncMock(return_value={"id": "note-77"})  # type: ignore[method-assign]
+    service.update_work_order_note = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    tools = {t.name: t for t in build_note_tools(service, _write_tool_ctx())}
+    await tools["appfolio_add_note"].function(work_order_id="wo-1", body="on site", media_refs=[])
+    result = await tools["appfolio_update_note"].function(
+        work_order_id="wo-2", note_id="note-5", body="edit", media_refs=[]
+    )
+
+    assert result.is_error is False
+
+
+@pytest.mark.asyncio()
+async def test_update_note_allows_any_id_when_no_note_added_this_turn() -> None:
+    """Editing a pre-existing note stays unrestricted."""
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    service.update_work_order_note = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    tools = {t.name: t for t in build_note_tools(service, _write_tool_ctx())}
+    result = await tools["appfolio_update_note"].function(
+        work_order_id="wo-1", note_id="note-900", body="edit", media_refs=[]
+    )
+
+    assert result.is_error is False
+
+
+@pytest.mark.asyncio()
+async def test_update_note_guard_inert_when_appfolio_returns_no_note_id() -> None:
+    """AppFolio does not always echo an id; an empty set must not block edits."""
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    service.add_work_order_note = AsyncMock(return_value={"ok": True})  # type: ignore[method-assign]
+    service.update_work_order_note = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    tools = {t.name: t for t in build_note_tools(service, _write_tool_ctx())}
+    await tools["appfolio_add_note"].function(work_order_id="wo-1", body="on site", media_refs=[])
+    result = await tools["appfolio_update_note"].function(
+        work_order_id="wo-1", note_id="note-3", body="edit", media_refs=[]
+    )
+
+    assert result.is_error is False
+
+
+@pytest.mark.asyncio()
+async def test_update_note_guard_does_not_leak_between_tool_builds() -> None:
+    """The tool list is rebuilt per inbound message, so the guard must reset."""
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    service.add_work_order_note = AsyncMock(return_value={"id": "note-77"})  # type: ignore[method-assign]
+    service.update_work_order_note = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    first = {t.name: t for t in build_note_tools(service, _write_tool_ctx())}
+    await first["appfolio_add_note"].function(work_order_id="wo-1", body="on site", media_refs=[])
+
+    second = {t.name: t for t in build_note_tools(service, _write_tool_ctx())}
+    result = await second["appfolio_update_note"].function(
+        work_order_id="wo-1", note_id="note-78", body="edit", media_refs=[]
+    )
+
+    assert result.is_error is False
+
+
+# ---------------------------------------------------------------------------
+# HTTP status classification
+# ---------------------------------------------------------------------------
+
+
+def test_appfolio_404_maps_to_not_found() -> None:
+    """404 is a missing object, not an outage."""
+    from backend.app.agent.tools.base import ToolErrorKind
+    from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
+
+    result = service_error_to_tool_result("updating note", AppFolioError("nope", status_code=404))
+
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.NOT_FOUND
+
+
+def test_appfolio_500_stays_service() -> None:
+    from backend.app.agent.tools.base import ToolErrorKind
+    from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
+
+    result = service_error_to_tool_result("updating note", AppFolioError("boom", status_code=500))
+
+    assert result.error_kind == ToolErrorKind.SERVICE
+
+
+def test_appfolio_error_without_status_stays_service() -> None:
+    """Network and validation failures never reached an HTTP response."""
+    from backend.app.agent.tools.base import ToolErrorKind
+    from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
+
+    result = service_error_to_tool_result("updating note", AppFolioError("timeout"))
+
+    assert result.error_kind == ToolErrorKind.SERVICE
+    assert AppFolioError("timeout").status_code is None
+
+
+def test_auth_errors_keep_their_own_kinds() -> None:
+    """The 404 mapping must not disturb the auth branches."""
+    from backend.app.agent.tools.base import ToolErrorKind
+    from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
+
+    expired = service_error_to_tool_result("adding note", AuthExpiredError(login_url="x"))
+    scope = service_error_to_tool_result("adding note", AuthScopeError("wrong customer"))
+
+    assert expired.error_kind == ToolErrorKind.AUTH
+    assert scope.error_kind == ToolErrorKind.SERVICE
