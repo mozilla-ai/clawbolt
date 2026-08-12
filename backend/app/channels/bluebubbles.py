@@ -1056,6 +1056,11 @@ class BlueBubblesChannel(BaseChannel):
 
         Requires the BlueBubbles Private API to be enabled on the server.
         Silently skipped when using apple-script send method.
+
+        Logs every attempt, including successes. The endpoint answers 200 even
+        for a chat GUID that does not exist, so a 2xx is proof the request was
+        accepted and nothing more; without an explicit log line a typing
+        indicator that never reaches the device leaves no trace at all.
         """
         if settings.bluebubbles_send_method != "private-api":
             return
@@ -1072,6 +1077,12 @@ class BlueBubblesChannel(BaseChannel):
                     resp.status_code,
                     mask_pii(chat_guid),
                     resp.text[:500],
+                )
+            else:
+                logger.debug(
+                    "BlueBubbles typing indicator accepted: status=%s chatGuid=%s",
+                    resp.status_code,
+                    mask_pii(chat_guid),
                 )
         except Exception:
             logger.exception("Failed to send BlueBubbles typing indicator to %s", mask_pii(to))
