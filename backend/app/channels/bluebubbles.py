@@ -80,6 +80,12 @@ _TRANSIENT_HTTP_EXCEPTIONS = (
 INBOUND_WEBHOOK_PATH = "/api/webhooks/bluebubbles"
 INBOUND_WEBHOOK_EVENT = "new-message"
 
+# BlueBubbles ships "All Events" as a first-class event value and its dispatcher
+# short-circuits on it (``if (!eventTypes.includes("*") && ...) continue``), so a
+# webhook subscribed to "*" does receive new-message. Treating it as a mismatch
+# would report a delivering bridge as broken.
+_WILDCARD_WEBHOOK_EVENT = "*"
+
 # Timeout for the server-info probe. Deliberately short: this runs on a timer
 # against a residential Mac, and a slow answer is itself a bad sign.
 _SERVER_INFO_TIMEOUT_SECONDS = 5.0
@@ -215,7 +221,15 @@ async def list_bluebubbles_webhooks(
         logger.debug("Could not list BlueBubbles webhooks", exc_info=True)
         return None
 
-    raw_hooks = data if isinstance(data, list) else data.get("data", [])
+    if isinstance(data, list):
+        raw_hooks: object = data
+    elif isinstance(data, dict):
+        raw_hooks = data.get("data", [])
+    else:
+        # A 200 carrying a JSON scalar or null is not something we can read.
+        # Returning None keeps the documented "unknown" contract instead of
+        # raising out of a function two health paths call without a handler.
+        return None
     if not isinstance(raw_hooks, list):
         return None
 
@@ -374,7 +388,7 @@ async def verify_webhook_registration(
             continue
         # An empty event tuple means the server's format was unrecognized.
         # Unknown is not a failure.
-        if wh.events and INBOUND_WEBHOOK_EVENT not in wh.events:
+        if wh.events and not {INBOUND_WEBHOOK_EVENT, _WILDCARD_WEBHOOK_EVENT} & set(wh.events):
             return WebhookCheck(
                 ok=False,
                 detail=(
@@ -392,9 +406,11 @@ async def verify_webhook_registration(
             "match the current server password, so deliveries are rejected on arrival"
         )
     elif endpoints:
+        # Count the endpoints being listed, not the raw registrations: quoting
+        # "3 registered" beside two deduplicated URLs reads as a missing entry.
         detail = (
             f"no webhook registered for {expected_endpoint}; the server has "
-            f"{len(webhooks)} registered instead: {', '.join(endpoints)}"
+            f"{len(endpoints)} other endpoint(s) registered: {', '.join(endpoints)}"
         )
     else:
         detail = (
@@ -460,7 +476,12 @@ async def probe_bluebubbles_server(
                 params={"password": password},
                 timeout=timeout,
             )
-    except httpx.HTTPError as exc:
+    except Exception as exc:
+        # Catch broadly, not just ``httpx.HTTPError``: ``httpx.InvalidURL``
+        # derives straight from ``Exception``, so a malformed
+        # BLUEBUBBLES_SERVER_URL (an unbracketed IPv6 literal, say) would
+        # otherwise escape a function documented never to raise, and
+        # ``start()`` would abort before the health and backfill loops spawn.
         # The exception text can carry the request URL, and the URL carries
         # the password. Report the type only.
         return BlueBubblesHealth(
@@ -506,14 +527,23 @@ async def probe_bluebubbles_server(
     if not isinstance(payload, dict):
         payload = {}
 
-    account = payload.get("detected_icloud")
+    # ``detected_icloud`` is read off MobileMeAccounts.plist, so it reports the
+    # Mac's *iCloud* login, not the Messages.app sign-in, and it comes back null
+    # whenever that plist read fails. ``detected_imessage`` is derived from the
+    # iMessage chat database and is null on a Mac with no iMessage chats yet.
+    # Either one being populated proves a signed-in account, so require both to
+    # be empty before claiming the Mac cannot send. Neither field present means
+    # an older server and stays ``None``.
+    account_fields = [f for f in ("detected_icloud", "detected_imessage") if f in payload]
     return BlueBubblesHealth(
         reachable=True,
         authenticated=True,
         server_version=str(payload.get("server_version") or ""),
         private_api=_optional_bool(payload.get("private_api")),
         helper_connected=_optional_bool(payload.get("helper_connected")),
-        imessage_signed_in=bool(account) if "detected_icloud" in payload else None,
+        imessage_signed_in=(
+            any(bool(payload.get(f)) for f in account_fields) if account_fields else None
+        ),
     )
 
 
@@ -526,7 +556,7 @@ def describe_send_readiness(health: BlueBubblesHealth, send_method: str = "") ->
     server perfectly reachable and every send failing.
     """
     if health.imessage_signed_in is False:
-        return "the Mac is not signed in to iMessage (BlueBubbles reports no iCloud account)"
+        return "the Mac is not signed in to iMessage (BlueBubbles reports no signed-in account)"
     if (send_method or settings.bluebubbles_send_method) == "private-api":
         if health.private_api is False:
             return "send method is private-api but the BlueBubbles Private API is disabled"

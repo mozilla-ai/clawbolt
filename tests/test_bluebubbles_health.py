@@ -156,6 +156,19 @@ async def test_probe_omitted_flags_are_unknown_not_false() -> None:
     assert describe_send_readiness(health, "private-api") == ""
 
 
+async def test_probe_survives_a_malformed_server_url() -> None:
+    """``httpx.InvalidURL`` is not an ``httpx.HTTPError``; the probe must not raise.
+
+    ``start()`` awaits this before spawning the health and backfill loops, so an
+    escape here would silently leave both loops unstarted for the process life.
+    """
+    health = await probe_bluebubbles_server("http://[::1", _PASSWORD, timeout=0.1)
+
+    assert not health.ok
+    assert health.reachable is False
+    assert "InvalidURL" in health.detail
+
+
 # ---------------------------------------------------------------------------
 # Send readiness
 # ---------------------------------------------------------------------------
@@ -163,12 +176,28 @@ async def test_probe_omitted_flags_are_unknown_not_false() -> None:
 
 async def test_send_readiness_flags_signed_out_mac() -> None:
     """Reachable and authenticated, but Messages.app is signed out: every send fails."""
-    with _mock_bb_http(_info_response(detected_icloud="")):
+    with _mock_bb_http(_info_response(detected_icloud="", detected_imessage="")):
         health = await probe_bluebubbles_server(_SERVER, _PASSWORD)
 
     assert health.ok
     assert health.imessage_signed_in is False
     assert "not signed in to iMessage" in describe_send_readiness(health, "apple-script")
+
+
+async def test_send_readiness_trusts_the_imessage_account_when_icloud_is_absent() -> None:
+    """``detected_icloud`` reads the iCloud login, which a signed-in Mac can lack.
+
+    It comes from MobileMeAccounts.plist, so a Mac using iMessage without iCloud
+    (or one where the plist read fails) reports null there while
+    ``detected_imessage``, derived from the chat database, is populated. Alerting
+    on the iCloud field alone would email the operator about a working bridge.
+    """
+    with _mock_bb_http(_info_response(detected_icloud=None, detected_imessage="a@example.com")):
+        health = await probe_bluebubbles_server(_SERVER, _PASSWORD)
+
+    assert health.imessage_signed_in is True
+    assert describe_send_readiness(health, "apple-script") == ""
+    assert "a@example.com" not in repr(health)
 
 
 def test_send_readiness_private_api_disabled_only_matters_for_private_api() -> None:
@@ -285,6 +314,37 @@ async def test_verify_parses_every_event_encoding(events: Any) -> None:
         check = await verify_webhook_registration("http://bb.example", expected, _PASSWORD)
 
     assert check.ok
+
+
+async def test_verify_accepts_the_all_events_wildcard() -> None:
+    """BlueBubbles ships "All Events" as ``*`` and its dispatcher honours it.
+
+    An operator who repairs a broken registration by hand picks that option, and
+    the webhook does deliver new-message. Calling it a mismatch would report a
+    working bridge as broken and trigger a repair the premium monitor emails about.
+    """
+    expected = build_webhook_url("https://clawbolt.example", _PASSWORD)
+    with _mock_bb_http(_webhook_list_handler([{"id": 8, "url": expected, "events": ["*"]}])):
+        check = await verify_webhook_registration("http://bb.example", expected, _PASSWORD)
+
+    assert check.ok
+
+
+async def test_list_webhooks_returns_none_for_a_scalar_json_body() -> None:
+    """A 200 carrying ``null`` used to raise ``AttributeError`` out of the helper.
+
+    ``verify_webhook_registration`` has no handler of its own, so the escape
+    reached the health path rather than reporting "unknown".
+    """
+    with _mock_bb_http(
+        lambda _req: httpx.Response(
+            200, content=b"null", headers={"content-type": "application/json"}
+        )
+    ):
+        assert await list_bluebubbles_webhooks("http://bb.example", "pw") is None
+        check = await verify_webhook_registration("http://bb.example", "https://x.example", "pw")
+
+    assert not check.listed
 
 
 async def test_verify_passes_when_the_event_format_is_unrecognized() -> None:
