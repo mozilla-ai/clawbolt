@@ -4,6 +4,7 @@ export {
   getLoginPageElement,
   getDefaultSettingsTab,
   shouldRedirectRootToApp,
+  getDefaultAppPath,
   getFeatureRequestUrl,
   getReportIssueUrl,
   getDocsUrl,

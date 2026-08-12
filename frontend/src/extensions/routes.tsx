@@ -18,6 +18,15 @@ export function shouldRedirectRootToApp(_isPremium: boolean): boolean {
   return true;
 }
 
+/**
+ * Landing path for ``/app``, or null to keep the default (get-started /
+ * dashboard). Lets an extension route a role somewhere else on login;
+ * premium sends admins to the admin overview.
+ */
+export function getDefaultAppPath(_isAdmin: boolean): string | null {
+  return null;
+}
+
 export function getFeatureRequestUrl(): string {
   return 'https://github.com/mozilla-ai/clawbolt/issues/new?title=Feature+request:+&labels=enhancement';
 }
