@@ -19,6 +19,7 @@ import logging
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.appfolio_vendor.concurrency import work_order_concurrency_key
 from backend.app.integrations.appfolio_vendor.errors import service_error_to_tool_result
 from backend.app.integrations.appfolio_vendor.params import (
     AppFolioUndoWorkOrderStatusParams,
@@ -69,6 +70,7 @@ def build_work_order_write_tools(service: AppFolioVendorService) -> list[Tool]:
             description="Update the status code on an AppFolio work order.",
             function=appfolio_update_work_order_status,
             params_model=AppFolioUpdateWorkOrderStatusParams,
+            concurrency_group=work_order_concurrency_key,
             usage_hint=(
                 "Use to mark a job in-progress, completed, or back to needs-action."
                 " Confirm the target status with the user when uncertain."
@@ -86,6 +88,7 @@ def build_work_order_write_tools(service: AppFolioVendorService) -> list[Tool]:
             description="Revert a recent status change on an AppFolio work order.",
             function=appfolio_undo_work_order_status,
             params_model=AppFolioUndoWorkOrderStatusParams,
+            concurrency_group=work_order_concurrency_key,
             usage_hint=(
                 "Use only when the user explicitly asks to undo a status change they just made."
             ),

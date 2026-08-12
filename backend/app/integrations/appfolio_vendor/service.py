@@ -74,7 +74,18 @@ value itself is opaque to AppFolio."""
 
 
 class AppFolioError(RuntimeError):
-    """Generic AppFolio API failure (5xx, network, validation)."""
+    """Generic AppFolio API failure (5xx, network, validation).
+
+    ``status_code`` carries the HTTP status when the failure came from an
+    AppFolio response, so callers can tell "that thing is not there" (404)
+    apart from a transient backend failure without parsing the message
+    string. ``None`` for network and validation failures that never
+    reached an HTTP response.
+    """
+
+    def __init__(self, *args: object, status_code: int | None = None) -> None:
+        super().__init__(*args)
+        self.status_code = status_code
 
 
 class AppFolioUnavailableError(AppFolioError):
@@ -570,7 +581,10 @@ class AppFolioVendorService:
             # Don't echo response_text into the raised error: AppFolioError
             # messages flow into ToolResult.content (visible to the LLM and
             # the end user). The full body stays in the warning log above.
-            raise AppFolioError(f"AppFolio {method} {path} failed: HTTP {resp.status_code}")
+            raise AppFolioError(
+                f"AppFolio {method} {path} failed: HTTP {resp.status_code}",
+                status_code=resp.status_code,
+            )
         byte_len = len(resp.content or b"")
         logger.debug(
             "AppFolio %s %s ok (%d, %d bytes)",
