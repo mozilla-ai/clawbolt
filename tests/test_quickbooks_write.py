@@ -10,6 +10,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from backend.app.agent.tools.base import ToolErrorKind
 from backend.app.integrations.quickbooks.factory import (
     QBCreateParams,
     QBUpdateParams,
@@ -1170,3 +1171,215 @@ def test_qb_create_approval_description_survives_format_approval_message() -> No
     # multi-line description has not stomped the reply instructions.
     assert "yes: allow this once" in prompt
     assert "never: deny and remember" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Same-turn create/send ordering. A qb_send emitted in the same model turn
+# as its qb_create ran concurrently with it, reached QBO first, and drew
+# "code=610 Object Not Found" for a transaction that did not exist yet.
+# ---------------------------------------------------------------------------
+
+
+def _get_tool_obj(tools: list, name: str) -> Any:
+    for t in tools:
+        if t.name == name:
+            return t
+    raise KeyError(f"Tool {name} not found")
+
+
+def test_qb_write_tools_share_a_concurrency_group() -> None:
+    """qb_create, qb_update and qb_send must serialize against each other.
+
+    The agent runs every approved call from one model turn concurrently, so
+    without a shared group a send emitted alongside its create reaches QBO
+    before the entity exists.
+    """
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+
+    groups = {
+        name: _get_tool_obj(tools, name).concurrency_group
+        for name in ("qb_create", "qb_update", "qb_send")
+    }
+    assert None not in groups.values(), f"QB write tools missing concurrency_group: {groups}"
+    assert len(set(groups.values())) == 1, f"QB write tools must share one group: {groups}"
+
+
+def test_qb_query_has_no_concurrency_group() -> None:
+    """The read-only tool must stay parallelizable."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    assert _get_tool_obj(tools, "qb_query").concurrency_group is None
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_accepts_id_returned_by_create_in_same_turn() -> None:
+    """The normal create-then-send flow must still work."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    create = _get_tool(tools, "qb_create")
+    send = _get_tool(tools, "qb_send")
+
+    created = await create(
+        entity_type="Estimate",
+        data={"CustomerRef": {"value": "3"}, "Line": [{"Amount": 100.0}]},
+    )
+    assert created.is_error is False
+    new_id = created.content.split("Id: ")[1].split(" ")[0]
+
+    result = await send(entity_type="Estimate", entity_id=new_id, email="dev@example.com")
+
+    assert result.is_error is False
+    assert svc.sent == [("Estimate", new_id, "dev@example.com")]
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_refuses_predicted_id_after_create_in_same_turn() -> None:
+    """A send must not target an id the model guessed rather than read back.
+
+    Serializing create before send fixes the race, but a wrong guess would
+    then email a live, unrelated transaction to this recipient.
+    """
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    create = _get_tool(tools, "qb_create")
+    send = _get_tool(tools, "qb_send")
+
+    created = await create(
+        entity_type="Estimate",
+        data={"CustomerRef": {"value": "3"}, "Line": [{"Amount": 100.0}]},
+    )
+    new_id = created.content.split("Id: ")[1].split(" ")[0]
+    predicted = str(int(new_id) + 3)
+
+    result = await send(entity_type="Estimate", entity_id=predicted, email="dev@example.com")
+
+    assert result.is_error is True
+    assert result.error_kind is ToolErrorKind.VALIDATION
+    assert new_id in result.content
+    assert svc.sent == [], "no email may go out for an unverified id"
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_allows_any_id_when_no_create_ran_this_turn() -> None:
+    """Sending a previously existing entity stays unrestricted."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    send = _get_tool(tools, "qb_send")
+
+    result = await send(entity_type="Invoice", entity_id="9001", email="dev@example.com")
+
+    assert result.is_error is False
+    assert svc.sent == [("Invoice", "9001", "dev@example.com")]
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_guard_is_scoped_per_entity_type() -> None:
+    """Creating an Item must not restrict which Invoice may be sent."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    create = _get_tool(tools, "qb_create")
+    send = _get_tool(tools, "qb_send")
+
+    await create(entity_type="Item", data={"Name": "Labor"})
+    result = await send(entity_type="Invoice", entity_id="9001", email="dev@example.com")
+
+    assert result.is_error is False
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_guard_does_not_leak_between_tool_builds() -> None:
+    """The tool list is rebuilt per inbound message, so the guard must reset."""
+    svc = FakeQBService()
+    first = create_quickbooks_tools(svc)
+    created = await _get_tool(first, "qb_create")(
+        entity_type="Estimate",
+        data={"CustomerRef": {"value": "3"}, "Line": [{"Amount": 100.0}]},
+    )
+    other_id = str(int(created.content.split("Id: ")[1].split(" ")[0]) + 5)
+
+    second = create_quickbooks_tools(svc)
+    result = await _get_tool(second, "qb_send")(
+        entity_type="Estimate", entity_id=other_id, email="dev@example.com"
+    )
+
+    assert result.is_error is False
+
+
+# ---------------------------------------------------------------------------
+# Intuit fault classification
+# ---------------------------------------------------------------------------
+
+
+def _fault_error(code: str, status: int = 400) -> httpx.HTTPStatusError:
+    body = {
+        "Fault": {
+            "Error": [{"Message": "Object Not Found", "Detail": "Object Not Found", "code": code}],
+            "type": "ValidationFault",
+        }
+    }
+    request = httpx.Request("POST", "https://example.invalid/estimate/1/send")
+    response = httpx.Response(status, json=body, request=request)
+    return httpx.HTTPStatusError(f"{status}", request=request, response=response)
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_610_is_not_found_not_service() -> None:
+    """610 is a 4xx about a missing object, not an outage.
+
+    SERVICE tells the model "temporarily unavailable, try a different
+    approach"; NOT_FOUND tells it to verify the id, which is the correct
+    recovery.
+    """
+    svc = FakeQBService()
+    svc.send_entity_email = AsyncMock(side_effect=_fault_error("610"))  # type: ignore[method-assign]
+    tools = create_quickbooks_tools(svc)
+
+    result = await _get_tool(tools, "qb_send")(
+        entity_type="Estimate", entity_id="5001", email="dev@example.com"
+    )
+
+    assert result.is_error is True
+    assert result.error_kind is ToolErrorKind.NOT_FOUND
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_other_faults_stay_service() -> None:
+    svc = FakeQBService()
+    svc.send_entity_email = AsyncMock(side_effect=_fault_error("2030"))  # type: ignore[method-assign]
+    tools = create_quickbooks_tools(svc)
+
+    result = await _get_tool(tools, "qb_send")(
+        entity_type="Estimate", entity_id="5001", email="dev@example.com"
+    )
+
+    assert result.is_error is True
+    assert result.error_kind is ToolErrorKind.SERVICE
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_610_is_not_found() -> None:
+    svc = FakeQBService()
+    svc.create_entity = AsyncMock(side_effect=_fault_error("610"))  # type: ignore[method-assign]
+    tools = create_quickbooks_tools(svc)
+
+    result = await _get_tool(tools, "qb_create")(
+        entity_type="Invoice", data={"CustomerRef": {"value": "999"}}
+    )
+
+    assert result.is_error is True
+    assert result.error_kind is ToolErrorKind.NOT_FOUND
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_non_http_error_stays_service() -> None:
+    svc = FakeQBService()
+    svc.create_entity = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+    tools = create_quickbooks_tools(svc)
+
+    result = await _get_tool(tools, "qb_create")(
+        entity_type="Invoice", data={"CustomerRef": {"value": "1"}}
+    )
+
+    assert result.is_error is True
+    assert result.error_kind is ToolErrorKind.SERVICE

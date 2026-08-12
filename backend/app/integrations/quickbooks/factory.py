@@ -76,6 +76,23 @@ _UPDATABLE_ENTITIES = {"Customer", "Estimate", "Invoice", "Item"}
 # Entity types that qb_send is allowed to send via email.
 _SENDABLE_ENTITIES = {"Invoice", "Estimate"}
 
+# Serialization key shared by every QuickBooks write tool.
+#
+# The agent runs all approved tool calls from one model turn concurrently.
+# The model routinely emits ``qb_create`` and ``qb_send`` in the same turn,
+# predicting the id the create will return. Without a shared group the send
+# races the create and QBO answers ``code=610 Object Not Found`` because the
+# transaction genuinely does not exist yet. These tools all mutate the same
+# QBO company and read each other's ids, so they share one static key rather
+# than a per-entity resolver: ordering across entity types matters too (an
+# Invoice line can reference an Item created in the same turn).
+_QB_WRITE_CONCURRENCY_GROUP = "quickbooks_write"
+
+# Intuit fault codes that mean "the entity is not there", as opposed to a
+# transient backend failure. Surfaced as NOT_FOUND so the model looks the id
+# up again instead of blindly retrying a "service unavailable".
+_INTUIT_NOT_FOUND_CODES = {"610"}
+
 
 class QBQueryParams(BaseModel):
     """Parameters for the qb_query tool."""
@@ -145,6 +162,38 @@ def _format_intuit_fault(exc: httpx.HTTPStatusError, *, entity: str | None = Non
     if hint:
         body = f"{body}\nHint: {hint}"
     return body
+
+
+def _intuit_fault_codes(exc: httpx.HTTPStatusError) -> set[str]:
+    """Collect the ``Fault.Error[].code`` values from a QBO error response.
+
+    Returns an empty set when the body is not a recognizable Intuit fault.
+    """
+    try:
+        raw_body = exc.response.json()
+    except Exception:
+        return set()
+    fault = (raw_body or {}).get("Fault") if isinstance(raw_body, dict) else None
+    errors = (fault or {}).get("Error") if isinstance(fault, dict) else None
+    if not isinstance(errors, list):
+        return set()
+    return {str(err["code"]) for err in errors if isinstance(err, dict) and err.get("code")}
+
+
+def _fault_error_kind(exc: Exception) -> ToolErrorKind:
+    """Classify a QBO failure for the LLM error hint.
+
+    A 610 is a 4xx about a missing object, not an outage. Reporting it as
+    SERVICE tells the model "temporarily unavailable, try a different
+    approach", which is the wrong instruction: the id is wrong (or not
+    visible yet) and the model should look it up rather than retry blind.
+    """
+    if (
+        isinstance(exc, httpx.HTTPStatusError)
+        and _intuit_fault_codes(exc) & _INTUIT_NOT_FOUND_CODES
+    ):
+        return ToolErrorKind.NOT_FOUND
+    return ToolErrorKind.SERVICE
 
 
 def _enum_hint(error_body: str, entity: str | None) -> str:
@@ -493,6 +542,17 @@ def create_quickbooks_tools(
 ) -> list[Tool]:
     """Create QuickBooks-related tools for the agent."""
 
+    # Entity ids created during this agent run, keyed by entity type. The
+    # tool list is rebuilt per inbound message, so this is scoped to one
+    # user turn (spanning every LLM round of that turn) and never leaks
+    # between messages or users.
+    #
+    # qb_send consults it to refuse an id the model predicted rather than
+    # read back from a qb_create result. A predicted id that happens to
+    # match a different live transaction would email one customer another
+    # customer's invoice, so the guess is rejected, not retried.
+    created_ids: dict[str, set[str]] = {}
+
     async def qb_query(query: str) -> ToolResult:
         """Run a read-only query against QuickBooks Online."""
         import re as _re
@@ -562,7 +622,7 @@ def create_quickbooks_tools(
             return ToolResult(
                 content=f"Failed to create {entity_type}: {error_str}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=_fault_error_kind(exc),
             )
 
         entity_id = result.get("Id", "?")
@@ -570,6 +630,9 @@ def create_quickbooks_tools(
         total = result.get("TotalAmt")
         display_name = result.get("DisplayName", "")
         item_name = result.get("Name", "")
+
+        if entity_id != "?":
+            created_ids.setdefault(entity_type, set()).add(str(entity_id))
 
         # LLM-facing content stays terse and data-only so the model has no
         # receipt-shaped phrasing to bullet-point back to the user. The
@@ -615,7 +678,7 @@ def create_quickbooks_tools(
             return ToolResult(
                 content=f"Failed to update {entity_type}: {error_str}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=_fault_error_kind(exc),
             )
 
         entity_id = result.get("Id", "?")
@@ -653,6 +716,30 @@ def create_quickbooks_tools(
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
+        # When this turn created entities of the same type, the only ids the
+        # model can legitimately send are the ones qb_create handed back.
+        # Anything else is a prediction, and sending a predicted id delivers
+        # some other customer's transaction to this recipient.
+        turn_created = created_ids.get(entity_type)
+        if turn_created and entity_id.strip() not in turn_created:
+            known = ", ".join(sorted(turn_created))
+            logger.warning(
+                "qb_send_unverified_entity_id tool=qb_send entity_type=%s requested=%s created=%s",
+                entity_type,
+                entity_id,
+                known,
+            )
+            return ToolResult(
+                content=(
+                    f"Refusing to send {entity_type} {entity_id}: this turn created "
+                    f"{entity_type} {known}, and {entity_id} is not among them. "
+                    f"Send one of the ids returned by qb_create, or look the "
+                    f"intended {entity_type.lower()} up with qb_query first."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
         try:
             await qb_service.send_entity_email(entity_type, entity_id, email)
         except Exception as exc:
@@ -664,7 +751,7 @@ def create_quickbooks_tools(
             return ToolResult(
                 content=f"Failed to send {entity_type.lower()}: {error_str}",
                 is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+                error_kind=_fault_error_kind(exc),
             )
 
         # Drop the verb + recipient from the LLM-facing content: that
@@ -711,6 +798,7 @@ def create_quickbooks_tools(
             ),
             function=qb_create,
             params_model=QBCreateParams,
+            concurrency_group=_QB_WRITE_CONCURRENCY_GROUP,
             usage_hint=(
                 "Create a Customer, Estimate, Invoice, or Item in QB. "
                 "Construct the QBO API payload as described in the skill docs."
@@ -733,6 +821,7 @@ def create_quickbooks_tools(
             ),
             function=qb_update,
             params_model=QBUpdateParams,
+            concurrency_group=_QB_WRITE_CONCURRENCY_GROUP,
             usage_hint=(
                 "Update a Customer, Estimate, Invoice, or Item in QB. "
                 "Payload must include Id and SyncToken from a prior query."
@@ -749,10 +838,11 @@ def create_quickbooks_tools(
             name=ToolName.QB_SEND,
             description=(
                 "Send an invoice or estimate to a customer via QuickBooks email. "
-                "The entity must already exist in QuickBooks."
+                "Pass the Id returned by qb_create or qb_query; never predict one."
             ),
             function=qb_send,
             params_model=QBSendParams,
+            concurrency_group=_QB_WRITE_CONCURRENCY_GROUP,
             usage_hint=(
                 "Send a QB invoice or estimate by email. "
                 "Confirm the email address with the user first."
