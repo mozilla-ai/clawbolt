@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import copy
 import json
 import logging
@@ -6,7 +7,7 @@ import random
 import re
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -132,6 +133,22 @@ _VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "s
 _MAX_TOKENS_CEILING = 16384
 
 _LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
+
+# How often to re-send the typing indicator while the agent is blocked on a
+# slow operation. Clients that render an indicator expire it on their own once
+# refreshes stop, so the single indicator fired before an LLM call or tool round
+# goes stale partway through and the user is left with no signal for the rest of
+# the wait.
+#
+# The keepalive is channel-agnostic, so the interval has to stay under the
+# shortest expiry of any channel that renders one. Telegram is both the tightest
+# and the only one that documents a number: ``sendChatAction`` holds the status
+# for "5 seconds or less". iMessage sits at the other end and clears slowly
+# rather than promptly, which is why ``stop_typing_indicator`` exists to cancel
+# it explicitly; its expiry has not been measured, so Telegram is the binding
+# constraint here. Also short enough that a self-hosted bridge dropping one
+# request self-heals on the next tick.
+_TYPING_KEEPALIVE_SECONDS = 4.0
 
 # Provider phrasings for "this prompt is longer than the model's context window"
 # that any-llm does NOT classify as ``ContextLengthExceededError``. Its
@@ -425,6 +442,11 @@ class ClawboltAgent:
             except Exception:
                 logger.exception("Event subscriber error for %s", type(event).__name__)
 
+    @property
+    def _can_send_typing(self) -> bool:
+        """Whether this agent has a channel target to send typing indicators to."""
+        return bool(self._publish_outbound and self._chat_id and self._channel)
+
     async def _send_typing_indicator(self) -> None:
         """Send a typing indicator via the bus if a publish callback and chat_id are available."""
         if self._publish_outbound and self._chat_id and self._channel:
@@ -441,6 +463,44 @@ class ClawboltAgent:
                 )
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", mask_pii(self._chat_id))
+
+    async def _typing_keepalive_loop(self) -> None:
+        """Re-send the typing indicator on a fixed interval until cancelled."""
+        while True:
+            await asyncio.sleep(_TYPING_KEEPALIVE_SECONDS)
+            await self._send_typing_indicator()
+
+    @contextlib.asynccontextmanager
+    async def _typing_keepalive(self) -> AsyncIterator[None]:
+        """Hold the typing indicator active for the duration of a slow await.
+
+        Callers fire a single indicator before entering, and this refreshes it
+        every ``_TYPING_KEEPALIVE_SECONDS`` until the block exits so a long LLM
+        call or tool round does not leave the user watching an expired bubble.
+
+        The first refresh is deliberately delayed by a full interval, so an
+        operation that finishes quickly publishes nothing beyond the indicator
+        its caller already sent. The task is always cancelled on exit, including
+        on exception, so a keepalive can never outlive the wait it covers and
+        strand a phantom bubble after the reply lands.
+        """
+        if not self._can_send_typing:
+            yield
+            return
+
+        task = asyncio.create_task(self._typing_keepalive_loop(), name="typing-keepalive")
+        try:
+            yield
+        finally:
+            task.cancel()
+            # ``gather(return_exceptions=True)`` rather than
+            # ``suppress(CancelledError)`` around ``await task``: the latter also
+            # swallows a cancellation aimed at *this* task when one lands while
+            # we are suspended here, which silently defeats the surrounding
+            # ``asyncio.timeout`` in the ingestion pipeline (no truncation and no
+            # ``TimeoutError``, since ``Timeout.__aexit__`` only converts a
+            # ``CancelledError`` that actually reaches it).
+            await asyncio.gather(task, return_exceptions=True)
 
     async def _get_tool_permission(
         self,
@@ -674,19 +734,20 @@ class ClawboltAgent:
         )
         for attempt in range(LLM_MAX_RETRIES):
             try:
-                response = cast(
-                    MessageResponse,
-                    await amessages(
-                        model=effective_model,
-                        provider=effective_provider,
-                        api_base=settings.llm_api_base,
-                        system=system,
-                        messages=msg_dicts,
-                        tools=tool_schemas,
-                        max_tokens=effective_max_tokens,
-                        thinking=thinking,
-                    ),
-                )
+                async with self._typing_keepalive():
+                    response = cast(
+                        MessageResponse,
+                        await amessages(
+                            model=effective_model,
+                            provider=effective_provider,
+                            api_base=settings.llm_api_base,
+                            system=system,
+                            messages=msg_dicts,
+                            tools=tool_schemas,
+                            max_tokens=effective_max_tokens,
+                            thinking=thinking,
+                        ),
+                    )
                 await self._emit_response(
                     response,
                     purpose=PURPOSE_AGENT_MAIN,
@@ -801,19 +862,20 @@ class ClawboltAgent:
                 started_at=followup_started_at,
             )
         )
-        followup_response = cast(
-            MessageResponse,
-            await amessages(
-                model=effective_model,
-                provider=effective_provider,
-                api_base=settings.llm_api_base,
-                system=system,
-                messages=trimmed_dicts,
-                tools=tool_schemas,
-                max_tokens=effective_max_tokens,
-                thinking=thinking,
-            ),
-        )
+        async with self._typing_keepalive():
+            followup_response = cast(
+                MessageResponse,
+                await amessages(
+                    model=effective_model,
+                    provider=effective_provider,
+                    api_base=settings.llm_api_base,
+                    system=system,
+                    messages=trimmed_dicts,
+                    tools=tool_schemas,
+                    max_tokens=effective_max_tokens,
+                    thinking=thinking,
+                ),
+            )
         await self._emit_response(
             followup_response,
             purpose=PURPOSE_AGENT_FOLLOWUP,
@@ -1326,7 +1388,11 @@ class ClawboltAgent:
                     results.append((pos, record, msg, label))
                 return results
 
-            unit_outputs = await asyncio.gather(*(_run_unit(u) for u in schedule_units))
+            # A single slow tool (a supplier price lookup, a large sync) can run
+            # for minutes. Refresh the indicator for the whole fan-out so the
+            # bubble does not expire midway through the wait.
+            async with self._typing_keepalive():
+                unit_outputs = await asyncio.gather(*(_run_unit(u) for u in schedule_units))
 
             results_by_pos: dict[int, tuple[StoredToolInteraction, ToolResultMessage, str]] = {}
             for unit_output in unit_outputs:
