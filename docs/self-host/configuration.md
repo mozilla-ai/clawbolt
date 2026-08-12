@@ -134,7 +134,7 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 |----------|---------|-------------|
 | `LLM_MAX_TOKENS_AGENT` | `8192` | Max tokens per agent loop LLM response. A turn truncated at this limit is retried once with a doubled budget and then discarded rather than delivered, so sizing this too low costs a wasted round. |
 | `LLM_MAX_TOKENS_HEARTBEAT` | `12000` | Max tokens per heartbeat LLM response |
-| `LLM_MAX_TOKENS_VISION` | `1000` | Max tokens per vision/image analysis response |
+| `LLM_MAX_TOKENS_VISION` | `12000` | Max tokens per vision/image analysis response |
 
 ## Agent loop
 
