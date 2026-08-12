@@ -590,10 +590,20 @@ class BrowserBackedSearch:
             deadline=deadline,
         )
         if res["status"] != 200:
+            # The status and the head of the body are the only evidence of why
+            # Home Depot refused, and neither was recorded. A run of 502s in the
+            # logs was just a run of 502s, when the useful question is whether
+            # the session is being bot-checked or the payload is malformed.
+            logger.warning(
+                "home_depot refused the search: status=%s body=%.300s",
+                res["status"],
+                res["body"],
+            )
             raise HTTPException(502, f"Home Depot returned {res['status']}")
         try:
             payload = json.loads(res["body"])
         except ValueError as exc:
+            logger.warning("home_depot returned a non-JSON body: %.300s", res["body"])
             raise HTTPException(502, "Home Depot returned a non-JSON body") from exc
         return (payload.get("data") or {}).get("searchModel") or {}
 
@@ -607,10 +617,16 @@ class BrowserBackedSearch:
             deadline=deadline,
         )
         if res["status"] != 200:
+            logger.warning(
+                "home_depot store locator refused the lookup: status=%s body=%.300s",
+                res["status"],
+                res["body"],
+            )
             raise HTTPException(502, f"Home Depot store locator returned {res['status']}")
         try:
             payload = json.loads(res["body"])
         except ValueError as exc:
+            logger.warning("home_depot store locator returned a non-JSON body: %.300s", res["body"])
             raise HTTPException(502, "Store locator returned a non-JSON body") from exc
         if "GenericError" in res["body"] and "stores" not in payload:
             raise HTTPException(502, "Home Depot refused the store lookup")
