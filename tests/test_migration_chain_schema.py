@@ -133,8 +133,9 @@ def test_040_downgrade_restores_heartbeat_items(
 ) -> None:
     """040 is reversible, so a rollback past it does not strand the DB.
 
-    Runs last in the module and restores head afterwards so the shared
-    ``migrated_tables`` state stays true for reruns.
+    Restores head afterwards so the database the module-scoped
+    ``migrated_tables`` describes stays at head for the tests after this
+    one.
     """
     _alembic(scratch_db_url, "downgrade", "039")
     try:
@@ -148,9 +149,10 @@ def test_040_upgrades_cleanly_when_table_is_already_absent(
 ) -> None:
     """A database that never had ``heartbeat_items`` still upgrades.
 
-    Databases bootstrapped by ``create_all`` after #662 never got the
-    table, because no model declares it. 040 drops it conditionally so
-    those deploys do not fail on a missing table.
+    A database built by ``create_all`` against current models never gets
+    the table, because no model declares it. Deploys replay the chain
+    instead and so always have it, which makes 040's conditional drop
+    defensive rather than load-bearing. This locks that behavior in.
     """
     _alembic(scratch_db_url, "downgrade", "039")
     try:

@@ -33,11 +33,14 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # IF EXISTS because presence is environment-dependent, which is the
-    # whole problem this revision closes: the table is invisible to
-    # ``Base.metadata``, so any database bootstrapped by ``create_all``
-    # after #662 never had it, while every database migrated from 001
-    # does. A plain DROP would fail on the former and block the deploy.
+    # IF EXISTS rather than ``op.drop_table`` because presence is
+    # environment-dependent, which is the problem this revision closes:
+    # the table is invisible to ``Base.metadata``, so a database built by
+    # ``create_all`` against current models never gets it, while one
+    # migrated from 001 has it. Deploys always run ``alembic upgrade
+    # head`` and so land in the second case, which makes this defensive
+    # rather than load-bearing; the databases that actually lack the
+    # table are the test ones both repos build with ``create_all``.
     op.execute("DROP TABLE IF EXISTS heartbeat_items")
 
 
