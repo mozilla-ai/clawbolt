@@ -263,8 +263,11 @@ def test_autogenerate_emits_no_destructive_operations(
 
     generated = [p for p in versions.glob("*.py") if p.name.endswith("_probe.py")]
     assert len(generated) == 1, f"expected one generated migration, got {generated}"
-    body = generated[0].read_text()
-    drops = [line.strip() for line in body.splitlines() if "op.drop" in line]
+    # Only the upgrade half. The downgrade of any legitimate ``create_table``
+    # is a ``drop_table``, so scanning the whole file would fail on unrelated
+    # model-vs-chain drift and blame the ``include_object`` filter for it.
+    upgrade_body = generated[0].read_text().split("def downgrade(")[0]
+    drops = [line.strip() for line in upgrade_body.splitlines() if "op.drop" in line]
     assert not drops, (
         "autogenerate emitted destructive operations against objects that only "
         "lack a model because #1510 has not landed yet:\n  " + "\n  ".join(drops)
