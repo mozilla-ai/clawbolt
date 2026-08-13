@@ -25,6 +25,7 @@ import psycopg
 import pytest
 from psycopg import sql
 
+import backend.app.models  # noqa: F401 -- registers every table on Base.metadata
 from backend.app.database import Base
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -35,12 +36,21 @@ _UNMANAGED_TABLES = {"alembic_version"}
 
 
 def _scratch_db_name() -> str:
-    """Dedicated database per xdist worker.
+    """Dedicated database per branch / xdist worker.
 
     The chain has to run against an empty database, and it leaves the
     schema at head rather than at whatever the rest of the suite
     expects, so it cannot share ``clawbolt_test``.
+
+    Resolution order mirrors ``_resolve_test_db_name`` in ``conftest.py``
+    so that ``OSS_TEST_DB``, the documented escape hatch for several
+    agents or branches running pytest at once, isolates this database
+    too. Without it, two concurrent runs race on CREATE DATABASE and the
+    loser's teardown force-drops the winner's scratch DB mid-chain.
     """
+    explicit = os.environ.get("OSS_TEST_DB")
+    if explicit:
+        return f"{explicit}_migrchain"
     worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
     return f"clawbolt_migrchain_{worker}"
 
@@ -50,7 +60,7 @@ def scratch_db_url() -> Generator[str]:
     """Create an empty database, yield its sync URL, drop it after."""
     name = _scratch_db_name()
     with psycopg.connect(_PG_ADMIN_URL, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(name)))
+        cur.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
         cur.execute(sql.SQL("CREATE DATABASE {} OWNER clawbolt").format(sql.Identifier(name)))
 
     yield f"postgresql://clawbolt:clawbolt@localhost:5432/{name}"
