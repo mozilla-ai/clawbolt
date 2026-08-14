@@ -1,0 +1,103 @@
+/*
+ * Brand gradient tokens for premium splash surfaces (marketing, login, docs).
+ *
+ * These implement DESIGN.md's "Gradient Brand Theme": an always-dark warm-black
+ * base with a warm amber glow. They are FIXED (not theme-dependent) because the
+ * splash pages are always dark regardless of the app's light/dark setting.
+ *
+ * Defined here (premium) rather than in the OSS brand-tokens.css because these
+ * surfaces are premium-only. If a splash treatment is ever needed in OSS,
+ * promote these to ../clawbolt/frontend/src/styles/brand-tokens.css.
+ *
+ * Imported by the splash layouts/components so a rebrand is a token edit, not a
+ * hunt through inline gradient strings.
+ */
+:root {
+  --brand-gradient-glow-1: #D4940F; /* bright amber */
+  --brand-gradient-glow-2: #B8720E; /* amber */
+  --brand-gradient-glow-3: #9A5F0B; /* deep amber */
+  --brand-gradient-warm-1: #6B5A40; /* warm brown */
+  --brand-gradient-warm-2: #504B44; /* warm taupe */
+  --brand-gradient-warm-3: #4A4540; /* warm taupe (deep) */
+  --brand-gradient-base: #43403A; /* warm-black base (marketing/docs) */
+  --brand-gradient-base-deep: #3A3630; /* warm-black base (login) */
+}
+
+/* ---------------------------------------------------------------------------
+ * Legal prose
+ *
+ * Styles the operator-supplied HTML that LegalPage injects at /terms and
+ * /privacy. Those files carry semantic markup and no classes, so the rules
+ * are element-scoped. Tailwind never sees that markup (it lives in public/,
+ * outside the content scan), which is exactly why the presentation lives
+ * here in CSS instead.
+ * ------------------------------------------------------------------------ */
+
+.legal-prose > * + * {
+  margin-top: 1.25rem;
+}
+
+.legal-prose h1 {
+  font-family: var(--font-display, inherit);
+  font-size: 1.875rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+}
+
+.legal-prose h2 {
+  font-family: var(--font-display, inherit);
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.legal-prose h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.legal-prose h4 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.legal-prose p {
+  margin-bottom: 1rem;
+}
+
+.legal-prose ul,
+.legal-prose ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.legal-prose ul {
+  list-style: disc;
+}
+
+.legal-prose ol {
+  list-style: decimal;
+}
+
+.legal-prose li {
+  margin-bottom: 0.5rem;
+}
+
+.legal-prose section + section {
+  margin-top: 2rem;
+}
+
+.legal-prose a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.legal-prose strong {
+  font-weight: 600;
+}

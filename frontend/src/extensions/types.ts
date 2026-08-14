@@ -1,7 +1,10 @@
-export interface SubscriptionInfo {
-  [key: string]: unknown;
+export interface UsageBucket {
+  used: number;
+  limit: number;
 }
 
-export interface PlanInfo {
-  [key: string]: unknown;
+export interface UsageSummary {
+  messages: UsageBucket;
+  tokens: UsageBucket;
+  period_start: string | null;
 }

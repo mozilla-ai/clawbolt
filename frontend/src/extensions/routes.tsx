@@ -1,40 +1,76 @@
 import type { ReactNode } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Route } from 'react-router-dom';
+import MarketingLayout from '@/layouts/MarketingLayout';
+import DocsLayout from '@/layouts/DocsLayout';
+import LoginPage from '@/components/LoginPage';
+import HomePage from '@/pages/marketing/HomePage';
+import LegalPage from '@/pages/marketing/LegalPage';
+import DocsPage from '@/pages/docs/DocsPage';
 
-export function getPremiumRouteElements(): ReactNode {
-  return null;
-}
+// SPA login path. Mirrored in the OSS backend/app/web_paths.py for URL
+// builders (transactional emails). The canonical route declaration is the
+// `<Route path="/app/login">` in OSS App.tsx; everything else should import
+// this constant.
+export const LOGIN_PATH = '/app/login';
 
 export function getLoginPageElement(): ReactNode {
-  // OSS has no login, redirect to app
-  return <Navigate to="/app" replace />;
+  return <LoginPage />;
+}
+
+export function getPremiumRouteElements(): ReactNode {
+  return (
+    <>
+      <Route element={<MarketingLayout />}>
+        <Route index element={<HomePage />} />
+      </Route>
+      {/* Prose comes from public/legal/, which the deployment supplies.
+          See LegalPage for why it is not checked in here. */}
+      <Route
+        path="/terms"
+        element={<LegalPage src="/legal/terms.html" title="Terms of Service" />}
+      />
+      <Route
+        path="/privacy"
+        element={<LegalPage src="/legal/privacy.html" title="Privacy Policy" />}
+      />
+      <Route path="/docs" element={<DocsLayout />}>
+        <Route index element={<DocsPage />} />
+        <Route path="*" element={<DocsPage />} />
+      </Route>
+    </>
+  );
 }
 
 export function getDefaultSettingsTab(_isPremium: boolean): string {
-  return 'model';
+  // Channels is visible in every premium variant (non-premium, premium-user,
+  // premium-admin), so it's a safe default for /app/settings with no tab.
+  return 'channels';
 }
 
-export function shouldRedirectRootToApp(_isPremium: boolean): boolean {
-  return true;
+export function shouldRedirectRootToApp(isPremium: boolean): boolean {
+  return !isPremium;
 }
 
 /**
- * Landing path for ``/app``, or null to keep the default (get-started /
- * dashboard). Lets an extension route a role somewhere else on login;
- * premium sends admins to the admin overview.
+ * Admins land on the admin overview instead of their personal dashboard.
+ *
+ * Operating the platform is what an admin opens the app to do; their own
+ * assistant is one sidebar click away. Non-admins get the OSS default
+ * (null), and OSS's ``DefaultRedirect`` still sends anyone with incomplete
+ * onboarding to the wizard first.
  */
-export function getDefaultAppPath(_isAdmin: boolean): string | null {
-  return null;
+export function getDefaultAppPath(isAdmin: boolean): string | null {
+  return isAdmin ? '/app/admin' : null;
 }
 
 export function getFeatureRequestUrl(): string {
-  return 'https://github.com/mozilla-ai/clawbolt/issues/new?title=Feature+request:+&labels=enhancement';
+  return 'mailto:support@clawbolt.ai?subject=Feature+request:+';
 }
 
 export function getReportIssueUrl(): string {
-  return 'https://github.com/mozilla-ai/clawbolt/issues/new?title=Bug:+&labels=bug';
+  return 'mailto:support@clawbolt.ai?subject=Issue+report:+';
 }
 
 export function getDocsUrl(): string {
-  return 'https://clawbolt.ai/guide/';
+  return '/docs/guide/';
 }
