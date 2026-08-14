@@ -23,7 +23,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | `DATABASE_URL` | `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt` | PostgreSQL connection URL |
 | `SETTINGS_STORE` | `db` | Backend for runtime-configurable settings (admin UI values). `db` writes to the `app_settings` table; `file` keeps the legacy `data/config.json` flow for file-based deployments |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated list of allowed CORS origins |
-| `AUTH_MODE` | `single_user` | Who the app authenticates. `single_user` needs no credentials and resolves every request to the one user in the database. `multi_user` requires a plugin that registers a resolver and refuses to start without one |
+| `AUTH_MODE` | `single_user` | Who the app authenticates, and the deployment's tenancy switch. `single_user` needs no credentials and resolves every request to the one user in the database. `multi_user` turns on the hosted surface described under [Multi-user deployment](#multi-user-deployment) |
 | `JWT_SECRET` | `change-me-in-production` | Secret key for JWT signing. **Change this in production** |
 | `JWT_EXPIRY_MINUTES` | `15` | JWT token expiry time in minutes |
 | `PREMIUM_PLUGIN` | (empty) | Python import path for premium auth plugin. Leave empty for OSS single-tenant mode |
@@ -197,7 +197,8 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOG_REQUEST_TIMING` | `false` | Log method, path, status code, and duration for every HTTP request |
+| `LOG_REQUEST_TIMING` | `false` | Log method, path, status code, and duration for every HTTP request. Always on under `AUTH_MODE=multi_user` |
+| `LOG_FORMAT` | `text` | Log rendering. `json` emits one JSON object per line with the request correlation ID as a top-level key, for log aggregators |
 
 ## Web chat UI
 
@@ -304,3 +305,100 @@ An earlier version of this integration queried the store locator directly with a
 |----------|---------|-------------|
 | `MAX_MEDIA_SIZE_BYTES` | `20971520` | Max upload size (20 MB default) |
 | `MEDIA_DOWNLOAD_MAX_SECONDS` | `60.0` | Hard wall-time ceiling per media download (slow-drip guard) |
+
+## Multi-user deployment
+
+Everything in this section is inert unless `AUTH_MODE=multi_user`. That mode turns one process into a hosted, multi-tenant deployment: users sign in with Google, sessions are JWTs, each tenant gets its own message and token quota, admins get a console at `/app/admin`, and the operator gets health probes and error alerts by email. A single-user self-host can skip the whole section.
+
+Two things behave differently in this mode beyond the settings below. Channel senders are approved by linking a channel to an account (a `channel_routes` row) rather than by the `*_ALLOWED_NUMBERS` env vars, which are not read. And FastAPI's `/docs`, `/redoc`, and `/openapi.json` are not served, because `/docs` is the SPA's user guide.
+
+### Sign-in
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GOOGLE_CLIENT_ID` | | OAuth client ID from the [Google Cloud console](https://console.cloud.google.com/apis/credentials) |
+| `GOOGLE_CLIENT_SECRET` | | OAuth client secret |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:8000/api/auth/oauth/google/callback` | Legacy. The callback URL is derived from `APP_BASE_URL`; this is kept only for deployments that pinned a non-default value |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token lifetime |
+| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Refresh token lifetime |
+| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
+| `AUTH_RATE_LIMIT_MAX_REQUESTS` | `10` | Sign-in requests allowed per window, per client IP |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `60` | Length of that window |
+| `OAUTH_STATE_EXPIRY_MINUTES` | `5` | Lifetime of the signed OAuth state token |
+
+Register `<APP_BASE_URL>/api/auth/oauth/google/callback` as an authorized redirect URI on the OAuth client. The app refuses to start if `JWT_SECRET` is still the placeholder and `APP_BASE_URL` is not localhost, since anyone who knows the default could mint a token for any account.
+
+### Access and admin
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REGISTRATION_MODE` | `restricted` | `restricted` admits only addresses in the `allowed_emails` table plus `ADMIN_EMAIL`; `open` admits anyone with a Google account |
+| `ADMIN_EMAIL` | | Promoted to the admin role on first login. Compared case-insensitively |
+| `ADMIN_USER_IDS_RAW` | | Legacy env-var admin list, no longer consulted at request time. Kept so `python -m backend.app.cli promote-env-admins` can migrate it into the database; remove it once that has run |
+
+Admin is granted exclusively by `Subscription.role`, so it is revocable from the console and shows up in the audit log. Everyone else who signs in gets a `free` plan.
+
+### Quotas
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FREE_TIER_DAILY_GLOBAL_CAP` | `0` | Ceiling on messages across all free-tier users combined. `0` disables it |
+
+Per-plan message and token limits are code, not config: see `backend/app/billing/plans.py`. Quotas reset on the first of each month, and admins are exempt.
+
+### Account lifecycle
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INACTIVE_WARN_MONTHS` | `11` | Months of inactivity before a free-tier user is emailed a warning |
+| `INACTIVE_DELETE_MONTHS` | `12` | Months of inactivity before the account is deleted |
+
+Neither threshold does anything on its own. Run `python -m backend.app.cli cleanup` on a schedule to drive the sweep, or `--warn-only` to send warnings without deleting.
+
+### Email
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SMTP_HOST` | | SMTP relay hostname. Empty makes every send a no-op |
+| `SMTP_PORT` | `587` | SMTP port (587 is STARTTLS) |
+| `SMTP_USERNAME` | | SMTP username |
+| `SMTP_PASSWORD` | | SMTP password |
+| `SMTP_FROM_EMAIL` | | Envelope sender |
+| `SMTP_TIMEOUT_SECONDS` | `10` | Per-operation socket timeout |
+
+Set `SMTP_HOST` and `SMTP_FROM_EMAIL` together or not at all: a partial config is rejected at startup rather than silently no-opping, because the usual cause is a typo and the usual symptom is users reporting missing email months later. The timeout is deliberately short: `socket.create_connection` retries every address a host resolves to, so a blocked outbound port on a three-record host would otherwise hold an admin request for three times as long.
+
+### Operator alerting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALERTS_ENABLED` | `true` | Route ERROR-level application logs to the operator's inbox |
+| `ALERT_EMAIL` | | Recipient. Falls back to `ADMIN_EMAIL` |
+| `ALERT_FLUSH_INTERVAL_SECONDS` | `60` | How often queued alerts are sent |
+| `ALERT_DEDUPE_MINUTES` | `30` | Minimum gap between emails for the same fingerprint |
+| `ALERT_MAX_EMAILS_PER_HOUR` | `20` | Hard ceiling on outbound alert volume |
+
+Dormant unless SMTP is configured and a recipient resolves, so dev and CI never send. Alerts group by fingerprint (logger, exception type, log template) and carry a suppressed-occurrence count, so one broken integration logging thousands of identical errors a minute produces one email, not thousands. `POST /api/monitoring/test-alert` verifies the wiring; `POST /api/monitoring/diagnose-email` reports whether the relay is refusing or nothing is leaving the container at all.
+
+### Health monitoring
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HEALTH_MONITOR_ENABLED` | `true` | Probe dependencies on a timer |
+| `HEALTH_CHECK_INTERVAL_SECONDS` | `300` | Seconds between probe runs |
+| `HEALTH_FAILURE_THRESHOLD` | `2` | Consecutive failures before a dependency is declared DOWN |
+| `HEALTH_PROBE_LLM` | `true` | Include a single-token completion against the configured model |
+| `HEALTH_PROBE_MAX_USERS` | `50` | Cap on users checked per tick by the integration probe |
+| `HEALTH_PROBE_TIMEOUT_SECONDS` | `45` | Per-probe wall-clock ceiling |
+
+Email goes out on state transitions (OK to DOWN, DOWN to OK), not on every failing tick, so a multi-hour outage is two emails. The failure threshold exists because one timed-out probe against a residential iMessage bridge is noise, not an outage. Current state is at `GET /api/monitoring/status`.
+
+### KMS envelope encryption
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KMS_KEY_ARN` | | AWS KMS key that wraps the per-row data keys. Empty falls back to a local key derived from `ENCRYPTION_KEY` |
+| `AWS_ACCESS_KEY_ID` | | Optional. Omit to use the instance's ambient credentials |
+| `AWS_SECRET_ACCESS_KEY` | | Optional, paired with the above |
+
+Setting `KMS_KEY_ARN` switches DEK wrapping to KMS on the next restart. Rows written before the switch carry `kek_id="local"` and keep decrypting through the local provider, so enabling KMS does not strand existing data. Going the other way does: unsetting it after KMS-wrapped rows exist makes them unreadable. Treat a change here as a data migration. `python -m backend.app.security.validate` round-trips a sentinel through the configured key and exits non-zero on failure, which is what to run in a pre-deploy step.

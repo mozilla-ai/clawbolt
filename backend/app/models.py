@@ -5,12 +5,16 @@ import uuid as _uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
+    JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -19,6 +23,7 @@ from sqlalchemy import (
     false,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -41,10 +46,10 @@ class EncryptedString(TypeDecorator):
     On read, the envelope is parsed, the DEK is unwrapped via the
     provider, and the plaintext is recovered.
 
-    The provider is selected through ``backend.app.auth.loader``: OSS
-    ships ``LocalKEKProvider`` (Fernet wrapping derived from
-    ``settings.encryption_key``); premium plugins override with a
-    KMS-backed provider for per-tenant DEK wrapping.
+    The provider is selected through ``backend.app.auth.loader``:
+    ``LocalKEKProvider`` by default (Fernet wrapping derived from
+    ``settings.encryption_key``), or a KMS-backed provider when
+    ``KMS_KEY_ARN`` is set.
     """
 
     impl = Text
@@ -115,6 +120,7 @@ class User(Base):
     """
 
     __tablename__ = "users"
+    __table_args__ = (Index("ix_users_last_login_at", "last_login_at"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(_uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
@@ -138,6 +144,16 @@ class User(Base):
     data_sharing_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     data_sharing_consent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
+    )
+    # Multi-user accounting. Stamped by the login tracker on every sign-in
+    # and read by the inactivity sweep, which warns at
+    # ``INACTIVE_WARN_MONTHS`` and deletes at ``INACTIVE_DELETE_MONTHS``.
+    # Naive (no timezone) to match the column the migration created;
+    # writers strip tzinfo from an otherwise-UTC value before binding.
+    # Both stay NULL in single-user deployments, where nothing signs in.
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    inactivity_warned_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, default=None
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
@@ -920,3 +936,276 @@ class AppSetting(Base):
     updated_by_user_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-user deployment models
+#
+# These tables exist in every deployment (revision 041 creates them), but
+# only ``AUTH_MODE=multi_user`` writes to them. A single-user self-host
+# leaves them empty.
+# ---------------------------------------------------------------------------
+
+
+class Subscription(Base):
+    """Per-user plan, role, and LLM override. One row per user.
+
+    None of the models in this section declares an ORM ``relationship`` to
+    ``User``, so SQLAlchemy has no inter-mapper dependency to order a flush
+    by and falls back to the mapper sort key, which is alphabetical:
+    ``Subscription`` flushes before ``User``. Adding a user and its
+    dependent rows in one flush therefore emits the child INSERT first and
+    violates the foreign key. Flush the ``User`` first, as
+    ``auth/oauth_flow.py`` does.
+
+    The relationships are omitted deliberately. Declaring one changes what
+    ``db.delete(user)`` does to these rows, and deletion is already handled
+    explicitly by ``services/user_deletion.py``.
+    """
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), unique=True, index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), default="user")
+    email: Mapped[str] = mapped_column(String(255), default="")
+    plan: Mapped[str] = mapped_column(String(20), default="free")
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    # Per-user LLM override. Empty string means "use the global default"
+    # (settings.llm_provider / settings.llm_model). Either field can be
+    # set independently: e.g. provider="" + model="claude-opus-4-5" keeps
+    # the global provider but pins this user to a specific model.
+    llm_provider_override: Mapped[str] = mapped_column(String(64), default="")
+    llm_model_override: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UsageQuota(Base):
+    """One row per user per calendar month, holding usage and that month's caps.
+
+    Limits are captured at row creation, so a plan change only affects the
+    active month if something rewrites the row (see
+    ``billing.quota.apply_plan_limits_to_current_quota``).
+    """
+
+    __tablename__ = "usage_quotas"
+    __table_args__ = (
+        UniqueConstraint("user_id", "period_start", name="uq_usage_quotas_user_period"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    messages_used: Mapped[int] = mapped_column(Integer, default=0)
+    messages_limit: Mapped[int] = mapped_column(Integer, default=1000)
+    tokens_used: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_limit: Mapped[int] = mapped_column(Integer, default=1_000_000)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DeletedUserUsage(Base):
+    """Archived usage for deleted accounts. Prevents quota reset via re-registration."""
+
+    __tablename__ = "deleted_user_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    original_user_id: Mapped[str] = mapped_column(String(255), index=True)
+    plan_at_deletion: Mapped[str] = mapped_column(String(20), default="free")
+    total_messages: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AllowedEmail(Base):
+    """Pre-approved email addresses that are allowed to register.
+
+    When ``REGISTRATION_MODE`` is "restricted", only emails in this table
+    (plus ``ADMIN_EMAIL``) can create new accounts.
+    """
+
+    __tablename__ = "allowed_emails"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# Placeholder used when a signup does not supply a name. Must stay in sync
+# with the ``server_default`` on the ``name`` column, since both router-side
+# normalization and the email-template greeter check for this exact literal
+# to decide whether to fall back to the neutral ``Hi there,`` salutation.
+WAITLIST_NAME_DEFAULT = "user"
+
+
+class WaitlistEntry(Base):
+    """Email addresses of users who want access but aren't yet approved.
+
+    Entries are created via the public ``POST /api/waitlist/join`` endpoint
+    and reviewed by admins in the Waitlist tab.
+    """
+
+    __tablename__ = "waitlist_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(
+        String(120), nullable=False, server_default=WAITLIST_NAME_DEFAULT
+    )
+    # Free-text answer to "what would you use this for?" so admins can tell
+    # tradespeople from devs poking the form. Optional, nullable.
+    use_case: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(50), default="homepage", server_default="homepage")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminApiKey(Base):
+    """A long-lived API key bound to an admin user.
+
+    Long-lived bearer tokens that admin users mint to authenticate from a
+    CLI / curl context where an OAuth-issued JWT isn't a fit (interactive
+    flow, short expiry).
+
+    Lookup is by ``key_hash`` (SHA-256 hex of the cleartext token). The
+    cleartext is shown once at mint time and never stored; if a user loses
+    their key they have to mint a new one.
+
+    Scoped to the admin role: the auth path re-checks the owner's
+    ``Subscription.role`` on every request, so demoting an admin
+    invalidates all their keys instantly without revoking them first.
+    ``revoked_at`` covers the explicit-revoke case for admins who stay
+    admin but want to retire one device's key.
+    """
+
+    __tablename__ = "admin_api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    # Human label set by the admin at mint time ("laptop", "ci runner").
+    # Free-form, truncated to 200 chars at the service layer.
+    label: Mapped[str] = mapped_column(String(200), default="")
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # First 11 chars of the cleartext, including the ``ck_`` family marker
+    # plus 8 random suffix chars (``ck_a1b2c3d4``). Stored in this format so
+    # the displayed value matches the leading characters of the cleartext
+    # the admin pasted; no "strip ck_" mental step. Display-only; the full
+    # token is never recoverable.
+    key_prefix: Mapped[str] = mapped_column(String(16), default="")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # Stamped on each successful auth that uses this key. NULL means "never
+    # used since mint". Best-effort: the auth path updates this in a
+    # fire-and-forget background commit so a slow update doesn't block the
+    # request.
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # NULL = active. The auth path treats any non-null value as "denied",
+    # regardless of how far in the past it was set, so revocation is
+    # irreversible.
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdminAuditLog(Base):
+    """Append-only record of admin reads and mutations against user data.
+
+    Limits the blast radius of a compromised admin token and gives a query
+    hook for "show me everything admin X did last week."
+
+    Two generations of fields coexist. ``endpoint`` is the original
+    free-text "GET /api/admin/users/{id}" string, still populated for
+    forensic queries that predate the structured fields. ``action`` is its
+    canonical replacement: short, indexed, and stable across endpoint URL
+    refactors. The structured fields are all nullable because rows written
+    before they existed only have ``endpoint``.
+    """
+
+    __tablename__ = "admin_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    admin_user_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    admin_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_user_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    endpoint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    action: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resource_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class LLMPayloadCapture(Base):
+    """Bounded rolling capture of LLM request payloads, keyed by user.
+
+    Stores at most two payloads per consenting user: the latest from the
+    *previous* compaction era and the latest from the *current* era.
+    ``current_era_*`` is always populated when the row exists;
+    ``previous_era_*`` stays NULL until the first rotation.
+
+    The era marker is the lowest persisted ``message_seq`` across the
+    user/assistant messages in the LLM prompt. When that value rises
+    (because compaction trimmed older messages), the capture service
+    rotates current into previous before writing the new current.
+
+    ``user_id`` is the sole primary key, which assumes the
+    ``UNIQUE(user_id)`` constraint on ``chat_sessions`` holds. Concurrent
+    multi-session per user would race two agent loops onto the same row
+    with different era markers and ping-pong the rotation; if multi-session
+    returns, the PK has to become ``(user_id, session_id)``.
+    """
+
+    __tablename__ = "llm_payload_captures"
+
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    current_era_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # NULL when no message in the captured prompt has a persisted seq (e.g.
+    # a brand-new conversation). The rotation upsert treats NULL as a
+    # distinct value from any integer, so the first capture of a fresh
+    # session does not rotate when the next capture has a real seq.
+    current_era_min_message_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    current_era_captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    current_era_request_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    current_era_payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Populated by ``capture_llm_response`` after the matching request
+    # lands in ``current_era_payload``. Match keys are ``user_id`` plus the
+    # request_id echoed on the response payload. A response that arrives
+    # without a matching request_id is dropped (the request was filtered
+    # out by purpose, size, or consent).
+    current_era_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    current_era_response_captured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    current_era_response_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    previous_era_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    previous_era_min_message_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    previous_era_captured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    previous_era_request_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    previous_era_payload_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    previous_era_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    previous_era_response_captured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    previous_era_response_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)

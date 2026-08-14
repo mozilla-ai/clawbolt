@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -15,9 +16,16 @@ from backend.app.agent.approval import cleanup_orphaned_approvals
 from backend.app.agent.compaction_recovery import recover_pending_compactions
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.agent.inbound_recovery import recover_orphan_inbound_messages
+from backend.app.agent.router import set_pipeline_override
 from backend.app.auth.dependencies import validate_auth_mode
+from backend.app.billing.pipeline_steps import get_multi_user_pipeline
 from backend.app.bus import message_bus
 from backend.app.channels import get_manager, register_channel
+from backend.app.channels.base import (
+    BaseChannel,
+    channel_route_allowlist,
+    set_is_allowed_override,
+)
 from backend.app.channels.bluebubbles import BlueBubblesChannel
 from backend.app.channels.linq import LinqChannel
 from backend.app.channels.telegram import TelegramChannel
@@ -35,13 +43,25 @@ from backend.app.config_store import (
 )
 from backend.app.database import db_session_async, get_async_engine
 from backend.app.logging_utils import mask_pii
+from backend.app.middleware.admin_config_guard import AdminConfigGuardMiddleware
+from backend.app.middleware.request_logging import RequestLoggingMiddleware
+from backend.app.middleware.security_headers import SecurityHeadersMiddleware
+from backend.app.middleware.seo_meta import SeoMetaMiddleware
 from backend.app.models import ChannelRoute, User
+from backend.app.observability import setup_logging
 from backend.app.routers import (
+    account,
+    admin,
+    admin_reported_conversations,
+    admin_shared_data,
     app_config,
     auth,
+    auth_tokens,
+    google_oauth,
     health,
     integrations,
     media_temp,
+    monitoring,
     oauth,
     user_calendar,
     user_memory,
@@ -49,16 +69,47 @@ from backend.app.routers import (
     user_profile,
     user_sessions,
     user_tools,
+    waitlist,
 )
+from backend.app.routers import (
+    channels as channels_router,
+)
+from backend.app.services.admin_alerts import (
+    install_alert_handler,
+    start_alert_flusher,
+    stop_alert_flusher,
+)
+from backend.app.services.health_monitor import LOCAL_BASE_URL, health_monitor
+from backend.app.services.heartbeat_usage import install_heartbeat_usage_hook
+from backend.app.services.llm_payload_capture import install_llm_payload_capture
+from backend.app.services.llm_resolver import install_user_llm_resolver
 from backend.app.services.oauth import oauth_refresh_scheduler
+from backend.app.services.telegram_webhook import discover_bot_username
 
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
-)
-# Only the app's own loggers get the configured level; third-party libraries
-# (httpcore, httpx, telegram, etc.) stay at WARNING to avoid noise.
-logging.getLogger("backend").setLevel(settings.log_level.upper())
+# Whether this process runs the hosted, multi-tenant surface: OAuth
+# sign-in, the admin console, quota enforcement, and operator monitoring.
+# Read at import for the agent hooks below, which are process-global and
+# cannot be installed per-app. ``create_app`` and the lifespan read
+# ``settings.auth_mode`` when they run instead, so a test that builds a
+# second app under a different mode gets a consistent one.
+MULTI_USER = settings.auth_mode == "multi_user"
+
+# Structured logging with a per-request correlation ID. Pins the root
+# logger to WARNING (so httpx does not log request URLs carrying
+# credentials at INFO) and raises only the ``backend`` tree to LOG_LEVEL.
+setup_logging()
+
+if MULTI_USER:
+    # Capture ERROR-level logs for the operator alert email from here on.
+    # Installed at import rather than inside setup_logging() because
+    # admin_alerts imports observability for the request-id ContextVar, so
+    # the reverse import would be a cycle. The flush task that actually
+    # sends starts in the lifespan; until then errors only accumulate in
+    # memory. Re-installed there as well, because uvicorn's dictConfig
+    # strips handlers from the loggers it names (including uvicorn.error)
+    # after this module is imported.
+    install_alert_handler()
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +120,28 @@ register_channel(WebChatChannel())
 register_channel(LinqChannel())
 register_channel(BlueBubblesChannel())
 register_channel(TwilioChannel())
+
+
+# -- Multi-user hooks into the agent stack ----------------------------------
+
+if MULTI_USER:
+    # Quota checks before the LLM call and usage tracking after it.
+    set_pipeline_override(get_multi_user_pipeline())
+
+    # Senders are approved by having a ChannelRoute, not by an env-var
+    # allowlist: an operator-managed list cannot express per-tenant access.
+    set_is_allowed_override(channel_route_allowlist)
+
+    # Heartbeat LLM calls bypass the ingestion pipeline, so their spend
+    # would otherwise never reach the tenant's UsageQuota counters.
+    install_heartbeat_usage_hook()
+
+    # Lets admins pin individual users to a provider/model from the console.
+    install_user_llm_resolver()
+
+    # Capture LLM request payloads for users who opted into data sharing,
+    # so admins can export them for offline token-efficiency analysis.
+    install_llm_payload_capture()
 
 
 async def _enforce_single_channel() -> None:
@@ -196,63 +269,12 @@ async def _verify_database() -> None:
     logger.info("Database connection verified: %s", engine.url)
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
-    """Start/stop background services."""
-    # Hydrate the settings singleton from persistent storage. The store
-    # raises ConfigStoreError if its backend is unreachable (DB down,
-    # missing migration, decryption failure) so a misconfigured
-    # production environment fails the lifespan loudly rather than
-    # booting with empty defaults and crashing 30 lines deeper.
-    await _verify_database()
-    store = get_settings_store()
-    # One-shot migration from the legacy data/config.json into the DB
-    # store. No-op once the table has any persistable rows, so safe to
-    # leave in place across releases.
-    await import_legacy_config_json(store)
-    persisted = await store.load()
-    applied = apply_to_settings(persisted)
-    if applied:
-        logger.info(
-            "Loaded %d setting(s) from settings store: %s",
-            len(applied),
-            sorted(applied),
-        )
+def _log_channel_config_warnings() -> None:
+    """Warn about channels configured with no allowlist, which denies everyone.
 
-    # Pydantic Settings reads .env for its own declared fields only and
-    # does not mutate os.environ. Provider API keys like GROQ_API_KEY are
-    # consumed by the any-llm SDK, which reads them directly from
-    # os.environ, so we ensure .env values are loaded into the process
-    # environment here. Docker Compose already handles this via its
-    # env_file directive; this call covers bare-host / local-dev setups.
-    load_dotenv()
-
-    await _enforce_single_channel()
-    validate_imessage_backend()
-    validate_auth_mode()
-    log_config_warnings()
-
-    # Warm the Intuit discovery document cache so QuickBooks OAuth
-    # endpoints are resolved from the discovery document rather than
-    # hardcoded URLs.
-    from backend.app.services.oauth import warm_intuit_discovery
-
-    await warm_intuit_discovery()
-
-    await _verify_llm_settings()
-    heartbeat_scheduler.start()
-
-    # Background OAuth token refresh: keep tokens fresh proactively so
-    # user-facing tool calls do not pay the inline ~150ms refresh cost
-    # during the 5 minute pre-expiry window.
-    oauth_refresh_scheduler.start()
-
-    if settings.telegram_bot_token:
-        if settings.telegram_webhook_secret:
-            logger.info("Webhook secret: using explicit TELEGRAM_WEBHOOK_SECRET")
-        else:
-            logger.info("Webhook secret: auto-derived from bot token")
-
+    single_user only: these read the env-var allowlists, which multi_user
+    deployments do not use.
+    """
     if settings.telegram_bot_token and not settings.telegram_allowed_chat_id:
         logger.warning(
             "No Telegram user ID configured (TELEGRAM_ALLOWED_CHAT_ID). "
@@ -307,9 +329,137 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
                 'Set to "*" to allow all, or provide an E.164 phone number.'
             )
 
-    # Start all registered channels concurrently.
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    """Start/stop background services."""
+    multi_user = settings.auth_mode == "multi_user"
+
+    # Hydrate the settings singleton from persistent storage. The store
+    # raises ConfigStoreError if its backend is unreachable (DB down,
+    # missing migration, decryption failure) so a misconfigured
+    # production environment fails the lifespan loudly rather than
+    # booting with empty defaults and crashing 30 lines deeper.
+    await _verify_database()
+    store = get_settings_store()
+    # One-shot migration from the legacy data/config.json into the DB
+    # store. No-op once the table has any persistable rows, so safe to
+    # leave in place across releases.
+    await import_legacy_config_json(store)
+    persisted = await store.load()
+    applied = apply_to_settings(persisted)
+    if applied:
+        logger.info(
+            "Loaded %d setting(s) from settings store: %s",
+            len(applied),
+            sorted(applied),
+        )
+
+    # Pydantic Settings reads .env for its own declared fields only and
+    # does not mutate os.environ. Provider API keys like GROQ_API_KEY are
+    # consumed by the any-llm SDK, which reads them directly from
+    # os.environ, so we ensure .env values are loaded into the process
+    # environment here. Docker Compose already handles this via its
+    # env_file directive; this call covers bare-host / local-dev setups.
+    load_dotenv()
+
+    await _enforce_single_channel()
+    validate_imessage_backend()
+    validate_auth_mode()
+    log_config_warnings()
+
+    # Warm the Intuit discovery document cache so QuickBooks OAuth
+    # endpoints are resolved from the discovery document rather than
+    # hardcoded URLs.
+    from backend.app.services.oauth import warm_intuit_discovery
+
+    await warm_intuit_discovery()
+
+    await _verify_llm_settings()
+
+    if settings.cors_origins.strip() == "*":
+        logger.warning(
+            "CORS_ORIGINS is set to '*' (wildcard). "
+            "This allows any origin to access your API. "
+            "For production, set CORS_ORIGINS to specific origins."
+        )
+
+    if multi_user and settings.admin_user_ids:
+        logger.warning(
+            "ADMIN_USER_IDS is still set (%d entries) but is no longer "
+            "consulted: admin is granted exclusively by Subscription.role "
+            "in the database. If you've already run "
+            "`python -m backend.app.cli promote-env-admins` and verified "
+            "the listed users have role='admin' in the DB, this warning is "
+            "harmless: remove ADMIN_USER_IDS from your environment to "
+            "silence it. If you have NOT run the migration yet, do so now: "
+            "until then, the listed users will be denied admin access.",
+            len(settings.admin_user_ids),
+        )
+
+    if settings.telegram_bot_token:
+        if settings.telegram_webhook_secret:
+            logger.info("Webhook secret: using explicit TELEGRAM_WEBHOOK_SECRET")
+        else:
+            logger.info("Webhook secret: auto-derived from bot token")
+
+    # Channel allowlist warnings are single_user only. In multi_user mode
+    # senders are approved per tenant through ChannelRoute (see
+    # ``channel_route_allowlist``), so the env-var allowlists these warn
+    # about are unread and every one of them would be a false alarm.
+    if not multi_user:
+        _log_channel_config_warnings()
+
+    # Start all channels and the message bus consumer / outbound
+    # dispatcher before the heartbeat scheduler, so heartbeat messages
+    # published on the bus have somewhere to be delivered.
     manager = get_manager()
     channel_tasks = await manager.start_all()
+
+    # Auto-register channel webhooks against the public base URL. Each
+    # channel implements register_paas_webhook() in BaseChannel.
+    #
+    # Run the per-channel registrations as background tasks rather than
+    # awaiting them sequentially. The BlueBubbles registration in
+    # particular makes an outbound httpx call to the operator's
+    # BlueBubbles server, which can be unreachable for minutes when the
+    # user's Mac is asleep. Awaiting it here blocked the lifespan and
+    # delayed the first healthcheck-passing response by tens of seconds.
+    # Background tasks log success/failure on their own; the lifespan
+    # unblocks immediately.
+    background_tasks: list[asyncio.Task] = []
+    if multi_user:
+        # Normalize before comparing, so the health monitor's identical
+        # check cannot disagree with this one over a trailing slash and
+        # end up verifying a registration that was never made.
+        base = settings.app_base_url.rstrip("/")
+        if base and base != LOCAL_BASE_URL:
+            for channel in manager.channels.values():
+                background_tasks.append(
+                    asyncio.create_task(
+                        _register_channel_webhook_in_background(channel, base),
+                        name=f"webhook-register-{channel.name}",
+                    )
+                )
+
+        # Discover the bot username for the get-started page.
+        if settings.telegram_bot_token:
+            await discover_bot_username()
+
+    heartbeat_scheduler.start()
+
+    # Background OAuth token refresh: keep tokens fresh proactively so
+    # user-facing tool calls do not pay the inline ~150ms refresh cost
+    # during the 5 minute pre-expiry window.
+    oauth_refresh_scheduler.start()
+
+    if multi_user:
+        # Operator monitoring. Started after channels so the BlueBubbles
+        # probe can read the channel's reachability flag, and after the
+        # LLM/DB verification above so a hard misconfiguration fails the
+        # lifespan instead of arriving as an alert email.
+        start_alert_flusher()
+        health_monitor.start()
 
     # Notify users whose approval requests were in flight when the previous
     # worker died. Runs after channels are up so outbound delivery works.
@@ -348,16 +498,24 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # The orphan recovery above only handles messages that reached our DB;
     # a webhook delivery that failed because Clawbolt was unreachable
     # leaves no DB row, so we have to ask the BlueBubbles server for them.
-    try:
-        bb_channel = manager.get("bluebubbles")
-        if isinstance(bb_channel, BlueBubblesChannel):
-            replayed = await bb_channel.run_startup_backfill()
-            if replayed:
-                logger.info("Replayed %d BlueBubbles message(s) from startup backfill", replayed)
-    except KeyError:
-        pass
-    except Exception:
-        logger.exception("BlueBubbles startup backfill failed")
+    #
+    # single_user only. A multi-tenant deployment registers its webhook in
+    # the background above and lets the channel's own startup sequence
+    # replay, so running the backfill here as well would re-deliver
+    # messages that the channel is about to hand over anyway.
+    if not multi_user:
+        try:
+            bb_channel = manager.get("bluebubbles")
+            if isinstance(bb_channel, BlueBubblesChannel):
+                replayed = await bb_channel.run_startup_backfill()
+                if replayed:
+                    logger.info(
+                        "Replayed %d BlueBubbles message(s) from startup backfill", replayed
+                    )
+        except KeyError:
+            pass
+        except Exception:
+            logger.exception("BlueBubbles startup backfill failed")
 
     # Sweep expired media staging rows + on-disk bytes. Steady-state
     # eviction happens inline on stage(), but a crash between cap-enforce
@@ -378,71 +536,153 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     for task in channel_tasks:
         if not task.done():
             task.cancel()
+    for task in background_tasks:
+        if not task.done():
+            task.cancel()
+    if multi_user:
+        health_monitor.stop()
+        # Cancelling the flusher triggers one final drain, so errors
+        # logged during shutdown (including whatever caused it) still
+        # reach the operator.
+        stop_alert_flusher()
     await manager.stop_all()
     heartbeat_scheduler.stop()
     oauth_refresh_scheduler.stop()
 
 
-app = FastAPI(title="Clawbolt", version="0.1.0", lifespan=lifespan)
+async def _register_channel_webhook_in_background(channel: BaseChannel, base: str) -> None:
+    """Run a channel's PaaS webhook registration without blocking startup.
 
-if settings.log_request_timing:
-    from backend.app.middleware.request_logging import RequestLoggingMiddleware
+    Logs success/failure and updates ``channel.webhook_registered`` on
+    success. Swallows exceptions so a single channel failure does not
+    crash the lifespan task. Bounded by a 30s timeout so a hung server
+    doesn't keep the task alive forever.
+    """
+    try:
+        result = await asyncio.wait_for(channel.register_paas_webhook(base), timeout=30.0)
+    except TimeoutError:
+        logger.warning("%s webhook auto-registration timed out after 30s", channel.name)
+        return
+    except Exception:
+        logger.exception("%s webhook registration raised", channel.name)
+        return
+    if result is True:
+        channel.webhook_registered = True
+        logger.info("%s webhook auto-registered", channel.name)
+    elif result is False:
+        logger.warning("%s webhook auto-registration failed", channel.name)
 
-    app.add_middleware(RequestLoggingMiddleware)  # ty: ignore[invalid-argument-type]
 
-app.add_middleware(
-    CORSMiddleware,  # type: ignore[arg-type]
-    allow_origins=settings.cors_origins.split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(health.router, prefix="/api")
-app.include_router(app_config.router, prefix="/api")
-app.include_router(auth.router, prefix="/api")
-app.include_router(oauth.router, prefix="/api")
-app.include_router(integrations.router, prefix="/api")
-app.include_router(media_temp.router, prefix="/api")
-
-# Include routers from all registered channels.
-for _channel in get_manager().channels.values():
-    app.include_router(_channel.get_router(), prefix="/api")
-
-app.include_router(user_profile.router, prefix="/api")
-app.include_router(user_sessions.router, prefix="/api")
-app.include_router(user_memory.router, prefix="/api")
-app.include_router(user_permissions.router, prefix="/api")
-app.include_router(user_tools.router, prefix="/api")
-app.include_router(user_calendar.router, prefix="/api")
-
-# ---------------------------------------------------------------------------
-# Static file serving (built frontend)
-# ---------------------------------------------------------------------------
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
-if _FRONTEND_DIST.is_dir():
-    # Serve static assets (JS, CSS, images)
-    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
+# Paths that automated scanners probe for secrets. The SPA fallback returns
+# 404 for these instead of index.html, so the server doesn't look like it
+# hosts them.
+_BLOCKED_SUFFIXES = (".env", ".pem", ".key", ".pgpass", ".netrc")
+_BLOCKED_SEGMENTS = {"credentials", "secrets"}
 
-    # Paths that automated scanners probe for secrets. Return 404 instead of
-    # the SPA index.html so the server doesn't look like it hosts these files.
-    _BLOCKED_SUFFIXES = (".env", ".pem", ".key", ".pgpass", ".netrc")
-    _BLOCKED_SEGMENTS = {"credentials", "secrets"}
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
-        """Serve the SPA index.html for all non-API routes."""
-        lower = full_path.lower()
-        segments = lower.split("/")
-        basename = segments[-1] if segments else ""
-        if basename.endswith(_BLOCKED_SUFFIXES) or basename.startswith(".env"):
-            raise HTTPException(status_code=404)
-        if _BLOCKED_SEGMENTS.intersection(segments):
-            raise HTTPException(status_code=404)
+def create_app() -> FastAPI:
+    """Build the ASGI app for the current ``AUTH_MODE``.
 
-        file_path = _FRONTEND_DIST / full_path
-        resolved = file_path.resolve()
-        if resolved.is_file() and resolved.is_relative_to(_FRONTEND_DIST.resolve()):
-            return FileResponse(resolved)
-        return FileResponse(_FRONTEND_DIST / "index.html")
+    Called once at import to produce the module-level ``app`` that uvicorn
+    serves. Exposed as a factory so tests can build a second app under a
+    different mode without re-importing this module, whose channel
+    registration and agent-hook installation are import-time side effects.
+    """
+    multi_user = settings.auth_mode == "multi_user"
+
+    # FastAPI's own docs routes are dropped in multi_user mode: /docs is
+    # claimed by the SPA's user guide, and without this Swagger UI wins
+    # route matching and shadows it.
+    app = FastAPI(
+        title="Clawbolt",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url=None if multi_user else "/docs",
+        redoc_url=None if multi_user else "/redoc",
+        openapi_url=None if multi_user else "/openapi.json",
+    )
+
+    app.add_middleware(
+        CORSMiddleware,  # type: ignore[arg-type]
+        allow_origins=settings.cors_origins.split(","),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Always installed: it is the source of the per-request correlation ID
+    # and the ``X-Request-ID`` response header. The access-log line it also
+    # emits is opt-in for a self-host and always on for a hosted
+    # deployment, where the operator has no other request-level record.
+    app.add_middleware(
+        RequestLoggingMiddleware,  # ty: ignore[invalid-argument-type]
+        log_timing=settings.log_request_timing or multi_user,
+    )
+
+    if multi_user:
+        app.add_middleware(SecurityHeadersMiddleware)  # ty: ignore[invalid-argument-type]
+        app.add_middleware(SeoMetaMiddleware)  # ty: ignore[invalid-argument-type]
+        app.add_middleware(AdminConfigGuardMiddleware)  # ty: ignore[invalid-argument-type]
+
+    app.include_router(health.router, prefix="/api")
+    app.include_router(app_config.router, prefix="/api")
+    app.include_router(auth.router, prefix="/api")
+    app.include_router(oauth.router, prefix="/api")
+    app.include_router(integrations.router, prefix="/api")
+    app.include_router(media_temp.router, prefix="/api")
+
+    # Include routers from all registered channels.
+    for channel in get_manager().channels.values():
+        app.include_router(channel.get_router(), prefix="/api")
+
+    app.include_router(user_profile.router, prefix="/api")
+    app.include_router(user_sessions.router, prefix="/api")
+    app.include_router(user_memory.router, prefix="/api")
+    app.include_router(user_permissions.router, prefix="/api")
+    app.include_router(user_tools.router, prefix="/api")
+    app.include_router(user_calendar.router, prefix="/api")
+
+    # Hosted-deployment surface: sign-in, the account page, the admin
+    # console, operator monitoring, and the public waitlist. Mounted before
+    # the SPA fallback below, which otherwise matches every GET.
+    if multi_user:
+        app.include_router(auth_tokens.router, prefix="/api")
+        app.include_router(google_oauth.router, prefix="/api")
+        app.include_router(admin.router, prefix="/api")
+        app.include_router(admin_shared_data.router, prefix="/api")
+        app.include_router(admin_reported_conversations.router, prefix="/api")
+        app.include_router(account.router, prefix="/api")
+        app.include_router(channels_router.router, prefix="/api")
+        app.include_router(monitoring.router, prefix="/api")
+        app.include_router(waitlist.router, prefix="/api")
+
+    # -----------------------------------------------------------------
+    # Static file serving (built frontend)
+    # -----------------------------------------------------------------
+    if _FRONTEND_DIST.is_dir():
+        # Serve static assets (JS, CSS, images)
+        app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
+            """Serve the SPA index.html for all non-API routes."""
+            lower = full_path.lower()
+            segments = lower.split("/")
+            basename = segments[-1] if segments else ""
+            if basename.endswith(_BLOCKED_SUFFIXES) or basename.startswith(".env"):
+                raise HTTPException(status_code=404)
+            if _BLOCKED_SEGMENTS.intersection(segments):
+                raise HTTPException(status_code=404)
+
+            file_path = _FRONTEND_DIST / full_path
+            resolved = file_path.resolve()
+            if resolved.is_file() and resolved.is_relative_to(_FRONTEND_DIST.resolve()):
+                return FileResponse(resolved)
+            return FileResponse(_FRONTEND_DIST / "index.html")
+
+    return app
+
+
+app = create_app()

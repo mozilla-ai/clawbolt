@@ -1,30 +1,36 @@
-import logging
 from collections.abc import Awaitable, Callable
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.user_db import provision_user
-from backend.app.auth.loader import load_plugin_module
+from backend.app.auth.session_auth import resolve_multi_user
 from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.models import User
 
-logger = logging.getLogger(__name__)
-
 LOCAL_USER_ID = "local@clawbolt.local"
+
+# Placeholder values that are safe locally and unsafe in a public
+# multi_user deployment. Mirrors the defaults declared on ``Settings``.
+_INSECURE_JWT_SECRET = "change-me-in-production"
+_LOCAL_APP_BASE_URL = "http://localhost:8000"
 
 CurrentUserResolver = Callable[[Request], Awaitable[User]]
 
-# Set by ``set_current_user_resolver`` when AUTH_MODE=multi_user. Mirrors
-# the module-level setter pattern used by ``set_pipeline_override`` and
-# ``set_llm_request_observer``.
+# Set by ``set_current_user_resolver`` to replace the built-in multi_user
+# resolver. Mirrors the module-level setter pattern used by
+# ``set_pipeline_override`` and ``set_llm_request_observer``.
 _current_user_resolver: CurrentUserResolver | None = None
 
 
 def set_current_user_resolver(resolver: CurrentUserResolver | None) -> None:
-    """Register the resolver that authenticates requests in multi_user mode.
+    """Override the resolver that authenticates requests in multi_user mode.
+
+    multi_user already has a built-in resolver
+    (``session_auth.resolve_multi_user``: Bearer JWT or admin API key).
+    Register here only to authenticate some other way.
 
     The resolver receives the request and returns the authenticated
     ``User``, or raises ``HTTPException(401)``. It owns its own database
@@ -37,40 +43,34 @@ def set_current_user_resolver(resolver: CurrentUserResolver | None) -> None:
     object instead of a value, which fails at attribute access rather
     than returning a 401. Read what you need off ``request``.
 
-    Pass ``None`` to clear, which tests use to restore the default.
+    Pass ``None`` to clear, which tests use to restore the built-in.
     """
     global _current_user_resolver
     _current_user_resolver = resolver
 
 
-def get_current_user_resolver() -> CurrentUserResolver | None:
-    """Return the registered multi_user resolver, or ``None`` if unset."""
-    return _current_user_resolver
+def get_current_user_resolver() -> CurrentUserResolver:
+    """Return the active multi_user resolver: the override, else the built-in."""
+    return _current_user_resolver or resolve_multi_user
 
 
 def validate_auth_mode() -> None:
-    """Reject startup when multi_user is requested with no resolver.
+    """Reject startup on a multi_user deployment that cannot authenticate.
 
-    Called from the lifespan. Failing here turns a silent authentication
-    gap into a boot failure: without this, every request would take the
-    ``HTTPException(500)`` branch in ``get_current_user`` and the
-    operator would learn about it from user reports.
+    Called from the lifespan, so a misconfiguration is a boot failure
+    rather than something the operator learns about from user reports.
 
-    Nothing in the lifespan imports ``PREMIUM_PLUGIN`` on its own, so a
-    plugin that registers its resolver as an import side effect may not
-    have run yet: ``get_settings_store()`` only reaches the plugin on the
-    ``SETTINGS_STORE=db`` path, via ``get_kek_provider()``. Force the
-    import here so the check does not depend on an unrelated setting.
+    A public multi_user deployment still running the placeholder
+    ``JWT_SECRET`` lets anyone who knows the default mint a token for any
+    account. The localhost default for ``APP_BASE_URL`` is treated as
+    local development and exempt.
     """
     if settings.auth_mode != "multi_user":
         return
-    if _current_user_resolver is None:
-        load_plugin_module()
-    if _current_user_resolver is None:
+    if settings.app_base_url != _LOCAL_APP_BASE_URL and settings.jwt_secret == _INSECURE_JWT_SECRET:
         raise RuntimeError(
-            "AUTH_MODE=multi_user but no current-user resolver is registered. "
-            "Load a plugin that calls set_current_user_resolver(), or set "
-            "AUTH_MODE=single_user."
+            "JWT_SECRET is set to the insecure default. Set a strong JWT_SECRET "
+            "environment variable before deploying with AUTH_MODE=multi_user."
         )
 
 
@@ -104,25 +104,16 @@ async def get_current_user(
     """Resolve the caller according to AUTH_MODE.
 
     single_user (the default) is unchanged self-hosted behavior. multi_user
-    delegates to the registered resolver and never falls back to the
-    single-user path: a missing resolver is a misconfiguration, and
-    serving the first row in ``users`` to an unauthenticated caller would
-    be an authentication bypass rather than a degraded mode.
+    delegates to the resolver and never falls back to the single-user
+    path: serving the first row in ``users`` to an unauthenticated caller
+    would be an authentication bypass rather than a degraded mode.
 
     ``db`` stays a dependency so the single_user path keeps using the
     request-scoped session it has always used. multi_user therefore
     constructs a session it never touches, which costs an object rather
     than a pool connection, since SQLAlchemy checks a connection out on
-    first use. mozilla-ai/clawbolt#1510 can revisit it once the
-    multi-user implementation actually lives here.
+    first use.
     """
     if settings.auth_mode == "multi_user":
-        resolver = _current_user_resolver
-        if resolver is None:
-            logger.error(
-                "AUTH_MODE=multi_user but no current-user resolver is registered; "
-                "refusing the request rather than falling back to single-user auth."
-            )
-            raise HTTPException(status_code=500, detail="Authentication is not configured")
-        return await resolver(request)
+        return await get_current_user_resolver()(request)
     return await resolve_single_user(db)
