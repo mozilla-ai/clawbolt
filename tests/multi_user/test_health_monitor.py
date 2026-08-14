@@ -271,7 +271,6 @@ class TestProbeCollection:
     def test_unconfigured_dependencies_are_not_probed(self, monitor: hm.HealthMonitor) -> None:
         with (
             patch.object(hm.settings, "bluebubbles_server_url", ""),
-            patch.object(hm.settings, "home_depot_sidecar_url", ""),
             patch.object(hm.settings, "health_probe_llm", False),
         ):
             names = [p.name for p in monitor._infra_probes()]
@@ -281,7 +280,6 @@ class TestProbeCollection:
         with (
             patch.object(hm.settings, "bluebubbles_server_url", "http://mac.local"),
             patch.object(hm.settings, "bluebubbles_password", "secret"),
-            patch.object(hm.settings, "home_depot_sidecar_url", "http://sidecar:8080"),
             patch.object(hm.settings, "llm_model", "some-model"),
             patch.object(hm.settings, "health_probe_llm", True),
         ):
@@ -290,7 +288,6 @@ class TestProbeCollection:
             "database",
             "llm",
             "bluebubbles",
-            "supplier_sidecar",
         ]
 
 
@@ -616,32 +613,6 @@ class TestInboundWebhookCheck:
 
         mock_verify.assert_not_awaited()
         mock_reg.assert_not_awaited()
-
-
-class TestSupplierSidecarProbe:
-    """The background probe must never send traffic to a retailer."""
-
-    @pytest.fixture
-    def sidecar(self) -> Generator[MagicMock]:
-        mock = MagicMock()
-        mock.healthy = AsyncMock(return_value=True)
-        mock.search_products = AsyncMock()
-        with patch.object(hm, "_supplier_sidecar", return_value=mock):
-            yield mock
-
-    async def test_healthy_browser_is_up_without_a_search(self, sidecar: MagicMock) -> None:
-        observation = await hm._probe_supplier_sidecar()
-        assert observation.key == "supplier_sidecar"
-        assert observation.ok is True
-        sidecar.healthy.assert_awaited_once()
-        sidecar.search_products.assert_not_awaited()
-
-    async def test_unhealthy_browser_is_down_without_a_search(self, sidecar: MagicMock) -> None:
-        sidecar.healthy.return_value = False
-        observation = await hm._probe_supplier_sidecar()
-        assert observation.ok is False
-        assert "No retailer search" in observation.detail
-        sidecar.search_products.assert_not_awaited()
 
 
 @contextmanager

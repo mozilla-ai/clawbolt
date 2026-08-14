@@ -58,7 +58,6 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   companycam_update_project: 'Update project',
   companycam_upload_photo: 'Upload photo',
   supplier_search_products: 'Search products',
-  supplier_find_stores: 'Find stores',
 };
 
 export function displayName(name: string): string {

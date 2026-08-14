@@ -275,21 +275,11 @@ ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HOME_DEPOT_SIDECAR_URL` | | Base URL of the browser sidecar, e.g. `http://localhost:8899`. Required for store lookup; preferred for product search. |
-| `HOME_DEPOT_SIDECAR_TOKEN` | | Bearer token for the sidecar. Must match its `HD_SIDECAR_TOKEN`. |
-| `SERPAPI_API_KEY` | | Optional fallback for product search only. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
+| `SERPAPI_API_KEY` | | Required for product search. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
 
-The agent gets two specialist tools here: `supplier_search_products` (prices, ratings, stock, and links by keyword and zip code, at **Home Depot or Lowe's** via its `supplier` argument) and `supplier_find_stores` (store number, address, phone, and distance near a zip code, city, or address). Feed a store number from the second into the first to get that store's price and shelf count instead of regional pricing; Home Depot only.
+The agent gets one specialist tool here: `supplier_search_products`, which returns prices, ratings, stock, and links by keyword and zip code at Home Depot. Without `SERPAPI_API_KEY` the tool does not load.
 
-Both retailers are served by the same sidecar process, so one `HOME_DEPOT_SIDECAR_URL` covers both. SerpApi is a fallback for Home Depot only, because it has no Lowe's engine; a Lowe's lookup that the sidecar cannot serve reports the failure rather than silently returning Home Depot prices.
-
-Home Depot has no public API and its bot manager refuses plain HTTP clients on both product and store routes, so everything here goes through the sidecar (`sidecar/home_depot/`), which drives a real browser. See its README for how to run it and how to point Clawbolt at one on a different host.
-
-**Store lookup** requires the sidecar. SerpApi has no equivalent endpoint, so without a sidecar `supplier_find_stores` reports being unavailable.
-
-**Product search** prefers the sidecar and falls back to SerpApi when the sidecar cannot answer, so a wedged or restarting sidecar degrades rather than breaking. With neither configured, neither tool loads at all.
-
-An earlier version of this integration queried the store locator directly with a TLS-impersonating HTTP client, which worked for a while and then stopped: the locator now answers such clients with a `206` error while serving a real browser normally from the same address. That is why there is no keyless direct mode any more.
+Lowe's search and Home Depot store lookup are not available. They were previously served by a browser-driving sidecar that has been removed; SerpApi has no engine for either.
 
 ## HTTP timeouts
 

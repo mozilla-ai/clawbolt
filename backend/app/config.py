@@ -389,13 +389,8 @@ class Settings(BaseSettings):
     servicetitan_auth_base_url: str = "https://auth.servicetitan.io"
     servicetitan_use_fake: bool = True
 
-    # Supplier pricing. The sidecar (sidecar/home_depot/) drives a real browser
-    # and is the only client Home Depot serves: its bot manager refuses plain
-    # HTTP clients on both product and store routes. Store lookup needs the
-    # sidecar; product search falls back to SerpApi when the sidecar cannot
-    # answer. With neither set, the Home Depot tools do not load.
-    home_depot_sidecar_url: str = ""  # e.g. http://localhost:8899
-    home_depot_sidecar_token: str = ""  # must match the sidecar's HD_SIDECAR_TOKEN
+    # Supplier pricing. Home Depot product search is served through SerpApi, a
+    # licensed search API. Without a key the supplier tools do not load.
     serpapi_api_key: str = ""  # https://serpapi.com, free tier: 250 searches/month
 
     # OAuth
@@ -551,21 +546,15 @@ class Settings(BaseSettings):
     # but it is opt-outable for anyone who would rather not pay it.
     health_probe_llm: bool = True
 
-    # Retailer product searches are deliberately not health probes.
-    # Replaying a fixed query from the same cloud egress teaches bot
-    # managers to reject the actual user search flow. The monitor checks
-    # only the sidecar browser's local health endpoint; live retailer
-    # verification comes from product use.
-
     # Cap on users checked per tick by the integration probe. Each user
     # costs one auth_check per specialist factory (mostly cheap DB reads),
     # so an unbounded sweep would grow with the tenant count. Truncation is
     # logged, never silent.
     health_probe_max_users: int = Field(default=50, ge=1)
 
-    # Per-probe ceiling. Probes call out to a residential Mac, an LLM
-    # provider, and a scraping sidecar, none of which is guaranteed to
-    # answer or to fail fast. Without a ceiling one wedged socket stalls
+    # Per-probe ceiling. Probes call out to a residential Mac and an LLM
+    # provider, neither of which is guaranteed to answer or to fail fast.
+    # Without a ceiling one wedged socket stalls
     # the whole run, which is what made the admin tab's "Run probes now"
     # sit on "Running" indefinitely. A probe past this budget is reported
     # DOWN with a timeout detail, which is the honest reading: a dependency

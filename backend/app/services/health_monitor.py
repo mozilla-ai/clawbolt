@@ -5,8 +5,6 @@ logged when a user hit them; this module finds breakage nobody has hit yet, and
 specifically the failures that never raise:
 
 - A BlueBubbles bridge on a sleeping Mac accepts nothing and logs nothing.
-- A supplier sidecar whose browser crashes can remain reachable while unable to
-  answer its local health round-trip.
 - An expired OAuth token surfaces only when the agent next reaches for that
   tool, which may be days after it lapsed.
 
@@ -38,8 +36,7 @@ Design:
   consecutive-failure threshold is met, no DOWN transition would ever fire, so
   the repair sends its own email and writes its own activity-log entry.
 - **Every probe is time-boxed, and a run reports its progress.** Probes call a
-  residential Mac, an LLM provider, and a scraping sidecar; none of them is
-  obliged to answer. Without a per-probe ceiling one wedged socket stalls the
+  residential Mac and an LLM provider; neither is obliged to answer. Without a per-probe ceiling one wedged socket stalls the
   whole run, and an on-demand run from the admin tab sits on "Running" with
   nothing to show. A run publishes per-step state (pending, running, ok,
   failed) so the caller can watch it advance and see which dependency is slow.
@@ -75,7 +72,6 @@ from backend.app.channels.bluebubbles import (
 )
 from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal
-from backend.app.integrations.supplier_pricing.sidecar_client import SidecarSupplier
 from backend.app.models import Subscription, User
 from backend.app.routers.health import health_check
 from backend.app.services import email_service
@@ -515,49 +511,6 @@ async def _probe_bluebubbles() -> Observation:
     )
 
 
-def _supplier_sidecar(site: str, name: str, display_name: str) -> SidecarSupplier:
-    return SidecarSupplier(
-        settings.home_depot_sidecar_url,
-        site=site,
-        name=name,
-        display_name=display_name,
-        token=settings.home_depot_sidecar_token,
-    )
-
-
-async def _probe_supplier_sidecar() -> Observation:
-    """Check that the browser sidecar is alive without visiting either retailer.
-
-    Home Depot and Lowe's both flag predictable automated searches. A health
-    probe must therefore stop at the sidecar's local browser round-trip. Actual
-    retailer searches remain user-driven, where their failures are captured by
-    the normal application error alerts instead of becoming background traffic.
-    """
-    supplier = _supplier_sidecar("home_depot", "homedepot", "Retail search")
-    try:
-        healthy = await supplier.healthy()
-    except Exception as exc:
-        return Observation(
-            key="supplier_sidecar",
-            label="Retail search sidecar",
-            ok=False,
-            detail=f"Health check raised {type(exc).__name__}: {exc}",
-        )
-    if not healthy:
-        return Observation(
-            key="supplier_sidecar",
-            label="Retail search sidecar",
-            ok=False,
-            detail="Browser is unavailable or warming. No retailer search was sent.",
-        )
-    return Observation(
-        key="supplier_sidecar",
-        label="Retail search sidecar",
-        ok=True,
-        detail="Browser responds. Background monitoring does not send retailer searches.",
-    )
-
-
 async def _user_labels() -> dict[str, str]:
     """Map ``users.id`` to the address the admin knows that tenant by.
 
@@ -720,17 +673,13 @@ class HealthMonitor:
             )
         if settings.bluebubbles_server_url and settings.bluebubbles_password:
             probes.append(_InfraProbe("bluebubbles", _probe_bluebubbles, "BlueBubbles bridge"))
-        if settings.home_depot_sidecar_url:
-            probes.append(
-                _InfraProbe("supplier_sidecar", _probe_supplier_sidecar, "Retail search sidecar")
-            )
         return probes
 
     async def _run_probe(self, probe: _InfraProbe, step: _RunStep | None) -> Observation:
         """Run one probe under a timeout, converting every outcome into a result.
 
         A probe that raises is a failure signal, and so is a probe that never
-        returns: an unbounded await on a residential Mac or a wedged sidecar
+        returns: an unbounded await on a residential Mac or a hung provider
         would hold the entire run open. Both are folded into a DOWN observation
         so the transition machinery treats them like any other failure.
         """
@@ -959,7 +908,7 @@ class HealthMonitor:
         """Kick off a run in the background. False if one is already in flight.
 
         The admin endpoint returns immediately instead of awaiting the run: a
-        full pass calls an LLM provider, a residential Mac, a scraping sidecar
+        full pass calls an LLM provider, a residential Mac
         and one auth_check per specialist per user, which is minutes of
         wall-clock in the worst case. Holding an HTTP request open for that is
         what made the tab appear to hang with nothing to show.
