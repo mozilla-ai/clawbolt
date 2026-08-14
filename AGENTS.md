@@ -287,6 +287,7 @@ uv run ruff format --check backend/ tests/ alembic/        # format passes
 uv run ty check --python .venv backend/ tests/ alembic/    # type checking passes
 cd frontend && npm run typecheck                   # TypeScript type checking passes
 cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
+cd frontend && npm run test                        # vitest suite passes
 ```
 
 ### Frontend generated types
