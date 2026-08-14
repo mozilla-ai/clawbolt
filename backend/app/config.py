@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Any, Literal
 
-from pydantic import Field, SecretStr, ValidationError
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -81,18 +81,18 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_expiry_minutes: int = Field(default=15, ge=1)
     premium_plugin: str | None = None
-    # Who the app authenticates. "single_user" is the self-hosted default:
-    # no credentials, every request resolves to the one user in the
-    # database. "multi_user" requires a registered resolver (OAuth, JWT)
-    # and rejects requests that do not carry one; see
-    # ``backend/app/auth/dependencies.py``.
+    # Who the app authenticates, and the deployment's tenancy switch.
     #
-    # Not yet the tenancy switch. Premium still replaces the auth
-    # dependency through ``app.dependency_overrides`` and leaves this at
-    # the default, so a multi-tenant deployment reads "single_user" here
-    # until mozilla-ai/clawbolt#1510 lands. Code that needs to know
-    # whether more than one tenant exists must keep testing
-    # ``premium_plugin``, the way ``agent/ingestion.py`` does.
+    # "single_user" is the self-hosted default: no credentials, every
+    # request resolves to the one user in the database, and none of the
+    # hosted-deployment surface below is reachable.
+    #
+    # "multi_user" turns on Google OAuth sign-in, JWT sessions, the admin
+    # console, per-tenant quota enforcement, and the operator monitoring
+    # stack. It requires a registered current-user resolver and rejects
+    # requests that do not carry one; see
+    # ``backend/app/auth/dependencies.py``. The settings from
+    # "Multi-user deployment" onward only matter in this mode.
     auth_mode: Literal["single_user", "multi_user"] = "single_user"
     # Backend for runtime-configurable settings: "db" (default) stores in
     # the app_settings table; "file" keeps the legacy data/config.json
@@ -441,6 +441,9 @@ class Settings(BaseSettings):
 
     # Observability
     log_request_timing: bool = False  # Set True (or LOG_REQUEST_TIMING=1) to log per-request timing
+    # Log rendering: "text" or "json". JSON adds the request correlation ID
+    # as a top-level key for log aggregators.
+    log_format: str = "text"
 
     # Web chat UI: whether the chat page shows the file attachment affordance
     # (paperclip button + hidden file input). Defaults to True for OSS, where
@@ -449,6 +452,182 @@ class Settings(BaseSettings):
     # premium) set this to False until the upload path is fixed, so users do
     # not see an affordance that silently fails.
     chat_web_attachments_enabled: bool = True
+
+    # -----------------------------------------------------------------
+    # Multi-user deployment
+    #
+    # Everything below is inert unless AUTH_MODE=multi_user. A
+    # single-user self-host can ignore this whole block.
+    # -----------------------------------------------------------------
+
+    # Google OAuth. The sign-in flow derives its redirect URI from
+    # APP_BASE_URL; GOOGLE_REDIRECT_URI is kept only for deployments that
+    # pinned a non-default value before the switch.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/auth/oauth/google/callback"
+
+    # Session tokens. JWT_SECRET is shared with the OSS field above.
+    jwt_access_token_expire_minutes: int = Field(default=15, ge=1)
+    jwt_refresh_token_expire_days: int = Field(default=30, ge=1)
+    jwt_algorithm: str = "HS256"
+
+    # Cost protection: global daily message cap for free-tier users (0 = disabled)
+    free_tier_daily_global_cap: int = Field(default=0, ge=0)
+
+    # Comma-separated user_ids for legacy env-var admin access. No longer
+    # consulted at request time; admin is granted exclusively by
+    # ``Subscription.role``. Retained so
+    # ``python -m backend.app.cli promote-env-admins`` can migrate them.
+    admin_user_ids_raw: str = ""
+
+    # Email address auto-promoted to admin role on first login. Normalized
+    # to lowercase + stripped so comparison with incoming OAuth emails is
+    # case-insensitive.
+    admin_email: str = ""
+
+    # Registration mode: "open" (anyone) or "restricted" (allowed_emails table only)
+    registration_mode: str = "restricted"
+
+    # Auth rate limiting
+    auth_rate_limit_max_requests: int = Field(default=10, ge=1)
+    auth_rate_limit_window_seconds: int = Field(default=60, ge=1)
+
+    # OAuth state token expiry (minutes)
+    oauth_state_expiry_minutes: int = Field(default=5, ge=1)
+
+    # Inactive account cleanup thresholds (months, free tier only)
+    inactive_warn_months: int = Field(default=11, ge=1)
+    inactive_delete_months: int = Field(default=12, ge=1)
+
+    # SMTP for transactional email (waitlist approvals, operator alerts).
+    # When smtp_host is empty, the email sender is a no-op so dev/local
+    # works without credentials and CI needs no secrets.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+
+    # Socket timeout for one SMTP operation. Kept short because the failure
+    # mode is a silently dropped SYN (a platform that blocks outbound SMTP,
+    # a firewalled relay), and ``socket.create_connection`` retries every
+    # address the host resolves to: at 15s, a three-A-record host held an
+    # admin request for 45s before reporting anything. The send is
+    # additionally bounded by twice this value so a multi-address retry
+    # cannot outlive it.
+    smtp_timeout_seconds: int = Field(default=10, ge=1)
+
+    # Operator error alerting. Routes ERROR-level application logs to the
+    # operator's inbox via the SMTP sender above. Dormant unless SMTP is
+    # configured AND a recipient resolves (alert_email, else admin_email),
+    # so dev/local and CI never send.
+    #
+    # Throttling exists because a single broken integration can log
+    # thousands of identical errors a minute. Alerts are grouped by
+    # fingerprint (logger + exception type + log template); each
+    # fingerprint emails at most once per alert_dedupe_minutes, carrying
+    # the suppressed occurrence count.
+    alerts_enabled: bool = True
+    alert_email: str = ""
+    alert_flush_interval_seconds: int = Field(default=60, ge=1)
+    alert_dedupe_minutes: int = Field(default=30, ge=1)
+    alert_max_emails_per_hour: int = Field(default=20, ge=1)
+
+    # Proactive health monitoring. Probes each dependency on a timer and
+    # emails the operator on state transitions (OK -> DOWN, DOWN -> OK)
+    # rather than on every failing tick, so a multi-hour outage is two
+    # emails, not hundreds.
+    #
+    # health_failure_threshold requires N consecutive failures before
+    # declaring DOWN. A single timed-out probe against a residential
+    # BlueBubbles host is noise, not an outage.
+    health_monitor_enabled: bool = True
+    health_check_interval_seconds: int = Field(default=300, ge=1)
+    health_failure_threshold: int = Field(default=2, ge=1)
+
+    # The LLM probe spends real tokens (a single-token completion per
+    # tick). At the 300s default that is ~288 calls/day, negligible cost,
+    # but it is opt-outable for anyone who would rather not pay it.
+    health_probe_llm: bool = True
+
+    # Retailer product searches are deliberately not health probes.
+    # Replaying a fixed query from the same cloud egress teaches bot
+    # managers to reject the actual user search flow. The monitor checks
+    # only the sidecar browser's local health endpoint; live retailer
+    # verification comes from product use.
+
+    # Cap on users checked per tick by the integration probe. Each user
+    # costs one auth_check per specialist factory (mostly cheap DB reads),
+    # so an unbounded sweep would grow with the tenant count. Truncation is
+    # logged, never silent.
+    health_probe_max_users: int = Field(default=50, ge=1)
+
+    # Per-probe ceiling. Probes call out to a residential Mac, an LLM
+    # provider, and a scraping sidecar, none of which is guaranteed to
+    # answer or to fail fast. Without a ceiling one wedged socket stalls
+    # the whole run, which is what made the admin tab's "Run probes now"
+    # sit on "Running" indefinitely. A probe past this budget is reported
+    # DOWN with a timeout detail, which is the honest reading: a dependency
+    # that cannot answer in 45s is not healthy.
+    health_probe_timeout_seconds: int = Field(default=45, ge=1)
+
+    # AWS KMS for envelope encryption. When kms_key_arn is set,
+    # ``auth.loader.get_kek_provider()`` returns a KMSEnvelopeKEKProvider;
+    # when unset it falls back to LocalKEKProvider. This lets the code ship
+    # ahead of platform engineering provisioning the key and IAM
+    # credentials: flipping the env vars activates KMS on the next restart
+    # with no code change.
+    kms_key_arn: str = ""
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+
+    @field_validator("admin_email", "alert_email", mode="before")
+    @classmethod
+    def _normalize_operator_email(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.lower().strip()
+        return value
+
+    @field_validator("kms_key_arn", mode="before")
+    @classmethod
+    def _strip_kms_key_arn(cls, value: object) -> object:
+        """Reject whitespace-only ARNs at startup instead of letting the
+        provider constructor crash on the first credential read.
+
+        Whitespace alone is treated as the dormant signal (empty), so an
+        operator who set ``KMS_KEY_ARN=" "`` by accident gets the local
+        fallback rather than a runtime crash.
+        """
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @model_validator(mode="after")
+    def _validate_smtp_pair(self) -> "Settings":
+        """Reject partial SMTP config so a typo'd env var fails loudly.
+
+        Both ``SMTP_HOST`` and ``SMTP_FROM_EMAIL`` must be set for sends to
+        work. Setting only one is almost certainly a misconfiguration;
+        without this check the sender silently no-ops and operators
+        discover the problem only when users complain about missing email.
+        """
+        host_set = bool(self.smtp_host.strip())
+        from_set = bool(self.smtp_from_email.strip())
+        if host_set != from_set:
+            missing = "SMTP_FROM_EMAIL" if host_set else "SMTP_HOST"
+            raise ValueError(
+                f"SMTP config is partial: set both SMTP_HOST and SMTP_FROM_EMAIL, "
+                f"or neither. Missing: {missing}."
+            )
+        return self
+
+    @property
+    def admin_user_ids(self) -> set[str]:
+        """Parse comma-separated legacy admin user IDs into a set."""
+        if not self.admin_user_ids_raw:
+            return set()
+        return {uid.strip() for uid in self.admin_user_ids_raw.split(",") if uid.strip()}
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
