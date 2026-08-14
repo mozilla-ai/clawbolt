@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -14,13 +14,18 @@ from backend.app.database import db_session_async
 from backend.app.models import User
 
 
+def _request() -> Request:
+    """A minimal ASGI request. single_user auth reads nothing off it."""
+    return Request({"type": "http", "method": "GET", "path": "/api/me", "headers": []})
+
+
 @pytest.mark.asyncio()
 async def test_get_current_user_creates_local_user(
     async_db: async_sessionmaker,
 ) -> None:
     """OSS mode should auto-create a local user when store is empty."""
     async with async_db() as db:
-        user = await get_current_user(db)
+        user = await get_current_user(_request(), db)
         assert user.user_id == LOCAL_USER_ID
         assert user.id is not None
 
@@ -31,7 +36,7 @@ async def test_local_user_needs_onboarding(
 ) -> None:
     """New local user should trigger onboarding (regression for #521)."""
     async with async_db() as db:
-        user = await get_current_user(db)
+        user = await get_current_user(_request(), db)
         assert not user.onboarding_complete
         # Create BOOTSTRAP.md to simulate file-store setup (still needed during hybrid period)
         user_dir = Path(settings.data_dir) / str(user.id)
@@ -46,8 +51,8 @@ async def test_get_current_user_returns_same_user(
 ) -> None:
     """Calling twice should return the same user."""
     async with async_db() as db:
-        c1 = await get_current_user(db)
-        c2 = await get_current_user(db)
+        c1 = await get_current_user(_request(), db)
+        c2 = await get_current_user(_request(), db)
         assert c1.id == c2.id
 
 
@@ -75,7 +80,7 @@ async def test_get_current_user_returns_existing_telegram_user(
         existing_id = telegram_user.id
 
     async with async_db() as db:
-        dashboard_user = await get_current_user(db)
+        dashboard_user = await get_current_user(_request(), db)
         assert dashboard_user.id == existing_id
         assert dashboard_user.user_id == "telegram_123456789"
 

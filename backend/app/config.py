@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_expiry_minutes: int = Field(default=15, ge=1)
     premium_plugin: str | None = None
+    # Who the app authenticates. "single_user" is the self-hosted default:
+    # no credentials, every request resolves to the one user in the
+    # database. "multi_user" requires a registered resolver (OAuth, JWT)
+    # and rejects requests that do not carry one; see
+    # ``backend/app/auth/dependencies.py``.
+    auth_mode: Literal["single_user", "multi_user"] = "single_user"
     # Backend for runtime-configurable settings: "db" (default) stores in
     # the app_settings table; "file" keeps the legacy data/config.json
     # behavior for file-based deployments.
