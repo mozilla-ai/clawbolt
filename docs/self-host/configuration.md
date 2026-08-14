@@ -23,6 +23,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | `DATABASE_URL` | `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt` | PostgreSQL connection URL |
 | `SETTINGS_STORE` | `db` | Backend for runtime-configurable settings (admin UI values). `db` writes to the `app_settings` table; `file` keeps the legacy `data/config.json` flow for file-based deployments |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated list of allowed CORS origins |
+| `AUTH_MODE` | `single_user` | Who the app authenticates. `single_user` needs no credentials and resolves every request to the one user in the database. `multi_user` requires a plugin that registers a resolver and refuses to start without one |
 | `JWT_SECRET` | `change-me-in-production` | Secret key for JWT signing. **Change this in production** |
 | `JWT_EXPIRY_MINUTES` | `15` | JWT token expiry time in minutes |
 | `PREMIUM_PLUGIN` | (empty) | Python import path for premium auth plugin. Leave empty for OSS single-tenant mode |

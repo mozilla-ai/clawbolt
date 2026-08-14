@@ -168,7 +168,7 @@ When you need realistic-looking data, use clearly synthetic values: `jane.doe@ex
 ## Architecture
 
 - **PostgreSQL storage**: all structured data in PostgreSQL via SQLAlchemy 2.0 ORM. See `backend/app/database.py` and `backend/app/models.py`. Store modules in `backend/app/agent/` provide CRUD APIs.
-- **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). OSS is single-tenant; premium adds multi-tenant auth via plugin.
+- **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). `AUTH_MODE` selects the model: `single_user` (default) resolves every request to the one user in the database; `multi_user` delegates to a resolver registered via `set_current_user_resolver()` and never falls back to the single-user path, since that would serve one tenant's data to an unauthenticated caller.
 - **`user_id` scoping** on every data class and endpoint from day one
 - **Message bus**: async inbound/outbound queues in `bus.py`. Channels publish inbound messages; the agent publishes outbound replies. The ``ChannelManager`` dispatches outbound messages to the correct channel.
 - **Agent loop**: channel webhook -> media pipeline -> tool-calling loop (any-llm `amessages`) -> tool execution -> reply
