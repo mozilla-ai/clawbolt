@@ -3778,11 +3778,11 @@
               "type": "integer",
               "maximum": 90,
               "minimum": 1,
-              "description": "Window size in days, ending now. Scopes the time-bucketed subresources (conversations, heartbeat-logs, compaction-events, LLM-usage, reports, and the tool-call rollup). Identity, profile, memory, and the configured-directives count (``heartbeat_directives_count``) are point-in-time and not scoped by the window.",
+              "description": "Window size in days, ending now. Scopes the time-bucketed subresources (conversations, heartbeat-logs, compaction-events, LLM-usage, reports, and the tool-call rollup). Identity, profile, and memory are point-in-time and not scoped by the window.",
               "default": 7,
               "title": "Days"
             },
-            "description": "Window size in days, ending now. Scopes the time-bucketed subresources (conversations, heartbeat-logs, compaction-events, LLM-usage, reports, and the tool-call rollup). Identity, profile, memory, and the configured-directives count (``heartbeat_directives_count``) are point-in-time and not scoped by the window."
+            "description": "Window size in days, ending now. Scopes the time-bucketed subresources (conversations, heartbeat-logs, compaction-events, LLM-usage, reports, and the tool-call rollup). Identity, profile, and memory are point-in-time and not scoped by the window."
           },
           {
             "name": "include_turns",
@@ -8156,7 +8156,7 @@
           "memory"
         ],
         "title": "SharedDataExportResponse",
-        "description": "Composite per-user export.\n\nSections:\n* ``user``: identity + profile config (timezone, channel, consent\n  timestamp).\n* ``window``: the date range applied to time-windowed sub-resources.\n* ``summary``: the aggregate-counts rollup, including\n  ``heartbeat_directives_count`` for \"is this user even configured\n  to receive proactive messages?\".\n* ``conversations``: per-session metadata for sessions active in\n  the window (no bodies; bodies live in ``turns`` if requested).\n* ``heartbeat_logs``: per-event rows including PII-redacted\n  ``message_text`` / ``reasoning`` / ``tasks``.\n* ``compaction_events``: per-event metadata (no content; the\n  content is in ``memory.history_text``).\n* ``profile``: soul / user / heartbeat directives text, PII-redacted.\n* ``memory``: working memory + compacted history, PII-redacted.\n* ``turns``: turn-grouped transcripts (only when ``include_turns=true``)."
+        "description": "Composite per-user export.\n\nSections:\n* ``user``: identity + profile config (timezone, channel, consent\n  timestamp).\n* ``window``: the date range applied to time-windowed sub-resources.\n* ``summary``: the aggregate-counts rollup.\n* ``conversations``: per-session metadata for sessions active in\n  the window (no bodies; bodies live in ``turns`` if requested).\n* ``heartbeat_logs``: per-event rows including PII-redacted\n  ``message_text`` / ``reasoning`` / ``tasks``.\n* ``compaction_events``: per-event metadata (no content; the\n  content is in ``memory.history_text``).\n* ``profile``: soul / user / heartbeat directives text, PII-redacted.\n* ``memory``: working memory + compacted history, PII-redacted.\n* ``turns``: turn-grouped transcripts (only when ``include_turns=true``)."
       },
       "SharedDataExportSummary": {
         "properties": {
@@ -8236,10 +8236,6 @@
           "reports_total": {
             "type": "integer",
             "title": "Reports Total"
-          },
-          "heartbeat_directives_count": {
-            "type": "integer",
-            "title": "Heartbeat Directives Count"
           }
         },
         "type": "object",
@@ -8260,8 +8256,7 @@
           "tool_calls_total",
           "tool_calls_error_count",
           "tool_calls_top",
-          "reports_total",
-          "heartbeat_directives_count"
+          "reports_total"
         ],
         "title": "SharedDataExportSummary",
         "description": "Aggregate counts for one user over the requested window.\n\nMirrors the per-user activity rollup an admin would otherwise\nderive by walking the conversations / heartbeat-logs / compaction\nendpoints. Counts only; bodies and memory text live in the other\nfields of the export response."
