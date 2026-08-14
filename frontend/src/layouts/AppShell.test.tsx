@@ -149,14 +149,32 @@ describe('AppShell', () => {
     });
   });
 
-  it('renders default sidebar footer when renderSidebarFooter stub returns null', async () => {
+  it('renders the sidebar footer links behind the More toggle', async () => {
     renderWithRouter(<AppShell />, { route: '/app' });
 
-    await waitFor(() => {
-      expect(screen.getByText('Get Started')).toBeInTheDocument();
-    });
+    // The footer collapses everything behind "More", so the links are
+    // absent until it is opened.
+    const toggle = await screen.findByLabelText('Toggle footer menu');
+    expect(screen.queryByText('Report issue')).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+
+    expect(screen.getByText('Get Started')).toBeInTheDocument();
     expect(screen.getByText('Report issue')).toBeInTheDocument();
     expect(screen.getByText('Feature request')).toBeInTheDocument();
+  });
+
+  it('hides the legal links and log out on a single-user deployment', async () => {
+    // AuthContext is mocked with isPremium: false above. A self-host has
+    // no operator to have terms with and no session to end, so neither
+    // should be advertised.
+    renderWithRouter(<AppShell />, { route: '/app' });
+
+    await userEvent.click(await screen.findByLabelText('Toggle footer menu'));
+
+    expect(screen.queryByText('Terms of Service')).not.toBeInTheDocument();
+    expect(screen.queryByText('Privacy Notice')).not.toBeInTheDocument();
+    expect(screen.queryByText('Log out')).not.toBeInTheDocument();
   });
 
   // Regression: sending a chat message and then switching tabs used to abort the

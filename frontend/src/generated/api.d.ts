@@ -980,10 +980,2242 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Token
+         * @description Exchange a valid refresh token for a new access + refresh token pair.
+         */
+        post: operations["refresh_token_api_auth_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/oauth/google": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth Google Redirect
+         * @description Redirect to Google's authorization endpoint to start the OAuth flow.
+         */
+        get: operations["oauth_google_redirect_api_auth_oauth_google_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/oauth/google/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth Google Callback
+         * @description Handle the OAuth callback from Google.
+         *
+         *     Exchanges the authorization code for user info, creates/gets the user,
+         *     issues a refresh token, and redirects to the app with the token in a
+         *     URL hash fragment (never sent to the server or logged by proxies).
+         */
+        get: operations["oauth_google_callback_api_auth_oauth_google_callback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/oauth/google/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Oauth State
+         * @description Generate a signed state parameter for OAuth CSRF protection.
+         */
+        get: operations["get_oauth_state_api_auth_oauth_google_state_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/oauth/google/exchange": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Google Oauth Exchange
+         * @description Exchange a Google authorization code for JWT tokens (JSON API).
+         *
+         *     Legacy endpoint for clients that handle the OAuth redirect themselves.
+         */
+        post: operations["google_oauth_exchange_api_auth_oauth_google_exchange_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Users
+         * @description List users with pagination, search, sort, and consent filter.
+         *
+         *     NOTE: This endpoint is O(N) in the total user count today: it loads every
+         *     Subscription, every User row, every Message-this-month aggregate, and the
+         *     full UserData list from the store before slicing the requested page.
+         *     Acceptable at <few-thousand-user scale; revisit when we cross that.
+         */
+        get: operations["list_users_api_admin_users_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get User Detail
+         * @description Return identity, subscription, profile config, and integrations.
+         *
+         *     Slimmed in #325 work item 2: user-authored content (memory, soul,
+         *     user text, heartbeat directives, message bodies, tool-call args /
+         *     results) was removed from this default response. Content surfaces
+         *     only via the consent-gated paths — ``/admin/reported-conversations``
+         *     (after a user reports a conversation) or ``/admin/shared-data``
+         *     (when a user opted into data sharing) — once items 3 + 4 land.
+         *
+         *     Eager-loads ``tool_configs`` and ``channel_routes`` via selectinload
+         *     so we make one round-trip instead of three.
+         */
+        get: operations["get_user_detail_api_admin_users__user_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Purge User
+         * @description Hard delete a user and every trace of their data.
+         *
+         *     Physically removes the user row, cascades to OSS data (sessions,
+         *     messages, channels, media, memory, heartbeats), drops multi-user rows
+         *     (subscription, quotas, archived usage), and clears on-disk data.
+         *     The user can re-onboard cleanly with the same identity afterwards.
+         */
+        delete: operations["purge_user_api_admin_users__user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activate User
+         * @description Re-activate a deactivated user.
+         */
+        post: operations["activate_user_api_admin_users__user_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deactivate User
+         * @description Deactivate a user (soft disable, preserves data).
+         */
+        post: operations["deactivate_user_api_admin_users__user_id__deactivate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/reset-quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset User Quota
+         * @description Reset a user's current month usage counters to zero.
+         */
+        post: operations["reset_user_quota_api_admin_users__user_id__reset_quota_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/compact-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compact User Context
+         * @description Synchronously compact a user's currently-visible conversation context.
+         *
+         *     Use this when a bug or model error has poisoned a user's in-context
+         *     conversation history (e.g. the agent confidently asserted a wrong
+         *     fact about its own capabilities) and you want to reset the LLM-facing
+         *     context without dropping durable user-supplied facts. The OSS
+         *     ``admin_compact_visible_messages`` helper extracts facts into
+         *     MEMORY.md / USER.md / SOUL.md before advancing the trim watermark,
+         *     so the next turn starts from a clean slate plus the rewritten memory.
+         *
+         *     ``keep_recent`` preserves the last N visible turns so the user's
+         *     pending request is not lost when an admin clears stale context
+         *     mid-conversation. ``hint`` is prepended to the compaction LLM's
+         *     ``<conversation>`` block as ``[admin note: ...]`` to bias how the
+         *     LLM reads the messages, which is useful when the exact failure mode
+         *     is known (e.g. "ignore prior agent claims about being read-only").
+         *
+         *     Audit-logged via ``AdminAction.COMPACT_USER_CONTEXT``; the resulting
+         *     ``compaction_events`` row is also linked from ``ctx.detail`` so a
+         *     forensic query can join admin action to the compaction outcome.
+         */
+        post: operations["compact_user_context_api_admin_users__user_id__compact_now_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/hygiene-compact-memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hygiene Compact Memory Endpoint
+         * @description Re-audit a user's MEMORY.md against the Do-Not-Include list.
+         *
+         *     Runs the compaction LLM in hygiene-only mode: the model reads the
+         *     user's current MEMORY.md and removes every line that violates the
+         *     exclusion list (customer IDs, phone numbers, stale bug notes, etc.),
+         *     even if no new conversation triggered the compaction. This is the
+         *     "clean my memory now" operation that scrubs pre-existing violations
+         *     that were written before the compliance rule existed.
+         *
+         *     Unlike ``POST /admin/users/{user_id}/compact-now``, this endpoint
+         *     does not require untrimmed conversation messages and does not
+         *     advance the trim watermark. It only touches MEMORY.md.
+         *
+         *     Audit-logged via ``AdminAction.HYGIENE_COMPACT_MEMORY``.
+         */
+        post: operations["hygiene_compact_memory_endpoint_api_admin_users__user_id__hygiene_compact_memory_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/heartbeat-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get User Heartbeat Logs
+         * @description List heartbeat log metadata for a specific user, most recent first.
+         *
+         *     Slimmed in #325 work item 2: ``message_text``, ``reasoning``, and
+         *     ``tasks`` were stripped from this response. Heartbeat content
+         *     surfaces only via the consent-gated paths once items 3 + 4 land.
+         */
+        get: operations["get_user_heartbeat_logs_api_admin_users__user_id__heartbeat_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/llm-usage-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get User Llm Usage Logs
+         * @description List per-call LLM usage logs for a specific user, most recent first.
+         *
+         *     Each row records a single LLM call: provider, model, purpose
+         *     (primary / vision / heartbeat / compaction / etc.), token counts,
+         *     and cost in USD. Purpose lets you spot a runaway compaction loop
+         *     or a heartbeat model burning cache misses.
+         *
+         *     The audit dependency writes one row when the route exits, matching
+         *     the policy on the user-detail endpoint.
+         */
+        get: operations["get_user_llm_usage_logs_api_admin_users__user_id__llm_usage_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/staged-media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get User Staged Media
+         * @description List staged-media rows for a user, newest first, with cap context.
+         *
+         *     Returns ``total`` / ``active`` / ``uploaded`` / ``cap`` counts so a
+         *     glance answers "is this user pinned at the cap, and are all 50
+         *     slots upload receipts?" -- the shape that proves the receipts-pin
+         *     -the-cap symptom without scrolling the row list.
+         */
+        get: operations["get_user_staged_media_api_admin_users__user_id__staged_media_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/webhook-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get User Webhook Events
+         * @description List webhook dedup events for this user, newest first.
+         *
+         *     Joins ``idempotency_keys`` to ``messages`` via the external_id so
+         *     each row carries whether a Message persisted. Default behavior is
+         *     to return only events tied to this user; setting
+         *     ``include_orphans=true`` adds rows where no Message landed (those
+         *     reveal approval-gate consumption or consumer-side failures, but
+         *     cannot be attributed to a specific user so they are off by
+         *     default to avoid cross-tenant noise).
+         */
+        get: operations["get_user_webhook_events_api_admin_users__user_id__webhook_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/llm-payloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export User Llm Payloads
+         * @description Download the captured LLM request payloads for one user.
+         *
+         *     Returns the previous-era and current-era payload snapshots stored
+         *     by ``llm_payload_capture`` for users who have toggled
+         *     ``data_sharing_consent``. Non-consenting users are not captured in
+         *     the first place, so 404 is returned both when no row exists and
+         *     when the user has revoked consent (which deletes the row).
+         *
+         *     Response is served with ``Content-Disposition: attachment`` so the
+         *     admin frontend can drop it to disk for offline analysis without
+         *     rendering the JSON in-page.
+         */
+        get: operations["export_user_llm_payloads_api_admin_users__user_id__llm_payloads_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/usage/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get User Usage
+         * @description Get quota usage and aggregate LLM spend for a specific user.
+         *
+         *     Existence-checks the user up-front. ``get_usage_summary`` calls
+         *     ``get_current_quota`` which inserts a ``UsageQuota`` row for the
+         *     user; without the check, a bogus ``user_id`` reaches that insert
+         *     and 500s on the FK to ``users.id``. 404 is the right answer for an
+         *     admin endpoint queried with an unknown user.
+         *
+         *     Cost totals are scoped to the same period as the quota counters
+         *     (``period_cost_usd`` covers the current calendar month, matching
+         *     ``messages.used`` / ``tokens.used``). ``lifetime_cost_usd`` lets
+         *     the admin spot a user whose monthly spend is fine but whose
+         *     all-time spend is an outlier.
+         */
+        get: operations["get_user_usage_api_admin_usage__user_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/allowed-emails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Allowed Emails
+         * @description List all pre-approved email addresses.
+         */
+        get: operations["list_allowed_emails_api_admin_allowed_emails_get"];
+        put?: never;
+        /**
+         * Add Allowed Email
+         * @description Add an email address to the approved registration list.
+         */
+        post: operations["add_allowed_email_api_admin_allowed_emails_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/allowed-emails/{email_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Allowed Email
+         * @description Remove an email address from the approved registration list.
+         */
+        delete: operations["remove_allowed_email_api_admin_allowed_emails__email_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/waitlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Waitlist Entries
+         * @description List waitlist entries, newest first.
+         */
+        get: operations["list_waitlist_entries_api_admin_waitlist_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/waitlist/{entry_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Waitlist Entry
+         * @description Approve a waitlist entry: add to allowed_emails and remove from waitlist.
+         */
+        post: operations["approve_waitlist_entry_api_admin_waitlist__entry_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/waitlist/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Dismiss Waitlist Entry
+         * @description Remove a waitlist entry without approving.
+         */
+        delete: operations["dismiss_waitlist_entry_api_admin_waitlist__entry_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Admin Stats
+         * @description Return the messaging configuration needed by the admin overview.
+         */
+        get: operations["get_admin_stats_api_admin_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Admin Version
+         * @description Build metadata for the admin overview card and the client's auto-reload poll.
+         */
+        get: operations["get_admin_version_api_admin_version_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/channels/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Admin Channel Config
+         * @description Return full server-level channel configuration for the admin panel.
+         */
+        get: operations["get_admin_channel_config_api_admin_channels_config_get"];
+        /**
+         * Update Admin Channel Config
+         * @description Update server-level channel configuration (admin only).
+         */
+        put: operations["update_admin_channel_config_api_admin_channels_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/telegram/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register Telegram Webhook Endpoint
+         * @description Register or update the Telegram webhook URL.
+         *
+         *     If webhook_url is empty, constructs it from APP_BASE_URL.
+         */
+        post: operations["register_telegram_webhook_endpoint_api_admin_telegram_webhook_post"];
+        /**
+         * Unregister Telegram Webhook Endpoint
+         * @description Remove the Telegram webhook.
+         */
+        delete: operations["unregister_telegram_webhook_endpoint_api_admin_telegram_webhook_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/config/llm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Admin Llm Config
+         * @description Return the global default LLM provider/model used when a user has no override.
+         */
+        get: operations["get_admin_llm_config_api_admin_config_llm_get"];
+        /**
+         * Update Admin Llm Config
+         * @description Update the global default LLM. Persisted to the settings store.
+         */
+        put: operations["update_admin_llm_config_api_admin_config_llm_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/llm-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get User Llm Config
+         * @description Return per-user LLM override (and the effective values after fallback).
+         */
+        get: operations["get_user_llm_config_api_admin_users__user_id__llm_config_get"];
+        /**
+         * Update User Llm Config
+         * @description Set the per-user LLM override.
+         *
+         *     Pass an empty string in either field to clear that part of the
+         *     override and fall back to the global default. Pass null (omit) to
+         *     leave the field unchanged.
+         *
+         *     Deliberately has no self-action guard. Every other user-targeted mutation
+         *     endpoint (plan, activate, deactivate, reset-quota, delete, compact-now,
+         *     hygiene-compact-memory) still rejects a self-targeted call. For the plan /
+         *     activate / deactivate / reset-quota / delete set that guard stops an admin
+         *     escalating their own account: raising their own quota, upgrading their own
+         *     plan, locking themselves out. Which model an admin's own agent talks to is a
+         *     personal preference with no privilege attached, and blocking it stops the
+         *     most common legitimate use (an admin trying a model on their own account
+         *     before rolling it out). ``audit_admin`` still resolves ``get_current_admin``,
+         *     so the role check and the audit record are unaffected.
+         */
+        put: operations["update_user_llm_config_api_admin_users__user_id__llm_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/users/{user_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update User Plan
+         * @description Change a user's plan and re-cap their active month's quota row.
+         *
+         *     Without the quota-row update, a mid-month flip would not take effect
+         *     until the next calendar reset because ``UsageQuota`` captures limits
+         *     at row creation. ``messages_used`` / ``tokens_used`` carry over so a
+         *     user partway through their old cap does not get a free reset.
+         */
+        put: operations["update_user_plan_api_admin_users__user_id__plan_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/config/llm/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Admin Llm Providers
+         * @description List all known LLM providers known to any-llm.
+         */
+        get: operations["list_admin_llm_providers_api_admin_config_llm_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/config/llm/providers/{provider}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Admin Llm Provider Models
+         * @description Return models for ``provider`` plus structured failure context.
+         *
+         *     Enumerates ``settings.llm_api_base``, matching what the agent loop passes to
+         *     ``amessages`` on every call. Previously this called any-llm with no
+         *     ``api_base`` at all, so the listing went straight to the provider's own API
+         *     while the agent talked to a gateway. On a gateway deployment that failed
+         *     outright, because the gateway's virtual key got presented to the real
+         *     provider ("401 invalid x-api-key"), and an admin could never see the models
+         *     they were actually able to call.
+         *
+         *     Deliberately takes no caller-supplied ``api_base``. The OSS sibling
+         *     (``/api/user/providers/{provider}/models``) accepts one because its settings
+         *     form passes it, but the admin UI does not, so the parameter would be
+         *     a curl-only surface whose only real effect is to let an admin make the server
+         *     deliver a provider API key from its environment to an arbitrary host. If the
+         *     admin form ever needs to preview a candidate endpoint before saving it, add
+         *     the parameter together with URL validation, not before.
+         *
+         *     Never raises 4xx/5xx for "this provider cannot list models" or "the
+         *     provider's API call failed". Those are normal admin states; the UI
+         *     needs to render them, not see a generic 502. We only let through
+         *     framework-level errors (e.g. validation), which FastAPI handles.
+         */
+        get: operations["list_admin_llm_provider_models_api_admin_config_llm_providers__provider__models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Admin Api Keys
+         * @description List the admin's own API keys.
+         *
+         *     Includes revoked keys (with ``revoked_at`` populated) so the admin
+         *     can audit their own history. The cleartext token is never
+         *     returned; only the prefix + metadata.
+         */
+        get: operations["list_admin_api_keys_api_admin_api_keys_get"];
+        put?: never;
+        /**
+         * Create Admin Api Key
+         * @description Mint a new API key for the calling admin.
+         *
+         *     Returns the cleartext token in the response body. The caller must
+         *     persist it: a re-read of the row will only expose the prefix.
+         *
+         *     Refuses with 409 when the calling admin already has the per-admin
+         *     cap of active (un-revoked) keys. The actionable response is
+         *     "revoke an old key, then mint again", surfaced in the error
+         *     detail so a CLI client can show it verbatim. Revoked keys do not
+         *     count toward the cap.
+         */
+        post: operations["create_admin_api_key_api_admin_api_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/api-keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Admin Api Key
+         * @description Revoke one of the admin's own API keys.
+         *
+         *     Idempotent: revoking an already-revoked key returns 200 ok.
+         *     Scoped to the calling admin's own keys; an admin cannot revoke
+         *     another admin's keys through this endpoint (a separate force-
+         *     revoke surface would handle that, with stricter audit).
+         */
+        delete: operations["revoke_admin_api_key_api_admin_api_keys__key_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Shared Data Summary
+         * @description Aggregate counts for the Overview "Research pilot" panel.
+         *
+         *     Computes consenting-user totals, weekly activity counts (conversations
+         *     + heartbeats + errors), open-report count, and a small leaderboard
+         *     of the most active consenting users this week. Cheap enough to run
+         *     on every Overview load: a handful of indexed COUNT and GROUP BY
+         *     queries scoped to consenting user ids.
+         *
+         *     Only counts and a small leaderboard surface here. Message bodies,
+         *     memory text, and per-event content stay behind the existing
+         *     per-conversation endpoints, which already PII-redact and audit-log
+         *     every read.
+         *
+         *     The "this week" window is the rolling 7 days ending now (UTC).
+         */
+        get: operations["get_shared_data_summary_api_admin_shared_data_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Shared Data Users
+         * @description List users who have opted into data sharing.
+         *
+         *     Filtered to ``data_sharing_consent=True`` server-side; non-
+         *     consenting rows never reach the response. ``conversation_count`` and
+         *     ``last_message_at`` are per-user aggregates, so the admin can identify
+         *     recent conversations without fetching a transcript.
+         */
+        get: operations["list_shared_data_users_api_admin_shared_data_users_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users/{user_id}/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Shared Data Conversation
+         * @description Return the consenting user's single conversation.
+         *
+         *     Each user has at most one conversation (enforced by the
+         *     ``uq_sessions_user_id`` constraint on OSS). 404s if the user has
+         *     no conversation yet, which is normal for a freshly onboarded user
+         *     who hasn't sent a first message.
+         */
+        get: operations["get_shared_data_conversation_api_admin_shared_data_users__user_id__conversation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users/{user_id}/conversation/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Shared Data Conversation Turns
+         * @description Return the user's conversation as turn-grouped, redacted records.
+         *
+         *     Pulls every message in the user's single conversation (capped at
+         *     ``limit`` rows so a runaway transcript does not OOM the response),
+         *     groups them into turns via :func:`_group_turns`, and returns each
+         *     turn with its user message, agent reply, and the tool calls fired
+         *     during the turn. Each tool call is redacted at the leaves: ``args``
+         *     is walked recursively and ``result`` is string-redacted, so a
+         *     query like ``qb_query("...WHERE customer_name='John Smith'")``
+         *     does not surface the customer name even when the conversation is
+         *     opened.
+         *
+         *     The consent gate is re-checked server-side, so a user revoking
+         *     consent mid-investigation immediately starts returning 403.
+         */
+        get: operations["list_shared_data_conversation_turns_api_admin_shared_data_users__user_id__conversation_turns_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users/{user_id}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Shared Data Profile
+         * @description Return the consenting user's soul / user / heartbeat profile text.
+         *
+         *     These three fields used to live on ``GET /admin/users/{id}`` until
+         *     #336 dropped them. They are user-authored content (soul = how the
+         *     agent should behave for this user; user_text = synthesized profile;
+         *     heartbeat_text = proactive directives), so they belong behind the
+         *     consent gate. Strings are passed through ``redact_pii`` even though
+         *     they're plaintext at rest, because users sometimes paste contact
+         *     info into their soul / heartbeat directives.
+         *
+         *     Heartbeat config (opt-in flag, frequency, max_daily) is metadata
+         *     that the slim ``/admin/users/{id}`` route already returns; we
+         *     duplicate it here so an admin reviewing one consenting user has
+         *     everything in one response without cross-route hopping.
+         */
+        get: operations["get_shared_data_profile_api_admin_shared_data_users__user_id__profile_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users/{user_id}/heartbeat-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Shared Data Heartbeat Logs
+         * @description Return heartbeat scheduler runs with their content fields.
+         *
+         *     The non-consent variant ``/admin/users/{id}/heartbeat-logs`` returns
+         *     only metadata (id, action_type, channel, created_at) since #336.
+         *     For consenting users the full content surfaces here: ``message_text``
+         *     (what the agent sent on this tick), ``reasoning`` (why it sent /
+         *     skipped — often quotes the user back to themselves), and ``tasks``
+         *     (the serialized task state the LLM was deciding from). All three
+         *     columns are envelope-encrypted at rest; ORM reads decrypt
+         *     transparently and we redact PII shapes before serialization.
+         */
+        get: operations["list_shared_data_heartbeat_logs_api_admin_shared_data_users__user_id__heartbeat_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users/{user_id}/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Shared Data Memory
+         * @description Return the consenting user's MemoryDocument (memory + history).
+         *
+         *     ``memory_text`` is the agent's working memory file (persistent
+         *     notes, reminders, current context). ``history_text`` is the
+         *     accumulated output of session compactions: each time a long
+         *     session compacts, the LLM extracts durable facts and appends them
+         *     here. Reading ``history_text`` is the closest persisted surface to
+         *     a per-event compaction stream; per-event timing lives in
+         *     ``logger.info("compaction.summary user=...")`` lines only and is
+         *     not yet queryable.
+         *
+         *     Both columns are envelope-encrypted at rest. A user with no
+         *     document yet (never compacted, never wrote memory) returns empty
+         *     strings rather than 404 — consenting and "no memory yet" is a
+         *     valid combined state.
+         */
+        get: operations["get_shared_data_memory_api_admin_shared_data_users__user_id__memory_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users/{user_id}/compaction-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Shared Data Compaction Events
+         * @description Return per-event compaction metadata for one consenting user.
+         *
+         *     Backed by the OSS ``compaction_events`` table (migrations 023 and
+         *     030). The metadata columns (counts, timings, outcome flags) carry
+         *     no user content, so no redaction is applied. Migration 030 added
+         *     eight envelope-encrypted before/after snapshots (memory, history,
+         *     user, soul); these decrypt to plaintext on read and ride through
+         *     the response so an admin can see exactly what a compaction event
+         *     rewrote across the four memory files. ``status`` is one of
+         *     ``'pending'`` (sync watermark advanced, async LLM call still
+         *     running or crashed) or ``'completed'``; legacy rows default to
+         *     ``'completed'`` via the migration's server-side default.
+         *
+         *     Snapshots that exceed
+         *     ``settings.compaction_event_snapshot_max_bytes_per_file`` are
+         *     stored as a JSON truncation record. We surface those as a flagged
+         *     payload (``truncated=True`` plus head, tail, size, sha256) instead
+         *     of dumping the JSON verbatim so the UI can render
+         *     "truncated, N KB" with the head and tail visible inline.
+         *
+         *     Ordered ``triggered_at desc`` so the most recent compaction shows
+         *     first; that is the question admins almost always ask ("did this
+         *     user just compact, and what did it cost?"). ``limit`` caps the
+         *     response so a long-running user does not OOM the wire.
+         */
+        get: operations["list_shared_data_compaction_events_api_admin_shared_data_users__user_id__compaction_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users/{user_id}/approval-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Shared Data Approval Events
+         * @description Return per-event tool-approval lifecycle for one consenting user.
+         *
+         *     Backed by the OSS ``approval_events`` table (migration 028). The
+         *     agent's approval gate writes one row per transition: ``requested``
+         *     when a tool with ASK policy fires, ``decided`` (with the
+         *     ApprovalDecision) when the user replies, ``timed_out`` if the user
+         *     never answers, and ``recovered`` if a worker crash left an orphan
+         *     that the next boot cleaned up. Surfacing this stream lets admins
+         *     see when the agent was blocked on a permission prompt and how the
+         *     request resolved, which the conversation transcript alone cannot
+         *     show (prompts ride through the messages table indistinguishably
+         *     from ordinary replies).
+         *
+         *     ``description`` is the human-readable text shown to the user in
+         *     the prompt body. It can echo user-pasted content (filenames, URLs,
+         *     quoted message text), so it is PII-redacted before serialization.
+         *     ``channel`` and ``chat_id`` are infrastructure metadata that route
+         *     the prompt; they are not redacted.
+         *
+         *     Ordered ``created_at asc`` so a request/decided pair stays adjacent
+         *     in the response, matching how the activity feed will render them.
+         */
+        get: operations["list_shared_data_approval_events_api_admin_shared_data_users__user_id__approval_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/shared-data/users/{user_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Shared Data User
+         * @description One-shot export bundle for a consenting user.
+         *
+         *     Designed for CLI / offline analysis: a single audit-logged request
+         *     returns identity + profile + memory + heartbeat history + activity
+         *     counts + tool usage rollup, all PII-redacted. Without this, an
+         *     admin investigating "what's wrong with this user's experience?"
+         *     has to walk seven separate endpoints by hand.
+         *
+         *     The window only applies to time-bucketed sub-resources. The
+         *     profile / memory / consent fields are always the current value.
+         *
+         *     Bodies live in two places:
+         *     * The agent's persistent text (soul, user, heartbeat directives,
+         *       memory) returns in the corresponding sections.
+         *     * Per-message transcripts only return when ``include_turns=true``.
+         *       They are the heaviest field (one row per message + tool call).
+         */
+        get: operations["export_shared_data_user_api_admin_shared_data_users__user_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reported-conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Reported Conversations
+         * @description List reports for triage.
+         *
+         *     No status filter returns both open and dismissed; ``status=open``
+         *     or ``status=dismissed`` narrows. Open reports always sort first.
+         */
+        get: operations["list_reported_conversations_api_admin_reported_conversations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reported-conversations/{report_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Reported Conversation Messages
+         * @description Return the messages around the report's anchor.
+         *
+         *     Includes ``window`` messages on either side of ``anchor_seq``. If
+         *     ``anchor_seq`` is NULL (the OSS handler couldn't capture one when
+         *     the user reported on an empty session), returns the most recent
+         *     ``window`` messages instead.
+         *
+         *     All bodies pass through PII redaction before serialization.
+         */
+        get: operations["get_reported_conversation_messages_api_admin_reported_conversations__report_id__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reported-conversations/{report_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss Reported Conversation
+         * @description Mark a report as dismissed.
+         *
+         *     Stamps ``dismissed_at`` (NOW) and ``reviewed_admin_user_id`` (the
+         *     calling admin's id). Returns 404 if the report doesn't exist, 400
+         *     if it's already dismissed (idempotent re-dismiss is a no-op but we
+         *     surface it so the admin UI can show a clear error rather than
+         *     silently swallowing the click).
+         */
+        post: operations["dismiss_reported_conversation_api_admin_reported_conversations__report_id__dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/account/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Profile
+         * @description Return the authenticated user's profile.
+         */
+        get: operations["get_profile_api_account_profile_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/account/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Account Usage
+         * @description Return current usage for the authenticated user.
+         */
+        get: operations["get_account_usage_api_account_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/account/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Data
+         * @description Export all user data as JSON for GDPR compliance.
+         */
+        get: operations["export_data_api_account_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/account/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Account
+         * @description Delete account: archive usage, cascade delete data, deactivate.
+         *
+         *     Archives usage totals to prevent quota-reset abuse, deletes all
+         *     user-generated data, and deactivates the user record.
+         */
+        delete: operations["delete_account_api_account_delete_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Telegram Link
+         * @description Return the current user's linked Telegram user ID.
+         */
+        get: operations["get_telegram_link_api_channels_telegram_get"];
+        /**
+         * Set Telegram Link
+         * @description Link a Telegram user ID to the current user's account.
+         *
+         *     Creates or updates the ChannelRoute so inbound Telegram messages
+         *     from this ID are routed to this user. Returns 409 if the Telegram
+         *     user ID is already claimed by another account.
+         */
+        put: operations["set_telegram_link_api_channels_telegram_put"];
+        post?: never;
+        /**
+         * Remove Telegram Link
+         * @description Unlink the Telegram user ID from the current user's account.
+         */
+        delete: operations["remove_telegram_link_api_channels_telegram_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/linq": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Linq Link
+         * @description Return the current user's linked phone number for Linq.
+         */
+        get: operations["get_linq_link_api_channels_linq_get"];
+        /**
+         * Set Linq Link
+         * @description Link a phone number to the current user for Linq (iMessage/RCS/SMS).
+         *
+         *     Creates or updates the ChannelRoute so inbound Linq messages from this
+         *     phone number are routed to this user. Returns 409 if the phone number
+         *     is already claimed by another account.
+         */
+        put: operations["set_linq_link_api_channels_linq_put"];
+        post?: never;
+        /**
+         * Remove Linq Link
+         * @description Unlink the phone number from the current user's account.
+         */
+        delete: operations["remove_linq_link_api_channels_linq_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/bluebubbles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Bluebubbles Link
+         * @description Return the current user's linked phone number or email for BlueBubbles.
+         */
+        get: operations["get_bluebubbles_link_api_channels_bluebubbles_get"];
+        /**
+         * Set Bluebubbles Link
+         * @description Link a phone number or email to the current user for BlueBubbles.
+         *
+         *     Creates or updates the ChannelRoute so inbound BlueBubbles messages from this
+         *     identifier are routed to this user. Returns 409 if the identifier is already
+         *     claimed by another account.
+         */
+        put: operations["set_bluebubbles_link_api_channels_bluebubbles_put"];
+        post?: never;
+        /**
+         * Remove Bluebubbles Link
+         * @description Unlink the BlueBubbles identifier from the current user's account.
+         */
+        delete: operations["remove_bluebubbles_link_api_channels_bluebubbles_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/twilio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Twilio Link
+         * @description Return the current user's linked phone number for Twilio.
+         */
+        get: operations["get_twilio_link_api_channels_twilio_get"];
+        /**
+         * Set Twilio Link
+         * @description Link a phone number to the current user for Twilio.
+         *
+         *     Creates or updates the ChannelRoute so inbound Twilio messages from
+         *     this phone number are routed to this user. Returns 409 if the phone
+         *     number is already claimed by another account.
+         */
+        put: operations["set_twilio_link_api_channels_twilio_put"];
+        post?: never;
+        /**
+         * Remove Twilio Link
+         * @description Unlink the Twilio phone number from the current user's account.
+         */
+        delete: operations["remove_twilio_link_api_channels_twilio_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/linq/welcome": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Linq Welcome
+         * @description Send the onboarding welcome iMessage/SMS to the linked Linq number.
+         */
+        post: operations["send_linq_welcome_api_channels_linq_welcome_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/bluebubbles/welcome": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Bluebubbles Welcome
+         * @description Send the onboarding welcome iMessage to the linked BlueBubbles identifier.
+         */
+        post: operations["send_bluebubbles_welcome_api_channels_bluebubbles_welcome_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/twilio/welcome": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Twilio Welcome
+         * @description Send the onboarding welcome text to the linked Twilio number.
+         */
+        post: operations["send_twilio_welcome_api_channels_twilio_welcome_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/health/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Health Detail
+         * @description Rich health check: status, database connectivity, uptime.
+         *
+         *     ``/api/health`` answers the same status question and is what the
+         *     platform healthcheck uses. This adds process uptime, which is what
+         *     distinguishes "still degraded" from "just restarted".
+         */
+        get: operations["health_detail_api_health_detail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/monitoring/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Monitoring Status
+         * @description Current state of every health probe, plus alerting configuration.
+         *
+         *     Answers "is it working right now" without waiting for the next email, and
+         *     makes a misconfigured alert pipeline visible: ``alerts.enabled`` false with
+         *     SMTP set means no recipient resolved.
+         */
+        get: operations["monitoring_status_api_monitoring_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/monitoring/test-alert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Test Alert
+         * @description Send a synthetic alert email so SMTP and recipient wiring can be verified.
+         *
+         *     Worth having because the alert path is, by design, exercised only when
+         *     something is already broken. Discovering then that ``ALERT_EMAIL`` had a
+         *     typo is the worst possible time.
+         *
+         *     On failure the transport's own explanation is returned rather than a generic
+         *     "not sent", which previously sent the operator to the container logs to
+         *     learn whether the cause was a typo, a rejected password, or a blocked port.
+         */
+        post: operations["send_test_alert_api_monitoring_test_alert_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/monitoring/diagnose-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Diagnose Email
+         * @description Probe the email path from inside this container and explain the result.
+         *
+         *     Answers the question a failed test alert leaves open: is the mail server
+         *     saying no, or is nothing getting out of the container at all? Reports
+         *     per-port TCP reachability plus a full authenticated handshake (EHLO,
+         *     STARTTLS, login, NOOP) against the configured port, sending no message.
+         */
+        post: operations["diagnose_email_api_monitoring_diagnose_email_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/monitoring/run-probes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Probes
+         * @description Start a probe run in the background and return its initial progress.
+         *
+         *     Deliberately does not await the run. A full pass calls an LLM provider, a
+         *     residential Mac, a sidecar health endpoint, and one auth_check per specialist per
+         *     user; awaiting it held the request open for minutes with nothing to show,
+         *     and any proxy timeout in between lost the result entirely. The caller polls
+         *     ``GET /monitoring/status`` and reads ``health_monitor.run`` instead.
+         */
+        post: operations["run_probes_api_monitoring_run_probes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/waitlist/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Join Waitlist
+         * @description Add an email to the waitlist.
+         *
+         *     Always returns 200 to prevent email enumeration.
+         *     Rate-limited per IP.
+         */
+        post: operations["join_waitlist_api_waitlist_join_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AdminApiKeyCreate
+         * @description Mint request body. ``label`` is free-form, capped server-side.
+         */
+        AdminApiKeyCreate: {
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+        };
+        /**
+         * AdminApiKeyItem
+         * @description One row in the admin's key list. Cleartext token never appears.
+         */
+        AdminApiKeyItem: {
+            /** Id */
+            id: number;
+            /** Label */
+            label: string;
+            /** Key Prefix */
+            key_prefix: string;
+            /** Created At */
+            created_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
+        };
+        /** AdminApiKeyListResponse */
+        AdminApiKeyListResponse: {
+            /** Items */
+            items: components["schemas"]["AdminApiKeyItem"][];
+        };
+        /**
+         * AdminApiKeyMintResponse
+         * @description Mint response. ``token`` is the only place the cleartext is shown.
+         *
+         *     The caller must save the token immediately; subsequent reads of
+         *     the row only have the prefix. ``key_prefix`` is duplicated here
+         *     so the frontend can echo it back to the admin alongside the
+         *     cleartext for confirmation ("you minted ``ck_a1b2c3d4...``").
+         */
+        AdminApiKeyMintResponse: {
+            /** Id */
+            id: number;
+            /** Token */
+            token: string;
+            /** Key Prefix */
+            key_prefix: string;
+            /** Label */
+            label: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** AdminChannelConfigResponse */
+        AdminChannelConfigResponse: {
+            /**
+             * Bluebubbles Server Url
+             * @default
+             */
+            bluebubbles_server_url: string;
+            /**
+             * Bluebubbles Password Set
+             * @default false
+             */
+            bluebubbles_password_set: boolean;
+            /**
+             * Bluebubbles Imessage Address
+             * @default
+             */
+            bluebubbles_imessage_address: string;
+            /**
+             * Bluebubbles Send Method
+             * @default apple-script
+             */
+            bluebubbles_send_method: string;
+            /**
+             * Bluebubbles Configured
+             * @default false
+             */
+            bluebubbles_configured: boolean;
+            /**
+             * Telegram Bot Token Set
+             * @default false
+             */
+            telegram_bot_token_set: boolean;
+            /**
+             * Telegram Allowed Chat Id
+             * @default
+             */
+            telegram_allowed_chat_id: string;
+            /**
+             * Linq Api Token Set
+             * @default false
+             */
+            linq_api_token_set: boolean;
+            /**
+             * Linq From Number
+             * @default
+             */
+            linq_from_number: string;
+            /**
+             * Linq Allowed Numbers
+             * @default
+             */
+            linq_allowed_numbers: string;
+            /**
+             * Linq Preferred Service
+             * @default iMessage
+             */
+            linq_preferred_service: string;
+            /**
+             * Twilio Account Sid Set
+             * @default false
+             */
+            twilio_account_sid_set: boolean;
+            /**
+             * Twilio Auth Token Set
+             * @default false
+             */
+            twilio_auth_token_set: boolean;
+            /**
+             * Twilio Api Key Sid Set
+             * @default false
+             */
+            twilio_api_key_sid_set: boolean;
+            /**
+             * Twilio Api Key Secret Set
+             * @default false
+             */
+            twilio_api_key_secret_set: boolean;
+            /**
+             * Twilio Configured
+             * @default false
+             */
+            twilio_configured: boolean;
+            /**
+             * Twilio Phone Number
+             * @default
+             */
+            twilio_phone_number: string;
+            /**
+             * Twilio Messaging Service Sid
+             * @default
+             */
+            twilio_messaging_service_sid: string;
+            /**
+             * Twilio Allowed Numbers
+             * @default
+             */
+            twilio_allowed_numbers: string;
+        };
+        /** AdminChannelConfigUpdate */
+        AdminChannelConfigUpdate: {
+            /** Bluebubbles Server Url */
+            bluebubbles_server_url?: string | null;
+            /** Bluebubbles Password */
+            bluebubbles_password?: string | null;
+            /** Bluebubbles Imessage Address */
+            bluebubbles_imessage_address?: string | null;
+            /** Bluebubbles Send Method */
+            bluebubbles_send_method?: string | null;
+            /** Telegram Bot Token */
+            telegram_bot_token?: string | null;
+            /** Telegram Allowed Chat Id */
+            telegram_allowed_chat_id?: string | null;
+            /** Linq Api Token */
+            linq_api_token?: string | null;
+            /** Linq From Number */
+            linq_from_number?: string | null;
+            /** Linq Allowed Numbers */
+            linq_allowed_numbers?: string | null;
+            /** Linq Preferred Service */
+            linq_preferred_service?: string | null;
+            /** Twilio Account Sid */
+            twilio_account_sid?: string | null;
+            /** Twilio Auth Token */
+            twilio_auth_token?: string | null;
+            /** Twilio Api Key Sid */
+            twilio_api_key_sid?: string | null;
+            /** Twilio Api Key Secret */
+            twilio_api_key_secret?: string | null;
+            /** Twilio Phone Number */
+            twilio_phone_number?: string | null;
+            /** Twilio Messaging Service Sid */
+            twilio_messaging_service_sid?: string | null;
+            /** Twilio Allowed Numbers */
+            twilio_allowed_numbers?: string | null;
+        };
+        /** AdminChannelRouteEntry */
+        AdminChannelRouteEntry: {
+            /** Channel */
+            channel: string;
+            /** Channel Identifier */
+            channel_identifier: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Last Inbound At */
+            last_inbound_at: string | null;
+        };
+        /**
+         * AdminHeartbeatLogItem
+         * @description Heartbeat log metadata only.
+         *
+         *     Content fields (``message_text``, ``reasoning``, ``tasks``) were
+         *     removed in #325 work item 2 — they were user-facing content the
+         *     user-detail response also stripped. They surface only via the
+         *     consent-gated paths once items 3 + 4 land.
+         */
+        AdminHeartbeatLogItem: {
+            /** Id */
+            id: number;
+            /** User Id */
+            user_id: string;
+            /**
+             * Action Type
+             * @default send
+             */
+            action_type: string;
+            /**
+             * Channel
+             * @default
+             */
+            channel: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** AdminHeartbeatLogListResponse */
+        AdminHeartbeatLogListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["AdminHeartbeatLogItem"][];
+        };
+        /**
+         * AdminLLMConfigResponse
+         * @description Global default LLM (used when a user has no per-user override).
+         */
+        AdminLLMConfigResponse: {
+            /** Llm Provider */
+            llm_provider: string;
+            /** Llm Model */
+            llm_model: string;
+            /** Llm Api Base */
+            llm_api_base?: string | null;
+        };
+        /**
+         * AdminLLMConfigUpdate
+         * @description All fields optional. Pass only what you want to change.
+         */
+        AdminLLMConfigUpdate: {
+            /** Llm Provider */
+            llm_provider?: string | null;
+            /** Llm Model */
+            llm_model?: string | null;
+            /** Llm Api Base */
+            llm_api_base?: string | null;
+        };
+        /**
+         * AdminLLMModelsResponse
+         * @description Structured result of an ``alist_models`` call, with failure context.
+         *
+         *     The admin UI uses this to decide between:
+         *       - rendering a real ``<select>`` (``models`` non-empty)
+         *       - rendering an inline error + text-input fallback (``error`` set)
+         *       - rendering a "this provider does not support listing models"
+         *         notice + text-input fallback (``supports_listing == False``)
+         */
+        AdminLLMModelsResponse: {
+            /** Provider */
+            provider: string;
+            /** Models */
+            models: string[];
+            /** Supports Listing */
+            supports_listing: boolean;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * AdminLLMProvider
+         * @description One entry in the admin provider list.
+         */
+        AdminLLMProvider: {
+            /** Name */
+            name: string;
+            /** Local */
+            local: boolean;
+        };
+        /** AdminLLMProvidersResponse */
+        AdminLLMProvidersResponse: {
+            /** Providers */
+            providers: components["schemas"]["AdminLLMProvider"][];
+        };
+        /** AdminStatsResponse */
+        AdminStatsResponse: {
+            /**
+             * Telegram Configured
+             * @default false
+             */
+            telegram_configured: boolean;
+            /**
+             * Bluebubbles Configured
+             * @default false
+             */
+            bluebubbles_configured: boolean;
+            /**
+             * Twilio Configured
+             * @default false
+             */
+            twilio_configured: boolean;
+        };
+        /** AdminToolConfigEntry */
+        AdminToolConfigEntry: {
+            /** Tool Name */
+            tool_name: string;
+            /** Enabled */
+            enabled: boolean;
+        };
+        /**
+         * AdminUsageSummary
+         * @description Admin-only variant that adds aggregate LLM spend.
+         *
+         *     Kept separate from the user-facing ``UsageSummary`` because we do
+         *     not want to surface raw API cost back to end users via
+         *     ``/account/usage``: the app is free to them, and the dollar
+         *     figure is operational data for Mozilla.ai. Costs are formatted
+         *     decimal strings (``"82.553261"``) to match the per-row
+         *     ``LLMUsageLogItem.cost_usd`` shape and avoid float precision loss.
+         */
+        AdminUsageSummary: {
+            messages: components["schemas"]["UsageBucket"];
+            tokens: components["schemas"]["UsageBucket"];
+            /** Period Start */
+            period_start: string | null;
+            /** Period Cost Usd */
+            period_cost_usd: string;
+            /** Lifetime Cost Usd */
+            lifetime_cost_usd: string;
+        };
+        /**
+         * AdminUserDetailResponse
+         * @description Identity, account state, and configuration metadata for one user.
+         *
+         *     User-authored content (memory, soul, user text, heartbeat directives,
+         *     message bodies, tool-call args/results) was removed in #325 work
+         *     item 2. The plan: content surfaces only via the consent-gated paths
+         *     (``/admin/reported-conversations`` and ``/admin/shared-data``) once
+         *     items 3 + 4 land. Until then, admins debugging an incident see the
+         *     metadata + integrations here, plus the audit log of who looked.
+         *
+         *     Channel routes carry a *masked* ``channel_identifier`` — phone
+         *     numbers / iMessage emails / Telegram chat IDs are PII the admin
+         *     rarely needs in full. The route applies ``_mask_channel_identifier``
+         *     so admins see enough to recognize a route and confirm last-4 digits,
+         *     not enough to dial / message directly from the admin panel.
+         */
+        AdminUserDetailResponse: {
+            /** Id */
+            id: string;
+            /** User Id */
+            user_id: string;
+            /** Email */
+            email: string;
+            /** Plan */
+            plan: string;
+            /** Status */
+            status: string;
+            /** Role */
+            role: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Onboarding Complete */
+            onboarding_complete: boolean;
+            /** Subscription Created At */
+            subscription_created_at: string | null;
+            /** Subscription Updated At */
+            subscription_updated_at: string | null;
+            /** Timezone */
+            timezone: string;
+            /** Preferred Channel */
+            preferred_channel: string;
+            /** Heartbeat Opt In */
+            heartbeat_opt_in: boolean;
+            /** Heartbeat Frequency */
+            heartbeat_frequency: string;
+            /** Tool Configs */
+            tool_configs: components["schemas"]["AdminToolConfigEntry"][];
+            /** Channel Routes */
+            channel_routes: components["schemas"]["AdminChannelRouteEntry"][];
+            permissions: components["schemas"]["AdminUserPermissions"];
+        };
+        /**
+         * AdminUserLLMOverrideResponse
+         * @description Per-user override values plus the resolved (effective) values.
+         *
+         *     Empty ``llm_provider_override`` / ``llm_model_override`` mean "fall
+         *     back to the global default". The effective fields show what the
+         *     agent will actually use, factoring in fallbacks.
+         */
+        AdminUserLLMOverrideResponse: {
+            /** User Id */
+            user_id: string;
+            /** Llm Provider Override */
+            llm_provider_override: string;
+            /** Llm Model Override */
+            llm_model_override: string;
+            /** Effective Llm Provider */
+            effective_llm_provider: string;
+            /** Effective Llm Model */
+            effective_llm_model: string;
+        };
+        /**
+         * AdminUserLLMOverrideUpdate
+         * @description Pass empty strings to clear an override and fall back to the global default.
+         */
+        AdminUserLLMOverrideUpdate: {
+            /** Llm Provider Override */
+            llm_provider_override?: string | null;
+            /** Llm Model Override */
+            llm_model_override?: string | null;
+        };
+        /**
+         * AdminUserPermissionEntry
+         * @description One tool-level permission override (always, ask, or deny).
+         */
+        AdminUserPermissionEntry: {
+            /** Tool Name */
+            tool_name: string;
+            /** Level */
+            level: string;
+        };
+        /**
+         * AdminUserPermissions
+         * @description Per-user tool/resource permission overrides.
+         *
+         *     Mirrors the JSON document at ``user_permissions.data``: the tool list
+         *     is the top-level approval level for each tool, and resources are the
+         *     finer-grained overrides keyed by (tool, resource pattern).
+         */
+        AdminUserPermissions: {
+            /** Tools */
+            tools: components["schemas"]["AdminUserPermissionEntry"][];
+            /** Resources */
+            resources: components["schemas"]["AdminUserResourcePermissionEntry"][];
+        };
+        /**
+         * AdminUserPlanResponse
+         * @description Resulting plan plus the active month's caps after the change.
+         */
+        AdminUserPlanResponse: {
+            /** User Id */
+            user_id: string;
+            /** Plan */
+            plan: string;
+            /** Messages Limit */
+            messages_limit: number;
+            /** Tokens Limit */
+            tokens_limit: number;
+        };
+        /**
+         * AdminUserPlanUpdate
+         * @description Set a user's subscription plan. Must be a key in ``billing.plans.PLANS``.
+         */
+        AdminUserPlanUpdate: {
+            /** Plan */
+            plan: string;
+        };
+        /**
+         * AdminUserResourcePermissionEntry
+         * @description One resource-scoped permission override.
+         *
+         *     ``resource`` may be a literal value or a glob pattern such as ``*.gov``,
+         *     matching the OSS approval store's resolution order.
+         */
+        AdminUserResourcePermissionEntry: {
+            /** Tool Name */
+            tool_name: string;
+            /** Resource */
+            resource: string;
+            /** Level */
+            level: string;
+        };
+        /**
+         * AdminVersionResponse
+         * @description Build metadata for the admin overview's version card and auto-reload poll.
+         *
+         *     ``started_at`` is the load-bearing field: a fresh process picks up a new
+         *     timestamp, which lets the admin client detect a deploy without depending
+         *     on commit env vars being stamped at build time.
+         */
+        AdminVersionResponse: {
+            /** Premium Version */
+            premium_version: string;
+            /** Premium Commit */
+            premium_commit: string;
+            /** Oss Version */
+            oss_version: string;
+            /** Oss Commit */
+            oss_commit: string;
+            /** Started At */
+            started_at: string;
+        };
+        /** AllowedEmailCreate */
+        AllowedEmailCreate: {
+            /** Email */
+            email: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** AllowedEmailListResponse */
+        AllowedEmailListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["AllowedEmailResponse"][];
+        };
+        /** AllowedEmailResponse */
+        AllowedEmailResponse: {
+            /** Id */
+            id: number;
+            /** Email */
+            email: string;
+            /** Note */
+            note: string;
+            /** Created At */
+            created_at: string;
+        };
         /**
          * AppConfigResponse
          * @description Deployment-level feature flags the frontend reads on app load.
@@ -1006,10 +3238,39 @@ export interface components {
              */
             magic_link: string;
         };
+        /** AuthResponse */
+        AuthResponse: {
+            /** Access Token */
+            access_token: string;
+            /** Refresh Token */
+            refresh_token: string;
+            /**
+             * Token Type
+             * @default bearer
+             */
+            token_type: string;
+            /** User Id */
+            user_id: string;
+        };
         /** BatchDeleteRequest */
         BatchDeleteRequest: {
             /** Seqs */
             seqs: number[];
+        };
+        /** BlueBubblesLinkRequest */
+        BlueBubblesLinkRequest: {
+            /** Phone Number */
+            phone_number: string;
+        };
+        /** BlueBubblesLinkResponse */
+        BlueBubblesLinkResponse: {
+            /** Phone Number */
+            phone_number?: string | null;
+            /**
+             * Connected
+             * @default false
+             */
+            connected: boolean;
         };
         /** Body_send_chat_message_api_user_chat_post */
         Body_send_chat_message_api_user_chat_post: {
@@ -1197,6 +3458,48 @@ export interface components {
             enabled: boolean;
         };
         /**
+         * CompactUserContextRequest
+         * @description Body for ``POST /admin/users/{user_id}/compact-now``.
+         *
+         *     Both fields are optional: a bare ``{}`` runs the default "compact
+         *     everything visible, no LLM steering" behavior.
+         */
+        CompactUserContextRequest: {
+            /**
+             * Keep Recent
+             * @description Preserve the last N visible messages from compaction so the agent retains immediate context (e.g. a pending user request).
+             * @default 0
+             */
+            keep_recent: number;
+            /**
+             * Hint
+             * @description Optional steering note prepended inside the compaction LLM's <conversation> block as `[admin note: ...]`. Use to bias how the LLM reads the conversation, e.g. 'ignore prior agent self-claims about AppFolio capabilities'.
+             */
+            hint?: string | null;
+        };
+        /**
+         * CompactUserContextResponse
+         * @description Outcome of an admin-triggered context compaction.
+         *
+         *     ``event_id`` is the row this call wrote, populated only when the
+         *     call did real work. ``previous_event_id`` is populated only on
+         *     no-op returns and points at the most recent prior compaction event
+         *     for the user (if any), so admin tooling can tell apart "you already
+         *     did this seconds ago" from "there was never anything to do".
+         */
+        CompactUserContextResponse: {
+            /** Compacted Message Count */
+            compacted_message_count: number;
+            /** New Watermark */
+            new_watermark: number | null;
+            /** Memory Updated */
+            memory_updated: boolean;
+            /** Event Id */
+            event_id: number | null;
+            /** Previous Event Id */
+            previous_event_id?: number | null;
+        };
+        /**
          * DataSharingConsentRequest
          * @description Body for ``PUT /api/user/data-sharing-consent``.
          *
@@ -1243,6 +3546,29 @@ export interface components {
             status: string;
             /** Messages Deleted */
             messages_deleted: number;
+        };
+        /** DeleteResponse */
+        DeleteResponse: {
+            /** Deleted */
+            deleted: boolean;
+            /** Id */
+            id: number;
+        };
+        /** DismissReportedConversationResponse */
+        DismissReportedConversationResponse: {
+            /** Id */
+            id: number;
+            /** Dismissed At */
+            dismissed_at: string;
+            /** Reviewed Admin User Id */
+            reviewed_admin_user_id: string;
+        };
+        /** GoogleAuthRequest */
+        GoogleAuthRequest: {
+            /** Code */
+            code: string;
+            /** State */
+            state: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1301,6 +3627,22 @@ export interface components {
             items: components["schemas"]["HeartbeatLogItemResponse"][];
         };
         /**
+         * HygieneCompactMemoryResponse
+         * @description Outcome of an admin-triggered hygiene-only memory re-audit.
+         *
+         *     ``memory_updated`` indicates whether at least one exclusion-list
+         *     violation was removed from MEMORY.md. ``memory_text`` carries the
+         *     new full MEMORY.md content (empty string if nothing changed) so
+         *     the admin can preview the diff without re-reading the user's
+         *     memory file.
+         */
+        HygieneCompactMemoryResponse: {
+            /** Memory Updated */
+            memory_updated: boolean;
+            /** Memory Text */
+            memory_text: string;
+        };
+        /**
          * IntegrationConnectionResponse
          * @description Result of a connect/disconnect on a web-form integration.
          */
@@ -1325,6 +3667,38 @@ export interface components {
             /** Total Cost */
             total_cost: number;
         };
+        /** LLMUsageLogItem */
+        LLMUsageLogItem: {
+            /** Id */
+            id: number;
+            /** Timestamp */
+            timestamp: string;
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Purpose */
+            purpose: string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Cost Usd */
+            cost_usd: string;
+            /** Cache Creation Input Tokens */
+            cache_creation_input_tokens: number | null;
+            /** Cache Read Input Tokens */
+            cache_read_input_tokens: number | null;
+        };
+        /** LLMUsageLogListResponse */
+        LLMUsageLogListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["LLMUsageLogItem"][];
+        };
         /** LLMUsageSummary */
         LLMUsageSummary: {
             /** Total Calls */
@@ -1335,6 +3709,23 @@ export interface components {
             total_cost: number;
             /** By Purpose */
             by_purpose: components["schemas"]["LLMUsageByPurpose"][];
+        };
+        /** LinqLinkRequest */
+        LinqLinkRequest: {
+            /** Phone Number */
+            phone_number: string;
+        };
+        /** LinqLinkResponse */
+        LinqLinkResponse: {
+            /** Phone Number */
+            phone_number: string | null;
+            /** Connected */
+            connected: boolean;
+            /**
+             * Linq From Number
+             * @default
+             */
+            linq_from_number: string;
         };
         /** MemoryResponse */
         MemoryResponse: {
@@ -1423,12 +3814,102 @@ export interface components {
             /** Content */
             content: string;
         };
+        /** ProfileResponse */
+        ProfileResponse: {
+            /** Id */
+            id: string;
+            /** Plan */
+            plan: string;
+            /** Role */
+            role: string;
+        };
         /** ProviderInfo */
         ProviderInfo: {
             /** Name */
             name: string;
             /** Local */
             local: boolean;
+        };
+        /** RefreshRequest */
+        RefreshRequest: {
+            /** Refresh Token */
+            refresh_token: string;
+        };
+        /**
+         * ReportedConversationItem
+         * @description One ``ReportedConversation`` row in the admin queue.
+         *
+         *     The ``reason`` field is the user-supplied free-text passed through
+         *     PII redaction at serialization time; the raw stored value is never
+         *     surfaced. ``status`` is derived: ``"open"`` until ``dismissed_at``
+         *     is set, then ``"dismissed"``.
+         */
+        ReportedConversationItem: {
+            /** Id */
+            id: number;
+            /** User Id */
+            user_id: string;
+            /** User Email */
+            user_email: string;
+            /** Session Id */
+            session_id: string;
+            /** Channel */
+            channel: string;
+            /** Anchor Seq */
+            anchor_seq: number | null;
+            /** Reason */
+            reason: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: string;
+            /** Dismissed At */
+            dismissed_at: string | null;
+            /** Reviewed Admin Email */
+            reviewed_admin_email: string | null;
+        };
+        /** ReportedConversationListResponse */
+        ReportedConversationListResponse: {
+            /** Total */
+            total: number;
+            /** Open Count */
+            open_count: number;
+            /** Items */
+            items: components["schemas"]["ReportedConversationItem"][];
+        };
+        /**
+         * ReportedConversationMessage
+         * @description One message in a reported conversation, PII-redacted.
+         *
+         *     Mirrors ``SharedDataMessageItem`` shape so the frontend can reuse
+         *     the same renderer. ``is_anchor`` flags the message that the
+         *     ``/report`` command anchored against, so the UI can highlight the
+         *     surrounding window.
+         */
+        ReportedConversationMessage: {
+            /** Seq */
+            seq: number;
+            /** Direction */
+            direction: string;
+            /** Body */
+            body: string;
+            /** Timestamp */
+            timestamp: string | null;
+            /** Is Anchor */
+            is_anchor: boolean;
+        };
+        /** ReportedConversationMessageListResponse */
+        ReportedConversationMessageListResponse: {
+            /** Report Id */
+            report_id: number;
+            /** Session Id */
+            session_id: string;
+            /** User Id */
+            user_id: string;
+            /** Anchor Seq */
+            anchor_seq: number | null;
+            /** Items */
+            items: components["schemas"]["ReportedConversationMessage"][];
         };
         /**
          * ServiceTitanConnectRequest
@@ -1504,6 +3985,624 @@ export interface components {
             /** Is Onboarding */
             is_onboarding: boolean;
         };
+        /**
+         * SharedDataApprovalEventItem
+         * @description One persisted tool-approval lifecycle transition for a consenting user.
+         *
+         *     Mirrors ``backend.app.models.ApprovalEvent``. ``event_type`` is one of
+         *     ``requested`` / ``decided`` / ``timed_out`` / ``recovered``;
+         *     ``decision`` is populated only on ``decided`` rows. ``description``
+         *     is the human-readable string that was shown to the user in the
+         *     approval prompt and can echo user-pasted content (filenames, URLs),
+         *     so it's PII-redacted before serialization. ``channel`` and
+         *     ``chat_id`` are infrastructure metadata; they are not redacted
+         *     because they identify routing, not content.
+         */
+        SharedDataApprovalEventItem: {
+            /** Id */
+            id: number;
+            /** Event Type */
+            event_type: string;
+            /** Tool Name */
+            tool_name: string;
+            /** Description */
+            description: string;
+            /** Channel */
+            channel: string;
+            /** Chat Id */
+            chat_id: string;
+            /** Decision */
+            decision: string | null;
+            /** Created At */
+            created_at: string | null;
+        };
+        /** SharedDataApprovalEventListResponse */
+        SharedDataApprovalEventListResponse: {
+            /** User Id */
+            user_id: string;
+            /** Consent At */
+            consent_at: string | null;
+            /** Items */
+            items: components["schemas"]["SharedDataApprovalEventItem"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * SharedDataCompactionEventItem
+         * @description One persisted compaction event for a consenting user.
+         *
+         *     Mirrors ``backend.app.models.CompactionEvent``. Counts, timings,
+         *     and outcome flags are metadata, so no redaction is applied.
+         *     ``status`` is one of ``'pending'`` (sync trim watermark advanced,
+         *     async LLM call still running or crashed) or ``'completed'`` (LLM
+         *     call finished and snapshots populated). The eight ``*_before`` /
+         *     ``*_after`` snapshots carry plaintext (decrypted on read) of the
+         *     four memory files this event touched, or a structured
+         *     :class:`SharedDataCompactionSnapshot` truncation record when the
+         *     plaintext exceeded the per-file cap.
+         */
+        SharedDataCompactionEventItem: {
+            /** Id */
+            id: number;
+            /** Triggered At */
+            triggered_at: string | null;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Trimmed Count */
+            trimmed_count: number;
+            /** Trimmed Chars */
+            trimmed_chars: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Min Message Seq */
+            min_message_seq: number | null;
+            /** Max Message Seq */
+            max_message_seq: number | null;
+            /** Status */
+            status: string;
+            /** Memory Updated */
+            memory_updated: boolean;
+            /** User Profile Updated */
+            user_profile_updated: boolean;
+            /** Soul Updated */
+            soul_updated: boolean;
+            /** Summary Len */
+            summary_len: number;
+            memory_text_before: components["schemas"]["SharedDataCompactionSnapshot"];
+            memory_text_after: components["schemas"]["SharedDataCompactionSnapshot"];
+            history_text_before: components["schemas"]["SharedDataCompactionSnapshot"];
+            history_text_after: components["schemas"]["SharedDataCompactionSnapshot"];
+            user_text_before: components["schemas"]["SharedDataCompactionSnapshot"];
+            user_text_after: components["schemas"]["SharedDataCompactionSnapshot"];
+            soul_text_before: components["schemas"]["SharedDataCompactionSnapshot"];
+            soul_text_after: components["schemas"]["SharedDataCompactionSnapshot"];
+            prompt: components["schemas"]["SharedDataCompactionSnapshot"];
+            raw_response: components["schemas"]["SharedDataCompactionSnapshot"];
+            parsed_response: components["schemas"]["SharedDataCompactionSnapshot"];
+        };
+        /** SharedDataCompactionEventListResponse */
+        SharedDataCompactionEventListResponse: {
+            /** User Id */
+            user_id: string;
+            /** Consent At */
+            consent_at: string | null;
+            /** Items */
+            items: components["schemas"]["SharedDataCompactionEventItem"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * SharedDataCompactionSnapshot
+         * @description One before/after memory-file snapshot from a compaction event.
+         *
+         *     OSS stores eight envelope-encrypted text columns on
+         *     ``compaction_events`` (memory/history/user/soul x before/after). The
+         *     ORM decrypts to plaintext on read. When the underlying file
+         *     exceeded ``settings.compaction_event_snapshot_max_bytes_per_file``
+         *     the column instead carries a JSON truncation record (``head``,
+         *     ``tail``, ``size_bytes``, ``sha256``); we surface that here as
+         *     ``truncated=True`` so the admin UI can render "truncated, N KB" with
+         *     the head and tail visible inline rather than dumping the JSON
+         *     verbatim into a body cell.
+         *
+         *     ``None`` plaintext (``text`` is None and ``truncated`` is False)
+         *     means the field was unchanged by this event (skip-if-unchanged
+         *     optimization), the row is still ``'pending'``, or the row predates
+         *     the feature.
+         */
+        SharedDataCompactionSnapshot: {
+            /** Text */
+            text?: string | null;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /** Head */
+            head?: string | null;
+            /** Tail */
+            tail?: string | null;
+            /** Sha256 */
+            sha256?: string | null;
+        };
+        /**
+         * SharedDataConversationItem
+         * @description The consenting user's conversation.
+         *
+         *     ``last_trim_seq`` is the highest ``messages.seq`` that the agent's
+         *     trim path has dropped from live LLM context. Messages with
+         *     ``seq <= last_trim_seq`` are still in the database (and still ship
+         *     in the turns endpoint) but the agent no longer sees them on the
+         *     next inbound. ``None`` means nothing has been trimmed yet on this
+         *     session, including legacy sessions that predate the watermark.
+         *     Surfacing it here lets the admin UI render a "trimmed by
+         *     compaction" line in the timeline at the boundary between dropped
+         *     and live messages.
+         */
+        SharedDataConversationItem: {
+            /** Session Id */
+            session_id: string;
+            /** Channel */
+            channel: string;
+            /** Created At */
+            created_at: string | null;
+            /** Last Message At */
+            last_message_at: string | null;
+            /** Message Count */
+            message_count: number;
+            /** Last Trim Seq */
+            last_trim_seq?: number | null;
+        };
+        /** SharedDataConversationTurnsResponse */
+        SharedDataConversationTurnsResponse: {
+            /** Session Id */
+            session_id: string;
+            /** User Id */
+            user_id: string;
+            /** Consent At */
+            consent_at: string | null;
+            /** Turns */
+            turns: components["schemas"]["SharedDataTurn"][];
+            /** Total */
+            total: number;
+            /** Last Trim Seq */
+            last_trim_seq?: number | null;
+        };
+        /**
+         * SharedDataExportResponse
+         * @description Composite per-user export.
+         *
+         *     Sections:
+         *     * ``user``: identity + profile config (timezone, channel, consent
+         *       timestamp).
+         *     * ``window``: the date range applied to time-windowed sub-resources.
+         *     * ``summary``: the aggregate-counts rollup, including
+         *       ``heartbeat_directives_count`` for "is this user even configured
+         *       to receive proactive messages?".
+         *     * ``conversations``: per-session metadata for sessions active in
+         *       the window (no bodies; bodies live in ``turns`` if requested).
+         *     * ``heartbeat_logs``: per-event rows including PII-redacted
+         *       ``message_text`` / ``reasoning`` / ``tasks``.
+         *     * ``compaction_events``: per-event metadata (no content; the
+         *       content is in ``memory.history_text``).
+         *     * ``profile``: soul / user / heartbeat directives text, PII-redacted.
+         *     * ``memory``: working memory + compacted history, PII-redacted.
+         *     * ``turns``: turn-grouped transcripts (only when ``include_turns=true``).
+         */
+        SharedDataExportResponse: {
+            /** User Id */
+            user_id: string;
+            /** User */
+            user: {
+                [key: string]: string | boolean | null;
+            };
+            /** Window */
+            window: {
+                [key: string]: string | number;
+            };
+            summary: components["schemas"]["SharedDataExportSummary"];
+            /** Conversations */
+            conversations: components["schemas"]["SharedDataConversationItem"][];
+            /** Heartbeat Logs */
+            heartbeat_logs: components["schemas"]["SharedDataHeartbeatLogItem"][];
+            /** Compaction Events */
+            compaction_events: components["schemas"]["SharedDataCompactionEventItem"][];
+            profile: components["schemas"]["SharedDataProfileResponse"];
+            memory: components["schemas"]["SharedDataMemoryDocumentResponse"];
+            /** Turns */
+            turns?: components["schemas"]["SharedDataConversationTurnsResponse"][] | null;
+        };
+        /**
+         * SharedDataExportSummary
+         * @description Aggregate counts for one user over the requested window.
+         *
+         *     Mirrors the per-user activity rollup an admin would otherwise
+         *     derive by walking the conversations / heartbeat-logs / compaction
+         *     endpoints. Counts only; bodies and memory text live in the other
+         *     fields of the export response.
+         */
+        SharedDataExportSummary: {
+            /** Session Count */
+            session_count: number;
+            /** Message Count */
+            message_count: number;
+            /** Inbound Count */
+            inbound_count: number;
+            /** Outbound Count */
+            outbound_count: number;
+            /** Heartbeats Total */
+            heartbeats_total: number;
+            /** Heartbeats By Action */
+            heartbeats_by_action: {
+                [key: string]: number;
+            };
+            /** Compactions Count */
+            compactions_count: number;
+            /** Llm Calls Total */
+            llm_calls_total: number;
+            /** Llm Calls By Purpose */
+            llm_calls_by_purpose: {
+                [key: string]: number;
+            };
+            /** Llm Cost Usd */
+            llm_cost_usd: string;
+            /** Llm Input Tokens */
+            llm_input_tokens: number;
+            /** Llm Output Tokens */
+            llm_output_tokens: number;
+            /** Llm Cache Read Tokens */
+            llm_cache_read_tokens: number;
+            /** Tool Calls Total */
+            tool_calls_total: number;
+            /** Tool Calls Error Count */
+            tool_calls_error_count: number;
+            /** Tool Calls Top */
+            tool_calls_top: components["schemas"]["SharedDataExportTopTool"][];
+            /** Reports Total */
+            reports_total: number;
+            /** Heartbeat Directives Count */
+            heartbeat_directives_count: number;
+        };
+        /**
+         * SharedDataExportTopTool
+         * @description One tool name with its call frequency and error count.
+         */
+        SharedDataExportTopTool: {
+            /** Name */
+            name: string;
+            /** Call Count */
+            call_count: number;
+            /** Error Count */
+            error_count: number;
+        };
+        /**
+         * SharedDataHeartbeatLogItem
+         * @description One heartbeat scheduler run for a consenting user.
+         *
+         *     The three redacted text columns (``message_text``, ``reasoning``,
+         *     ``tasks``) are envelope-encrypted at rest; the ORM read decrypts
+         *     transparently and ``redact_pii`` runs on each before serialization.
+         */
+        SharedDataHeartbeatLogItem: {
+            /** Id */
+            id: number;
+            /** Action Type */
+            action_type: string;
+            /** Channel */
+            channel: string;
+            /** Message Text */
+            message_text: string;
+            /** Reasoning */
+            reasoning: string;
+            /** Tasks */
+            tasks: string;
+            /** Created At */
+            created_at: string | null;
+        };
+        /** SharedDataHeartbeatLogListResponse */
+        SharedDataHeartbeatLogListResponse: {
+            /** User Id */
+            user_id: string;
+            /** Consent At */
+            consent_at: string | null;
+            /** Items */
+            items: components["schemas"]["SharedDataHeartbeatLogItem"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * SharedDataMemoryDocumentResponse
+         * @description Working memory + accumulated compaction history for a consenting user.
+         *
+         *     ``memory_text`` is the agent's working memory file; ``history_text``
+         *     is the chronological log of what compaction extracted from older
+         *     sessions. Per-event metadata (when, sizes, costs, what got updated)
+         *     lives in ``compaction_events`` and is exposed via the sibling
+         *     ``/compaction-events`` endpoint; this response is the working
+         *     memory itself.
+         */
+        SharedDataMemoryDocumentResponse: {
+            /** User Id */
+            user_id: string;
+            /** Consent At */
+            consent_at: string | null;
+            /** Memory Text */
+            memory_text: string;
+            /** History Text */
+            history_text: string;
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /**
+         * SharedDataMessageItem
+         * @description One message inside a consenting user's conversation, PII-redacted.
+         *
+         *     ``body`` has been passed through :func:`pii_redaction.redact_pii`
+         *     before serialization. The original plaintext is never returned by
+         *     this endpoint. ``thinking`` carries the LLM's extended-thinking
+         *     output for outbound messages (see OSS migration 033); it is empty
+         *     for inbound messages and for outbound rows persisted before the
+         *     capture path was wired up. ``thinking`` runs through the same
+         *     shape-based redaction as ``body`` (emails, phones, cards, tokens
+         *     masked by regex). Names and other free-form identifiers are not
+         *     masked because the redactor has no shape to match them against,
+         *     same caveat as ``body``.
+         */
+        SharedDataMessageItem: {
+            /** Seq */
+            seq: number;
+            /** Direction */
+            direction: string;
+            /** Body */
+            body: string;
+            /**
+             * Thinking
+             * @default
+             */
+            thinking: string;
+            /** Timestamp */
+            timestamp: string | null;
+        };
+        /**
+         * SharedDataProfileResponse
+         * @description User profile + agent personality text for one consenting user.
+         *
+         *     All three text fields go through ``redact_pii`` before serialization
+         *     so phone numbers / emails / tokens that the user pasted into their
+         *     soul or memory directives don't surface verbatim. ``soul_text``
+         *     (agent personality), ``user_text`` (synthesized profile), and
+         *     ``heartbeat_text`` (proactive directives) used to live on
+         *     ``GET /admin/users/{id}`` until the slimming PR (#336); this is the
+         *     consent-gated home for them.
+         */
+        SharedDataProfileResponse: {
+            /** User Id */
+            user_id: string;
+            /** Consent At */
+            consent_at: string | null;
+            /** Soul Text */
+            soul_text: string;
+            /** User Text */
+            user_text: string;
+            /** Heartbeat Text */
+            heartbeat_text: string;
+            /** Heartbeat Opt In */
+            heartbeat_opt_in: boolean;
+            /** Heartbeat Frequency */
+            heartbeat_frequency: string;
+            /** Heartbeat Max Daily */
+            heartbeat_max_daily: number;
+        };
+        /**
+         * SharedDataReceipt
+         * @description Tool receipt redacted for admin display.
+         *
+         *     Mirrors ``StoredToolReceipt`` from ``backend/app/agent/context.py``
+         *     but each string field is passed through :func:`pii_redaction.redact_pii`
+         *     before serialization.
+         */
+        SharedDataReceipt: {
+            /**
+             * Action
+             * @default
+             */
+            action: string;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+            /** Url */
+            url?: string | null;
+        };
+        /**
+         * SharedDataSummaryResponse
+         * @description Aggregate counts across the consenting-user pilot population.
+         *
+         *     Used by the Overview "Research pilot" panel to render at-a-glance
+         *     metrics that previously required visiting the Shared, Reported,
+         *     and per-user Activity tabs separately.
+         *
+         *     Fields are deliberately conservative: only counts and a small
+         *     leaderboard, never message bodies or memory. The bodies stay
+         *     behind the existing per-conversation endpoints, which already
+         *     PII-redact and audit-log every read.
+         *
+         *     ``consents_changed_this_week`` counts every user currently
+         *     consenting whose ``data_sharing_consent_at`` toggled within the
+         *     last 7 days. The OSS column ticks on every change (opt-in OR
+         *     opt-out), so the count surfaces "consent state moved recently"
+         *     rather than "first-time opt-ins". A user who toggles off and back
+         *     on within the week still counts.
+         *
+         *     A heartbeat-error metric was deliberately excluded: the OSS
+         *     heartbeat scheduler writes ``action_type`` of ``send | skip |
+         *     cleanup`` and never ``error``, so any "errors this week" count
+         *     we built here would always be zero. If we want a real error
+         *     signal in the future, it has to come from a different source
+         *     (LLMUsageLog failures, the Reported queue, structured logs).
+         */
+        SharedDataSummaryResponse: {
+            /** Consenting User Count */
+            consenting_user_count: number;
+            /** Consents Changed This Week */
+            consents_changed_this_week: number;
+            /** Conversations This Week */
+            conversations_this_week: number;
+            /** Heartbeats This Week */
+            heartbeats_this_week: number;
+            /** Open Reports Count */
+            open_reports_count: number;
+            /** Top Users This Week */
+            top_users_this_week: components["schemas"]["SharedDataTopUserItem"][];
+        };
+        /**
+         * SharedDataToolCall
+         * @description One tool call inside a turn, redacted at the leaves.
+         *
+         *     ``args`` and ``result`` are redacted via :func:`pii_redaction.redact_pii_recursive`
+         *     so customer names, phone numbers, tokens, etc. that the agent passed
+         *     to a tool or got back from one do not surface verbatim to admins.
+         */
+        SharedDataToolCall: {
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Name */
+            name: string;
+            /** Args */
+            args?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Result
+             * @default
+             */
+            result: string;
+            /**
+             * Is Error
+             * @default false
+             */
+            is_error: boolean;
+            receipt?: components["schemas"]["SharedDataReceipt"] | null;
+        };
+        /**
+         * SharedDataTopUserItem
+         * @description One row in the "top consenting users this week" leaderboard.
+         *
+         *     Surfaced on the Overview pilot panel: small enough to render
+         *     inline without a drill-down, useful enough to answer "who is
+         *     actually using the assistant in our pilot right now?".
+         */
+        SharedDataTopUserItem: {
+            /** Id */
+            id: string;
+            /** Email */
+            email: string;
+            /** User Id */
+            user_id: string;
+            /** Messages This Week */
+            messages_this_week: number;
+        };
+        /**
+         * SharedDataTurn
+         * @description One conversational turn: inbound user message + agent reply(ies) + tool calls.
+         *
+         *     A turn starts at an inbound message and includes every outbound
+         *     message until the next inbound (or end of conversation). Tool calls
+         *     aggregate from every outbound message in the turn, in order. A turn
+         *     can also have no ``user_message`` at all when the agent initiated
+         *     it (heartbeat tick, scheduled action).
+         */
+        SharedDataTurn: {
+            /** Turn Index */
+            turn_index: number;
+            user_message?: components["schemas"]["SharedDataMessageItem"] | null;
+            agent_reply?: components["schemas"]["SharedDataMessageItem"] | null;
+            /** Tool Calls */
+            tool_calls?: components["schemas"]["SharedDataToolCall"][];
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+        };
+        /**
+         * SharedDataUserItem
+         * @description One consenting user in the shared-data list.
+         */
+        SharedDataUserItem: {
+            /** Id */
+            id: string;
+            /** User Id */
+            user_id: string;
+            /** Email */
+            email: string;
+            /** Consent At */
+            consent_at: string | null;
+            /** Conversation Count */
+            conversation_count: number;
+            /** Last Message At */
+            last_message_at: string | null;
+        };
+        /** SharedDataUserListResponse */
+        SharedDataUserListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["SharedDataUserItem"][];
+        };
+        /**
+         * StagedMediaItem
+         * @description One row of ``staged_media`` for the admin diagnostics view.
+         *
+         *     Excludes ``disk_path`` (an internal artifact) and the bytes
+         *     themselves (not consent-gated content but no reason to ship MB of
+         *     image data through an admin list endpoint).
+         */
+        StagedMediaItem: {
+            /** Handle */
+            handle: string;
+            /** Original Url */
+            original_url: string;
+            /** Mime Type */
+            mime_type: string;
+            /** Created At */
+            created_at: string;
+            /** Expires At */
+            expires_at: string;
+            /** Upload Service */
+            upload_service: string | null;
+            /** Upload Status */
+            upload_status: string | null;
+            /** Uploaded At */
+            uploaded_at: string | null;
+        };
+        /** StagedMediaListResponse */
+        StagedMediaListResponse: {
+            /** Total */
+            total: number;
+            /** Active */
+            active: number;
+            /** Uploaded */
+            uploaded: number;
+            /** Cap */
+            cap: number;
+            /** Items */
+            items: components["schemas"]["StagedMediaItem"][];
+        };
+        /** StateResponse */
+        StateResponse: {
+            /** State */
+            state: string;
+        };
+        /** StatusResponse */
+        StatusResponse: {
+            /** Status */
+            status: string;
+        };
         /** SubToolEntryResponse */
         SubToolEntryResponse: {
             /** Name */
@@ -1542,6 +4641,45 @@ export interface components {
             bot_username: string;
             /** Bot Link */
             bot_link: string;
+        };
+        /** TelegramLinkRequest */
+        TelegramLinkRequest: {
+            /** Telegram User Id */
+            telegram_user_id: string;
+        };
+        /** TelegramLinkResponse */
+        TelegramLinkResponse: {
+            /** Telegram User Id */
+            telegram_user_id: string | null;
+            /** Connected */
+            connected: boolean;
+        };
+        /** TelegramWebhookRequest */
+        TelegramWebhookRequest: {
+            /**
+             * Webhook Url
+             * @default
+             */
+            webhook_url: string;
+        };
+        /** TelegramWebhookResponse */
+        TelegramWebhookResponse: {
+            /** Status */
+            status: string;
+            /** Webhook Url */
+            webhook_url: string;
+        };
+        /** TokenResponse */
+        TokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /** Refresh Token */
+            refresh_token: string;
+            /**
+             * Token Type
+             * @default bearer
+             */
+            token_type: string;
         };
         /** ToolConfigEntryResponse */
         ToolConfigEntryResponse: {
@@ -1609,6 +4747,95 @@ export interface components {
             enabled: boolean;
             /** Sub Tools */
             sub_tools?: components["schemas"]["SubToolPermissionUpdate"][] | null;
+        };
+        /** TwilioLinkRequest */
+        TwilioLinkRequest: {
+            /** Phone Number */
+            phone_number: string;
+        };
+        /** TwilioLinkResponse */
+        TwilioLinkResponse: {
+            /** Phone Number */
+            phone_number?: string | null;
+            /**
+             * Connected
+             * @default false
+             */
+            connected: boolean;
+        };
+        /** UsageBucket */
+        UsageBucket: {
+            /** Used */
+            used: number;
+            /** Limit */
+            limit: number;
+        };
+        /** UsageSummary */
+        UsageSummary: {
+            messages: components["schemas"]["UsageBucket"];
+            tokens: components["schemas"]["UsageBucket"];
+            /** Period Start */
+            period_start: string | null;
+        };
+        /** UserActiveResponse */
+        UserActiveResponse: {
+            /** Id */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+        };
+        /** UserItem */
+        UserItem: {
+            /** Id */
+            id: string;
+            /** User Id */
+            user_id: string;
+            /** Email */
+            email: string;
+            /** Plan */
+            plan: string;
+            /** Status */
+            status: string;
+            /** Role */
+            role: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Onboarding Complete */
+            onboarding_complete: boolean;
+            /** Created At */
+            created_at?: string | null;
+            /** Last Login At */
+            last_login_at?: string | null;
+            /** Last Message At */
+            last_message_at?: string | null;
+            /**
+             * Messages This Month
+             * @default 0
+             */
+            messages_this_month: number;
+            /**
+             * Data Sharing Consent
+             * @default false
+             */
+            data_sharing_consent: boolean;
+            /** Data Sharing Consent At */
+            data_sharing_consent_at?: string | null;
+            /**
+             * Conversation Count
+             * @default 0
+             */
+            conversation_count: number;
+        };
+        /** UserListResponse */
+        UserListResponse: {
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Items */
+            items: components["schemas"]["UserItem"][];
         };
         /** UserProfileResponse */
         UserProfileResponse: {
@@ -1705,6 +4932,94 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WaitlistEntryResponse */
+        WaitlistEntryResponse: {
+            /** Id */
+            id: number;
+            /** Email */
+            email: string;
+            /** Name */
+            name: string;
+            /** Use Case */
+            use_case?: string | null;
+            /** Source */
+            source: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** WaitlistJoinRequest */
+        WaitlistJoinRequest: {
+            /** Email */
+            email: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Use Case
+             * @default
+             */
+            use_case: string;
+            /**
+             * Source
+             * @default homepage
+             */
+            source: string;
+        };
+        /** WaitlistListResponse */
+        WaitlistListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["WaitlistEntryResponse"][];
+        };
+        /**
+         * WebhookEventItem
+         * @description One ``idempotency_keys`` row, optionally joined to the message it created.
+         *
+         *     ``message_persisted`` is the join result: True if a Message row
+         *     exists for this ``external_id``, False if the webhook was accepted
+         *     (allowlist + dedup passed) but no Message landed (consumed by the
+         *     approval gate, channel disabled, or consumer-side failure).
+         */
+        WebhookEventItem: {
+            /** External Id */
+            external_id: string;
+            /** Created At */
+            created_at: string;
+            /** Message Persisted */
+            message_persisted: boolean;
+            /** User Id */
+            user_id: string | null;
+            /** Message Timestamp */
+            message_timestamp: string | null;
+            /** Media Count */
+            media_count: number;
+        };
+        /** WebhookEventListResponse */
+        WebhookEventListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["WebhookEventItem"][];
+        };
+        /**
+         * WelcomeTextResponse
+         * @description Result of POST /api/channels/{channel}/welcome.
+         *
+         *     ``sent`` is True when the channel's ``send_text`` returned without raising.
+         *     ``channel_identifier`` echoes the destination so the UI can render
+         *     "we texted +1555..." without a second round trip.
+         */
+        WelcomeTextResponse: {
+            /** Sent */
+            sent: boolean;
+            /** Channel */
+            channel: string;
+            /** Channel Identifier */
+            channel_identifier: string;
         };
         /** _ChatAccepted */
         _ChatAccepted: {
@@ -2988,6 +6303,2216 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CalendarConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_token_api_auth_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    oauth_google_redirect_api_auth_oauth_google_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            307: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    oauth_google_callback_api_auth_oauth_google_callback_get: {
+        parameters: {
+            query?: {
+                code?: string | null;
+                state?: string | null;
+                error?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                oauth_state?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_oauth_state_api_auth_oauth_google_state_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StateResponse"];
+                };
+            };
+        };
+    };
+    google_oauth_exchange_api_auth_oauth_google_exchange_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoogleAuthRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_users_api_admin_users_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+                search?: string;
+                sort?: string;
+                /** @description Filter by data-sharing consent. 'all' returns every user, 'shared' returns only consenting users, 'none' returns only non-consenting users. Used by the Users tab consent filter. */
+                consent?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_detail_api_admin_users__user_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purge_user_api_admin_users__user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_user_api_admin_users__user_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserActiveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deactivate_user_api_admin_users__user_id__deactivate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserActiveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_user_quota_api_admin_users__user_id__reset_quota_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compact_user_context_api_admin_users__user_id__compact_now_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompactUserContextRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompactUserContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hygiene_compact_memory_endpoint_api_admin_users__user_id__hygiene_compact_memory_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HygieneCompactMemoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_heartbeat_logs_api_admin_users__user_id__heartbeat_logs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminHeartbeatLogListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_llm_usage_logs_api_admin_users__user_id__llm_usage_logs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMUsageLogListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_staged_media_api_admin_users__user_id__staged_media_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StagedMediaListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_webhook_events_api_admin_users__user_id__webhook_events_get: {
+        parameters: {
+            query?: {
+                /** @description ISO timestamp lower bound. Default returns the most recent rows. Format ``2026-05-21T00:00:00+00:00``. */
+                since?: string;
+                /** @description Restrict to ``idempotency_keys`` whose ``external_id`` starts with this prefix. Defaults to ``bb_`` (BlueBubbles). */
+                channel_prefix?: string;
+                /** @description Also return idempotency rows in the window that did NOT produce a Message row. Orphans are not user-scoped (the idempotency table has no user_id column) so they may belong to another tenant; only opt in for whole-server investigations. */
+                include_orphans?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEventListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_user_llm_payloads_api_admin_users__user_id__llm_payloads_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_usage_api_admin_usage__user_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUsageSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_allowed_emails_api_admin_allowed_emails_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllowedEmailListResponse"];
+                };
+            };
+        };
+    };
+    add_allowed_email_api_admin_allowed_emails_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AllowedEmailCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllowedEmailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_allowed_email_api_admin_allowed_emails__email_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                email_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_waitlist_entries_api_admin_waitlist_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WaitlistListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_waitlist_entry_api_admin_waitlist__entry_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllowedEmailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_waitlist_entry_api_admin_waitlist__entry_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_admin_stats_api_admin_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStatsResponse"];
+                };
+            };
+        };
+    };
+    get_admin_version_api_admin_version_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminVersionResponse"];
+                };
+            };
+        };
+    };
+    get_admin_channel_config_api_admin_channels_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminChannelConfigResponse"];
+                };
+            };
+        };
+    };
+    update_admin_channel_config_api_admin_channels_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminChannelConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminChannelConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_telegram_webhook_endpoint_api_admin_telegram_webhook_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramWebhookRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramWebhookResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unregister_telegram_webhook_endpoint_api_admin_telegram_webhook_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramWebhookResponse"];
+                };
+            };
+        };
+    };
+    get_admin_llm_config_api_admin_config_llm_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMConfigResponse"];
+                };
+            };
+        };
+    };
+    update_admin_llm_config_api_admin_config_llm_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminLLMConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_llm_config_api_admin_users__user_id__llm_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserLLMOverrideResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_user_llm_config_api_admin_users__user_id__llm_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserLLMOverrideUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserLLMOverrideResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_user_plan_api_admin_users__user_id__plan_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserPlanUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_admin_llm_providers_api_admin_config_llm_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMProvidersResponse"];
+                };
+            };
+        };
+    };
+    list_admin_llm_provider_models_api_admin_config_llm_providers__provider__models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMModelsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_admin_api_keys_api_admin_api_keys_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminApiKeyListResponse"];
+                };
+            };
+        };
+    };
+    create_admin_api_key_api_admin_api_keys_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminApiKeyCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminApiKeyMintResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_admin_api_key_api_admin_api_keys__key_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_shared_data_summary_api_admin_shared_data_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataSummaryResponse"];
+                };
+            };
+        };
+    };
+    list_shared_data_users_api_admin_shared_data_users_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataUserListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_shared_data_conversation_api_admin_shared_data_users__user_id__conversation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataConversationItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_shared_data_conversation_turns_api_admin_shared_data_users__user_id__conversation_turns_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataConversationTurnsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_shared_data_profile_api_admin_shared_data_users__user_id__profile_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_shared_data_heartbeat_logs_api_admin_shared_data_users__user_id__heartbeat_logs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description ISO-8601 timestamp; lower bound on created_at. */
+                start_date?: string | null;
+                /** @description ISO-8601 timestamp; upper bound on created_at. */
+                end_date?: string | null;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataHeartbeatLogListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_shared_data_memory_api_admin_shared_data_users__user_id__memory_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataMemoryDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_shared_data_compaction_events_api_admin_shared_data_users__user_id__compaction_events_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description ISO-8601 timestamp; lower bound on triggered_at. */
+                start_date?: string | null;
+                /** @description ISO-8601 timestamp; upper bound on triggered_at. */
+                end_date?: string | null;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataCompactionEventListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_shared_data_approval_events_api_admin_shared_data_users__user_id__approval_events_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description ISO-8601 timestamp; lower bound on created_at. */
+                start_date?: string | null;
+                /** @description ISO-8601 timestamp; upper bound on created_at. */
+                end_date?: string | null;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataApprovalEventListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_shared_data_user_api_admin_shared_data_users__user_id__export_get: {
+        parameters: {
+            query?: {
+                /** @description Window size in days, ending now. Scopes the time-bucketed subresources (conversations, heartbeat-logs, compaction-events, LLM-usage, reports, and the tool-call rollup). Identity, profile, memory, and the configured-directives count (``heartbeat_directives_count``) are point-in-time and not scoped by the window. */
+                days?: number;
+                /** @description When true, attach turn-grouped transcripts for every conversation in the window. Off by default because turns are expensive both to compute and to ship; flip on when you want full body content. */
+                include_turns?: boolean;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDataExportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_reported_conversations_api_admin_reported_conversations_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+                /** @description Filter by status: 'open' (not yet dismissed) or 'dismissed'. */
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportedConversationListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reported_conversation_messages_api_admin_reported_conversations__report_id__messages_get: {
+        parameters: {
+            query?: {
+                /** @description How many messages on either side of anchor_seq to include. */
+                window?: number;
+            };
+            header?: never;
+            path: {
+                report_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportedConversationMessageListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_reported_conversation_api_admin_reported_conversations__report_id__dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DismissReportedConversationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_api_account_profile_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+        };
+    };
+    get_account_usage_api_account_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSummary"];
+                };
+            };
+        };
+    };
+    export_data_api_account_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    delete_account_api_account_delete_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+        };
+    };
+    get_telegram_link_api_channels_telegram_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramLinkResponse"];
+                };
+            };
+        };
+    };
+    set_telegram_link_api_channels_telegram_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_telegram_link_api_channels_telegram_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramLinkResponse"];
+                };
+            };
+        };
+    };
+    get_linq_link_api_channels_linq_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinqLinkResponse"];
+                };
+            };
+        };
+    };
+    set_linq_link_api_channels_linq_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinqLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinqLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_linq_link_api_channels_linq_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinqLinkResponse"];
+                };
+            };
+        };
+    };
+    get_bluebubbles_link_api_channels_bluebubbles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlueBubblesLinkResponse"];
+                };
+            };
+        };
+    };
+    set_bluebubbles_link_api_channels_bluebubbles_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlueBubblesLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlueBubblesLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_bluebubbles_link_api_channels_bluebubbles_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlueBubblesLinkResponse"];
+                };
+            };
+        };
+    };
+    get_twilio_link_api_channels_twilio_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwilioLinkResponse"];
+                };
+            };
+        };
+    };
+    set_twilio_link_api_channels_twilio_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TwilioLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwilioLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_twilio_link_api_channels_twilio_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwilioLinkResponse"];
+                };
+            };
+        };
+    };
+    send_linq_welcome_api_channels_linq_welcome_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WelcomeTextResponse"];
+                };
+            };
+        };
+    };
+    send_bluebubbles_welcome_api_channels_bluebubbles_welcome_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WelcomeTextResponse"];
+                };
+            };
+        };
+    };
+    send_twilio_welcome_api_channels_twilio_welcome_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WelcomeTextResponse"];
+                };
+            };
+        };
+    };
+    health_detail_api_health_detail_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    monitoring_status_api_monitoring_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    send_test_alert_api_monitoring_test_alert_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    diagnose_email_api_monitoring_diagnose_email_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    run_probes_api_monitoring_run_probes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    join_waitlist_api_waitlist_join_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WaitlistJoinRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
                 };
             };
             /** @description Validation Error */
