@@ -200,6 +200,10 @@ What the mode switches on, and where it lives:
 | Request middleware (security headers, SEO meta, admin config guard) | `middleware/` |
 | KMS envelope encryption | `security/kms.py`, `security/dek_cache.py`, `security/validate.py` |
 
+On the frontend, the same surface lives under `frontend/src/extensions/`, plus `pages/marketing/`, `pages/docs/`, `layouts/`, and `components/LoginPage.tsx`. It ships in every build and gates itself at **runtime**, not at build time: `isPremiumAuth()` reads `/api/auth/config`, which only reports `oauth_google` when the backend is in multi_user mode. There is no separate frontend build for the two modes, and no overlay.
+
+Terms and Privacy are the exception. They are a contract naming a specific operator, so a deployment supplies the prose at `public/legal/*.html` and `pages/marketing/LegalPage.tsx` renders it. A deployment that supplies nothing gets a placeholder. Do not check legal text into this repo.
+
 Three rules when touching this:
 
 - **`create_app()` is the only place that decides what mounts.** Routers and middleware are conditional there. Do not gate a route by checking the mode inside the handler.
@@ -288,6 +292,8 @@ cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 ### Frontend generated types
 
 When backend schemas change (`backend/app/schemas.py`, route signatures, response models, or endpoint docstrings), you **must** regenerate the frontend OpenAPI types. Never hand-edit `frontend/src/generated/api.d.ts`. CI will fail if the committed file doesn't match what the generator produces.
+
+The spec is exported in `multi_user` mode, so it documents every route the product can serve. The frontend ships as one bundle for both modes and calls those routes through a typed client; a spec narrowed to `single_user` would leave the sign-in, account, and admin calls untyped.
 
 ```bash
 uv run python scripts/export_openapi.py           # export openapi.json from backend
