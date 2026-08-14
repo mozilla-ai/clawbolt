@@ -40,7 +40,7 @@ uv run ty check --python .venv backend/ tests/ alembic/
 
 ## Storage
 
-All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The database has 11 tables:
+All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The core tables:
 
 | Table | Purpose |
 |---|---|
@@ -55,6 +55,8 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `tool_configs` | Per-user tool configuration |
 | `calendar_configs` | Per-user calendar integration settings |
 | `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, Google Drive, QuickBooks, etc.) |
+
+Eight more tables exist for `AUTH_MODE=multi_user` and stay empty in a single-user deployment: `subscriptions`, `usage_quotas`, `deleted_user_usage`, `allowed_emails`, `waitlist_entries`, `admin_api_keys`, `admin_audit_logs`, `llm_payload_captures`. See "Multi-user mode" below.
 
 Saved files are not tracked in Postgres. The Google Drive integration is the source of truth for filenames, locations, and descriptions. The agent quotes saved files by their storage path (e.g. `/Astro Home Management - 123 Main Street/photos/foo.jpg`).
 
@@ -114,9 +116,16 @@ The opt-in `async_db` fixture (in `tests/conftest.py`) gives a stricter SAVEPOIN
 
 Pair `async_db` with the `async_test_user` fixture, which inserts the test user through the per-test connection so it is visible inside the same outer transaction. End every `async_db`-using test file with an iso-canary pair (`_part_a` writes a fixed-id row, `_part_b` asserts it is gone) to prove rollback isolation. Reference `test_async_isolation_rolls_back_between_tests_part_a` and `_part_b` in `tests/test_idempotency_pruning_async.py`.
 
-### Premium
+### Multi-user tests
 
-Premium imports OSS via the editable `../clawbolt` path. Premium fixtures rebind the OSS engine module attributes for per-test isolation; see premium `tests/conftest.py`.
+`tests/multi_user/` runs the `AUTH_MODE=multi_user` surface. Its `conftest.py` inherits the root database fixtures and adds three things: a package-level `MULTI_USER_APP` built by `create_app()` with the mode set (one instance, so a test's `app.dependency_overrides` and the `client` fixture agree on the object), an autouse fixture pinning `settings.auth_mode`, and a sync `db_session` for the setup and assertions that suite does through a plain `Session`.
+
+Put a test there when it exercises sign-in, the admin console, quotas, or operator monitoring. Everything else belongs in `tests/`, where the app is single-user.
+
+Two things that suite gets wrong easily, both of which surface as a foreign-key violation or a hung `TRUNCATE` rather than as anything that names the cause:
+
+- **Flush a `User` before its dependent rows.** None of the multi-user models declares an ORM relationship to `User`, so a single flush orders the INSERTs by mapper sort key, which puts `Subscription` first. See the note on the model.
+- **Set `auth_mode` when you patch `settings` wholesale.** The lifespan and `create_app()` both read it, and a bare `MagicMock` compares unequal to every string, so the multi-user branches silently do not run.
 
 ## Backwards Compatibility
 
@@ -174,6 +183,28 @@ When you need realistic-looking data, use clearly synthetic values: `jane.doe@ex
 - **Agent loop**: channel webhook -> media pipeline -> tool-calling loop (any-llm `amessages`) -> tool execution -> reply
 - **Memory**: Freeform per-user MEMORY.md managed via workspace tools, backed by `memory_documents` table with automatic compaction
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
+
+## Multi-user mode
+
+`AUTH_MODE=multi_user` (see `docs/self-host/configuration.md`) turns one process into a hosted, multi-tenant deployment. The default, `single_user`, is unchanged self-hosted behavior and none of this is reachable there.
+
+What the mode switches on, and where it lives:
+
+| Surface | Modules |
+|---|---|
+| Google OAuth sign-in, JWT sessions, admin API keys | `auth/google_oauth` router, `auth/oauth_flow.py`, `auth/jwt_auth.py`, `auth/session_auth.py`, `services/admin_api_keys.py` |
+| Admin console, audit log, consent-gated shared data | `routers/admin.py`, `routers/admin_shared_data.py`, `routers/admin_reported_conversations.py`, `services/admin_audit.py`, `services/pii_redaction.py` |
+| Account page, data export, deletion | `routers/account.py`, `services/data_export.py`, `services/user_deletion.py`, `services/inactive_cleanup.py` |
+| Per-tenant quotas and plans | `billing/` |
+| Operator monitoring and email | `routers/monitoring.py`, `services/health_monitor.py`, `services/admin_alerts.py`, `services/email_service.py` |
+| Request middleware (security headers, SEO meta, admin config guard) | `middleware/` |
+| KMS envelope encryption | `security/kms.py`, `security/dek_cache.py`, `security/validate.py` |
+
+Three rules when touching this:
+
+- **`create_app()` is the only place that decides what mounts.** Routers and middleware are conditional there. Do not gate a route by checking the mode inside the handler.
+- **The agent-level hooks are process-global,** so they are installed at `main.py` import under `if MULTI_USER`: the quota pipeline, the `ChannelRoute` allowlist override, the heartbeat usage hook, the per-user LLM resolver, and the payload-capture observers. They cannot be per-app, which is why `create_app()` does not touch them.
+- **`get_kek_provider()` in `auth/loader.py` is load-bearing for data.** Returning a different provider than the one that wrote a row makes every `EncryptedString` column on it unreadable. Changing its resolution order is a data migration, not a refactor.
 
 ## Adding a New Agent Tool
 

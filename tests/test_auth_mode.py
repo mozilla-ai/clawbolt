@@ -6,9 +6,7 @@ regression in the default is invisible to anyone who only tests the new
 mode. Half of these tests exist to pin the default in place.
 """
 
-import sys
 from collections.abc import Generator
-from pathlib import Path
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -19,6 +17,7 @@ from backend.app.auth.dependencies import (
     LOCAL_USER_ID,
     get_current_user,
     get_current_user_resolver,
+    resolve_multi_user,
     set_current_user_resolver,
     validate_auth_mode,
 )
@@ -33,7 +32,7 @@ def _request() -> Request:
 
 @pytest.fixture(autouse=True)
 def _clear_resolver() -> Generator[None]:
-    """Leave the module-level resolver unset, whatever the test did."""
+    """Leave the resolver override unset, whatever the test did."""
     set_current_user_resolver(None)
     yield
     set_current_user_resolver(None)
@@ -64,8 +63,8 @@ async def test_single_user_ignores_a_registered_resolver(
 ) -> None:
     """Mode decides, not resolver presence.
 
-    Premium registers its resolver at import time. If that registration
-    alone flipped behavior, importing the plugin would silently turn on
+    A deployment can register a resolver for its own reasons. If that
+    registration alone flipped behavior, it would silently turn on
     multi-user auth in a deployment that never asked for it.
     """
 
@@ -121,15 +120,16 @@ async def test_multi_user_propagates_resolver_rejection(
 
 
 @pytest.mark.asyncio()
-async def test_multi_user_without_resolver_refuses_rather_than_falling_back(
+async def test_multi_user_without_credentials_refuses_rather_than_falling_back(
     async_db: async_sessionmaker,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The authentication-bypass regression.
 
-    Falling back to the single-user path here would hand the first row in
-    ``users`` to an unauthenticated caller, which is worse than the 500:
-    a multi-tenant deployment would serve one tenant's data to anyone.
+    Falling back to the single-user path for an unauthenticated request
+    would hand the first row in ``users`` to anyone who asked, so a
+    multi-tenant deployment would serve one tenant's data to the public.
+    The built-in resolver rejects instead, with no override registered.
     """
     monkeypatch.setattr(settings, "auth_mode", "multi_user")
     async with async_db() as db:
@@ -139,67 +139,62 @@ async def test_multi_user_without_resolver_refuses_rather_than_falling_back(
     async with async_db() as db:
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(_request(), db)
-    assert exc_info.value.status_code == 500
+    assert exc_info.value.status_code == 401
 
 
-def test_validate_auth_mode_rejects_multi_user_without_resolver(
+def test_multi_user_falls_back_to_the_built_in_resolver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Startup fails loudly instead of 500ing every request."""
+    """With no override registered, the Bearer-token resolver is active."""
     monkeypatch.setattr(settings, "auth_mode", "multi_user")
-    with pytest.raises(RuntimeError, match="no current-user resolver"):
+    assert get_current_user_resolver() is resolve_multi_user
+
+
+def test_validate_auth_mode_rejects_the_placeholder_jwt_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A public deployment on the default secret fails to boot.
+
+    Anyone who knows the placeholder could mint a token for any account,
+    so this has to be a startup failure rather than a warning.
+    """
+    monkeypatch.setattr(settings, "auth_mode", "multi_user")
+    monkeypatch.setattr(settings, "app_base_url", "https://clawbolt.example")
+    monkeypatch.setattr(settings, "jwt_secret", "change-me-in-production")
+    with pytest.raises(RuntimeError, match="insecure default"):
         validate_auth_mode()
 
 
-def test_validate_auth_mode_accepts_multi_user_with_resolver(
+def test_validate_auth_mode_allows_the_placeholder_on_localhost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _resolver(request: Request) -> User:
-        raise AssertionError("not called during validation")
-
+    """Local development is exempt, or nobody could run the mode locally."""
     monkeypatch.setattr(settings, "auth_mode", "multi_user")
-    set_current_user_resolver(_resolver)
+    monkeypatch.setattr(settings, "app_base_url", "http://localhost:8000")
+    monkeypatch.setattr(settings, "jwt_secret", "change-me-in-production")
     validate_auth_mode()
 
 
-def test_validate_auth_mode_imports_the_plugin_before_deciding(
-    tmp_path: Path,
+def test_validate_auth_mode_accepts_a_real_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The guard must not rely on someone else having imported the plugin.
-
-    Nothing earlier in the lifespan imports PREMIUM_PLUGIN:
-    ``get_settings_store()`` reaches it only on the SETTINGS_STORE=db path,
-    via ``get_kek_provider()``. Without the forced import here, a file-backed
-    deployment fails to boot with a perfectly good plugin installed, and the
-    error message tells the operator to install the plugin they already have.
-    """
-    module_name = "fake_auth_mode_plugin"
-    (tmp_path / f"{module_name}.py").write_text(
-        "from backend.app.auth.dependencies import set_current_user_resolver\n"
-        "from backend.app.models import User\n"
-        "\n"
-        "\n"
-        "async def _resolver(request):\n"
-        "    return User(user_id='tenant@example.com')\n"
-        "\n"
-        "\n"
-        "set_current_user_resolver(_resolver)\n"
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.setattr(settings, "premium_plugin", module_name)
-    monkeypatch.setattr(settings, "settings_store", "file")
     monkeypatch.setattr(settings, "auth_mode", "multi_user")
+    monkeypatch.setattr(settings, "app_base_url", "https://clawbolt.example")
+    monkeypatch.setattr(settings, "jwt_secret", "a-real-secret")
+    validate_auth_mode()
 
-    try:
-        validate_auth_mode()
-        assert get_current_user_resolver() is not None
-    finally:
-        sys.modules.pop(module_name, None)
+
+def test_validate_auth_mode_ignores_the_placeholder_in_single_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """single_user issues no JWTs, so the placeholder is not a hole there."""
+    monkeypatch.setattr(settings, "app_base_url", "https://clawbolt.example")
+    monkeypatch.setattr(settings, "jwt_secret", "change-me-in-production")
+    validate_auth_mode()
 
 
 def test_validate_auth_mode_accepts_the_default() -> None:
-    """single_user needs no resolver, which is the point of the default."""
+    """single_user has nothing to validate, which is the point of the default."""
     validate_auth_mode()
 
 
@@ -239,8 +234,8 @@ def test_set_current_user_resolver_round_trips() -> None:
     async def _resolver(request: Request) -> User:
         raise AssertionError("not called")
 
-    assert get_current_user_resolver() is None
+    assert get_current_user_resolver() is resolve_multi_user
     set_current_user_resolver(_resolver)
     assert get_current_user_resolver() is _resolver
     set_current_user_resolver(None)
-    assert get_current_user_resolver() is None
+    assert get_current_user_resolver() is resolve_multi_user

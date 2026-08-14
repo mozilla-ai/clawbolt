@@ -15,6 +15,10 @@ dependencies = [
     "twilio>=9.0",
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
+    # Session tokens for AUTH_MODE=multi_user.
+    "pyjwt>=2.8",
+    # KMS envelope encryption, loaded only when KMS_KEY_ARN is set.
+    "boto3>=1.35",
     "sqlalchemy>=2.0",
     "asyncpg>=0.29",
     "alembic>=1.13",

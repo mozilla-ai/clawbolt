@@ -9,11 +9,14 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 
 from backend.app.agent.stores import get_idempotency_store
 from backend.app.bus import message_bus
 from backend.app.channels.unknown_sender import reply_to_unknown_sender
+from backend.app.database import db_session_async
 from backend.app.media.download import DownloadedMedia
+from backend.app.models import ChannelRoute
 
 if TYPE_CHECKING:
     from backend.app.agent.ingestion import InboundMessage
@@ -27,12 +30,12 @@ logger = logging.getLogger(__name__)
 # loop on a sync session.
 IsAllowedOverride = Callable[[str, str], Awaitable[bool]]
 
-# Module-level override set by premium during plugin initialization.
+# Module-level override, set at startup in multi_user mode.
 _is_allowed_override: IsAllowedOverride | None = None
 
 
 def set_is_allowed_override(fn: IsAllowedOverride) -> None:
-    """Register a global allowlist override (called by the premium plugin)."""
+    """Register a global allowlist override."""
     global _is_allowed_override
     _is_allowed_override = fn
 
@@ -40,6 +43,25 @@ def set_is_allowed_override(fn: IsAllowedOverride) -> None:
 def get_is_allowed_override() -> IsAllowedOverride | None:
     """Return the current allowlist override, or None if not set."""
     return _is_allowed_override
+
+
+async def channel_route_allowlist(channel_name: str, sender_id: str) -> bool:
+    """Return True if a ``ChannelRoute`` exists for this sender on this channel.
+
+    The allowlist override installed in multi_user mode, where senders are
+    approved by linking a channel to an account rather than by an
+    operator-managed env-var list.
+    """
+    async with db_session_async() as db:
+        route = (
+            await db.execute(
+                select(ChannelRoute).where(
+                    ChannelRoute.channel == channel_name,
+                    ChannelRoute.channel_identifier == sender_id,
+                )
+            )
+        ).scalar_one_or_none()
+        return route is not None
 
 
 class BaseChannel(ABC):

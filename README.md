@@ -65,6 +65,7 @@ Webhooks are registered automatically via a Cloudflare Tunnel. Text the Linq pho
 
 - [Self-hosting overview](./docs/self-host/README.md) -- quickstart and index
 - [Configuration](./docs/self-host/configuration.md) -- full environment variable reference
+- [Multi-user deployment](./docs/self-host/configuration.md#multi-user-deployment) -- `AUTH_MODE=multi_user`: Google sign-in, per-tenant quotas, admin console. Off by default; a self-host can ignore it
 - [Docker](./docs/self-host/docker.md) -- Docker Compose setup and troubleshooting
 - [Google Drive Setup](./docs/self-host/google-drive-setup.md) -- file storage integration, per-user OAuth
 - Messaging channels: [Linq](./docs/self-host/linq-setup.md), [BlueBubbles](./docs/self-host/bluebubbles-setup.md), [Telegram](./docs/self-host/telegram-setup.md)
