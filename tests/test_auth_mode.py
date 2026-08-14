@@ -6,10 +6,13 @@ regression in the default is invisible to anyone who only tests the new
 mode. Half of these tests exist to pin the default in place.
 """
 
+import sys
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from backend.app.auth.dependencies import (
@@ -159,9 +162,77 @@ def test_validate_auth_mode_accepts_multi_user_with_resolver(
     validate_auth_mode()
 
 
+def test_validate_auth_mode_imports_the_plugin_before_deciding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard must not rely on someone else having imported the plugin.
+
+    Nothing earlier in the lifespan imports PREMIUM_PLUGIN:
+    ``get_settings_store()`` reaches it only on the SETTINGS_STORE=db path,
+    via ``get_kek_provider()``. Without the forced import here, a file-backed
+    deployment fails to boot with a perfectly good plugin installed, and the
+    error message tells the operator to install the plugin they already have.
+    """
+    module_name = "fake_auth_mode_plugin"
+    (tmp_path / f"{module_name}.py").write_text(
+        "from backend.app.auth.dependencies import set_current_user_resolver\n"
+        "from backend.app.models import User\n"
+        "\n"
+        "\n"
+        "async def _resolver(request):\n"
+        "    return User(user_id='tenant@example.com')\n"
+        "\n"
+        "\n"
+        "set_current_user_resolver(_resolver)\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(settings, "premium_plugin", module_name)
+    monkeypatch.setattr(settings, "settings_store", "file")
+    monkeypatch.setattr(settings, "auth_mode", "multi_user")
+
+    try:
+        validate_auth_mode()
+        assert get_current_user_resolver() is not None
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_validate_auth_mode_accepts_the_default() -> None:
     """single_user needs no resolver, which is the point of the default."""
     validate_auth_mode()
+
+
+def test_multi_user_resolves_through_a_real_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dispatcher still works as a FastAPI dependency, not just as a call.
+
+    Every other test here invokes ``get_current_user`` directly, which
+    proves the branching but not the wiring: ``request: Request`` has to
+    be injectable for the multi_user path to reach a resolver at all. A
+    throwaway app is enough, and keeps this off the real router, where
+    the ``client`` fixture overrides the dependency it would test.
+    """
+
+    async def _resolver(request: Request) -> User:
+        assert request.headers.get("x-token") == "secret"
+        return User(user_id="resolved@example.com")
+
+    monkeypatch.setattr(settings, "auth_mode", "multi_user")
+    set_current_user_resolver(_resolver)
+
+    app = FastAPI()
+
+    @app.get("/whoami")
+    async def whoami(user: User = Depends(get_current_user)) -> dict[str, str]:
+        return {"user_id": user.user_id}
+
+    with TestClient(app) as client:
+        response = client.get("/whoami", headers={"x-token": "secret"})
+
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "resolved@example.com"}
 
 
 def test_set_current_user_resolver_round_trips() -> None:

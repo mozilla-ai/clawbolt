@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.user_db import provision_user
+from backend.app.auth.loader import load_plugin_module
 from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.models import User
@@ -30,6 +31,12 @@ def set_current_user_resolver(resolver: CurrentUserResolver | None) -> None:
     access: ``get_current_user`` does not hand it a session, because the
     credential it reads (a header, a cookie) may not require one.
 
+    ``get_current_user`` awaits the resolver directly, so FastAPI's
+    dependency injection never runs on it. Declare no ``Depends``,
+    ``Header``, or ``Query`` parameters: they keep their sentinel default
+    object instead of a value, which fails at attribute access rather
+    than returning a 401. Read what you need off ``request``.
+
     Pass ``None`` to clear, which tests use to restore the default.
     """
     global _current_user_resolver
@@ -44,13 +51,22 @@ def get_current_user_resolver() -> CurrentUserResolver | None:
 def validate_auth_mode() -> None:
     """Reject startup when multi_user is requested with no resolver.
 
-    Called from the lifespan, after plugin import has had its chance to
-    register one. Failing here turns a silent authentication gap into a
-    boot failure: without this, every request would take the
+    Called from the lifespan. Failing here turns a silent authentication
+    gap into a boot failure: without this, every request would take the
     ``HTTPException(500)`` branch in ``get_current_user`` and the
     operator would learn about it from user reports.
+
+    Nothing in the lifespan imports ``PREMIUM_PLUGIN`` on its own, so a
+    plugin that registers its resolver as an import side effect may not
+    have run yet: ``get_settings_store()`` only reaches the plugin on the
+    ``SETTINGS_STORE=db`` path, via ``get_kek_provider()``. Force the
+    import here so the check does not depend on an unrelated setting.
     """
-    if settings.auth_mode == "multi_user" and _current_user_resolver is None:
+    if settings.auth_mode != "multi_user":
+        return
+    if _current_user_resolver is None:
+        load_plugin_module()
+    if _current_user_resolver is None:
         raise RuntimeError(
             "AUTH_MODE=multi_user but no current-user resolver is registered. "
             "Load a plugin that calls set_current_user_resolver(), or set "
@@ -95,10 +111,10 @@ async def get_current_user(
 
     ``db`` stays a dependency so the single_user path keeps using the
     request-scoped session it has always used. multi_user therefore
-    acquires a pooled session it does not use; that is deliberate for now,
-    since preserving the default path matters more than the pool slot, and
-    mozilla-ai/clawbolt#1510 can revisit it once the multi-user
-    implementation actually lives here.
+    constructs a session it never touches, which costs an object rather
+    than a pool connection, since SQLAlchemy checks a connection out on
+    first use. mozilla-ai/clawbolt#1510 can revisit it once the
+    multi-user implementation actually lives here.
     """
     if settings.auth_mode == "multi_user":
         resolver = _current_user_resolver
