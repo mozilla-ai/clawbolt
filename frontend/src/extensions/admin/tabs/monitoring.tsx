@@ -768,8 +768,7 @@ export default function MonitoringTab() {
         <h3 className="text-sm font-semibold mb-1">Infrastructure</h3>
         <p className="text-xs text-muted-foreground mb-2">
           Dependencies that are not probed at all do not appear here: an unconfigured
-          integration is absent rather than permanently red. Retailer monitoring checks the
-          sidecar browser only. It never sends scheduled Home Depot or Lowe's searches.
+          integration is absent rather than permanently red.
         </p>
         <div className="bg-card border border-border rounded-[--radius-md] px-3">
           {infraProbes.length === 0 ? (

@@ -208,8 +208,8 @@ class TestRunProbesEndpoint:
     def test_returns_immediately_with_the_steps_it_will_run(self, admin_client: TestClient) -> None:
         """The request must not wait out the run.
 
-        A full pass calls an LLM provider, a residential Mac, a scraping
-        sidecar and one auth_check per specialist per user. Awaiting that is
+        A full pass calls an LLM provider, a residential Mac,
+        and one auth_check per specialist per user. Awaiting that is
         what left the admin tab on "Running" with nothing to show.
         """
         observation = health_monitor.Observation(

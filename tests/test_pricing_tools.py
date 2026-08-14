@@ -430,9 +430,8 @@ class TestSupplierSearchTool:
 
         from backend.app.integrations.supplier_pricing.factory import _create_pricing_tools
 
-        # Drive the SerpApi backend directly by configuring no sidecars. Fresh
-        # caches per tool set so one test's failures cannot suppress the next.
-        tools = _create_pricing_tools({}, mock_supplier, cache, SupplierCache())
+        # Fresh caches per tool set so one test's failures cannot suppress the next.
+        tools = _create_pricing_tools(mock_supplier, cache, SupplierCache())
         tool_fn = tools[0].function
         return tool_fn, mock_supplier, cache
 
@@ -607,8 +606,8 @@ class TestSupplierSearchTool:
 
 
 class TestPricingFactory:
-    def test_factory_returns_empty_when_no_backend_available(self) -> None:
-        """No sidecar and no SerpApi key means nothing to offer."""
+    def test_factory_returns_empty_without_a_serpapi_key(self) -> None:
+        """SerpApi is the only backend, so no key means nothing to offer."""
         from backend.app.integrations.supplier_pricing.factory import _pricing_factory
 
         ctx = MagicMock()
@@ -618,18 +617,7 @@ class TestPricingFactory:
 
         assert len(result) == 0
 
-    def test_factory_returns_tools_with_sidecar_and_no_key(self) -> None:
-        """The sidecar needs no API key, so tools load without SerpApi."""
-        from backend.app.integrations.supplier_pricing.factory import _pricing_factory
-
-        ctx = MagicMock()
-        with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
-            mock_settings.serpapi_api_key = ""
-            result = _pricing_factory(ctx)
-
-        assert [t.name for t in result] == ["supplier_search_products", "supplier_find_stores"]
-
-    def test_factory_returns_hd_when_key_set(self) -> None:
+    def test_factory_returns_search_tool_when_key_set(self) -> None:
         from backend.app.integrations.supplier_pricing.factory import _pricing_factory
 
         ctx = MagicMock()
@@ -637,8 +625,7 @@ class TestPricingFactory:
             mock_settings.serpapi_api_key = "test-key"
             result = _pricing_factory(ctx)
 
-        assert len(result) == 2
-        assert result[0].name == "supplier_search_products"
+        assert [t.name for t in result] == ["supplier_search_products"]
 
     async def test_auth_check_always_passes(self) -> None:
         from backend.app.integrations.supplier_pricing.factory import _pricing_auth_check

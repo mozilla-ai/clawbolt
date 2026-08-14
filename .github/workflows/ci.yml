@@ -14,10 +14,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - run: uv sync --all-extras
-      # sidecar/ is included deliberately: it is not part of the installed
-      # package, so nothing else keeps it clean, and it now holds several modules.
-      - run: uv run ruff check backend/ tests/ alembic/ sidecar/
-      - run: uv run ruff format --check backend/ tests/ alembic/ sidecar/
+      - run: uv run ruff check backend/ tests/ alembic/
+      - run: uv run ruff format --check backend/ tests/ alembic/
 
   typecheck:
     runs-on: ubuntu-latest

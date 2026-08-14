@@ -160,7 +160,7 @@ async def run_probes(_admin: User = Depends(get_current_admin)) -> dict:
     """Start a probe run in the background and return its initial progress.
 
     Deliberately does not await the run. A full pass calls an LLM provider, a
-    residential Mac, a sidecar health endpoint, and one auth_check per specialist per
+    residential Mac, and one auth_check per specialist per
     user; awaiting it held the request open for minutes with nothing to show,
     and any proxy timeout in between lost the result entirely. The caller polls
     ``GET /monitoring/status`` and reads ``health_monitor.run`` instead.

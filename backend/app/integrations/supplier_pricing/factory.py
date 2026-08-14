@@ -1,16 +1,17 @@
 """Supplier pricing specialist tools.
 
-Product search at Home Depot and Lowe's, plus Home Depot store lookup, all served
-clients, so a real browser is the only client either serves.
+Home Depot product search via SerpApi, a licensed search API that fronts the
+retailer on our behalf.
 
-SerpApi stays available as a fallback for Home Depot product search only: it has
-no Lowe's engine, and no store locator.
+Lowe's search and store lookup are deliberately absent: SerpApi has no engine for
+either, and the browser backend that used to serve them was removed. Do not
+reintroduce a scraping backend here without legal sign-off.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel, Field
@@ -22,19 +23,14 @@ from backend.app.config import settings
 from backend.app.integrations.supplier_pricing.cache import SupplierCache
 from backend.app.integrations.supplier_pricing.errors import SupplierUnavailableError
 from backend.app.integrations.supplier_pricing.homedepot import HomeDepotSupplier
-from backend.app.integrations.supplier_pricing.protocol import (
-    Location,
-    ProductResult,
-    StoreResult,
-)
-from backend.app.integrations.supplier_pricing.sidecar_client import SidecarSupplier
+from backend.app.integrations.supplier_pricing.protocol import Location, ProductResult
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
 
-# Shared across all users; the sidecar client is stateless so only the caches
+# Shared across all users; the SerpApi client is stateless so only the caches
 # need to be singletons.
 _cache = SupplierCache()
 
@@ -45,10 +41,10 @@ _cache = SupplierCache()
 _OUTAGE_TTL_SECONDS = 90
 _outages = SupplierCache(maxsize=500, ttl_seconds=_OUTAGE_TTL_SECONDS)
 
-# Let one retry through before suppressing. The sidecar warms its browser lazily
-# and evicts it when idle, so a second attempt genuinely does often succeed, and
-# _BACKEND_RETRY_HINT tells the model to make it. Suppression starts at the point
-# where retrying has stopped being evidence-gathering and started being a storm.
+# Let one retry through before suppressing. A single failed call is as likely to
+# be a blip as an outage, and _BACKEND_RETRY_HINT tells the model to try once
+# more. Suppression starts at the point where retrying has stopped being
+# evidence-gathering and started being a storm.
 _OUTAGE_STREAK_BEFORE_SUPPRESSING = 2
 
 # Both failure modes are infrastructure, never the search term. Saying so is the
@@ -57,63 +53,29 @@ _OUTAGE_STREAK_BEFORE_SUPPRESSING = 2
 # every attempt waiting out two stacked timeouts (issue #1496).
 _BACKEND_RETRY_HINT = (
     "The failure is not caused by the search term, so rewording will not help. "
-    "One retry is worth it: the backend warms a browser session lazily and the "
-    "second attempt often succeeds. If it fails again, tell the user the lookup "
-    "is unavailable and offer the other retailer, which may still work."
+    "One retry is worth it, since a single failed call is often a blip. If it "
+    "fails again, tell the user pricing lookup is unavailable right now."
 )
 
 _OUTAGE_HINT = (
-    "This retailer has failed repeatedly in the last minute, so no request was "
+    "Pricing lookup has failed repeatedly in the last minute, so no request was "
     "sent. Retrying and rewording will both fail. Tell the user the lookup is "
-    "unavailable and offer the other retailer, which may still work."
+    "unavailable right now."
 )
 
 
 class SupplierSearchParams(BaseModel):
     query: str = Field(description="Product search term, e.g. '3/4 plywood' or 'Kilz primer'")
     zip_code: str = Field(default="", description="5-digit US zip code for local pricing")
-    supplier: Literal["home_depot", "lowes"] = Field(
-        default="home_depot",
-        description=(
-            "Which retailer to search. Call once per retailer to compare prices. "
-            "Home Depot supports store_id for store-specific pricing; Lowe's does not."
-        ),
-    )
-    store_id: str = Field(
-        default="",
-        description=(
-            "Home Depot store number for store-specific pricing and shelf stock. "
-            "Get one from supplier_find_stores. Ignored for Lowe's. Optional."
-        ),
-    )
 
 
-class SupplierFindStoresParams(BaseModel):
-    near: str = Field(description="Zip code, city and state, or street address to search near")
-    radius_miles: int = Field(default=25, ge=1, le=100, description="Search radius in miles")
-
-
-def _format_results(
-    results: list[ProductResult],
-    query: str,
-    zip_code: str,
-    supplier_name: str = "Home Depot",
-    *,
-    localized: bool = True,
-) -> str:
-    """Format product results as plain text suitable for SMS/iMessage.
-
-    ``localized`` says whether the zip actually shaped these results. Only claim
-    it when it did: Lowe's results come from whichever store the sidecar's own
-    session is pinned to, so labelling them with the user's zip would invite a
-    tradesperson to drive to a store on the strength of someone else's shelf
-    count.
-    """
+def _format_results(results: list[ProductResult], query: str, zip_code: str) -> str:
+    """Format product results as plain text suitable for SMS/iMessage."""
     if not results:
-        return f'No products found for "{query}" at {supplier_name}.'
+        return f'No products found for "{query}" at Home Depot.'
 
-    header = f'Found {len(results)} result(s) for "{query}" at {supplier_name}'
-    if zip_code and localized:
+    header = f'Found {len(results)} result(s) for "{query}" at Home Depot'
+    if zip_code:
         header += f" (zip {zip_code})"
     has_any_price = any(p.price_dollars is not None for p in results)
     if not has_any_price:
@@ -152,95 +114,23 @@ def _format_results(
         lines.append(f"   Link: {url}")
         lines.append("")
 
-    if not localized and any(p.stock_quantity is not None for p in results):
-        lines.append(
-            "Note: these are not localized to your zip. Stock counts are for the "
-            f"default {supplier_name} store, so confirm before making a trip."
-        )
-
     return "\n".join(lines).rstrip()
-
-
-def _format_stores(stores: list[StoreResult], near: str) -> str:
-    """Format store results as plain text suitable for SMS/iMessage."""
-    if not stores:
-        return f'No Home Depot stores found near "{near}".'
-
-    lines = [f'Found {len(stores)} Home Depot store(s) near "{near}":\n']
-    for i, s in enumerate(stores, 1):
-        headline = f"{i}. {s.name} (store #{s.store_id})"
-        if s.distance_miles is not None:
-            headline += f" | {s.distance_miles} mi"
-        lines.append(headline)
-        address = ", ".join(part for part in (s.street, s.city, s.state) if part)
-        if s.zip_code:
-            address = f"{address} {s.zip_code}".strip()
-        if address:
-            lines.append(f"   {address}")
-        if s.phone:
-            lines.append(f"   {s.phone}")
-        lines.append("")
-
-    return "\n".join(lines).rstrip()
-
-
-# Human-facing retailer names, keyed by the tool's `supplier` argument.
-_SUPPLIER_LABELS = {"home_depot": "Home Depot", "lowes": "Lowe's"}
 
 
 def _create_pricing_tools(
-    sidecars: dict[str, SidecarSupplier],
-    fallback: HomeDepotSupplier | None,
+    supplier: HomeDepotSupplier,
     cache: SupplierCache,
     outages: SupplierCache,
 ) -> list[Tool]:
     """Build the pricing tool list.
 
-    ``sidecars`` is keyed by the tool's ``supplier`` argument. Product search
-    tries the requested retailer's sidecar and falls through to ``fallback``
-    (SerpApi) when it cannot answer, which only helps Home Depot: SerpApi has no
-    Lowe's engine. Store lookup is Home Depot sidecar only.
-
-    ``outages`` counts consecutive search failures per (supplier, zip) so a
-    retailer that is already down is not asked again on every reworded query.
-    It is passed in rather than built here because the factory runs per tool
-    context, and a per-context counter would never see a streak.
+    ``outages`` counts consecutive search failures per zip so a backend that is
+    already down is not asked again on every reworded query. It is passed in
+    rather than built here because the factory runs per tool context, and a
+    per-context counter would never see a streak.
     """
 
-    async def _search_with_fallback(
-        supplier: str, query: str, location: Location, max_results: int
-    ) -> list[ProductResult]:
-        """Try the retailer's sidecar, then SerpApi where it applies."""
-        chain: list[tuple[str, Any]] = []
-        sidecar = sidecars.get(supplier)
-        if sidecar is not None:
-            chain.append(("sidecar", sidecar))
-        # SerpApi only has a Home Depot engine, so it is not a fallback for Lowe's.
-        if fallback is not None and supplier == "home_depot":
-            chain.append(("serpapi", fallback))
-        if not chain:
-            raise SupplierUnavailableError(f"No backend is configured for {supplier}")
-
-        for index, (name, backend) in enumerate(chain):
-            try:
-                return await backend.search_products(query, location, max_results=max_results)
-            except SupplierUnavailableError as exc:
-                if index == len(chain) - 1:
-                    raise
-                # Warning, not info: this is the only line that says which
-                # backend failed and why, and the root logger sits at warning.
-                logger.warning(
-                    "%s %s backend unavailable (%s), trying %s",
-                    supplier,
-                    name,
-                    exc,
-                    chain[index + 1][0],
-                )
-        raise SupplierUnavailableError(f"No backend answered for {supplier}")
-
-    async def supplier_search_products(
-        query: str, zip_code: str = "", supplier: str = "home_depot", store_id: str = ""
-    ) -> ToolResult:
+    async def supplier_search_products(query: str, zip_code: str = "") -> ToolResult:
         resolved_zip = zip_code.strip()
         if not resolved_zip:
             return ToolResult(
@@ -254,62 +144,46 @@ def _create_pricing_tools(
                 ),
             )
 
-        resolved_store = store_id.strip()
-        label = _SUPPLIER_LABELS.get(supplier, supplier)
-        # Only Home Depot's search takes the zip and store into account; Lowe's
-        # ignores both, so keying its cache on them would only cause redundant
-        # fetches for answers that cannot differ.
-        localized = supplier == "home_depot"
-        cache_scope = (
-            (f"{resolved_zip}:{resolved_store}" if resolved_store else resolved_zip)
-            if localized
-            else "national"
-        )
-        cache_key = SupplierCache.make_key(supplier, query, cache_scope)
+        cache_key = SupplierCache.make_key("home_depot", query, resolved_zip)
         cached = await cache.get(cache_key)
         if cached is not None:
-            return ToolResult(
-                content=_format_results(cached, query, resolved_zip, label, localized=localized)
-            )
+            return ToolResult(content=_format_results(cached, query, resolved_zip))
 
-        outage_key = f"{supplier}:{cache_scope}"
+        outage_key = f"home_depot:{resolved_zip}"
         failures: int = await outages.get(outage_key) or 0
         if failures >= _OUTAGE_STREAK_BEFORE_SUPPRESSING:
             logger.warning(
-                "%s search suppressed after %d consecutive failures: query=%r zip=%s",
-                label,
+                "Home Depot search suppressed after %d consecutive failures: query=%r zip=%s",
                 failures,
                 query,
                 resolved_zip,
             )
             return ToolResult(
-                content=f"{label} pricing is still down, so this lookup was not sent.",
+                content="Home Depot pricing is still down, so this lookup was not sent.",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
                 hint=_OUTAGE_HINT,
             )
 
         try:
-            location = Location(zip_code=resolved_zip, store_id=resolved_store)
-            results = await _search_with_fallback(supplier, query, location, 5)
+            location = Location(zip_code=resolved_zip)
+            results = await supplier.search_products(query, location, max_results=5)
         except SupplierUnavailableError as exc:
             await outages.set(outage_key, failures + 1)
-            logger.warning("%s refused the search: query=%r reason=%s", label, query, exc)
+            logger.warning("Home Depot refused the search: query=%r reason=%s", query, exc)
             return ToolResult(
-                content=f"Couldn't reach {label} to look up pricing.",
+                content="Couldn't reach Home Depot to look up pricing.",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
                 hint=_BACKEND_RETRY_HINT,
             )
         except httpx.TimeoutException:
-            # Only the SerpApi fallback reaches this: the sidecar client maps its
-            # own timeouts to SupplierUnavailableError so the chain keeps falling
-            # through. Either way the term is not what timed out, so the hint has
-            # to match the branch above rather than send the model off rewording.
+            # The search term is not what timed out, so the hint has to match the
+            # branch above rather than send the model off rewording.
             await outages.set(outage_key, failures + 1)
-            logger.warning("%s search timed out: query=%r zip=%s", label, query, resolved_zip)
+            logger.warning("Home Depot search timed out: query=%r zip=%s", query, resolved_zip)
             return ToolResult(
-                content=f"{label} pricing timed out.",
+                content="Home Depot pricing timed out.",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
                 hint=_BACKEND_RETRY_HINT,
@@ -325,18 +199,18 @@ def _create_pricing_tools(
                 )
             if status == 429:
                 return ToolResult(
-                    content=f"{label} pricing is temporarily busy. Try again in a moment.",
+                    content="Home Depot pricing is temporarily busy. Try again in a moment.",
                     is_error=True,
                     error_kind=ToolErrorKind.SERVICE,
                 )
             logger.error("SerpApi error %d for query=%r", status, query)
             return ToolResult(
-                content=f"Couldn't reach {label} pricing. Try again shortly.",
+                content="Couldn't reach Home Depot pricing. Try again shortly.",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
         except Exception:
-            logger.exception("Unexpected error in %s search: query=%r", label, query)
+            logger.exception("Unexpected error in Home Depot search: query=%r", query)
             return ToolResult(
                 content="Got an unexpected error looking up pricing. Try again.",
                 is_error=True,
@@ -347,93 +221,22 @@ def _create_pricing_tools(
         # The streak counts consecutive failures, so an answer ends it.
         if failures:
             await outages.set(outage_key, 0)
-        return ToolResult(
-            content=_format_results(results, query, resolved_zip, label, localized=localized)
-        )
-
-    async def supplier_find_stores(near: str, radius_miles: int = 25) -> ToolResult:
-        resolved_near = near.strip()
-        if not resolved_near:
-            return ToolResult(
-                content="A zip code, city, or address is required to find stores.",
-                is_error=True,
-                error_kind=ToolErrorKind.VALIDATION,
-                hint="Ask the user where they want to look, then call this tool again.",
-            )
-        hd = sidecars.get("home_depot")
-        if hd is None:
-            return ToolResult(
-                content="Store lookup is not available.",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-                hint=(
-                    "Store lookup needs the Home Depot sidecar. Tell the user it is "
-                    "not configured; do not retry."
-                ),
-            )
-
-        cache_key = SupplierCache.make_key("homedepot_stores", resolved_near, str(radius_miles))
-        cached = await cache.get(cache_key)
-        if cached is not None:
-            return ToolResult(content=_format_stores(cached, resolved_near))
-
-        try:
-            stores = await hd.find_stores(resolved_near, radius_miles=radius_miles)
-        except SupplierUnavailableError:
-            logger.warning("Home Depot refused the store lookup: near=%r", resolved_near)
-            return ToolResult(
-                content="Couldn't reach Home Depot's store locator. Try again shortly.",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-        except Exception:
-            logger.exception("Unexpected error in Home Depot store lookup: near=%r", resolved_near)
-            return ToolResult(
-                content="Got an unexpected error looking up stores. Try again.",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-
-        await cache.set(cache_key, stores)
-        return ToolResult(content=_format_stores(stores, resolved_near))
+        return ToolResult(content=_format_results(results, query, resolved_zip))
 
     return [
         Tool(
             name=ToolName.SUPPLIER_SEARCH_PRODUCTS,
             description=(
-                "Search for products at Home Depot or Lowe's by keyword. "
+                "Search for products at Home Depot by keyword. "
                 "Returns product names, prices, stock, and links. "
                 "A zip_code is required for local pricing. Check the user's profile "
-                "(USER.md) for a stored zip code before asking. Set supplier to pick "
-                "the retailer, and call once per retailer when the user wants prices "
-                "compared. Pass store_id as well when you know it to get that store's "
-                "price and shelf count; Home Depot only."
+                "(USER.md) for a stored zip code before asking."
             ),
             function=supplier_search_products,
             params_model=SupplierSearchParams,
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ALWAYS,
-                description_builder=lambda args: (
-                    f"Search {_SUPPLIER_LABELS.get(args.get('supplier', 'home_depot'), 'Home Depot')}"
-                    f' for "{args.get("query", "")}"'
-                ),
-            ),
-        ),
-        Tool(
-            name=ToolName.SUPPLIER_FIND_STORES,
-            description=(
-                "Find Home Depot stores near a zip code, city, or address. "
-                "Returns each store's number, address, phone, and distance. "
-                "Use the store number with supplier_search_products for "
-                "store-specific pricing and shelf stock."
-            ),
-            function=supplier_find_stores,
-            params_model=SupplierFindStoresParams,
-            approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ALWAYS,
-                description_builder=lambda args: (
-                    f'Find Home Depot stores near "{args.get("near", "")}"'
-                ),
+                description_builder=lambda args: f'Search Home Depot for "{args.get("query", "")}"',
             ),
         ),
     ]
@@ -441,32 +244,14 @@ def _create_pricing_tools(
 
 def _pricing_factory(ctx: ToolContext) -> list[Tool]:
     """Factory called by the tool registry."""
-    sidecars: dict[str, SidecarSupplier] = {}
-        # One sidecar process serves both retailers; only the site differs.
-        for site, name, label in (
-            ("home_depot", "homedepot", "Home Depot"),
-            ("lowes", "lowes", "Lowe's"),
-        ):
-            sidecars[site] = SidecarSupplier(
-                site=site,
-                name=name,
-                display_name=label,
-            )
-
-    fallback = (
-        HomeDepotSupplier(api_key=settings.serpapi_api_key) if settings.serpapi_api_key else None
-    )
-
-    if not sidecars and fallback is None:
-        logger.info("supplier_pricing factory: no supplier backend configured, skipping")
+    if not settings.serpapi_api_key:
+        logger.info("supplier_pricing factory: no SERPAPI_API_KEY set, skipping")
         return []
 
-    logger.info(
-        "supplier_pricing factory: creating supplier tools (sidecar_sites=%s, serpapi=%s)",
-        sorted(sidecars) or "none",
-        fallback is not None,
+    logger.info("supplier_pricing factory: creating supplier tools (serpapi)")
+    return _create_pricing_tools(
+        HomeDepotSupplier(api_key=settings.serpapi_api_key), _cache, _outages
     )
-    return _create_pricing_tools(sidecars, fallback, _cache, _outages)
 
 
 async def _pricing_auth_check(ctx: ToolContext) -> str | None:
@@ -482,22 +267,15 @@ def _register() -> None:
         "supplier_pricing",
         _pricing_factory,
         core=False,
-        summary="Search product prices at Home Depot and Lowe's, and find Home Depot stores",
+        summary="Search product prices at Home Depot",
         display_name="Supplier pricing",
-        dashboard_description=(
-            "Search product prices at Home Depot and Lowe's, and find Home Depot stores"
-        ),
+        dashboard_description="Search product prices at Home Depot",
         dashboard_group="Integrations",
         dashboard_group_order=3,
         sub_tools=[
             SubToolInfo(
                 ToolName.SUPPLIER_SEARCH_PRODUCTS,
-                "Search products by keyword at Home Depot or Lowe's",
-                default_permission="always",
-            ),
-            SubToolInfo(
-                ToolName.SUPPLIER_FIND_STORES,
-                "Find Home Depot stores near a location",
+                "Search products by keyword at Home Depot",
                 default_permission="always",
             ),
         ],

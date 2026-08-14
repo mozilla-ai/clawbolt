@@ -92,7 +92,6 @@ class ToolName:
 
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
-    SUPPLIER_FIND_STORES = "supplier_find_stores"
 
     # Calculator
     CALCULATE = "calculate"
