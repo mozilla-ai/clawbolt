@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     # database. "multi_user" requires a registered resolver (OAuth, JWT)
     # and rejects requests that do not carry one; see
     # ``backend/app/auth/dependencies.py``.
+    #
+    # Not yet the tenancy switch. Premium still replaces the auth
+    # dependency through ``app.dependency_overrides`` and leaves this at
+    # the default, so a multi-tenant deployment reads "single_user" here
+    # until mozilla-ai/clawbolt#1510 lands. Code that needs to know
+    # whether more than one tenant exists must keep testing
+    # ``premium_plugin``, the way ``agent/ingestion.py`` does.
     auth_mode: Literal["single_user", "multi_user"] = "single_user"
     # Backend for runtime-configurable settings: "db" (default) stores in
     # the app_settings table; "file" keeps the legacy data/config.json
