@@ -246,6 +246,11 @@ describe('ToolsPage', () => {
       expect(screen.getByText('ServiceTitan')).toBeInTheDocument();
     });
     expect(screen.getByText('Not connected')).toBeInTheDocument();
+    // Not dimmed, and not labelled "Not configured": unlike an OAuth
+    // integration the deployment never set credentials for, an unconnected
+    // connect_form tool is something the user can act on right here.
+    expect(screen.queryByText('Not configured')).not.toBeInTheDocument();
+    expect(screen.getByText('ServiceTitan').closest('.opacity-50')).toBeNull();
 
     fireEvent.click(screen.getByText('Connect'));
 

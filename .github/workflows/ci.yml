@@ -151,6 +151,11 @@ jobs:
         run: npm run typecheck
       - working-directory: frontend
         run: npm run deadcode
+      # Vitest rides along in this job rather than getting its own: the npm
+      # install is the expensive part and it is already done here. A suite
+      # nothing runs rots, and this one did, silently, for four months.
+      - working-directory: frontend
+        run: npm run test
 
   docker:
     runs-on: ubuntu-latest
