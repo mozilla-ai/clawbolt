@@ -145,8 +145,18 @@ export default function ToolsPage() {
               const oauthIntegration = tool.oauth_name;
               const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(oauthIntegration, oauthMap, tool.configured);
 
+              // ``isConfigured`` means two different things depending on the
+              // branch getToolOAuthStatus took. For an OAuth integration it is
+              // an operator-level fact: the deployment has no client id and
+              // secret, so /oauth/{integration}/authorize returns 400 and no
+              // amount of clicking will connect it. For a connect_form or
+              // plain tool it mirrors the per-user auth_check, where "not
+              // configured" just means "not connected yet" and the Connect
+              // button is the whole point. Only the first case is dead ground.
+              const operatorUnconfigured = needsOAuth && !isConfigured;
+
               return (
-                <Card key={tool.name}>
+                <Card key={tool.name} className={operatorUnconfigured ? 'opacity-50' : undefined}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                       <IntegrationIcon name={tool.name} />
@@ -163,7 +173,7 @@ export default function ToolsPage() {
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                               <span className="size-1.5 rounded-full inline-block shrink-0 bg-neutral-300" />
-                              Not connected
+                              {operatorUnconfigured ? 'Not configured' : 'Not connected'}
                             </span>
                           )}
                         </div>
@@ -173,7 +183,7 @@ export default function ToolsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      {needsOAuth && isConnected && (
+                      {needsOAuth && isConfigured && isConnected && (
                         <Button
                           variant="secondary"
                           size="sm"
@@ -183,7 +193,7 @@ export default function ToolsPage() {
                           Disconnect
                         </Button>
                       )}
-                      {needsOAuth && !isConnected && (
+                      {needsOAuth && isConfigured && !isConnected && (
                         <Button
                           size="sm"
                           onClick={() => void handleConnect(oauthIntegration)}
