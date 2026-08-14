@@ -54,7 +54,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func as sa_func
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.approval import get_approval_event_store
@@ -1076,9 +1076,8 @@ async def export_shared_data_user(
             "Window size in days, ending now. Scopes the time-bucketed "
             "subresources (conversations, heartbeat-logs, compaction-events, "
             "LLM-usage, reports, and the tool-call rollup). Identity, "
-            "profile, memory, and the configured-directives count "
-            "(``heartbeat_directives_count``) are point-in-time and not "
-            "scoped by the window."
+            "profile, and memory are point-in-time and not scoped by the "
+            "window."
         ),
     ),
     include_turns: bool = Query(
@@ -1283,28 +1282,6 @@ async def export_shared_data_user(
             )
         )
     ).scalar_one() or 0
-    # heartbeat_items has no OSS ORM model yet; one COUNT via raw SQL.
-    # Point-in-time, not windowed: this is "how many directives are
-    # configured right now?", which is the load-bearing question for
-    # debugging "why is the agent never proactive?". A windowed count
-    # would mean "directives created in the last N days" which is a
-    # weaker signal. See SharedDataExportSummary.heartbeat_directives_count.
-    # Defensive: the test DB uses create_all() against ORM models, so
-    # the table is absent there. Wrap in a SAVEPOINT so the failure
-    # rolls back ONLY the count probe, leaving the outer transaction
-    # (and our already-loaded ``user`` row) intact. The count is
-    # informational, not load-bearing.
-    hb_dir_count = 0
-    try:
-        async with db.begin_nested():
-            hb_dir_count = (
-                await db.execute(
-                    text("SELECT COUNT(*) FROM heartbeat_items WHERE user_id = :uid"),
-                    {"uid": user.id},
-                )
-            ).scalar() or 0
-    except Exception:
-        hb_dir_count = 0
 
     summary = SharedDataExportSummary(
         session_count=session_count,
@@ -1324,7 +1301,6 @@ async def export_shared_data_user(
         tool_calls_error_count=tool_calls_error_count,
         tool_calls_top=tool_calls_top,
         reports_total=int(reports_total),
-        heartbeat_directives_count=int(hb_dir_count),
     )
 
     # ---- per-session conversation list (no bodies) -------------------

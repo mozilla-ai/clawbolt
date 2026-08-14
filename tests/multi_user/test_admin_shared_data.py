@@ -2091,7 +2091,12 @@ class TestSharedDataExport:
             assert key in body, f"missing top-level key {key}"
         assert body["window"]["days"] == 7
         assert body["summary"]["session_count"] == 0
-        assert body["summary"]["heartbeat_directives_count"] == 0
+        # ``heartbeat_directives_count`` counted rows in ``heartbeat_items``,
+        # which OSS revision 040 dropped. The probe degraded to zero rather
+        # than erroring, so leaving it in place would have reported "this
+        # user has no directives configured" for every user forever. The
+        # directives themselves are in ``profile.heartbeat_text``.
+        assert "heartbeat_directives_count" not in body["summary"]
         # ``include_turns`` defaults to False; turns is null when omitted.
         assert body["turns"] is None
 
