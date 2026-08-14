@@ -79,6 +79,7 @@ class TestSetupLogging:
     def test_json_format_sets_json_formatter(self) -> None:
         """When LOG_FORMAT=json, root handlers should use JSON formatter."""
         with patch("backend.app.observability.settings") as mock_settings:
+            mock_settings.log_level = "INFO"
             mock_settings.log_format = "json"
             setup_logging()
             root = logging.getLogger()
@@ -87,30 +88,29 @@ class TestSetupLogging:
     def test_text_format_does_not_set_json_formatter(self) -> None:
         """When LOG_FORMAT=text, root handlers should not use JSON formatter."""
         with patch("backend.app.observability.settings") as mock_settings:
+            mock_settings.log_level = "INFO"
             mock_settings.log_format = "text"
             setup_logging()
             root = logging.getLogger()
             assert not any(isinstance(h.formatter, _JsonFormatter) for h in root.handlers)
 
     def test_debug_level_applied(self) -> None:
-        """When LOG_LEVEL=DEBUG, clawbolt_premium logger should be set to DEBUG."""
-        with patch("backend.app.config.settings") as mock_settings:
+        """LOG_LEVEL=DEBUG raises the app logger tree to DEBUG."""
+        with patch("backend.app.observability.settings") as mock_settings:
             mock_settings.log_level = "DEBUG"
-            with patch("backend.app.observability.settings") as mock_ps:
-                mock_ps.log_format = "text"
-                setup_logging()
+            mock_settings.log_format = "text"
+            setup_logging()
 
-        assert logging.getLogger("clawbolt_premium").level == logging.DEBUG
+        assert logging.getLogger("backend").level == logging.DEBUG
 
     def test_info_level_default(self) -> None:
-        """When LOG_LEVEL=INFO, clawbolt_premium logger should be set to INFO."""
-        with patch("backend.app.config.settings") as mock_settings:
+        """LOG_LEVEL=INFO leaves the app logger tree at INFO."""
+        with patch("backend.app.observability.settings") as mock_settings:
             mock_settings.log_level = "INFO"
-            with patch("backend.app.observability.settings") as mock_ps:
-                mock_ps.log_format = "text"
-                setup_logging()
+            mock_settings.log_format = "text"
+            setup_logging()
 
-        assert logging.getLogger("clawbolt_premium").level == logging.INFO
+        assert logging.getLogger("backend").level == logging.INFO
 
     def test_third_party_loggers_stay_at_warning(self) -> None:
         """httpx, httpcore, and telegram must not log at INFO.
@@ -121,11 +121,10 @@ class TestSetupLogging:
         loggers to WARNING is part of the fix; the other half is the
         explicit root-level setting.
         """
-        with patch("backend.app.config.settings") as mock_settings:
+        with patch("backend.app.observability.settings") as mock_settings:
             mock_settings.log_level = "DEBUG"  # even with DEBUG app level
-            with patch("backend.app.observability.settings") as mock_ps:
-                mock_ps.log_format = "text"
-                setup_logging()
+            mock_settings.log_format = "text"
+            setup_logging()
 
         assert logging.getLogger().level == logging.WARNING
         assert logging.getLogger("httpx").level == logging.WARNING
@@ -139,11 +138,10 @@ class TestSetupLogging:
         containing ``password=`` should be suppressed once setup_logging
         has run.
         """
-        with patch("backend.app.config.settings") as mock_settings:
+        with patch("backend.app.observability.settings") as mock_settings:
             mock_settings.log_level = "INFO"
-            with patch("backend.app.observability.settings") as mock_ps:
-                mock_ps.log_format = "text"
-                setup_logging()
+            mock_settings.log_format = "text"
+            setup_logging()
 
         with caplog.at_level(logging.WARNING, logger="httpx"):
             logging.getLogger("httpx").info(

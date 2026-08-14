@@ -1,4 +1,10 @@
-"""Tests for CLI entry point (__main__.py)."""
+"""Tests for the management CLI (``backend.app.cli``).
+
+The CLI imports its dependencies at module scope, so these patch the
+names on ``backend.app.cli`` itself rather than the modules they came
+from. Patching the source module would not reach the reference the
+command functions already hold.
+"""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -24,12 +30,12 @@ class TestCLI:
         mock_uvicorn = MagicMock()
         with (
             patch("sys.argv", ["prog", "serve", "--port", "9000"]),
-            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+            patch("backend.app.cli.uvicorn", mock_uvicorn),
             patch.dict("os.environ", {}, clear=False),
         ):
             main()
             mock_uvicorn.run.assert_called_once_with(
-                "backend.app.app:app",
+                "backend.app.main:app",
                 host="0.0.0.0",
                 port=9000,
                 reload=False,
@@ -46,7 +52,7 @@ class TestCLI:
         mock_uvicorn = MagicMock()
         with (
             patch("sys.argv", ["prog", "serve"]),
-            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+            patch("backend.app.cli.uvicorn", mock_uvicorn),
             patch.dict("os.environ", {"WEB_CONCURRENCY": "4"}),
         ):
             main()
@@ -58,7 +64,7 @@ class TestCLI:
         mock_uvicorn = MagicMock()
         with (
             patch("sys.argv", ["prog", "serve", "--workers", "3"]),
-            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+            patch("backend.app.cli.uvicorn", mock_uvicorn),
             patch.dict("os.environ", {"WEB_CONCURRENCY": "8"}),
         ):
             main()
@@ -70,7 +76,7 @@ class TestCLI:
         mock_uvicorn = MagicMock()
         with (
             patch("sys.argv", ["prog", "serve", "--reload", "--workers", "4"]),
-            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+            patch("backend.app.cli.uvicorn", mock_uvicorn),
         ):
             main()
             kwargs = mock_uvicorn.run.call_args.kwargs
@@ -89,15 +95,9 @@ class TestCLI:
 
         with (
             patch("sys.argv", ["prog", "cleanup"]),
-            patch("backend.app.database.db_session_async", _mock_db_session_async),
-            patch(
-                "backend.app.services.inactive_cleanup.warn_inactive_users",
-                mock_warn,
-            ),
-            patch(
-                "backend.app.services.inactive_cleanup.cleanup_inactive_accounts",
-                mock_cleanup,
-            ),
+            patch("backend.app.cli.db_session_async", _mock_db_session_async),
+            patch("backend.app.cli.warn_inactive_users", mock_warn),
+            patch("backend.app.cli.cleanup_inactive_accounts", mock_cleanup),
         ):
             main()
             mock_warn.assert_called_once_with(mock_db)
@@ -115,15 +115,9 @@ class TestCLI:
 
         with (
             patch("sys.argv", ["prog", "cleanup", "--warn-only"]),
-            patch("backend.app.database.db_session_async", _mock_db_session_async),
-            patch(
-                "backend.app.services.inactive_cleanup.warn_inactive_users",
-                mock_warn,
-            ),
-            patch(
-                "backend.app.services.inactive_cleanup.cleanup_inactive_accounts",
-                mock_cleanup,
-            ),
+            patch("backend.app.cli.db_session_async", _mock_db_session_async),
+            patch("backend.app.cli.warn_inactive_users", mock_warn),
+            patch("backend.app.cli.cleanup_inactive_accounts", mock_cleanup),
         ):
             main()
             mock_warn.assert_called_once_with(mock_db)

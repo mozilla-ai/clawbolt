@@ -116,7 +116,11 @@ async def _make_user(async_db: async_sessionmaker, *, email: str = "user@example
         onboarding_complete=True,
     )
     async with async_db() as db:
+        # Flush the User first: without an ORM relationship between the two
+        # models, one flush orders the INSERTs by mapper sort key and puts
+        # subscriptions ahead of users, violating the FK.
         db.add(user)
+        await db.flush()
         db.add(
             Subscription(user_id=user.id, role="user", plan="free", status="active", email=email)
         )

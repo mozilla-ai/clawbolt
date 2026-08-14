@@ -1128,6 +1128,10 @@ class AdminAuditLog(Base):
     """
 
     __tablename__ = "admin_audit_logs"
+    # Serves the "what happened, most recent first" query the admin log
+    # view issues. Created by revision 041; declared here so autogenerate
+    # does not read it as deleted and propose dropping it.
+    __table_args__ = (Index("ix_admin_audit_logs_action_created", "action", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     admin_user_id: Mapped[str | None] = mapped_column(

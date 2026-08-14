@@ -214,7 +214,7 @@ class TestGetCurrentAdmin:
 
 
 class TestPromoteEnvAdmins:
-    """Tests for the one-shot ``python -m clawbolt_premium promote-env-admins``
+    """Tests for the one-shot ``python -m backend.app.cli promote-env-admins``
     migration command. Each branch (promote / already-admin / no-subscription /
     not-found) is exercised against the real DB so the SQL queries are
     actually validated, not just mocked away.
@@ -230,15 +230,10 @@ class TestPromoteEnvAdmins:
 
         Returns the captured stdout for assertion.
 
-        Patch targets are the *source* modules (``backend.app.config``
-        and ``backend.app.database``), not the CLI module. This works
-        because ``cmd_promote_env_admins`` does its imports at call time
-        (``from backend.app.config import settings`` inside
-        the function body), so the function-local lookup picks up the
-        patched value. If the function is ever refactored to use a
-        top-level import, this patching becomes a no-op. Tests would
-        suddenly hit the real settings, and these test cases would need
-        the patch targets retargeted to the CLI module.
+        Patch targets are the names on the CLI module, not the modules
+        they came from: ``cmd_promote_env_admins`` binds them at import,
+        so patching the source module would not reach the reference the
+        function already holds.
         """
         from backend.app import cli
 
@@ -256,8 +251,8 @@ class TestPromoteEnvAdmins:
             yield _SyncToAsyncSessionProxy(db_session)
 
         with (
-            patch("backend.app.config.settings", env_settings),
-            patch("backend.app.database.db_session_async", _yield_session),
+            patch("backend.app.cli.settings", env_settings),
+            patch("backend.app.cli.db_session_async", _yield_session),
         ):
             cli.cmd_promote_env_admins(MagicMock())
         return capsys.readouterr().out

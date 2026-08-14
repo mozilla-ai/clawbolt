@@ -1,8 +1,13 @@
-"""Tests for generic channel webhook auto-registration in the premium lifespan.
+"""Channel webhook auto-registration in the multi_user lifespan.
 
-Verifies that the premium lifespan calls register_paas_webhook() on every
-registered channel, so new channels get webhook registration automatically
-without editing the lifespan.
+Verifies that the lifespan calls register_paas_webhook() on every
+registered channel, so new channels get webhook registration
+automatically without editing the lifespan.
+
+Every test here patches ``backend.app.main.settings`` wholesale, which
+means ``auth_mode`` has to be set explicitly: the lifespan reads it to
+decide whether to register at all, and a bare MagicMock compares unequal
+to every string.
 """
 
 from __future__ import annotations
@@ -64,12 +69,12 @@ async def test_register_paas_webhook_called_for_all_channels() -> None:
 
     with (
         patch("backend.app.main.settings") as mock_settings,
-        patch("backend.app.main.settings") as mock_premium,
         patch("backend.app.main.get_manager", return_value=mock_manager),
     ):
+        mock_settings.auth_mode = "multi_user"
         mock_settings.cors_origins = "https://app.example.com"
         mock_settings.telegram_bot_token = ""
-        mock_premium.app_base_url = "https://app.clawbolt.ai"
+        mock_settings.app_base_url = "https://app.clawbolt.ai"
 
         async with lifespan(FastAPI()):
             # Yield to the event loop so the background registration tasks
@@ -93,12 +98,12 @@ async def test_register_paas_webhook_skipped_on_localhost() -> None:
 
     with (
         patch("backend.app.main.settings") as mock_settings,
-        patch("backend.app.main.settings") as mock_premium,
         patch("backend.app.main.get_manager", return_value=mock_manager),
     ):
+        mock_settings.auth_mode = "multi_user"
         mock_settings.cors_origins = "http://localhost:3000"
         mock_settings.telegram_bot_token = ""
-        mock_premium.app_base_url = "http://localhost:8000"
+        mock_settings.app_base_url = "http://localhost:8000"
 
         async with lifespan(FastAPI()):
             pass
@@ -118,12 +123,12 @@ async def test_register_paas_webhook_none_is_silent() -> None:
 
     with (
         patch("backend.app.main.settings") as mock_settings,
-        patch("backend.app.main.settings") as mock_premium,
         patch("backend.app.main.get_manager", return_value=mock_manager),
     ):
+        mock_settings.auth_mode = "multi_user"
         mock_settings.cors_origins = "https://app.example.com"
         mock_settings.telegram_bot_token = ""
-        mock_premium.app_base_url = "https://app.clawbolt.ai"
+        mock_settings.app_base_url = "https://app.clawbolt.ai"
 
         async with lifespan(FastAPI()):
             await asyncio.sleep(0.05)
@@ -145,12 +150,12 @@ async def test_register_paas_webhook_failure_logs_warning(
 
     with (
         patch("backend.app.main.settings") as mock_settings,
-        patch("backend.app.main.settings") as mock_premium,
         patch("backend.app.main.get_manager", return_value=mock_manager),
     ):
+        mock_settings.auth_mode = "multi_user"
         mock_settings.cors_origins = "https://app.example.com"
         mock_settings.telegram_bot_token = ""
-        mock_premium.app_base_url = "https://app.clawbolt.ai"
+        mock_settings.app_base_url = "https://app.clawbolt.ai"
 
         import logging
 
@@ -172,6 +177,7 @@ async def test_lifespan_calls_start_all_and_stop_all() -> None:
         patch("backend.app.main.settings") as mock_settings,
         patch("backend.app.main.get_manager", return_value=mock_manager),
     ):
+        mock_settings.auth_mode = "multi_user"
         mock_settings.cors_origins = "https://example.com"
         mock_settings.telegram_bot_token = ""
         async with lifespan(FastAPI()):
@@ -197,6 +203,7 @@ async def test_lifespan_starts_and_stops_oauth_refresh_scheduler() -> None:
         patch("backend.app.main.get_manager", return_value=mock_manager),
         patch("backend.app.main.oauth_refresh_scheduler") as mock_oauth,
     ):
+        mock_settings.auth_mode = "multi_user"
         mock_settings.cors_origins = "https://example.com"
         mock_settings.telegram_bot_token = ""
         async with lifespan(FastAPI()):

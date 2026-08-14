@@ -1,4 +1,9 @@
-"""Tests for health check endpoint."""
+"""Tests for the detailed health endpoint.
+
+``/api/health`` (single-user, OSS-owned) answers the same status
+question. This one adds process uptime, which is what tells "still
+degraded" apart from "just restarted".
+"""
 
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
@@ -11,12 +16,11 @@ from backend.app.models import Subscription
 class TestHealthEndpoint:
     def test_healthy_response(self, client: TestClient, test_subscription: Subscription) -> None:
         """Health endpoint should return healthy when DB is reachable."""
-        resp = client.get("/api/premium-health")
+        resp = client.get("/api/health/detail")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "healthy"
         assert data["database"] == "connected"
-        assert data["version"] == "premium"
         assert "uptime_seconds" in data
         assert "timestamp" in data
 
@@ -35,7 +39,7 @@ class TestHealthEndpoint:
 
         app.dependency_overrides[get_async_db] = _broken_get_async_db
         try:
-            resp = client.get("/api/premium-health")
+            resp = client.get("/api/health/detail")
         finally:
             del app.dependency_overrides[get_async_db]
 
