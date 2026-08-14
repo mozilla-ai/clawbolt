@@ -122,6 +122,11 @@ Pair `async_db` with the `async_test_user` fixture, which inserts the test user 
 
 Put a test there when it exercises sign-in, the admin console, quotas, or operator monitoring. Everything else belongs in `tests/`, where the app is single-user.
 
+Two things that suite gets wrong easily, both of which surface as a foreign-key violation or a hung `TRUNCATE` rather than as anything that names the cause:
+
+- **Flush a `User` before its dependent rows.** None of the multi-user models declares an ORM relationship to `User`, so a single flush orders the INSERTs by mapper sort key, which puts `Subscription` first. See the note on the model.
+- **Set `auth_mode` when you patch `settings` wholesale.** The lifespan and `create_app()` both read it, and a bare `MagicMock` compares unequal to every string, so the multi-user branches silently do not run.
+
 ## Backwards Compatibility
 
 Until this project has its first production release, you do not need to be concerned about backwards compatible changes.
