@@ -15,6 +15,7 @@ from backend.app.agent.approval import cleanup_orphaned_approvals
 from backend.app.agent.compaction_recovery import recover_pending_compactions
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.agent.inbound_recovery import recover_orphan_inbound_messages
+from backend.app.auth.dependencies import validate_auth_mode
 from backend.app.bus import message_bus
 from backend.app.channels import get_manager, register_channel
 from backend.app.channels.bluebubbles import BlueBubblesChannel
@@ -228,6 +229,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
     await _enforce_single_channel()
     validate_imessage_backend()
+    validate_auth_mode()
     log_config_warnings()
 
     # Warm the Intuit discovery document cache so QuickBooks OAuth
