@@ -1603,13 +1603,6 @@ class SharedDataExportSummary(BaseModel):
     # here lines up with the other time-bucketed counts in this rollup
     # (heartbeats_total, message_count, llm_calls_total).
     reports_total: int
-    # Point-in-time count of rows in the heartbeat_items table for this
-    # user, NOT scoped to the window. Zero means the Phase-1 heartbeat
-    # LLM has nothing to evaluate, so every cycle skips, useful signal
-    # for "why is the agent never proactive?". The full row contents
-    # are not in this schema yet because OSS lacks a HeartbeatItem ORM
-    # model; surface the count via raw SQL until the model lands.
-    heartbeat_directives_count: int
 
 
 class SharedDataExportResponse(BaseModel):
@@ -1619,9 +1612,7 @@ class SharedDataExportResponse(BaseModel):
     * ``user``: identity + profile config (timezone, channel, consent
       timestamp).
     * ``window``: the date range applied to time-windowed sub-resources.
-    * ``summary``: the aggregate-counts rollup, including
-      ``heartbeat_directives_count`` for "is this user even configured
-      to receive proactive messages?".
+    * ``summary``: the aggregate-counts rollup.
     * ``conversations``: per-session metadata for sessions active in
       the window (no bodies; bodies live in ``turns`` if requested).
     * ``heartbeat_logs``: per-event rows including PII-redacted

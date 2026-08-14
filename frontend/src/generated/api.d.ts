@@ -4180,9 +4180,7 @@ export interface components {
          *     * ``user``: identity + profile config (timezone, channel, consent
          *       timestamp).
          *     * ``window``: the date range applied to time-windowed sub-resources.
-         *     * ``summary``: the aggregate-counts rollup, including
-         *       ``heartbeat_directives_count`` for "is this user even configured
-         *       to receive proactive messages?".
+         *     * ``summary``: the aggregate-counts rollup.
          *     * ``conversations``: per-session metadata for sessions active in
          *       the window (no bodies; bodies live in ``turns`` if requested).
          *     * ``heartbeat_logs``: per-event rows including PII-redacted
@@ -4264,8 +4262,6 @@ export interface components {
             tool_calls_top: components["schemas"]["SharedDataExportTopTool"][];
             /** Reports Total */
             reports_total: number;
-            /** Heartbeat Directives Count */
-            heartbeat_directives_count: number;
         };
         /**
          * SharedDataExportTopTool
@@ -7817,7 +7813,7 @@ export interface operations {
     export_shared_data_user_api_admin_shared_data_users__user_id__export_get: {
         parameters: {
             query?: {
-                /** @description Window size in days, ending now. Scopes the time-bucketed subresources (conversations, heartbeat-logs, compaction-events, LLM-usage, reports, and the tool-call rollup). Identity, profile, memory, and the configured-directives count (``heartbeat_directives_count``) are point-in-time and not scoped by the window. */
+                /** @description Window size in days, ending now. Scopes the time-bucketed subresources (conversations, heartbeat-logs, compaction-events, LLM-usage, reports, and the tool-call rollup). Identity, profile, and memory are point-in-time and not scoped by the window. */
                 days?: number;
                 /** @description When true, attach turn-grouped transcripts for every conversation in the window. Off by default because turns are expensive both to compute and to ship; flip on when you want full body content. */
                 include_turns?: boolean;
