@@ -299,6 +299,8 @@ The agent gets one specialist tool here: `supplier_search_products`, which retur
 
 Everything in this section is inert unless `AUTH_MODE=multi_user`. That mode turns one process into a hosted, multi-tenant deployment: users sign in with Google, sessions are JWTs, each tenant gets its own message and token quota, admins get a console at `/app/admin`, and the operator gets health probes and error alerts by email. A single-user self-host can skip the whole section.
 
+The operator runbook for the alerting and probe stack is [Monitoring and alerting](./monitoring.md).
+
 Two things behave differently in this mode beyond the settings below. Channel senders are approved by linking a channel to an account (a `channel_routes` row) rather than by the `*_ALLOWED_NUMBERS` env vars, which are not read. And FastAPI's `/docs`, `/redoc`, and `/openapi.json` are not served, because `/docs` is the SPA's user guide.
 
 ### Sign-in

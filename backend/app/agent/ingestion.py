@@ -163,18 +163,19 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
 
     1. **Channel route exists** -- the sender has messaged before on this
        channel.  Return the linked user immediately.  This is the common
-       path for both OSS and premium.
+       path in both auth modes.
 
-    2. **Single-tenant reuse (OSS only)** -- exactly one user exists and
-       ``settings.premium_plugin`` is not set.  Link the new channel to
-       the existing user so that sessions from every channel are visible
-       in the dashboard.  Skipped in premium mode to prevent cross-tenant
-       linking.
+    2. **Single-tenant reuse (``single_user`` only)** -- exactly one user
+       exists and the deployment is single-tenant.  Link the new channel
+       to the existing user so that sessions from every channel are
+       visible in the dashboard.  Skipped under ``multi_user``, where an
+       unrecognized sender is a stranger rather than the operator on a
+       new channel, and linking would hand them another tenant's account.
 
-    3. **Sender ID matches an existing user PK (premium only)** -- the
-       webchat sends ``sender_id = user.id`` (the UUID primary key).
+    3. **Sender ID matches an existing user PK (``multi_user`` only)** --
+       the webchat sends ``sender_id = user.id`` (the UUID primary key).
        Link the existing user to this channel and provision defaults.
-       This avoids creating a duplicate account when a premium user
+       This avoids creating a duplicate account when a signed-in user
        first opens the webchat.
 
     If none of the above match, a new ``User`` and ``ChannelRoute`` are
@@ -228,12 +229,14 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 db.expunge(user)
                 return user
 
-        # Reuse the sole existing user (single-tenant OSS) so sessions from
-        # every channel are visible in the dashboard.  Skip this in
-        # multi-tenant (premium) mode to avoid linking a new sender's
-        # messages to an existing user's account.
+        # Reuse the sole existing user (single-tenant) so sessions from
+        # every channel are visible in the dashboard.  Gated on the auth
+        # mode itself: under ``multi_user`` this would link a new sender's
+        # messages to whichever account happens to be the only one, which
+        # is a cross-tenant leak on a deployment early enough to have one
+        # user.
         all_users = (await db.execute(select(User))).scalars().all()
-        if len(all_users) == 1 and not settings.premium_plugin:
+        if len(all_users) == 1 and settings.auth_mode == "single_user":
             user = all_users[0]
             logger.debug("_get_or_create_user: single-tenant reuse -> user %s", user.id)
             # Remove stale routes for this user+channel before adding the new one.
@@ -256,7 +259,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             db.expunge(user)
             return user
 
-        # In premium mode the webchat sends sender_id = user.id (the PK).
+        # Under multi_user the webchat sends sender_id = user.id (the PK).
         # Link the existing user to this channel instead of creating a
         # duplicate account.
         existing = (await db.execute(select(User).filter_by(id=sender_id))).scalar_one_or_none()
