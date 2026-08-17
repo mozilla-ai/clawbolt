@@ -7,11 +7,10 @@ import-time timestamp, so we do not depend on commit env vars being stamped
 to detect a deploy. The commit / version fields are display-only.
 
 The ``premium_*`` fields describe the deploy wrapper: mozilla.ai's hosted
-deployment builds this repo inside ``clawbolt-premium``, which pins the
-commit it ships in ``OSS_REF`` / ``OSS_VERSION`` and installs itself as the
-``clawbolt-premium`` distribution. A plain self-host has neither, so both
-fields report their unknown values and the admin UI renders the OSS side
-only.
+deployment builds this repo inside ``clawbolt-premium``, which stamps the
+commit it ships into ``OSS_REF`` / ``OSS_VERSION`` and its own release into
+``PREMIUM_VERSION``. A plain self-host has none of them, so both fields
+report their unknown values and the admin UI renders the OSS side only.
 """
 
 from __future__ import annotations
@@ -47,6 +46,16 @@ _OSS_VERSION_CANDIDATES = (
     Path.cwd() / "OSS_VERSION",
 )
 
+# The wrapper's own release version, stamped next to the two files above.
+# It used to be read from the installed ``clawbolt-premium`` distribution,
+# but the wrapper stopped shipping a Python package once the last of its
+# code moved into this repo, so the number travels as a file like the rest
+# of the build metadata.
+_PREMIUM_VERSION_CANDIDATES = (
+    Path("/app/PREMIUM_VERSION"),
+    Path.cwd() / "PREMIUM_VERSION",
+)
+
 
 def _read_first_nonempty(candidates: tuple[Path, ...], default: str) -> str:
     for candidate in candidates:
@@ -61,6 +70,11 @@ def _read_first_nonempty(candidates: tuple[Path, ...], default: str) -> str:
 
 @lru_cache(maxsize=1)
 def _premium_version() -> str:
+    from_file = _read_first_nonempty(_PREMIUM_VERSION_CANDIDATES, default="")
+    if from_file:
+        return from_file
+    # Wrapper images built before the file existed still install the
+    # package. Drop this branch once no such image can be deployed.
     try:
         return _pkg_version("clawbolt-premium")
     except PackageNotFoundError:

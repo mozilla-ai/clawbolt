@@ -148,7 +148,7 @@ class TestGetCurrentAdmin:
     ) -> None:
         """ADMIN_USER_IDS no longer grants admin at request time.
 
-        Operators must run ``python -m clawbolt_premium promote-env-admins`` to
+        Operators must run ``python -m backend.app.cli promote-env-admins`` to
         migrate these users into ``Subscription.role='admin'``. Until they do
         (or even if they never remove the env var), the env var is ignored;
         admin grants live exclusively in the database.

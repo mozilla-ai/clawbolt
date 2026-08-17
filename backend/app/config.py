@@ -80,7 +80,6 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://localhost:8000"
     jwt_secret: str = "change-me-in-production"
     jwt_expiry_minutes: int = Field(default=15, ge=1)
-    premium_plugin: str | None = None
     # Who the app authenticates, and the deployment's tenancy switch.
     #
     # "single_user" is the self-hosted default: no credentials, every

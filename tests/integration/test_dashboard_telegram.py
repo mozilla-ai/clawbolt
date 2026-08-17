@@ -320,10 +320,10 @@ class TestMultiChannelSingleTenant:
             assert count == 1
 
 
-class TestPremiumWebchatIdentity:
-    """Premium webchat sends sender_id = user.id (the PK).
+class TestMultiUserWebchatIdentity:
+    """Under multi_user the webchat sends sender_id = user.id (the PK).
 
-    Regression test for the bug where premium webchat messages disappeared
+    Regression test for the bug where hosted webchat messages disappeared
     because _get_or_create_user created a phantom duplicate user instead
     of linking to the existing JWT-authenticated user.
     """
@@ -337,11 +337,8 @@ class TestPremiumWebchatIdentity:
             await db.refresh(user)
             original_id = user.id
 
-        # Premium mode: sender_id is the user's PK (UUID)
-        with patch(
-            "backend.app.agent.ingestion.settings.premium_plugin",
-            "clawbolt_premium.plugin",
-        ):
+        # multi_user: sender_id is the user's PK (UUID)
+        with patch("backend.app.agent.ingestion.settings.auth_mode", "multi_user"):
             resolved = await _get_or_create_user("webchat", original_id)
 
         assert resolved.id == original_id
@@ -360,10 +357,7 @@ class TestPremiumWebchatIdentity:
             await db.refresh(user)
             original_id = user.id
 
-        with patch(
-            "backend.app.agent.ingestion.settings.premium_plugin",
-            "clawbolt_premium.plugin",
-        ):
+        with patch("backend.app.agent.ingestion.settings.auth_mode", "multi_user"):
             await _get_or_create_user("webchat", original_id)
 
         # A ChannelRoute should now exist
@@ -387,29 +381,23 @@ class TestPremiumWebchatIdentity:
             await db.refresh(user)
             original_id = user.id
 
-        with patch(
-            "backend.app.agent.ingestion.settings.premium_plugin",
-            "clawbolt_premium.plugin",
-        ):
+        with patch("backend.app.agent.ingestion.settings.auth_mode", "multi_user"):
             first = await _get_or_create_user("webchat", original_id)
             second = await _get_or_create_user("webchat", original_id)
 
         assert first.id == second.id == original_id
 
-    async def test_premium_skips_single_tenant_reuse(self) -> None:
-        """In premium mode, a new sender should NOT reuse the sole existing user."""
+    async def test_multi_user_skips_single_tenant_reuse(self) -> None:
+        """Under multi_user, a new sender must NOT reuse the sole existing user."""
         async with db_session_async() as db:
-            user = User(user_id="existing_premium_user@example.com")
+            user = User(user_id="existing_hosted_user@example.com")
             db.add(user)
             await db.commit()
             await db.refresh(user)
             existing_id = user.id
 
         # A truly new sender (not matching any PK) should create a new user
-        with patch(
-            "backend.app.agent.ingestion.settings.premium_plugin",
-            "clawbolt_premium.plugin",
-        ):
+        with patch("backend.app.agent.ingestion.settings.auth_mode", "multi_user"):
             new_user = await _get_or_create_user("telegram", "999888777")
 
         assert new_user.id != existing_id

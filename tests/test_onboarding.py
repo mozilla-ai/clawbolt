@@ -1531,7 +1531,7 @@ async def test_auto_exit_does_not_fire_without_timezone(
 async def test_oauth_user_provisioned_on_first_chat() -> None:
     """User created via OAuth (no provision_user call) should be provisioned on first chat.
 
-    Regression test: premium creates User rows during Google OAuth signup
+    Regression test: multi_user creates User rows during Google OAuth signup
     via UserStore.create(), which does NOT call provision_user(). When the
     user then sends their first webchat message, _get_or_create_user()
     found the existing user by PK but returned it without provisioning.
@@ -1558,9 +1558,9 @@ async def test_oauth_user_provisioned_on_first_chat() -> None:
     bootstrap_path = Path(app_settings.data_dir) / "oauth-premium-user" / "BOOTSTRAP.md"
     assert not bootstrap_path.exists()
 
-    # Simulate premium webchat: sender_id = user.id (the PK)
-    # Enable premium_plugin so the single-tenant reuse path is skipped
-    with patch.object(app_settings, "premium_plugin", "clawbolt_premium.plugin"):
+    # Simulate hosted webchat: sender_id = user.id (the PK)
+    # multi_user so the single-tenant reuse path is skipped
+    with patch.object(app_settings, "auth_mode", "multi_user"):
         resolved = await _get_or_create_user("webchat", "oauth-premium-user")
 
     # User should now be provisioned

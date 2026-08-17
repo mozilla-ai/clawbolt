@@ -58,6 +58,44 @@ class TestPremiumCommit:
         assert version_module._premium_commit() == "sha-with-whitespace"
 
 
+class TestPremiumVersion:
+    def test_reads_first_existing_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        missing = tmp_path / "missing-PREMIUM_VERSION"
+        present = tmp_path / "PREMIUM_VERSION"
+        present.write_text("0.8.0\n")
+        monkeypatch.setattr(
+            version_module,
+            "_PREMIUM_VERSION_CANDIDATES",
+            (missing, present),
+        )
+        assert version_module._premium_version() == "0.8.0"
+
+    def test_falls_back_to_package_metadata(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """No file means an older wrapper image, which installs the package."""
+        monkeypatch.setattr(
+            version_module,
+            "_PREMIUM_VERSION_CANDIDATES",
+            (tmp_path / "missing",),
+        )
+        monkeypatch.setattr(version_module, "_pkg_version", lambda _name: "0.7.67")
+        assert version_module._premium_version() == "0.7.67"
+
+    def test_zero_when_neither_file_nor_package(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A plain self-host has no wrapper at all, which the UI renders as absent."""
+        monkeypatch.setattr(
+            version_module,
+            "_PREMIUM_VERSION_CANDIDATES",
+            (tmp_path / "missing",),
+        )
+        assert version_module._premium_version() == "0.0.0"
+
+
 class TestOSSCommit:
     def test_env_override_wins_over_file(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
