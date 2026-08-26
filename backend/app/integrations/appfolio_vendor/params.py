@@ -133,13 +133,6 @@ class AppFolioCreateInvoiceParams(BaseModel):
             " empty to let AppFolio generate one."
         ),
     )
-    media_refs: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Optional photo or document references from the conversation"
-            " to attach as supporting evidence (same shape as appfolio_add_note)."
-        ),
-    )
 
 
 class AppFolioUploadInvoicePdfParams(BaseModel):

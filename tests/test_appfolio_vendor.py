@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1367,8 +1368,6 @@ def _patch_request(response: httpx.Response) -> Any:
 
 @pytest.mark.asyncio()
 async def test_create_invoice_serializes_line_items() -> None:
-    from backend.app.integrations.appfolio_vendor.service import FileUpload
-
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={"id": "inv-1"})
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -1386,7 +1385,6 @@ async def test_create_invoice_serializes_line_items() -> None:
                 "address_1": "123 Example Street",
             },
             reference_number="REF-001",
-            files=[FileUpload(name="receipt.pdf", data=b"%PDF-fake")],
         )
     args, kwargs = client.request.call_args
     assert args[0] == "POST"
@@ -1399,7 +1397,39 @@ async def test_create_invoice_serializes_line_items() -> None:
     assert payload["line_items"][0]["amount"] == 75.0
     assert payload["address"]["address_1"] == "123 Example Street"
     assert payload["reference_number"] == "REF-001"
-    assert len(payload["files"]) == 1
+    # AppFolio 500s on a body carrying both ``line_items`` and ``files``.
+    assert "files" not in payload
+
+
+@pytest.mark.asyncio()
+async def test_create_invoice_has_no_files_parameter() -> None:
+    """Regression: the line-itemized invoice path must not carry files.
+
+    Production took six line-items-only invoices successfully, then
+    answered HTTP 500 with an empty body three times running once a
+    single ``files`` entry rode along. The same photo bytes had POSTed
+    fine to the work-order notes endpoint 101 seconds before the first
+    failure, so the file itself was never the problem: AppFolio treats
+    ``line_items`` and ``files`` as mutually exclusive on
+    ``POST /maintenance/api/invoices``.
+
+    Pin the constraint at the signature so a future caller cannot
+    rebuild the rejected shape. ``upload_invoice_pdf`` stays the
+    files-only path.
+    """
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+
+    assert "files" not in inspect.signature(AppFolioVendorService.create_invoice).parameters
+
+    service = AppFolioVendorService(_credential(), api_base="https://api.test")
+    ctx = MagicMock()
+    ctx.user.id = "u1"
+    ctx.downloaded_media = []
+    tools = build_invoice_tools(service, ctx)
+    create = next(t for t in tools if t.name == "appfolio_create_invoice")
+
+    assert "media_refs" not in inspect.signature(create.function).parameters
+    assert "media_refs" not in create.params_model.model_fields
 
 
 @pytest.mark.asyncio()

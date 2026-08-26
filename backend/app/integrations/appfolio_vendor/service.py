@@ -970,7 +970,6 @@ class AppFolioVendorService:
         line_items: list[dict[str, Any]],
         address: dict[str, Any] | None = None,
         reference_number: str = "",
-        files: list[FileUpload] | None = None,
     ) -> Any:
         """Create a line-itemized invoice tied to a work order.
 
@@ -991,6 +990,13 @@ class AppFolioVendorService:
         property block. ``reference_number`` is the vendor-side invoice
         number (the SPA auto-suggests one based on the WO).
 
+        There is deliberately no ``files`` parameter. AppFolio answers
+        HTTP 500 with an empty body when one request carries both
+        ``line_items`` and ``files``; :meth:`upload_invoice_pdf` is the
+        files-only path, and photos that accompany a line-itemized
+        invoice belong on a work-order note. See the module docstring of
+        ``invoices.py`` for the production evidence.
+
         ``customer_id`` is optional. Pass ``None`` to resolve the canonical
         property-manager ID from ``/profiles/me``; this is the safe default
         when the agent's only signal is a search response (which can carry
@@ -1007,8 +1013,6 @@ class AppFolioVendorService:
             body["address"] = address
         if reference_number:
             body["reference_number"] = reference_number
-        if files:
-            body["files"] = _encode_files(files)
         return await self.post("/maintenance/api/invoices", json_body=body)
 
     async def upload_invoice_pdf(

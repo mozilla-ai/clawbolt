@@ -16,7 +16,7 @@ AppFolio Vendor Portal.
 | appfolio_list_notes | List notes on a work order | Auto |
 | appfolio_add_note | Add a note (with optional photos) | Ask |
 | appfolio_update_note | Edit an existing note | Ask |
-| appfolio_create_invoice | Build a line-itemized invoice with photos | Ask |
+| appfolio_create_invoice | Build a line-itemized invoice (no photos) | Ask |
 | appfolio_upload_invoice_pdf | Upload a pre-built invoice PDF | Ask |
 
 Common status codes: `0` = new, `4` = in progress, `8` = completed.
@@ -34,6 +34,14 @@ reused without re-searching.
 
 See the ``analyze_photo`` tool description for the ``media_XXXXXX`` handle
 convention. AppFolio receives photo bytes inline as base64 in the JSON body.
+
+`appfolio_create_invoice` takes no photos. AppFolio rejects an invoice
+that carries line items and files in one request, so a receipt or a
+photo of the finished work goes on the work order with
+`appfolio_add_note`. Post the note first, then the invoice, and tell the
+user where each landed. `appfolio_upload_invoice_pdf` is the one invoice
+path that carries files, and it replaces line items rather than
+accompanying them.
 
 ## Connecting
 
