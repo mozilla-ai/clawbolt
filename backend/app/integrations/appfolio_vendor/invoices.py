@@ -3,12 +3,18 @@
 Two write paths share one endpoint:
 
 * ``appfolio_create_invoice`` — line-itemized invoice built inside the
-  portal. Supports inline photo attachments via ``media_refs``.
+  portal. Line items only, never files (see below).
 * ``appfolio_upload_invoice_pdf`` — single invoice constructed from one
   or more pre-built PDFs the user already has.
 
 Both bodies POST to ``/maintenance/api/invoices``; AppFolio
-disambiguates by the presence of ``lineItems`` vs ``files`` only.
+disambiguates by the presence of ``line_items`` vs ``files`` only. The
+two are mutually exclusive: a body carrying both draws HTTP 500 with an
+empty response body, confirmed in production where six line-items-only
+invoices succeeded and three otherwise identical bodies with one
+``files`` entry all failed. Photos that belong
+with an invoice go up through ``appfolio_add_note``, which takes the same
+bytes on an endpoint that accepts them.
 """
 
 from __future__ import annotations
@@ -284,7 +290,6 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         work_order_id: str,
         line_items: list[dict[str, Any]],
         reference_number: str = "",
-        media_refs: list[str] | None = None,
     ) -> ToolResult:
         # Pydantic-coerce raw dicts the LLM emits into the typed shape.
         try:
@@ -305,10 +310,6 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
-        files_or_err = await resolve_staged_files(ctx, media_refs or [])
-        if isinstance(files_or_err, ToolResult):
-            return files_or_err
-        files = files_or_err
         address_or_err = await _fetch_invoice_address(service, customer_id, work_order_id)
         if isinstance(address_or_err, ToolResult):
             return address_or_err
@@ -320,7 +321,6 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
                 line_items=_line_items_to_payload(typed_items),
                 address=address or None,
                 reference_number=reference_number,
-                files=files or None,
             )
         except Exception as exc:
             return service_error_to_tool_result("creating invoice", exc)
@@ -329,16 +329,15 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         if isinstance(result, dict):
             invoice_id = str(result.get("id") or result.get("invoice", {}).get("id") or "")
         total = _line_items_total(typed_items)
-        photo_phrase = f" with {len(files)} attachment(s)" if files else ""
         invoice_phrase = f" | invoice Id: {invoice_id}" if invoice_id else ""
         return ToolResult(
             content=(
                 f"ok | work order: #{work_order_id} | total: ${total:.2f}"
-                f" | line items: {len(typed_items)}{photo_phrase}{invoice_phrase}"
+                f" | line items: {len(typed_items)}{invoice_phrase}"
             ),
             receipt=ToolReceipt(
                 action="Created AppFolio invoice",
-                target=f"#{work_order_id} ${total:.2f}{photo_phrase}",
+                target=f"#{work_order_id} ${total:.2f}",
             ),
         )
 
@@ -395,8 +394,8 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
         Tool(
             name=ToolName.APPFOLIO_CREATE_INVOICE,
             description=(
-                "Build a line-itemized invoice on an AppFolio work order"
-                " (with optional photo attachments)."
+                "Build a line-itemized invoice on an AppFolio work order."
+                " Cannot carry photos; attach those with appfolio_add_note."
             ),
             function=appfolio_create_invoice,
             params_model=AppFolioCreateInvoiceParams,
@@ -404,6 +403,9 @@ def build_invoice_tools(service: AppFolioVendorService, ctx: ToolContext) -> lis
             usage_hint=(
                 "Confirm each line item's description, quantity, and amount"
                 " with the user before submitting; this is a billing action."
+                " To put a receipt or photo on the record, call"
+                " appfolio_add_note on the same work order; AppFolio rejects"
+                " an invoice that carries line items and files together."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
