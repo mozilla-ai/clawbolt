@@ -1617,7 +1617,7 @@ def test_address_from_work_order_unwraps_camelcase_envelope() -> None:
     """Regression: production WO GET returns ``{"workOrder": {...}}``.
 
     The diagnostic warning from the previous deploy logged
-    ``top_keys=['workOrder']`` for jesse's failing invoice. Pin a
+    ``top_keys=['workOrder']`` for a production user's failing invoice. Pin a
     regression test to that exact envelope key so we don't lose it.
     """
     from backend.app.integrations.appfolio_vendor.invoices import (

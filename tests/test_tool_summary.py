@@ -226,7 +226,7 @@ def test_append_strips_multiple_fabricated_bullets() -> None:
 
 
 def test_append_strips_gmail_fabricated_bullet() -> None:
-    """Regression: Jesse's transcript shipped "- Sent email to X" right next
+    """Regression: a production transcript shipped "- Sent email to X" right next
     to the canonical "- Sent email via Gmail X" because "sent" / "email"
     weren't in the hand-maintained strip vocabulary. After switching to
     auto-derived nouns (and adding "sent" to the global verb set), the

@@ -476,8 +476,9 @@ async def test_create_event_uses_primary_when_id_omitted(
     """When primary_calendar_id is set and the LLM omits calendar_id, the
     tool resolves to the primary instead of erroring on ambiguity. This
     is the case the contractor with crew sub-calendars hits constantly:
-    "add to my calendar" used to fail because Personal/Vinny/Isaac were
-    all enabled and the LLM didn't pick one.
+    "add to my calendar" used to fail because a personal calendar and
+    several per-crew-member calendars were all enabled and the LLM
+    didn't pick one.
     """
     tools = create_calendar_tools(
         cal_service,

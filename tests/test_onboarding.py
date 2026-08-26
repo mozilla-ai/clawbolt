@@ -1058,7 +1058,7 @@ async def test_heuristic_does_not_fire_when_only_name_set_early(
                 "arguments": json.dumps(
                     {
                         "path": "USER.md",
-                        "content": "# User\n\n- Name: Jesse\n",
+                        "content": "# User\n\n- Name: Alice\n",
                     }
                 ),
             },
@@ -1067,7 +1067,7 @@ async def test_heuristic_does_not_fire_when_only_name_set_early(
     text_response = make_text_response("Saved that. What kind of work do you do?")
     mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
-    current_message = StoredMessage(direction="inbound", body="i'm jesse", seq=3)
+    current_message = StoredMessage(direction="inbound", body="i'm alice", seq=3)
     session = SessionState(
         session_id="early-session",
         user_id=user.id,
