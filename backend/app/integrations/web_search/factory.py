@@ -64,8 +64,11 @@ _RESULT_FOOTER = (
     "These are search results and may be out of date. Any figure you repeat "
     "from them needs its source URL and should be given as a ballpark to "
     "confirm, never as a firm quote. A price belongs to the item named in the "
-    "same result: check it matches what was asked for, give the range when "
-    "results disagree, and say you could not find one rather than inferring it."
+    "same result: check it matches what was asked for, and give the range when "
+    "results disagree. If nothing here carries the detail you needed, the query "
+    "was probably too broad and landed on category pages; name the specific "
+    "product and size and search once more before telling the user you could "
+    "not find it. Do not infer a figure from a page that does not state one."
 )
 
 

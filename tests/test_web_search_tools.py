@@ -448,6 +448,18 @@ class TestWebSearchTool:
         assert "never as a firm quote" in result.content
 
     @pytest.mark.asyncio
+    async def test_footer_sends_a_broad_query_back_for_one_retry(self) -> None:
+        """Measured against Brave: "how much does a bucket cost from lowes"
+        returns only category pages and no price, while "Lowes 5 gallon bucket
+        price" returns one cleanly. Without this the agent reports failure on
+        the first phrasing and never reaches the one that works."""
+        tool_fn, _, _ = self._make_tool(results=[_record()])
+        content = (await tool_fn(query="how much does a bucket cost")).content
+
+        assert "too broad" in content
+        assert "search once more" in content
+
+    @pytest.mark.asyncio
     async def test_renders_provider_fields_it_was_never_told_about(self) -> None:
         """The whole point of the pass-through: a field this code has no
         knowledge of still reaches the model."""
