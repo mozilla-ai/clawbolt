@@ -388,9 +388,22 @@ class Settings(BaseSettings):
     servicetitan_auth_base_url: str = "https://auth.servicetitan.io"
     servicetitan_use_fake: bool = True
 
-    # Supplier pricing. Home Depot product search is served through SerpApi, a
-    # licensed search API. Without a key the supplier tools do not load.
-    serpapi_api_key: str = ""  # https://serpapi.com, free tier: 250 searches/month
+    # Web search. One general-purpose search tool covering material prices,
+    # product specs, and code requirements. Without a key the tool does not
+    # load and the agent simply has no search capability.
+    web_search_api_key: str = ""
+    # Selects the backend from the provider registry in the web_search factory.
+    # Brave is the only one implemented today; the seam exists so a second one
+    # is a new module plus a registry entry, not a rewrite of the tool.
+    web_search_provider: str = "brave"
+    # Short by design: this runs inside a live message loop where the user is
+    # waiting, so a slow provider must fail fast rather than hang the reply.
+    web_search_timeout_seconds: float = Field(default=10.0, gt=0)
+    # Absorbs a model's retry-and-reword loop within one conversation. Long
+    # enough to save the duplicate call, short enough that a price checked
+    # twice in a day is fetched twice.
+    web_search_cache_ttl_seconds: int = Field(default=900, ge=0)
+    web_search_max_results: int = Field(default=5, ge=1, le=20)
 
     # OAuth
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks

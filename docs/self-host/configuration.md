@@ -271,13 +271,25 @@ The integration uses passwordless magic-link auth: users paste the URL from thei
 
 ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per tenant. The operator wires the integrator's app-level App Key here; each tenant pastes their own tenant ID, client ID, and client secret through the `connect_servicetitan` tool in chat. Stored credentials are envelope-encrypted at rest. ServiceTitan splits auth and resource traffic across two hosts, so `AUTH_BASE_URL` and `API_BASE_URL` are independent settings.
 
-## Supplier pricing
+## Web search
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERPAPI_API_KEY` | | Required for product search. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
+| `WEB_SEARCH_API_KEY` | | Required. Get one at [brave.com/search/api](https://brave.com/search/api/); the free tier allows 2,000 queries/month |
+| `WEB_SEARCH_PROVIDER` | `brave` | Search backend. `brave` is the only one implemented today |
+| `WEB_SEARCH_TIMEOUT_SECONDS` | `10` | Per-request timeout. Kept short because searches run inside a live message loop |
+| `WEB_SEARCH_CACHE_TTL_SECONDS` | `900` | How long an identical query is served from an in-memory cache, to control cost |
+| `WEB_SEARCH_MAX_RESULTS` | `5` | Results requested per search |
 
-The agent gets one specialist tool here: `supplier_search_products`, which returns prices, ratings, stock, and links by keyword and zip code at Home Depot. Without `SERPAPI_API_KEY` the tool does not load.
+The agent gets one specialist tool here: `web_search`, which takes a natural-language query and returns ranked results with titles, snippets, and source URLs. The agent writes its own queries and uses it for material prices, product specs, building code requirements, and anything else outside its training data.
+
+Without `WEB_SEARCH_API_KEY` the tool is not registered, so it never reaches the model's schema. The agent is told web search is unconfigured and answers from what it knows instead, saying so; nothing else degrades.
+
+Results are search snippets and can be stale. The agent is instructed to cite the source URL for any price or spec it repeats from a search and to frame the figure as a ballpark to confirm rather than a quotable number, since these answers feed customer bids. Store-level pricing, live in-store stock, and retailer SKU lookups are out of scope: a general web search does not provide them.
+
+### Swapping the search provider
+
+The provider seam is one method wide (`search(query, max_results) -> list[SearchResult]`). To add a backend, write a module in `backend/app/integrations/web_search/` satisfying the `SearchProvider` protocol, add it to `_PROVIDERS` in that package's `factory.py`, and point `WEB_SEARCH_PROVIDER` at it. The cache, retry policy, error handling, and result formatting are provider-agnostic and need no changes.
 
 
 ## HTTP timeouts

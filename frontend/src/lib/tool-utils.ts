@@ -17,7 +17,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   quickbooks: 'QuickBooks',
   calendar: 'Google Calendar',
   companycam: 'CompanyCam',
-  supplier_pricing: 'Pricing Tools',
+  web_search: 'Web Search',
   workspace: 'Workspace',
   profile: 'Profile',
   memory: 'Memory',
@@ -57,7 +57,7 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   companycam_create_project: 'Create project',
   companycam_update_project: 'Update project',
   companycam_upload_photo: 'Upload photo',
-  supplier_search_products: 'Search products',
+  web_search: 'Search the web',
 };
 
 export function displayName(name: string): string {

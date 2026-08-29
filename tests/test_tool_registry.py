@@ -64,7 +64,7 @@ EXPECTED_INTEGRATION_MODULES: set[str] = {
     # ``import_module`` patch records before the call returns, so the
     # entry shows up here.
     "backend.app.integrations.servicetitan.factory",
-    "backend.app.integrations.supplier_pricing.factory",
+    "backend.app.integrations.web_search.factory",
 }
 
 

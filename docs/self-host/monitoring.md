@@ -106,7 +106,6 @@ residential host is not an incident.
 | `database` | Calls the `/health` handler | Postgres unreachable |
 | `llm` | Single-token `amessages` call against the primary model | Revoked key, retired model, provider outage |
 | `bluebubbles` | Three checks in order: the channel's `/api/v1/server/info` result, the send-readiness flags in it, then webhook registration | Bridge asleep, rejected password, Mac signed out of iMessage, inbound webhook missing |
-| `supplier_sidecar` | Sidecar `/health` browser round-trip, with no retailer request | Crashed, unreachable, or warming browser |
 | `integration:<name>:<user_id>` | Each factory's `auth_check` per user | Expired refresh token, revoked grant |
 | `integration_check:<user_id>` | Whether that user's sweep answered at all | A stuck or exploding `auth_check`, which leaves every integration under it unknown |
 
@@ -227,27 +226,6 @@ hundred failures on a completely healthy deployment.
 
 The activity log lives in process memory, so a deploy resets it and each
 replica has its own. The alert emails are the durable record.
-
-### Supplier monitoring never searches retailers in the background
-
-The monitor checks the sidecar's browser health endpoint only. It deliberately
-does not replay a fixed Home Depot or Lowe's query: repeated automated searches
-from one cloud egress are themselves bot-detection traffic and can impair real
-user searches. Product searches are exercised by actual user requests, whose
-failures enter the normal application error alerting path.
-
-Set a known-good query if you do want product probes, using a product that must
-return results in the location you operate:
-
-```bash
-HEALTH_PROBE_SUPPLIER_QUERY="2x4 lumber"
-HEALTH_PROBE_SUPPLIER_ZIP="97201"
-```
-
-Each retailer is reported separately. A probe is DOWN if its browser cannot
-warm, its request fails, or its known-good query returns zero rows. Product
-probes run once per hour by default, independently of the five-minute system
-sweep, so health monitoring does not generate bot-like retailer traffic.
 
 ### Per-user integration checks are baseline-silent
 
