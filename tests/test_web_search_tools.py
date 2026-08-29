@@ -21,7 +21,8 @@ from backend.app.agent.tools.base import Tool
 from backend.app.integrations.web_search.brave import BraveSearchProvider, _clean
 from backend.app.integrations.web_search.cache import SearchCache
 from backend.app.integrations.web_search.errors import SearchUnavailableError
-from backend.app.integrations.web_search.protocol import SearchProvider, SearchResult
+from backend.app.integrations.web_search.protocol import SearchProvider
+from backend.app.integrations.web_search.render import render_records
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -87,9 +88,17 @@ class TestClean:
     def test_unescapes_entities(self) -> None:
         assert _clean("3/4&quot; pipe &amp; fittings") == '3/4" pipe & fittings'
 
-    def test_handles_none(self) -> None:
-        """Brave returns null for absent fields, not an empty string."""
-        assert _clean(None) == ""  # type: ignore[arg-type]
+    def test_passes_non_strings_through_untouched(self) -> None:
+        """Cleaning is markup removal, not coercion: numbers, booleans and the
+        nulls Brave sends for absent fields keep their types."""
+        assert _clean(None) is None
+        assert _clean(24.99) == 24.99
+        assert _clean(True) is True
+
+    def test_cleans_nested_objects_and_lists(self) -> None:
+        """Applied by walking the record, so it reaches fields nobody listed."""
+        cleaned = _clean({"product": {"name": "<strong>USG</strong>"}, "extra": ["<em>a</em>"]})
+        assert cleaned == {"product": {"name": "USG"}, "extra": ["a"]}
 
 
 class TestBraveSearchProvider:
@@ -112,10 +121,11 @@ class TestBraveSearchProvider:
 
         assert len(results) == 1
         r = results[0]
-        assert r.title == "1/2 in. Copper Type L Pipe"
-        assert r.url == "https://example.com/copper-type-l"
-        assert r.snippet == "Type L is commonly $1.40-$2.20 per foot."
-        assert r.age == "March 12, 2026"
+        # Passed through with the provider's own key names, markup stripped.
+        assert r["title"] == "1/2 in. Copper Type L Pipe"
+        assert r["url"] == "https://example.com/copper-type-l"
+        assert r["description"] == "Type L is commonly $1.40-$2.20 per foot."
+        assert r["age"] == "March 12, 2026"
 
     @pytest.mark.asyncio
     async def test_sends_the_key_as_a_header_not_a_query_param(self) -> None:
@@ -164,11 +174,69 @@ class TestBraveSearchProvider:
         with _patch_client(client):
             results = await provider.search("test")
 
-        assert results[0].age == "2026-01-15"
+        assert results[0]["page_age"] == "2026-01-15"
 
     @pytest.mark.asyncio
-    async def test_skips_results_with_no_url(self) -> None:
-        """An uncitable result is worse than no result: it invites a bare figure."""
+    async def test_parses_the_structured_product_price(self) -> None:
+        """The price that matters is the one bound to a product name."""
+        provider = BraveSearchProvider(api_key="k")
+        results_json = [
+            {
+                "title": "USG 4.5G Plus-3 Lightweight Joint Compound Blue Lid",
+                "url": "https://example.com/plus3",
+                "description": "d",
+                "product": {
+                    "type": "Product",
+                    "name": "USG 4.5G Plus-3 Lightweight Joint Compound Blue Lid",
+                    "price": "24.99",
+                },
+            }
+        ]
+        client = _mock_client([_make_httpx_response(200, _make_brave_response(results_json))])
+
+        with _patch_client(client):
+            results = await provider.search("blue lid joint compound")
+
+        # The field an allowlist would have dropped, and the reason the
+        # provider seam hands records up unshaped.
+        assert results[0]["product"]["price"] == "24.99"
+        assert results[0]["product"]["name"] == (
+            "USG 4.5G Plus-3 Lightweight Joint Compound Blue Lid"
+        )
+
+    @pytest.mark.asyncio
+    async def test_result_without_a_product_has_no_price(self) -> None:
+        provider = BraveSearchProvider(api_key="k")
+        client = _mock_client([_make_httpx_response(200, _make_brave_response())])
+
+        with _patch_client(client):
+            results = await provider.search("test")
+
+        assert "product" not in results[0]
+
+    @pytest.mark.asyncio
+    async def test_numeric_product_price_is_accepted(self) -> None:
+        """Brave sends the price as a string, but a number must not crash it."""
+        provider = BraveSearchProvider(api_key="k")
+        results_json = [
+            {
+                "title": "t",
+                "url": "https://example.com/a",
+                "description": "d",
+                "product": {"name": "Furring Strip", "price": 2.8},
+            }
+        ]
+        client = _mock_client([_make_httpx_response(200, _make_brave_response(results_json))])
+
+        with _patch_client(client):
+            results = await provider.search("test")
+
+        assert results[0]["product"]["price"] == 2.8
+
+    @pytest.mark.asyncio
+    async def test_keeps_every_record_including_ones_without_a_url(self) -> None:
+        """Pass-through does not judge records. The sourcing rule in the result
+        footer is what stops an unlinked figure being quoted."""
         provider = BraveSearchProvider(api_key="k")
         results_json = [
             {"title": "no link", "url": "", "description": "d"},
@@ -179,7 +247,7 @@ class TestBraveSearchProvider:
         with _patch_client(client):
             results = await provider.search("test")
 
-        assert [r.url for r in results] == ["https://example.com/ok"]
+        assert [r["url"] for r in results] == ["", "https://example.com/ok"]
 
     @pytest.mark.asyncio
     async def test_empty_payload_yields_no_results(self) -> None:
@@ -323,19 +391,21 @@ class TestSearchCache:
 # ---------------------------------------------------------------------------
 
 
-def _result(
-    title: str = "Copper Pipe",
-    url: str = "https://example.com/copper",
-    snippet: str = "$1.85 per foot",
-    age: str = "",
-) -> SearchResult:
-    return SearchResult(title=title, url=url, snippet=snippet, age=age)
+def _record(**overrides: object) -> dict:
+    """A provider record, shaped like a live Brave web result."""
+    base: dict = {
+        "title": "Copper Pipe",
+        "url": "https://example.com/copper",
+        "description": "$1.85 per foot",
+    }
+    base.update(overrides)
+    return base
 
 
 class TestWebSearchTool:
     def _make_tool(
         self,
-        results: list[SearchResult] | None = None,
+        results: list[dict] | None = None,
         side_effect: Exception | None = None,
     ) -> tuple:
         provider = AsyncMock(spec=BraveSearchProvider)
@@ -357,35 +427,49 @@ class TestWebSearchTool:
     async def test_happy_path_includes_every_source_url(self) -> None:
         tool_fn, _, _ = self._make_tool(
             results=[
-                _result(title="A", url="https://example.com/a"),
-                _result(title="B", url="https://example.com/b"),
+                _record(title="A", url="https://example.com/a"),
+                _record(title="B", url="https://example.com/b"),
             ]
         )
         result = await tool_fn(query="copper pipe price")
 
         assert not result.is_error
-        assert "Source: https://example.com/a" in result.content
-        assert "Source: https://example.com/b" in result.content
+        assert "url: https://example.com/a" in result.content
+        assert "url: https://example.com/b" in result.content
 
     @pytest.mark.asyncio
     async def test_result_carries_the_staleness_caveat(self) -> None:
         """The framing rides with the data, not only in the system prompt: a
         cached snippet otherwise reaches the model as undated plain text."""
-        tool_fn, _, _ = self._make_tool(results=[_result()])
+        tool_fn, _, _ = self._make_tool(results=[_record()])
         result = await tool_fn(query="copper pipe price")
 
         assert "ballpark" in result.content
-        assert "never a firm quote" in result.content
+        assert "never as a firm quote" in result.content
 
     @pytest.mark.asyncio
-    async def test_renders_publish_date_when_present(self) -> None:
-        tool_fn, _, _ = self._make_tool(results=[_result(age="March 12, 2026")])
+    async def test_renders_provider_fields_it_was_never_told_about(self) -> None:
+        """The whole point of the pass-through: a field this code has no
+        knowledge of still reaches the model."""
+        tool_fn, _, _ = self._make_tool(
+            results=[
+                _record(
+                    age="March 12, 2026",
+                    product={"name": "Blue Lid Plus 3", "price": "24.99"},
+                    some_future_brave_field="surfaced anyway",
+                )
+            ]
+        )
         result = await tool_fn(query="q")
-        assert "Published: March 12, 2026" in result.content
+
+        assert "age: March 12, 2026" in result.content
+        assert "product.name: Blue Lid Plus 3" in result.content
+        assert "product.price: 24.99" in result.content
+        assert "some_future_brave_field: surfaced anyway" in result.content
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_the_api(self) -> None:
-        tool_fn, provider, _ = self._make_tool(results=[_result(title="Cached")])
+        tool_fn, provider, _ = self._make_tool(results=[_record(title="Cached")])
 
         await tool_fn(query="copper pipe")
         result = await tool_fn(query="copper pipe")
@@ -396,7 +480,7 @@ class TestWebSearchTool:
 
     @pytest.mark.asyncio
     async def test_cache_hit_ignores_casing_and_spacing(self) -> None:
-        tool_fn, provider, _ = self._make_tool(results=[_result()])
+        tool_fn, provider, _ = self._make_tool(results=[_record()])
 
         await tool_fn(query="copper pipe")
         await tool_fn(query="  Copper   Pipe  ")
@@ -480,7 +564,7 @@ class TestWebSearchTool:
         tool_fn = _create_web_search_tools(provider, SearchCache())[0].function
         assert (await tool_fn(query="test")).is_error
 
-        provider.search = AsyncMock(return_value=[_result(title="Recovered")])
+        provider.search = AsyncMock(return_value=[_record(title="Recovered")])
         result = await tool_fn(query="test")
 
         assert not result.is_error
@@ -495,10 +579,12 @@ class TestWebSearchToolDefinition:
         provider.name = "brave"
         return _create_web_search_tools(provider, SearchCache())[0]
 
-    def test_description_points_the_model_at_the_intended_uses(self) -> None:
+    def test_description_stays_generic(self) -> None:
+        """An agent that sees a web search tool works out what it is good for.
+        Enumerating use cases spends prompt tokens to say the obvious."""
         description = self._tool().description.lower()
-        for topic in ("price", "spec", "code"):
-            assert topic in description
+        assert "search the web" in description
+        assert "source url" in description
 
     def test_usage_hint_requires_url_and_ballpark_framing(self) -> None:
         """The prompt-side guarantee: a search-sourced price is never quotable
@@ -506,15 +592,55 @@ class TestWebSearchToolDefinition:
         hint = self._tool().usage_hint.lower()
         assert "source url" in hint
         assert "ballpark" in hint
-        assert "never as a firm quote" in hint
+        assert "never a firm quote" in hint
 
     def test_usage_hint_scopes_the_caveat_to_search_results(self) -> None:
         """QuickBooks totals and the user's own rate card are exact. Hedging
         those would make the assistant useless for the numbers it does know."""
-        assert "quickbooks" in self._tool().usage_hint.lower()
+        assert "connected integrations" in self._tool().usage_hint.lower()
 
     def test_read_only_tool_declares_no_concurrency_group(self) -> None:
         assert self._tool().concurrency_group is None
+
+
+class TestRendering:
+    def test_renders_every_scalar_leaf(self) -> None:
+        out = render_records([{"a": "one", "n": 2, "flag": True}])
+        assert "a: one" in out
+        assert "n: 2" in out
+        assert "flag: True" in out
+
+    def test_dots_nested_keys_and_indexes_lists(self) -> None:
+        out = render_records([{"product": {"offers": [{"priceCurrency": "USD"}]}}])
+        assert "product.offers[0].priceCurrency: USD" in out
+
+    def test_drops_only_empty_values(self) -> None:
+        """Null and empty string carry nothing. Everything else is kept."""
+        out = render_records([{"kept": "yes", "zero": 0, "blank": "", "missing": None}])
+        assert "kept: yes" in out
+        assert "zero: 0" in out
+        assert "blank" not in out
+        assert "missing" not in out
+
+    def test_keeps_image_urls_like_every_other_field(self) -> None:
+        """No denylist. A field the provider sent is a field the model sees."""
+        out = render_records([{"thumbnail": {"src": "https://img.example.com/x.png"}}])
+        assert "thumbnail.src: https://img.example.com/x.png" in out
+
+    def test_never_truncates_a_long_value(self) -> None:
+        """The failure this guards against is a price or spec silently going
+        missing from a result the provider did return."""
+        out = render_records([{"description": "x" * 9000}])
+        assert "x" * 9000 in out
+        assert "truncated" not in out
+
+    def test_renders_every_result_it_is_given(self) -> None:
+        many = [{"description": "y" * 3000, "url": f"https://example.com/{i}"} for i in range(12)]
+        out = render_records(many)
+        assert "[12]" in out
+        assert "omitted" not in out
+        for i in range(12):
+            assert f"url: https://example.com/{i}" in out
 
 
 # ---------------------------------------------------------------------------
@@ -571,8 +697,8 @@ class TestProviderResolution:
             name = "stub"
             display_name = "Stub"
 
-            async def search(self, query: str, *, max_results: int = 5) -> list[SearchResult]:
-                return [_result(title="from stub")]
+            async def search(self, query: str, *, max_results: int = 5) -> list[dict]:
+                return [_record(title="from stub")]
 
         with (
             patch.dict(

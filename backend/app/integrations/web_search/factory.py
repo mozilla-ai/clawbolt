@@ -4,8 +4,8 @@ One tool, one provider seam. The provider is chosen by
 ``WEB_SEARCH_PROVIDER`` from the ``_PROVIDERS`` registry below, so adding a
 backend means writing a module that satisfies ``SearchProvider`` and adding one
 entry here. Nothing above this line is provider-specific: the cache, the retry
-policy, the error mapping, and the result formatting all operate on
-``SearchResult``.
+policy, the error mapping, and the rendering all operate on plain records whose
+field names the provider owns.
 
 Deliberately general. Retailer-specific search (store-level pricing, in-store
 stock, SKU normalization) is out of scope: it needs per-retailer clients and
@@ -28,7 +28,8 @@ from backend.app.config import settings
 from backend.app.integrations.web_search.brave import BraveSearchProvider
 from backend.app.integrations.web_search.cache import SearchCache
 from backend.app.integrations.web_search.errors import SearchUnavailableError
-from backend.app.integrations.web_search.protocol import SearchProvider, SearchResult
+from backend.app.integrations.web_search.protocol import SearchProvider
+from backend.app.integrations.web_search.render import render_records
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -53,49 +54,41 @@ _RETRY_HINT = (
     "not search just now and answer from what you already know, saying so."
 )
 
-# The staleness line rides on every non-empty result rather than living only in
-# the prompt. A cached snippet reaches the model as ordinary text with no marker
-# that it is months old, and a number lifted from one lands in a customer bid.
-# Putting the caveat next to the data keeps it in view at the moment the model
-# is deciding how to phrase the figure.
+# The caveat rides on every result rather than living only in the prompt. A
+# cached snippet reaches the model as ordinary text with no marker that it is
+# months old, and a number lifted from one lands in a customer bid. Putting it
+# next to the data keeps it in view when the model decides how to phrase a
+# figure. The second sentence is the green-lid case: a listing page puts several
+# products' prices side by side, and only the field pairing says which is which.
 _RESULT_FOOTER = (
-    "These are search snippets and may be weeks out of date. If you repeat a "
-    "price or spec from them, give the source URL with it and call it a "
-    "ballpark to confirm, never a firm quote."
+    "These are search results and may be out of date. Any figure you repeat "
+    "from them needs its source URL and should be given as a ballpark to "
+    "confirm, never as a firm quote. A price belongs to the item named in the "
+    "same result: check it matches what was asked for, give the range when "
+    "results disagree, and say you could not find one rather than inferring it."
 )
 
 
 class WebSearchParams(BaseModel):
     query: str = Field(
         max_length=400,
-        description=(
-            "A natural-language web search query, e.g. '1/2 inch copper pipe "
-            "price per foot' or '2023 NEC bathroom GFCI outlet requirement'."
-        ),
+        description="A natural-language web search query.",
     )
 
 
-def _format_results(results: list[SearchResult], query: str) -> str:
-    """Format search results as plain text suitable for SMS/iMessage."""
-    if not results:
+def _format_results(records: list[dict], query: str) -> str:
+    """Render provider records as plain text, followed by the sourcing rule."""
+    if not records:
         return (
             f'No web results for "{query}". Try different wording, or tell the '
             "user you could not find it."
         )
 
-    lines = [f'Top {len(results)} web result(s) for "{query}":\n']
-    for i, r in enumerate(results, 1):
-        lines.append(f"{i}. {r.title}")
-        if r.snippet:
-            lines.append(f"   {r.snippet}")
-        if r.age:
-            lines.append(f"   Published: {r.age}")
-        # Always present: the URL is what makes a quoted figure checkable.
-        lines.append(f"   Source: {r.url}")
-        lines.append("")
-
-    lines.append(_RESULT_FOOTER)
-    return "\n".join(lines)
+    return (
+        f'{len(records)} web result(s) for "{query}":\n\n'
+        + render_records(records)
+        + f"\n\n{_RESULT_FOOTER}"
+    )
 
 
 def _create_web_search_tools(provider: SearchProvider, cache: SearchCache) -> list[Tool]:
@@ -122,7 +115,7 @@ def _create_web_search_tools(provider: SearchProvider, cache: SearchCache) -> li
             return ToolResult(content=_format_results(cached, cleaned))
 
         try:
-            results = await provider.search(cleaned, max_results=max_results)
+            records = await provider.search(cleaned, max_results=max_results)
         except SearchUnavailableError as exc:
             logger.warning("Web search backend unavailable: query=%r reason=%s", cleaned, exc)
             return ToolResult(
@@ -173,31 +166,25 @@ def _create_web_search_tools(provider: SearchProvider, cache: SearchCache) -> li
                 hint=_RETRY_HINT,
             )
 
-        await cache.set(cache_key, results)
-        return ToolResult(content=_format_results(results, cleaned))
+        await cache.set(cache_key, records)
+        return ToolResult(content=_format_results(records, cleaned))
 
     return [
         Tool(
             name=ToolName.WEB_SEARCH,
             description=(
-                "Search the web and get back ranked results with titles, "
-                "snippets, and source URLs. Use it for anything outside what "
-                "you already know: material and tool prices, product specs and "
-                "dimensions, building code and permit requirements, "
-                "manufacturer documentation, and current information. Write "
-                "your own search query from what the user asked."
+                "Search the web. Returns the top results with their source "
+                "URLs and whatever details the search engine has for each one. "
+                "Write your own search query from what the user asked."
             ),
             function=web_search,
             params_model=WebSearchParams,
             usage_hint=(
-                "Use web_search rather than guessing when the user asks about a "
-                "price, a product spec, or a code requirement. Its results are "
-                "cached snippets that can be weeks stale, so whenever you "
-                "repeat a figure from one, include the source URL and frame it "
-                "as a ballpark to verify before it goes in a bid, never as a "
-                "firm quote. This applies only to search results: totals from "
-                "QuickBooks and rates from the user's own files are exact and "
-                "should be stated plainly."
+                "Results can be out of date, so a figure you repeat from one "
+                "needs its source URL and should be framed as a ballpark to "
+                "confirm, never a firm quote. This applies to search results "
+                "only: totals from connected integrations and rates from the "
+                "user's own files are exact and should be stated plainly."
             ),
             # Read-only and stateless: nothing to serialize against.
             approval_policy=ApprovalPolicy(
@@ -240,7 +227,7 @@ async def _web_search_auth_check(ctx: ToolContext) -> str | None:
     Web search is configured by the operator, not connected by the user, so an
     unconfigured install returns a reason that says so. That keeps the tool off
     the schema entirely while still telling the model why, so it says "I can't
-    search" instead of inventing a price or offering an OAuth link that does
+    search" instead of inventing an answer or offering an OAuth link that does
     not exist.
     """
     if _resolve_provider() is None:
@@ -259,17 +246,15 @@ def _register() -> None:
         "web_search",
         _web_search_factory,
         core=False,
-        summary="Search the web for prices, specs, code requirements, and current information",
+        summary="Search the web",
         display_name="Web search",
-        dashboard_description=(
-            "Look up material prices, product specs, and code requirements on the web"
-        ),
+        dashboard_description="Search the web for current information",
         dashboard_group="Integrations",
         dashboard_group_order=3,
         sub_tools=[
             SubToolInfo(
                 ToolName.WEB_SEARCH,
-                "Search the web and return ranked results with source links",
+                "Search the web and return results with source links",
                 default_permission="always",
             ),
         ],

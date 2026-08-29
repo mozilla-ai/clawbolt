@@ -1,25 +1,30 @@
 """Brave Search web results via the Brave Search API.
 
 https://api.search.brave.com/app/documentation/web-search/get-started
+
+This provider does not reshape Brave's records. It pulls the result list out of
+the envelope and hands them up as-is, so any field Brave sends (including ones
+added after this was written) reaches the model.
 """
 
 import asyncio
 import html
 import logging
 import re
+from typing import Any
 
 import httpx
 
 from backend.app.integrations.web_search.errors import SearchUnavailableError
-from backend.app.integrations.web_search.protocol import SearchResult
 
 logger = logging.getLogger(__name__)
 
 _BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
-# Brave marks query terms inside descriptions with <strong> tags. The model is
-# reading plain text on a phone, so the markup is noise at best and a spurious
-# formatting instruction at worst.
+# Brave marks query terms inside text fields with <strong> tags. Removing them
+# drops markup, not information, and it is applied to every string in the record
+# rather than to a named list of fields, so it needs no updating when Brave adds
+# one.
 _TAG_RE = re.compile(r"<[^>]+>")
 
 # Retried once each. 429 is a rate limit and 5xx is Brave being unwell; both
@@ -31,9 +36,21 @@ _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 0.5
 
 
-def _clean(text: str) -> str:
-    """Strip Brave's highlight markup and unescape entities."""
-    return html.unescape(_TAG_RE.sub("", text or "")).strip()
+def _clean(value: Any) -> Any:
+    """Strip highlight markup and unescape entities, recursively.
+
+    Walks the whole record rather than named fields, so nested objects (Brave's
+    ``product``, ``meta_url``, ``profile``) and lists (``extra_snippets``) are
+    cleaned without being enumerated here. Non-string leaves pass through
+    untouched, including the numbers and booleans Brave sends.
+    """
+    if isinstance(value, str):
+        return html.unescape(_TAG_RE.sub("", value)).strip()
+    if isinstance(value, dict):
+        return {k: _clean(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clean(v) for v in value]
+    return value
 
 
 class BraveSearchProvider:
@@ -85,32 +102,21 @@ class BraveSearchProvider:
         # Unreachable: the loop either returns, raises, or continues.
         raise SearchUnavailableError("Brave search exhausted its retries")
 
-    async def search(self, query: str, *, max_results: int = 5) -> list[SearchResult]:
+    async def search(self, query: str, *, max_results: int = 5) -> list[dict[str, Any]]:
         data = await self._request(
             {
                 "q": query,
                 "count": str(max_results),
-                # Plain web results only. Brave's infobox/FAQ/news blocks carry
-                # their own shapes and would need their own parsing; the tool
-                # promises ranked links and this keeps that promise honest.
+                # Plain web results only. Brave's news/video/location clusters
+                # have their own shapes and answer a different question than the
+                # one this tool asks. Product data is unaffected: Brave attaches
+                # it to ordinary web results, which is where the prices live.
                 "result_filter": "web",
+                # No extra_snippets flag: Brave returns those passages either
+                # way, measured identical byte counts with and without it, so
+                # asking for them only implies a control that does not exist.
             }
         )
 
-        raw = (data.get("web") or {}).get("results") or []
-        results: list[SearchResult] = []
-        for item in raw[:max_results]:
-            url = item.get("url", "")
-            if not url:
-                # A result with no URL cannot be cited, and an uncitable price
-                # is the exact thing this integration must not produce.
-                continue
-            results.append(
-                SearchResult(
-                    title=_clean(item.get("title", "")) or url,
-                    url=url,
-                    snippet=_clean(item.get("description", "")),
-                    age=_clean(item.get("age", "") or item.get("page_age", "")),
-                )
-            )
-        return results
+        results = (data.get("web") or {}).get("results") or []
+        return [_clean(r) for r in results[:max_results] if isinstance(r, dict)]
