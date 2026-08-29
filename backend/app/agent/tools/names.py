@@ -90,8 +90,8 @@ class ToolName:
     SERVICETITAN_LIST_APPOINTMENTS = "st_list_appointments"
     SERVICETITAN_ADD_JOB_NOTE = "st_add_job_note"
 
-    # Supplier pricing
-    SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
+    # Web search
+    WEB_SEARCH = "web_search"
 
     # Calculator
     CALCULATE = "calculate"

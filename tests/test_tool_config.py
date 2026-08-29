@@ -193,7 +193,7 @@ def test_get_tool_config_includes_oauth_name(client: TestClient) -> None:
     # Non-OAuth factories report empty string so the UI knows there is
     # nothing to connect.
     assert tools_by_name["workspace"]["oauth_name"] == ""
-    assert tools_by_name["supplier_pricing"]["oauth_name"] == ""
+    assert tools_by_name["web_search"]["oauth_name"] == ""
 
 
 def test_get_tool_config_includes_always_enabled(client: TestClient) -> None:

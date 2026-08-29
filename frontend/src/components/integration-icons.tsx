@@ -47,16 +47,15 @@ function CompanyCamIcon() {
   );
 }
 
-function PricingIcon() {
+// Web search is provider-agnostic by design, so this carries no vendor
+// branding: it uses the app's own primary token rather than a backend's
+// brand color, and stays correct if the provider is swapped.
+function WebSearchIcon() {
   return (
     <svg viewBox="0 0 24 24" className="size-5 shrink-0" fill="none">
-      <rect width="24" height="24" rx="4" fill="#F96302" />
-      <path
-        d="M12 6v1.5m0 9V18m3.5-6.75c0-1.24-1.57-2.25-3.5-2.25s-3.5 1.01-3.5 2.25S10.07 13.5 12 13.5s3.5 1.01 3.5 2.25S13.93 18 12 18"
-        stroke="white"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+      <rect width="24" height="24" rx="4" fill="currentColor" className="text-primary" />
+      <circle cx="11" cy="11" r="3.75" stroke="white" strokeWidth="1.5" />
+      <path d="m14 14 3.5 3.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -126,7 +125,7 @@ const ICON_MAP: Record<string, () => ReactNode> = {
   quickbooks: QuickBooksIcon,
   calendar: GoogleCalendarIcon,
   companycam: CompanyCamIcon,
-  supplier_pricing: PricingIcon,
+  web_search: WebSearchIcon,
   gmail: GmailIcon,
   file: GoogleDriveIcon,
   appfolio_vendor: AppFolioIcon,

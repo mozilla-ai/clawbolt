@@ -412,7 +412,7 @@ async def test_connect_unconfigured_integration(test_user: User) -> None:
 @pytest.mark.asyncio()
 async def test_connect_non_oauth_integration(test_user: User) -> None:
     """Connecting a non-OAuth integration should return an error."""
-    result = await _call(test_user, "connect", "supplier_pricing")
+    result = await _call(test_user, "connect", "web_search")
     assert result.is_error
     assert "does not use OAuth" in result.content
 
@@ -474,7 +474,7 @@ async def test_disconnect_not_connected(test_user: User) -> None:
 @pytest.mark.asyncio()
 async def test_disconnect_non_oauth(test_user: User) -> None:
     """Disconnecting a non-OAuth integration should return an error."""
-    result = await _call(test_user, "disconnect", "supplier_pricing")
+    result = await _call(test_user, "disconnect", "web_search")
     assert result.is_error
     assert "does not use OAuth" in result.content
 

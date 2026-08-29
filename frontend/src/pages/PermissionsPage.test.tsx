@@ -112,11 +112,11 @@ describe('PermissionsPage', () => {
     mockGetToolConfig.mockResolvedValue({
       tools: [
         tool({
-          name: 'supplier_pricing',
+          name: 'web_search',
           category: 'domain',
           configured: false,
           sub_tools: [
-            { name: 'search_supplier', permission_level: 'ask', hidden_in_permissions: false },
+            { name: 'web_search', permission_level: 'ask', hidden_in_permissions: false },
           ],
         }),
       ],
