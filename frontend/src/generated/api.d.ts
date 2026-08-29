@@ -1125,9 +1125,9 @@ export interface paths {
          *     Slimmed in #325 work item 2: user-authored content (memory, soul,
          *     user text, heartbeat directives, message bodies, tool-call args /
          *     results) was removed from this default response. Content surfaces
-         *     only via the consent-gated paths — ``/admin/reported-conversations``
+         *     only via the consent-gated paths. ``/admin/reported-conversations``
          *     (after a user reports a conversation) or ``/admin/shared-data``
-         *     (when a user opted into data sharing) — once items 3 + 4 land.
+         *     (when a user opted into data sharing) once items 3 + 4 land.
          *
          *     Eager-loads ``tool_configs`` and ``channel_routes`` via selectinload
          *     so we make one round-trip instead of three.
@@ -2018,7 +2018,7 @@ export interface paths {
          *     only metadata (id, action_type, channel, created_at) since #336.
          *     For consenting users the full content surfaces here: ``message_text``
          *     (what the agent sent on this tick), ``reasoning`` (why it sent /
-         *     skipped — often quotes the user back to themselves), and ``tasks``
+         *     skipped because it often quotes the user back to themselves), and ``tasks``
          *     (the serialized task state the LLM was deciding from). All three
          *     columns are envelope-encrypted at rest; ORM reads decrypt
          *     transparently and we redact PII shapes before serialization.
@@ -2054,7 +2054,7 @@ export interface paths {
          *
          *     Both columns are envelope-encrypted at rest. A user with no
          *     document yet (never compacted, never wrote memory) returns empty
-         *     strings rather than 404 — consenting and "no memory yet" is a
+         *     strings rather than 404. Consenting and "no memory yet" is a
          *     valid combined state.
          */
         get: operations["get_shared_data_memory_api_admin_shared_data_users__user_id__memory_get"];
@@ -2891,7 +2891,7 @@ export interface components {
          * @description Heartbeat log metadata only.
          *
          *     Content fields (``message_text``, ``reasoning``, ``tasks``) were
-         *     removed in #325 work item 2 — they were user-facing content the
+         *     removed in #325 work item 2. They were user-facing content the
          *     user-detail response also stripped. They surface only via the
          *     consent-gated paths once items 3 + 4 land.
          */
@@ -3036,7 +3036,7 @@ export interface components {
          *     items 3 + 4 land. Until then, admins debugging an incident see the
          *     metadata + integrations here, plus the audit log of who looked.
          *
-         *     Channel routes carry a *masked* ``channel_identifier`` — phone
+         *     Channel routes carry a *masked* ``channel_identifier``. Phone
          *     numbers / iMessage emails / Telegram chat IDs are PII the admin
          *     rarely needs in full. The route applies ``_mask_channel_identifier``
          *     so admins see enough to recognize a route and confirm last-4 digits,

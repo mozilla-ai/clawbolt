@@ -1778,7 +1778,7 @@
           "admin"
         ],
         "summary": "Get User Detail",
-        "description": "Return identity, subscription, profile config, and integrations.\n\nSlimmed in #325 work item 2: user-authored content (memory, soul,\nuser text, heartbeat directives, message bodies, tool-call args /\nresults) was removed from this default response. Content surfaces\nonly via the consent-gated paths \u2014 ``/admin/reported-conversations``\n(after a user reports a conversation) or ``/admin/shared-data``\n(when a user opted into data sharing) \u2014 once items 3 + 4 land.\n\nEager-loads ``tool_configs`` and ``channel_routes`` via selectinload\nso we make one round-trip instead of three.",
+        "description": "Return identity, subscription, profile config, and integrations.\n\nSlimmed in #325 work item 2: user-authored content (memory, soul,\nuser text, heartbeat directives, message bodies, tool-call args /\nresults) was removed from this default response. Content surfaces\nonly via the consent-gated paths. ``/admin/reported-conversations``\n(after a user reports a conversation) or ``/admin/shared-data``\n(when a user opted into data sharing) once items 3 + 4 land.\n\nEager-loads ``tool_configs`` and ``channel_routes`` via selectinload\nso we make one round-trip instead of three.",
         "operationId": "get_user_detail_api_admin_users__user_id__get",
         "parameters": [
           {
@@ -3442,7 +3442,7 @@
           "admin"
         ],
         "summary": "List Shared Data Heartbeat Logs",
-        "description": "Return heartbeat scheduler runs with their content fields.\n\nThe non-consent variant ``/admin/users/{id}/heartbeat-logs`` returns\nonly metadata (id, action_type, channel, created_at) since #336.\nFor consenting users the full content surfaces here: ``message_text``\n(what the agent sent on this tick), ``reasoning`` (why it sent /\nskipped \u2014 often quotes the user back to themselves), and ``tasks``\n(the serialized task state the LLM was deciding from). All three\ncolumns are envelope-encrypted at rest; ORM reads decrypt\ntransparently and we redact PII shapes before serialization.",
+        "description": "Return heartbeat scheduler runs with their content fields.\n\nThe non-consent variant ``/admin/users/{id}/heartbeat-logs`` returns\nonly metadata (id, action_type, channel, created_at) since #336.\nFor consenting users the full content surfaces here: ``message_text``\n(what the agent sent on this tick), ``reasoning`` (why it sent /\nskipped because it often quotes the user back to themselves), and ``tasks``\n(the serialized task state the LLM was deciding from). All three\ncolumns are envelope-encrypted at rest; ORM reads decrypt\ntransparently and we redact PII shapes before serialization.",
         "operationId": "list_shared_data_heartbeat_logs_api_admin_shared_data_users__user_id__heartbeat_logs_get",
         "parameters": [
           {
@@ -3533,7 +3533,7 @@
           "admin"
         ],
         "summary": "Get Shared Data Memory",
-        "description": "Return the consenting user's MemoryDocument (memory + history).\n\n``memory_text`` is the agent's working memory file (persistent\nnotes, reminders, current context). ``history_text`` is the\naccumulated output of session compactions: each time a long\nsession compacts, the LLM extracts durable facts and appends them\nhere. Reading ``history_text`` is the closest persisted surface to\na per-event compaction stream; per-event timing lives in\n``logger.info(\"compaction.summary user=...\")`` lines only and is\nnot yet queryable.\n\nBoth columns are envelope-encrypted at rest. A user with no\ndocument yet (never compacted, never wrote memory) returns empty\nstrings rather than 404 \u2014 consenting and \"no memory yet\" is a\nvalid combined state.",
+        "description": "Return the consenting user's MemoryDocument (memory + history).\n\n``memory_text`` is the agent's working memory file (persistent\nnotes, reminders, current context). ``history_text`` is the\naccumulated output of session compactions: each time a long\nsession compacts, the LLM extracts durable facts and appends them\nhere. Reading ``history_text`` is the closest persisted surface to\na per-event compaction stream; per-event timing lives in\n``logger.info(\"compaction.summary user=...\")`` lines only and is\nnot yet queryable.\n\nBoth columns are envelope-encrypted at rest. A user with no\ndocument yet (never compacted, never wrote memory) returns empty\nstrings rather than 404. Consenting and \"no memory yet\" is a\nvalid combined state.",
         "operationId": "get_shared_data_memory_api_admin_shared_data_users__user_id__memory_get",
         "parameters": [
           {
@@ -5122,7 +5122,7 @@
           "created_at"
         ],
         "title": "AdminHeartbeatLogItem",
-        "description": "Heartbeat log metadata only.\n\nContent fields (``message_text``, ``reasoning``, ``tasks``) were\nremoved in #325 work item 2 \u2014 they were user-facing content the\nuser-detail response also stripped. They surface only via the\nconsent-gated paths once items 3 + 4 land."
+        "description": "Heartbeat log metadata only.\n\nContent fields (``message_text``, ``reasoning``, ``tasks``) were\nremoved in #325 work item 2. They were user-facing content the\nuser-detail response also stripped. They surface only via the\nconsent-gated paths once items 3 + 4 land."
       },
       "AdminHeartbeatLogListResponse": {
         "properties": {
@@ -5477,7 +5477,7 @@
           "permissions"
         ],
         "title": "AdminUserDetailResponse",
-        "description": "Identity, account state, and configuration metadata for one user.\n\nUser-authored content (memory, soul, user text, heartbeat directives,\nmessage bodies, tool-call args/results) was removed in #325 work\nitem 2. The plan: content surfaces only via the consent-gated paths\n(``/admin/reported-conversations`` and ``/admin/shared-data``) once\nitems 3 + 4 land. Until then, admins debugging an incident see the\nmetadata + integrations here, plus the audit log of who looked.\n\nChannel routes carry a *masked* ``channel_identifier`` \u2014 phone\nnumbers / iMessage emails / Telegram chat IDs are PII the admin\nrarely needs in full. The route applies ``_mask_channel_identifier``\nso admins see enough to recognize a route and confirm last-4 digits,\nnot enough to dial / message directly from the admin panel."
+        "description": "Identity, account state, and configuration metadata for one user.\n\nUser-authored content (memory, soul, user text, heartbeat directives,\nmessage bodies, tool-call args/results) was removed in #325 work\nitem 2. The plan: content surfaces only via the consent-gated paths\n(``/admin/reported-conversations`` and ``/admin/shared-data``) once\nitems 3 + 4 land. Until then, admins debugging an incident see the\nmetadata + integrations here, plus the audit log of who looked.\n\nChannel routes carry a *masked* ``channel_identifier``. Phone\nnumbers / iMessage emails / Telegram chat IDs are PII the admin\nrarely needs in full. The route applies ``_mask_channel_identifier``\nso admins see enough to recognize a route and confirm last-4 digits,\nnot enough to dial / message directly from the admin panel."
       },
       "AdminUserLLMOverrideResponse": {
         "properties": {
