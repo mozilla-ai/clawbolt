@@ -42,7 +42,7 @@ from backend.app.web_paths import LOGIN_PATH
 if TYPE_CHECKING:
     # Runtime import would be circular: both alert modules import this one for
     # the shared ``_send`` transport.
-    from backend.app.services.admin_alerts import AlertSummary
+    from backend.app.services.admin_alerts import AlertSummary, ToolFailureSummary
     from backend.app.services.health_monitor import HealthTransition
 
 logger = logging.getLogger(__name__)
@@ -551,8 +551,20 @@ async def send_waitlist_approved(to_email: str, name: str = "") -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _alert_subject(alerts: Sequence[AlertSummary]) -> str:
+def _alert_subject(
+    alerts: Sequence[AlertSummary],
+    tool_failures: Sequence[ToolFailureSummary] = (),
+) -> str:
     """Front-load the subject with what broke, so triage happens in the inbox."""
+    if not alerts and tool_failures:
+        if len(tool_failures) == 1:
+            t = tool_failures[0]
+            return f"[clawbolt] {t.tool_name} {t.error_kind} x{t.count} ({t.user_count} users)"
+        total = sum(t.count for t in tool_failures)
+        return f"[clawbolt] {len(tool_failures)} tool failure groups, {total} occurrences"
+    if tool_failures:
+        base = _alert_subject(alerts)
+        return f"{base} + {len(tool_failures)} tool failure group(s)"
     if len(alerts) == 1:
         alert = alerts[0]
         occurrences = f" (x{alert.count})" if alert.count > 1 else ""
@@ -561,11 +573,92 @@ def _alert_subject(alerts: Sequence[AlertSummary]) -> str:
     return f"[clawbolt] {len(alerts)} error groups, {total} occurrences"
 
 
+def _tool_failure_html(tool_failures: Sequence[ToolFailureSummary]) -> str:
+    """Render the tool-failures section for the HTML part, or empty."""
+    if not tool_failures:
+        return ""
+    rows: list[str] = []
+    for t in tool_failures:
+        window = (
+            f"{t.first_seen:%Y-%m-%d %H:%M:%S} to {t.last_seen:%H:%M:%S} UTC"
+            if t.count > 1
+            else f"{t.first_seen:%Y-%m-%d %H:%M:%S} UTC"
+        )
+        meta = (
+            f"{t.count} failure{'s' if t.count != 1 else ''} across "
+            f"{t.user_count} user{'s' if t.user_count != 1 else ''} &middot; {window}"
+        )
+        sample_html = ""
+        if t.samples:
+            joined = "\n".join(t.samples)
+            sample_html = (
+                f'<pre style="margin: 10px 0 0; padding: 10px; background-color: #F6F5F3; '
+                f"border: 1px solid {_OPS_BORDER}; border-radius: 6px; font-family: {_OPS_MONO}; "
+                f"font-size: 12px; line-height: 1.45; overflow-x: auto; white-space: pre-wrap; "
+                f'word-break: break-word; color: {_OPS_TEXT};">{html.escape(joined)}</pre>'
+            )
+        withheld = t.user_count - t.consented_user_count
+        withheld_html = (
+            f'<p style="margin: 6px 0 0; font-family: {_OPS_FONT}; font-size: 12px; color: {_OPS_MUTED};">'
+            f"{withheld} further user(s) have not opted into data sharing; counts only."
+            f"</p>"
+            if withheld > 0
+            else ""
+        )
+        rows.append(
+            f"""
+        <tr>
+          <td style="padding: 16px 0; border-bottom: 1px solid {_OPS_BORDER};">
+            <p style="margin: 0 0 4px; font-family: {_OPS_MONO}; font-size: 14px; font-weight: 700; color: {_OPS_DOWN};">
+              {html.escape(t.tool_name)} <span style="font-family: {_OPS_FONT}; font-size: 11px; letter-spacing: 1px; text-transform: uppercase;">{html.escape(t.error_kind)}</span>
+            </p>
+            <p style="margin: 0; font-family: {_OPS_FONT}; font-size: 12px; color: {_OPS_MUTED};">{meta}</p>
+            {sample_html}
+            {withheld_html}
+          </td>
+        </tr>"""
+        )
+    return f"""
+              <h2 style="margin: 24px 0 0; font-family: {_OPS_FONT}; font-size: 16px; font-weight: 700; color: {_OPS_TEXT};">
+                Tool failures
+              </h2>
+              <p style="margin: 6px 0 0; font-family: {_OPS_FONT}; font-size: 12px; color: {_OPS_MUTED};">
+                Agent tool calls that did not succeed. Validation retries and declined approval prompts are excluded.
+              </p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                {"".join(rows)}
+              </table>"""
+
+
+def _tool_failure_text(t: ToolFailureSummary) -> str:
+    """Render one tool-failure group for the plain-text part."""
+    window = (
+        f"{t.first_seen:%Y-%m-%d %H:%M:%S} to {t.last_seen:%H:%M:%S} UTC"
+        if t.count > 1
+        else f"{t.first_seen:%Y-%m-%d %H:%M:%S} UTC"
+    )
+    lines = [
+        f"{t.tool_name} [{t.error_kind}]",
+        f"{t.count} failure{'s' if t.count != 1 else ''} "
+        f"across {t.user_count} user{'s' if t.user_count != 1 else ''}, {window}",
+    ]
+    if t.samples:
+        lines.append(f"  detail from {t.consented_user_count} consenting user(s):")
+        lines.extend(f"    {sample}" for sample in t.samples)
+    withheld = t.user_count - t.consented_user_count
+    if withheld > 0:
+        lines.append(f"  {withheld} further user(s) have not opted into data sharing; counts only.")
+    return "\n".join(lines) + "\n"
+
+
 def _admin_alert_message(
-    to_email: str, alerts: Sequence[AlertSummary], dropped: int
+    to_email: str,
+    alerts: Sequence[AlertSummary],
+    dropped: int,
+    tool_failures: Sequence[ToolFailureSummary] = (),
 ) -> EmailMessage:
     """Build the grouped error-alert email."""
-    subject = _alert_subject(alerts)
+    subject = _alert_subject(alerts, tool_failures)
 
     text_parts: list[str] = []
     html_parts: list[str] = []
@@ -624,10 +717,20 @@ def _admin_alert_message(
         else ""
     )
 
-    text_body = (
-        "Clawbolt application errors\n"
-        "===========================\n\n" + "\n".join(text_parts) + dropped_note
-    )
+    tool_text = ""
+    if tool_failures:
+        tool_text = (
+            "\n\nTool failures\n"
+            "=============\n\n"
+            + "\n".join(_tool_failure_text(t) for t in tool_failures)
+            + "\nA tool failure is a call the agent made that did not succeed. Only "
+            "INTERNAL, SERVICE and AUTH kinds are reported; validation retries and "
+            "declined approval prompts are normal and excluded.\n"
+        )
+
+    header = "Clawbolt application errors" if alerts else "Clawbolt tool failures"
+    body_parts = "\n".join(text_parts) + dropped_note if alerts else ""
+    text_body = f"{header}\n{'=' * len(header)}\n\n" + body_parts + tool_text
 
     html_body = f"""\
 <!doctype html>
@@ -654,6 +757,7 @@ def _admin_alert_message(
                 {"".join(html_parts)}
               </table>
               {dropped_html}
+              {_tool_failure_html(tool_failures)}
             </td>
           </tr>
         </table>
@@ -673,16 +777,21 @@ def _admin_alert_message(
     return msg
 
 
-async def send_admin_alert(to_email: str, alerts: Sequence[AlertSummary], dropped: int = 0) -> bool:
+async def send_admin_alert(
+    to_email: str,
+    alerts: Sequence[AlertSummary],
+    dropped: int = 0,
+    tool_failures: Sequence[ToolFailureSummary] = (),
+) -> bool:
     """Email a batch of grouped application errors to the operator.
 
     Best-effort like every sender here. Returns False on misconfiguration or
     send failure; the caller decides whether to retry (``admin_alerts`` does not
     start the dedupe cooldown on failure, so the next occurrence tries again).
     """
-    if not alerts:
+    if not alerts and not tool_failures:
         return False
-    return await _send(_admin_alert_message(to_email, alerts, dropped))
+    return await _send(_admin_alert_message(to_email, alerts, dropped, tool_failures))
 
 
 def _health_subject(transitions: Sequence[HealthTransition]) -> str:

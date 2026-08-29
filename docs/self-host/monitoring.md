@@ -4,7 +4,8 @@ Monitoring requires `AUTH_MODE=multi_user`. Single-user deployments do not mount
 
 | Layer | Catches | Blind to |
 |---|---|---|
-| Error alerts | Exceptions, failed tool calls, and other `ERROR` logs | Silent failures and process outages |
+| Error alerts | Exceptions and other `ERROR` logs | Silent failures and process outages |
+| Tool failures | Agent tool calls that failed: integration down, revoked token, tool raising | Failures outside a tool call |
 | Health probes | Unreachable or unhealthy dependencies | Process outages |
 
 Use an external uptime check as well. In-process monitoring cannot report that its own process is down.
@@ -51,7 +52,17 @@ A logging handler watches the `backend` and `uvicorn.error` trees. Every `ERROR`
 
 Alerts group by logger, exception type, and unformatted log template. Each group sends at most once per `ALERT_DEDUPE_MINUTES`, including the number of suppressed occurrences. `ALERT_MAX_EMAILS_PER_HOUR` caps total sends. A failed email does not start the cooldown.
 
-Failures that do not raise or log at `ERROR` require a health probe.
+Failures that do not raise or log at `ERROR` require a health probe or the tool-failure layer.
+
+## Tool failures
+
+Failed agent tool calls, reported from the agent loop rather than from a log record. The two most useful failures never reach the error-alert layer: a tool returning `SERVICE` (integration down) or `AUTH` (token revoked) logs at `WARNING`. Only a tool raising logs at `ERROR`, and that layer groups by log template, so every crashing tool collapses into one entry naming whichever ran most recently.
+
+Only `INTERNAL`, `SERVICE`, and `AUTH` are reported. `VALIDATION` and `NOT_FOUND` are the model self-correcting, and `PERMISSION` and `INTERRUPTED` are the user declining or stopping a turn.
+
+Alerts group by tool and error kind, carrying the occurrence count and the number of distinct users affected. Grouping, throttling, and delivery are shared with error alerts, so both arrive in one email per flush.
+
+Data-sharing consent gates detail, not visibility. Every qualifying failure raises the occurrence and distinct-user counts whatever the user's setting; tool arguments and result text attach only for users who opted in, after PII redaction. An outage confined to users who have not opted in stays visible as a count. Consent reads through a 60-second cache and an unknown user is treated as not consenting until it warms, so a sample can be one occurrence late.
 
 ## Health probes
 
