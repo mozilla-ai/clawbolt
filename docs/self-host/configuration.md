@@ -278,9 +278,16 @@ ServiceTitan uses OAuth 2.0 client credentials, one set per tenant. The operator
 | `WEB_SEARCH_PROVIDER` | `brave` | Search backend. `brave` is the only one implemented today |
 | `WEB_SEARCH_TIMEOUT_SECONDS` | `10` | Per-request timeout. Kept short because searches run inside a live message loop |
 | `WEB_SEARCH_CACHE_TTL_SECONDS` | `900` | How long an identical query is served from an in-memory cache, to control cost |
-| `WEB_SEARCH_MAX_RESULTS` | `5` | Results requested per search. This is the only lever on response size, see below |
+| `WEB_SEARCH_MAX_RESULTS` | `3` | Results returned when the agent does not ask for a specific count. See result size below |
 
 The agent gets one specialist tool here: `web_search`, which takes a natural-language query and returns ranked results with titles, snippets, and source URLs. The agent writes its own queries and uses it for material prices, product specs, building code requirements, and anything else outside its training data.
+
+Two optional parameters are chosen per call by the agent rather than fixed by configuration, because both depend on the question rather than the deployment:
+
+- `max_results` (1 to 20) trades cost against breadth. Checking one fact needs fewer results than comparing prices across suppliers. Values outside the range are clamped rather than rejected, since a rejected call costs a turn and teaches the agent nothing.
+- `freshness` (`pd`, `pw`, `pm`, `py` for past day/week/month/year) restricts results by age. A material price wants the past month; a 2023 code requirement wants no filter at all, because the correct answer is years old and filtering would hide it. Omitted by default.
+
+Without a freshness filter most results carry no publication date at all, so the agent cannot tell a page from last week from one from 2019. Asking for `pm` on a price query is the difference between an undated snippet and one stamped `3 weeks ago`.
 
 Without `WEB_SEARCH_API_KEY` the tool is not registered, so it never reaches the model's schema. The agent is told web search is unconfigured and answers from what it knows instead, saying so; nothing else degrades.
 
@@ -290,9 +297,9 @@ Results are search snippets and can be stale. The agent is instructed to cite th
 
 Results are passed through as the provider returned them. Nothing is truncated and no fields are dropped, because a search tool that quietly serves half a result is indistinguishable from one that is broken, and the field most likely to go missing is the one a specific answer depends on. An earlier revision of this integration mapped results onto a fixed set of fields and silently discarded the structured product price, which is exactly that failure.
 
-The cost is real and worth knowing before tuning. Measured against Brave with `WEB_SEARCH_MAX_RESULTS=5`, a single search renders to roughly 4,000 tokens for a product query and 8,500 for a broad research query. At `3` those fall to about 2,400 and 5,500. A request that fans out across many items multiplies accordingly: a nine-item materials list runs near 50,000 tokens at the default.
+The cost is real and worth knowing before tuning. Measured against Brave, a single search renders to roughly 2,600 tokens at three results and 4,000 at five, rising to about 16,000 at the ceiling of twenty. A request that fans out across many items multiplies accordingly.
 
-If that is too much for your deployment, lower the result count. That trades away whole results, which the agent can see and reason about, rather than trimming fields out of the ones it keeps.
+If that is too much for your deployment, lower `WEB_SEARCH_MAX_RESULTS`. That trades away whole results, which the agent can see and reason about, rather than trimming fields out of the ones it keeps. Note that the agent can request more than the default on a given call, so this sets the usual case rather than a hard budget.
 
 ### Swapping the search provider
 

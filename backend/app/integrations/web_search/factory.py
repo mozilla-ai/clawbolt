@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -72,10 +72,33 @@ _RESULT_FOOTER = (
 )
 
 
+# Bounds on what the agent may ask for. The ceiling is the lowest limit across
+# supported providers (Brave rejects count above 20).
+_MIN_RESULTS = 1
+_MAX_RESULTS = 20
+
+
 class WebSearchParams(BaseModel):
     query: str = Field(
         max_length=400,
         description="A natural-language web search query.",
+    )
+    max_results: int | None = Field(
+        default=None,
+        description=(
+            "How many results to return, 1 to 20. Omit for the default. Ask "
+            "for fewer when checking a single fact, more when comparing "
+            "prices or options across suppliers."
+        ),
+    )
+    freshness: Literal["pd", "pw", "pm", "py"] | None = Field(
+        default=None,
+        description=(
+            "Restrict results by age: pd past day, pw past week, pm past "
+            "month, py past year. Use pm for prices and anything that moves. "
+            "Omit it for building codes, specs, and standards, where the "
+            "correct answer is often years old and filtering hides it."
+        ),
     )
 
 
@@ -101,7 +124,11 @@ def _create_web_search_tools(provider: SearchProvider, cache: SearchCache) -> li
     can drive the tool with a stub backend and a fresh cache.
     """
 
-    async def web_search(query: str) -> ToolResult:
+    async def web_search(
+        query: str,
+        max_results: int | None = None,
+        freshness: str | None = None,
+    ) -> ToolResult:
         cleaned = query.strip()
         if not cleaned:
             return ToolResult(
@@ -111,14 +138,18 @@ def _create_web_search_tools(provider: SearchProvider, cache: SearchCache) -> li
                 hint="Provide a search query describing what to look up.",
             )
 
-        max_results = settings.web_search_max_results
-        cache_key = SearchCache.make_key(provider.name, cleaned, max_results)
+        # Clamped rather than rejected: a model asking for 50 wants "lots", and
+        # spending a turn on a validation error teaches it nothing useful.
+        requested = settings.web_search_max_results if max_results is None else max_results
+        resolved = max(_MIN_RESULTS, min(requested, _MAX_RESULTS))
+
+        cache_key = SearchCache.make_key(provider.name, cleaned, resolved, freshness)
         cached = await cache.get(cache_key)
         if cached is not None:
             return ToolResult(content=_format_results(cached, cleaned))
 
         try:
-            records = await provider.search(cleaned, max_results=max_results)
+            records = await provider.search(cleaned, max_results=resolved, freshness=freshness)
         except SearchUnavailableError as exc:
             logger.warning("Web search backend unavailable: query=%r reason=%s", cleaned, exc)
             return ToolResult(

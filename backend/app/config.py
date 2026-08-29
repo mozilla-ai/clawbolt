@@ -268,7 +268,9 @@ class Settings(BaseSettings):
     # enough to save the duplicate call, short enough that a price checked
     # twice in a day is fetched twice.
     web_search_cache_ttl_seconds: int = Field(default=900, ge=0)
-    web_search_max_results: int = Field(default=5, ge=1, le=20)
+    # Default when the agent does not ask for a specific count. Each result
+    # costs roughly 800 tokens, so this is the main lever on search cost.
+    web_search_max_results: int = Field(default=3, ge=1, le=20)
 
     # OAuth
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks
