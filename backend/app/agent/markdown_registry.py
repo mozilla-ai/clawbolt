@@ -1,25 +1,7 @@
-"""Bounded-growth registry for agent-managed markdown surfaces.
+"""Storage, write-mode, prompt-exposure, and size policies for agent markdown.
 
-Single source of truth for every markdown file the agent can read or
-write. Each surface declares:
-
-- where it is stored (which DB column or disk path);
-- how it is written (full rewrite, append, transient);
-- whether the contents are injected into an LLM prompt;
-- a hard byte budget enforced at write time;
-- a one-line description of what the file is for.
-
-The point of this registry is not just data: it is the integration
-seam used by the write paths (``workspace_tools``, ``memory_db``,
-``stores``), the read paths (``system_prompt`` builders), and the
-regression tests. Adding a new agent-mutable markdown surface without
-adding it here will fail the ``test_markdown_registry`` consistency
-tests, which is the mechanism that prevents future features from
-silently re-introducing unbounded growth.
-
-See ``docs/markdown_growth_policies.md`` for the per-surface rationale
-and the prior-art references the policies are based on (Claude Code's
-25 KB MEMORY.md cap, Letta / MemGPT's per-block character limits).
+Write paths, prompt builders, and consistency tests all consume this registry.
+See ``docs/markdown_growth_policies.md`` for the operational policy.
 """
 
 from __future__ import annotations
@@ -109,12 +91,7 @@ class BudgetExceededError(ValueError):
 # ---------------------------------------------------------------------------
 
 
-# 25 KiB across the board. Matches Claude Code's MEMORY.md cap and the
-# existing ``compaction_event_snapshot_max_bytes_per_file`` audit cap,
-# so any in-budget surface fits in audit rows without truncation. The
-# uniform value is deliberate: it makes the policy memorable and avoids
-# bikeshedding per file. Tune individual surfaces only when there is
-# evidence that a tighter or looser bound is needed.
+# One limit keeps enforcement predictable and fits below the audit snapshot cap.
 DEFAULT_BUDGET: int = 25 * 1024
 
 

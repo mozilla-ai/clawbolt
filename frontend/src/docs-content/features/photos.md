@@ -7,7 +7,7 @@ Send a photo to Clawbolt and it will analyze it using vision AI, providing a des
 1. **Send a photo**: Take a picture at the job site and send it to Clawbolt
 2. **AI analysis**: The image is processed by the LLM's vision capabilities
 3. **Description generated**: Clawbolt provides a text description of what it sees
-4. **Stored and organized**: If you have connected [Google Drive](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/google-drive-setup.md), the photo lands in your own Drive, organized by date and client
+4. **Optionally stored**: With Google Drive connected, the assistant can save the photo under the top-level `Clawbolt` folder
 
 ## Use cases
 
@@ -16,15 +16,4 @@ Send a photo to Clawbolt and it will analyze it using vision AI, providing a des
 - **Material identification**: Get help identifying materials, fixtures, or parts
 - **Progress tracking**: Document job progress with timestamped, described photos
 
-## Storage organization
-
-When [file cataloging](/docs/features/file-cataloging) is configured, photos are automatically organized:
-
-```
-Job Photos/
-├── 2026-02-28/
-│   ├── site-front.jpg
-│   └── site-back.jpg
-└── 2026-03-01/
-    └── kitchen-demo.jpg
-```
+See [File Cataloging](/docs/features/file-cataloging) for storage behavior and folder organization.

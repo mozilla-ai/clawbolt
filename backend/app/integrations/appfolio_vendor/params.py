@@ -37,7 +37,7 @@ class AppFolioListWorkOrdersParams(BaseModel):
 class AppFolioSearchWorkOrdersParams(BaseModel):
     search_term: str = Field(
         description=(
-            "Search query — work order number, address, unit, or any free text."
+            "Search query: work order number, address, unit, or any free text."
             " Matches AppFolio's universal vendor-portal search."
         ),
     )

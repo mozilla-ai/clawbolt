@@ -2,9 +2,9 @@
 
 Two write paths share one endpoint:
 
-* ``appfolio_create_invoice`` — line-itemized invoice built inside the
+* ``appfolio_create_invoice``: line-itemized invoice built inside the
   portal. Line items only, never files (see below).
-* ``appfolio_upload_invoice_pdf`` — single invoice constructed from one
+* ``appfolio_upload_invoice_pdf``: single invoice constructed from one
   or more pre-built PDFs the user already has.
 
 Both bodies POST to ``/maintenance/api/invoices``; AppFolio

@@ -31,7 +31,6 @@ Edit `.env` and fill in the required credentials. See [Configuration](./configur
 
 At minimum you need:
 - An LLM API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
-- `VISION_MODEL` (the model used for image analysis, defaults to `LLM_MODEL` if not set)
 - At least one messaging channel configured:
   - **iMessage (recommended):** choose one backend. Hosted iMessage/RCS/SMS via [Linq](./linq-setup.md) (`LINQ_API_TOKEN` + `LINQ_FROM_NUMBER`), or self-hosted iMessage via [BlueBubbles](./bluebubbles-setup.md) (`BLUEBUBBLES_SERVER_URL` + `BLUEBUBBLES_PASSWORD`). The app surfaces whichever backend you configure as a single "iMessage" channel to end users. Configuring both at once is not supported.
   - **Telegram:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_ID`, see [Telegram Setup](./telegram-setup.md)

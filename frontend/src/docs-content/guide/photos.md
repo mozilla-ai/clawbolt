@@ -1,6 +1,6 @@
 # Photos & Files
 
-Send a photo to your assistant and it will describe what it sees, store it, and organize it in your cloud storage.
+Send a photo to your assistant and it can describe what it sees. With Google Drive or CompanyCam connected, it can also save the photo where you need it.
 
 ## Sending a photo
 
@@ -17,17 +17,8 @@ Clawbolt: I can see a dated kitchen with dark wood cabinets,
 
 Great for before/after documentation, damage records, material identification, and progress tracking.
 
-## Where photos are stored
+## Saving photos
 
-Once you connect Google Drive (via the integrations panel), photos are organized into folders by date inside your own Drive under a top-level Clawbolt folder:
+With Google Drive connected, saved files live under a top-level `Clawbolt` folder. Client work can be organized under `Client - Address/photos`; files without clear job context default to `Inbox`. CompanyCam can store photos in its project structure instead.
 
-```
-Job Photos/
-  2026-03-15/
-    kitchen-before.jpg
-    kitchen-after.jpg
-  2026-03-16/
-    bathroom-tile.jpg
-```
-
-If you have not connected Google Drive, the assistant can still read and reply to photos you send, but it will not save them. Connect Drive (via the integrations panel or by asking the assistant) to turn on saving and retrieval. See [Google Drive Setup](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/google-drive-setup.md) for self-host operators.
+Without a storage integration, the assistant can still analyze and reply to photos but cannot save them. See [File Cataloging](/docs/features/file-cataloging) for user behavior and [Google Drive Setup](https://github.com/mozilla-ai/clawbolt/blob/main/docs/self-host/google-drive-setup.md) for operator setup.

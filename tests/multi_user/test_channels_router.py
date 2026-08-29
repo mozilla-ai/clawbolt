@@ -1,14 +1,4 @@
-"""Tests for per-user channel linking endpoints (Telegram, Linq, BlueBubbles, Twilio).
-
-Phase C async pilot (issue #391). The router uses ``Depends(get_async_db)``,
-so tests drive it through an ``httpx.AsyncClient`` + ``ASGITransport`` and
-use the ``async_db`` fixture to share a per-test connection with the route.
-Setup and verification go through ``async_db()`` rather than the sync
-``SessionLocal()`` because the async fixture's connection lives on a
-different backend connection from the sync ``_isolate_stores`` fixture
-(see the design comment in ``conftest.py``); a row written through the
-sync connection is invisible to the async route under READ COMMITTED.
-"""
+"""Per-user channel-linking endpoint tests."""
 
 from __future__ import annotations
 

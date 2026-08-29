@@ -1,16 +1,4 @@
-"""Database-backed user store.
-
-Replaces the file-based UserStore from the old file_store.py. Uses the User
-ORM model for persistence, while keeping UserData Pydantic model as the public
-API surface for backward compatibility with premium.
-
-Uses ``AsyncSessionLocal`` / ``db_session_async()`` for all UserStore methods.
-The dual sync+async API from the migration window (issue #1151) has been
-collapsed: only the async implementation remains, and the public method
-names are unsuffixed. ``*_async`` aliases are kept as thin wrappers so
-the premium layer continues to compile against this store while it
-finishes dropping the suffix on its own callers.
-"""
+"""Database-backed user store exposing UserData DTOs."""
 
 from __future__ import annotations
 
@@ -163,11 +151,7 @@ _USER_UPDATABLE_FIELDS: frozenset[str] = frozenset(
 )
 
 
-# Dual-API collapse (issue #1160, originally introduced in #1151 as part
-# of the OSS-wide async-DB rollout). Each public method now uses native
-# async access via ``AsyncSessionLocal``; the pure ``select(...)``
-# builders below survive because they document the shared shapes and
-# keep ``ty`` happy when the same query is reused across helpers.
+# Typed query builders shared by user-store methods.
 def _user_by_id_select(user_id: str | int) -> Select[tuple[User]]:
     """Builder for ``get_by_id`` and the update paths."""
     return select(User).filter_by(id=str(user_id))
@@ -195,14 +179,7 @@ def _apply_updates(user: User, fields: dict[str, Any]) -> None:
 
 
 class UserStore:
-    """Database-backed user storage using User ORM model.
-
-    Async-only API (issue #1160). The dual sync+async surface from the
-    migration window (issue #1151, PR #1199 pilot) has been collapsed
-    to a single async implementation. ``*_async`` aliases are kept as
-    thin wrappers so premium continues to compile while it drops the
-    suffix on its own callers.
-    """
+    """Database-backed user storage using the User model."""
 
     async def get_by_id(self, user_id: str | int) -> UserData | None:
         """Look up a user by primary key (id)."""

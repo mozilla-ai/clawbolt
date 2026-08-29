@@ -7,11 +7,11 @@ With QuickBooks connected, you can create estimates, look up invoices, and manag
 Dictate a job description from your phone and your assistant drafts an estimate in QuickBooks:
 
 ```
-You: Just left the Davis place. They want the master bathroom
+You: Just left the Test Customer job. They want the master bathroom
      remodeled. About 3 days of labor at 65 an hour, plus
      around 800 in materials for tile and fixtures.
 
-Clawbolt: I created a draft estimate for Davis in QuickBooks:
+Clawbolt: I created a draft estimate for Test Customer in QuickBooks:
           - Labor (3 days x 8 hrs x $65/hr): $1,560
           - Materials (tile & fixtures): $800
           - Total: $2,360
@@ -23,9 +23,9 @@ No laptop required. No "computer time" at the end of the day.
 ## Looking up invoices
 
 ```
-You: What invoices do I have for Amy's Bird Sanctuary?
+You: What invoices do I have for Test Customer?
 
-Clawbolt: Found 4 invoices for Amy's Bird Sanctuary:
+Clawbolt: Found 4 invoices for Test Customer:
           - #1036 | $315.00 (Paid)
           - #1012 | $650.00 (Open, $400 paid)
           - #1009 | $1,250.00 (Paid)
@@ -38,14 +38,4 @@ Ask your assistant to send estimates or invoices to clients, or create and updat
 
 ## Getting connected
 
-Ask your assistant to connect QuickBooks:
-
-```
-You: Connect my QuickBooks
-
-Clawbolt: Here's a link to connect your QuickBooks account:
-          [link]
-          Tap it, sign in, and you're all set.
-```
-
-You can also connect from the Tools page in the web dashboard. See [QuickBooks](/docs/features/quickbooks) for technical setup details.
+Ask your assistant to connect QuickBooks, or use the Tools page in the web dashboard. See [Integrations](/docs/guide/integrations) for the connection flow and [QuickBooks](/docs/features/quickbooks) for operator setup.

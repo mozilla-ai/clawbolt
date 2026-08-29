@@ -9,41 +9,9 @@ from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
-# Opt in to any-llm's unified exception family.
-#
-# any-llm still defaults to re-raising the raw provider SDK exception and only
-# converts to ``any_llm.exceptions`` types when this variable is truthy (see
-# ``any_llm.utils.exception_handler._handle_exception``). Without it, every
-# unified-exception handler in this codebase is dead code, because an
-# ``anthropic.RateLimitError`` is not an ``any_llm.RateLimitError``:
-#
-#   * ``core.py::_call_llm_with_retry`` never backs off on a rate limit, never
-#     trims and retries on a context overflow, and never logs the specific
-#     content-filter or auth diagnostics.
-#   * ``router.py::run_agent`` never returns ``CONTENT_FILTER_FALLBACK`` or
-#     ``AUTH_ERROR_FALLBACK``.
-#
-# Every failure instead lands in the generic ``except Exception`` and the user
-# gets "I'm having trouble thinking right now" with no retry. Observed in
-# production: an upstream 400 arrived as a raw ``anthropic.BadRequestError`` and
-# reached ``run_agent``'s generic handler.
-#
-# ``setdefault`` so an operator can opt out with
-# ``ANY_LLM_UNIFIED_EXCEPTIONS=0``, but note that has to be a real environment
-# variable: pydantic-settings reads ``.env`` into the ``Settings`` model without
-# writing it back to ``os.environ``, so a ``.env`` entry is invisible here. It
-# does work via ``docker compose`` ``env_file`` and on a platform's env config,
-# both of which inject real variables.
-#
-# any-llm reads the variable inside ``_handle_exception``, i.e. per raise rather
-# than at import time, so this does not depend on import ordering; config is
-# nonetheless imported by every module that calls ``amessages``.
-#
-# One conversion is load-bearing elsewhere: with this on, a provider that cannot
-# enumerate models raises ``NotImplementedError`` from inside any-llm's decorator
-# and arrives wrapped, which would silently kill the ``except
-# NotImplementedError`` branch callers use to render a free-text model field.
-# ``llm_service.get_models`` unwraps it so that signal survives.
+# Use any-llm's provider-independent exception types so retry and fallback logic
+# can handle rate limits, context overflow, auth failures, and content filters.
+# ``setdefault`` preserves an operator's explicit process-level override.
 os.environ.setdefault("ANY_LLM_UNIFIED_EXCEPTIONS", "1")
 
 # Default hysteresis buffer for the turn-count trim backstop: when
@@ -80,18 +48,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://localhost:8000"
     jwt_secret: str = "change-me-in-production"
     jwt_expiry_minutes: int = Field(default=15, ge=1)
-    # Who the app authenticates, and the deployment's tenancy switch.
-    #
-    # "single_user" is the self-hosted default: no credentials, every
-    # request resolves to the one user in the database, and none of the
-    # hosted-deployment surface below is reachable.
-    #
-    # "multi_user" turns on Google OAuth sign-in, JWT sessions, the admin
-    # console, per-tenant quota enforcement, and the operator monitoring
-    # stack. It requires a registered current-user resolver and rejects
-    # requests that do not carry one; see
-    # ``backend/app/auth/dependencies.py``. The settings from
-    # "Multi-user deployment" onward only matter in this mode.
+    # Tenancy switch. Multi-user mode enables authenticated hosted surfaces;
+    # single-user mode resolves requests to the deployment's sole user.
     auth_mode: Literal["single_user", "multi_user"] = "single_user"
     # Backend for runtime-configurable settings: "db" (default) stores in
     # the app_settings table; "file" keeps the legacy data/config.json
@@ -111,29 +69,8 @@ class Settings(BaseSettings):
     vision_model: str = ""  # empty = fall back to llm_model
     vision_provider: str = ""  # empty = fall back to llm_provider
     reasoning_effort: str = "auto"  # none, minimal, low, medium, high, xhigh, auto
-    # Sized to fit a typical multi-tool turn (one ~200-token reply plus a tool
-    # call whose JSON args can run 500-1500 tokens for nested entity payloads
-    # in the QuickBooks / CompanyCam tools) *plus* the reasoning tokens a
-    # thinking-by-default model spends before it emits anything at all.
-    #
-    # Raised 2048 -> 8192: reasoning models bill their chain-of-thought against
-    # this same budget, so 2048 left almost no headroom, and this path had the
-    # tightest budget in the file despite being the most tool-heavy one
-    # (heartbeat already gets 12000, compaction 16000).
-    #
-    # Truncation is not a benign "reply got cut short": a provider that renders
-    # tool calls as markup in the completion text needs the closing token to
-    # parse them, so a cut mid-block yields zero tool calls and leaks the raw
-    # markup as content (the ``core.py`` guard now discards that rather than
-    # delivering it). Measured against a DeepSeek-family model on a two-event
-    # calendar request: at 2048, 3 of 6 turns truncated and leaked; a
-    # *successful* turn consumed 1817 output tokens; and one turn needed more
-    # than 4096, recovering only on the ladder's second rung.
-    #
-    # Raising this is close to free. ``max_tokens`` is a ceiling, not a spend,
-    # and healthy turns here run 300-800 output tokens, so the higher default
-    # changes nothing about what they cost. It is only reached by a degenerate
-    # turn, which is what ``_MAX_TOKENS_CEILING`` bounds.
+    # Allows reasoning plus nested tool payloads without truncating a tool call.
+    # ``core.py`` applies a separate recovery ceiling to runaway generations.
     llm_max_tokens_agent: int = Field(default=8192, ge=1)
     llm_max_tokens_heartbeat: int = Field(default=12000, ge=1)
     llm_max_tokens_vision: int = Field(default=12000, ge=1)
@@ -145,108 +82,36 @@ class Settings(BaseSettings):
     google_drive_client_id: str = ""
     google_drive_client_secret: str = ""
 
-    # Inbound media staging: bytes for photos/files the user sends over the
-    # messaging channel land here until the agent uploads them somewhere
-    # durable (CompanyCam, Drive) or the 7-day TTL expires. Point this at a
-    # persistent volume in production; the bytes survive process restarts so
-    # the agent can still reference photos from days ago. Metadata lives in
-    # the ``staged_media`` Postgres table.
-    #
-    # MULTI-REPLICA WARNING: this path must be writable by exactly one
-    # application instance. If clawbolt is ever deployed across multiple
-    # replicas, the on-disk bytes are no longer shared and the staging cache
-    # needs to move to Postgres BYTEA or an object store. Tracked at
-    # https://github.com/mozilla-ai/clawbolt/issues/1336.
+    # Persistent staging for inbound media bytes; metadata is in Postgres.
+    # One application instance must own this path. See issue #1336.
     media_staging_base_dir: str = "data/staged_media"
 
     # Agent loop
     approval_timeout_seconds: int = Field(default=120, ge=1)
     agent_processing_timeout_seconds: float = Field(default=300.0, gt=0)
     message_batch_window_ms: int = Field(default=1500, ge=100)
-    # Inbound messages are persisted before MessageBatcher schedules an
-    # in-memory flush task. If the worker dies during that window the
-    # message lives in the DB but never reaches the agent. On startup we
-    # sweep for inbound rows from the last N minutes that have no
-    # outbound after them and re-dispatch each. Older orphans are
-    # unlikely to still be relevant; tune up if you have evidence
-    # otherwise. 0 disables the sweep entirely.
+    # Redispatch recently persisted inbound messages that lack an outbound reply.
+    # Zero disables startup recovery.
     inbound_recovery_lookback_minutes: int = Field(default=30, ge=0)
-    # Startup sweep for ``compaction_events`` rows stuck in ``'pending'``:
-    # the async compaction LLM call crashed (deploy restart, provider
-    # outage) after the trim watermark advanced, so the seq range's facts
-    # were never extracted into MEMORY.md. Rows older than a 10-minute
-    # grace floor and younger than this lookback are retried on boot
-    # (max 3 attempts per row, tracked in ``retry_count``). Unlike
-    # orphaned inbounds, a stale compaction stays fully recoverable for
-    # as long as the message rows exist, so the default lookback is a
-    # week rather than minutes. 0 disables the sweep entirely.
+    # Retry recent pending compactions at startup. Zero disables recovery.
     compaction_retry_lookback_minutes: int = Field(default=10_080, ge=0)
     max_tool_rounds: int = Field(default=10, ge=1)
     max_input_tokens: int = Field(default=600_000, ge=1)
-    # Primary trim governor: the raw conversation window is bounded by
-    # tokens, not turns. Trim fires when the prompt exceeds
-    # ``context_trim_trigger_tokens`` and drops the oldest turns until it
-    # is back under ``context_trim_target_tokens``. The gap between the two
-    # is hysteresis: a single threshold (target == trigger) would re-fire
-    # compaction on every message once the resting state sits at the
-    # ceiling. ~30K of headroom spaces trims a few active days apart for a
-    # token-light messaging user. Lower the target to trade raw recall for
-    # per-turn cost; the full window is sent every turn.
+    # Primary trim governor. Trigger above the target to provide hysteresis.
     context_trim_target_tokens: int = Field(default=120_000, ge=1)
     context_trim_trigger_tokens: int = Field(default=150_000, ge=1)
-    # Turn-count backstop. Tokens bind first for token-heavy users (150K
-    # is reached well before this cap when messages carry tool traffic);
-    # this cap is what protects token-light users, whose conversations
-    # can grow past ``conversation_history_limit`` rows while staying
-    # under the token trigger forever. The backstop must therefore be
-    # reachable inside the loader window: a user turn is typically an
-    # inbound + outbound row pair, so the effective trigger needs about
-    # 2x its value in rows, and ``log_config_warnings`` warns when
-    # ``2 * (trigger + 1) > conversation_history_limit`` (issue #1427).
-    # Trimming oldest turns past this cap rolls them through compaction
-    # into MEMORY.md / USER.md / SOUL.md. ge=2 so at least one prior turn
-    # is always retained; not ``None``, which would disable the guard
-    # entirely.
+    # Backstop for many token-light turns. Must remain reachable inside
+    # ``conversation_history_limit``; ``log_config_warnings`` enforces this.
     context_trim_target_turns: int = Field(default=200, ge=2)
-    # Turn-backstop trigger threshold: the turn cap fires only when the
-    # user-turn count exceeds this, then drops to
-    # ``context_trim_target_turns`` (same hysteresis rationale as the token
-    # path). When ``None``, defaults to ``context_trim_target_turns +
-    # CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS`` inside ``trim_messages``.
+    # None resolves to target plus CONTEXT_TRIM_DEFAULT_TRIGGER_BUFFER_TURNS.
     context_trim_trigger_turns: int | None = Field(default=None)
-    # Per-file truncation cap for memory-text snapshots persisted on
-    # ``compaction_events`` rows. A user with a 500KB MEMORY.md would
-    # otherwise produce ~4MB rows once before/after for all four files
-    # (memory, history, user, soul) is included. When a file exceeds the
-    # cap, the snapshot column stores a structured truncation record
-    # (head, tail, size, sha256) rather than the full text. Bounds the
-    # worst-case row size while keeping admin diff visibility intact.
+    # Per-file cap for compaction-event snapshots. Oversize content is stored
+    # as a head/tail/hash record rather than full text.
     compaction_event_snapshot_max_bytes_per_file: int = Field(default=100_000, ge=1024)
     llm_max_retries: int = Field(default=3, ge=1)
-    # Use Anthropic's 1-hour extended-TTL cache instead of the default
-    # 5-minute ephemeral cache. Inactive users with conversation gaps
-    # >5 min currently always miss the prompt cache on their first
-    # turn after returning. The 1h TTL covers their typical re-engage
-    # pattern at a 1.5x cache_create premium (vs 1.25x for 5min);
-    # the read cost is unchanged. Net cost goes down for any user
-    # whose median inter-message gap is more than ~5 min.
-    # Set to ``False`` to opt back into the default 5-minute TTL,
-    # e.g. if a non-Anthropic provider rejects the ttl field.
+    # Use Anthropic's one-hour cache TTL instead of the five-minute default.
     llm_cache_extended_ttl: bool = True
-    # Whether the agent may stamp Anthropic ``cache_control`` breakpoints.
-    #   "auto"   (default) stamp them for providers that serve the Messages API
-    #            natively, including through a custom ``llm_api_base``.
-    #   "never"  never stamp them, forgoing prompt caching entirely.
-    # A kill switch rather than a tuning knob: a marker the downstream cannot use
-    # is discarded in conversion, so "auto" is safe against a gateway whose
-    # models are not all Anthropic-backed. The one case that still needs "never"
-    # is a gateway running any-llm < 1.24, which rejects a marked request instead
-    # of dropping the marker (any-llm#1228).
-    # The former "always" value is gone: it existed only to override an endpoint
-    # check that no longer exists. It was never anything but a widening of
-    # "auto", so "auto" is the drop-in replacement.
-    # ``provider_honors_cache_control`` in ``services/llm_service.py`` owns the
-    # decision this feeds.
+    # "auto" stamps supported Anthropic cache breakpoints; "never" disables them.
     llm_prompt_cache: Literal["auto", "never"] = "auto"
 
     # Conversation & memory
@@ -425,25 +290,9 @@ class Settings(BaseSettings):
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
     heartbeat_concurrency: int = Field(default=5, ge=1)
     heartbeat_recent_messages_count: int = Field(default=5, ge=1)
-    # Skip the heartbeat LLM call for a user who messaged recently. The
-    # scheduler ticks every ``heartbeat_interval_minutes`` regardless of
-    # user activity; without this gate, an active conversation produces
-    # a tick → LLM call → "skip" decision every interval, burning tokens
-    # for no user value. The default 5-minute window is short enough not
-    # to delay genuinely overdue nudges and long enough to absorb a
-    # multi-turn back-and-forth. Set to 0 to disable the throttle.
+    # Skip heartbeat evaluation during an active conversation. Zero disables.
     heartbeat_user_quiet_period_minutes: int = Field(default=5, ge=0)
-    # Delay the first scheduler tick after process start. Without this,
-    # a deploy mid-conversation produces a tick on the new container
-    # within ~2 seconds of boot, before any in-flight work on the old
-    # container has had a chance to settle, and before any queued
-    # inbound messages have drained from the bus into normal processing.
-    # The Phase 1 LLM then sees the user's pending request in recent
-    # context and decides to act, racing the agent path that would have
-    # handled it normally. 60 seconds is short enough not to delay
-    # genuine proactive nudges in long-running deployments and long
-    # enough to absorb the post-restart settle window. Set to 0 to
-    # disable the warmup (the previous behavior).
+    # Let queued inbound work settle before the first post-start heartbeat tick.
     heartbeat_startup_warmup_seconds: int = Field(default=60, ge=0)
 
     # Observability
@@ -452,12 +301,7 @@ class Settings(BaseSettings):
     # as a top-level key for log aggregators.
     log_format: str = "text"
 
-    # Web chat UI: whether the chat page shows the file attachment affordance
-    # (paperclip button + hidden file input). Defaults to True for OSS, where
-    # uploads land directly on the FastAPI worker. Deployments behind a proxy
-    # or CDN that caps request body size (e.g. CloudFront's 1 MB default on
-    # premium) set this to False until the upload path is fixed, so users do
-    # not see an affordance that silently fails.
+    # Hide attachments when an upstream proxy cannot accept typical photo sizes.
     chat_web_attachments_enabled: bool = True
 
     # -----------------------------------------------------------------
@@ -516,46 +360,22 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = ""
 
-    # Socket timeout for one SMTP operation. Kept short because the failure
-    # mode is a silently dropped SYN (a platform that blocks outbound SMTP,
-    # a firewalled relay), and ``socket.create_connection`` retries every
-    # address the host resolves to: at 15s, a three-A-record host held an
-    # admin request for 45s before reporting anything. The send is
-    # additionally bounded by twice this value so a multi-address retry
-    # cannot outlive it.
+    # One SMTP operation timeout; the complete send is capped at twice this value.
     smtp_timeout_seconds: int = Field(default=10, ge=1)
 
-    # Operator error alerting. Routes ERROR-level application logs to the
-    # operator's inbox via the SMTP sender above. Dormant unless SMTP is
-    # configured AND a recipient resolves (alert_email, else admin_email),
-    # so dev/local and CI never send.
-    #
-    # Throttling exists because a single broken integration can log
-    # thousands of identical errors a minute. Alerts are grouped by
-    # fingerprint (logger + exception type + log template); each
-    # fingerprint emails at most once per alert_dedupe_minutes, carrying
-    # the suppressed occurrence count.
+    # Grouped and throttled ERROR-log email alerts. Requires SMTP and a recipient.
     alerts_enabled: bool = True
     alert_email: str = ""
     alert_flush_interval_seconds: int = Field(default=60, ge=1)
     alert_dedupe_minutes: int = Field(default=30, ge=1)
     alert_max_emails_per_hour: int = Field(default=20, ge=1)
 
-    # Proactive health monitoring. Probes each dependency on a timer and
-    # emails the operator on state transitions (OK -> DOWN, DOWN -> OK)
-    # rather than on every failing tick, so a multi-hour outage is two
-    # emails, not hundreds.
-    #
-    # health_failure_threshold requires N consecutive failures before
-    # declaring DOWN. A single timed-out probe against a residential
-    # BlueBubbles host is noise, not an outage.
+    # Dependency probes alert after the failure threshold and on recovery.
     health_monitor_enabled: bool = True
     health_check_interval_seconds: int = Field(default=300, ge=1)
     health_failure_threshold: int = Field(default=2, ge=1)
 
-    # The LLM probe spends real tokens (a single-token completion per
-    # tick). At the 300s default that is ~288 calls/day, negligible cost,
-    # but it is opt-outable for anyone who would rather not pay it.
+    # The LLM probe makes one single-token completion per tick.
     health_probe_llm: bool = True
 
     # Cap on users checked per tick by the integration probe. Each user

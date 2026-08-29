@@ -1,17 +1,4 @@
-"""Tests for the async API of ``HeartbeatStore`` (issue #1154).
-
-Mirrors the sync ``HeartbeatStore`` surface for the ``*_async`` peers
-added in the dual-API rollout. All tests opt into the per-test
-``async_db`` fixture (see ``tests/conftest.py``) so writes are rolled
-back at teardown. Follows the IdempotencyStore pilot pattern from
-PR #1199.
-
-User-row setup runs through the shared ``async_test_user`` fixture in
-``tests/conftest.py``; that fixture routes the insert through the
-async connection because the sync ``test_user`` fixture opens its own
-per-test transaction on a separate connection and rows committed there
-are invisible to the async store under READ COMMITTED.
-"""
+"""Async database-backed heartbeat-store tests."""
 
 from __future__ import annotations
 

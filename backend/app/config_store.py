@@ -176,23 +176,14 @@ class SettingsStore(Protocol):
 # ---------------------------------------------------------------------------
 
 
-# Dual-API rollout (issue #1175, follows the IdempotencyStore pilot in
-# #1199). Internal logic is factored into pure module-level helpers so
-# the sync and async methods stay in lockstep without a class
-# hierarchy. Each existing public method keeps its plain name; the new
-# ``*_async`` peer uses real async DB access via the configured async
-# session factory (default: ``AsyncSessionLocal``).
-#
-# These helpers are intentionally not parameterized over the bind type:
-# they return raw-SQL TextClauses and pure Python payloads, which both
-# ``Session.execute`` and ``AsyncSession.execute`` accept.
+# SQL builders shared by the database-backed store methods.
 def _load_select_sql() -> TextClause:
-    """Builder shared by ``load`` / ``load_async``."""
+    """Build the query that loads all persisted settings."""
     return text("SELECT key, value, is_secret FROM app_settings")
 
 
 def _save_upsert_sql() -> TextClause:
-    """Builder shared by ``save`` / ``save_async``.
+    """Build the batch settings upsert.
 
     One round-trip: ON CONFLICT upsert for the whole batch.
     """
@@ -210,16 +201,12 @@ def _save_upsert_sql() -> TextClause:
 
 
 def _delete_sql() -> TextClause:
-    """Builder shared by ``delete`` / ``delete_async``."""
+    """Build the settings deletion query."""
     return text("DELETE FROM app_settings WHERE key = ANY(:keys)")
 
 
 def _encryption_context() -> _encryption.EncryptionContext:
-    """Encryption context shared by both sync and async paths.
-
-    Module-level so the sync and async methods see identical (table,
-    column) bindings without going through an instance method.
-    """
+    """Return the stable table and column binding for encrypted values."""
     return {"table": "app_settings", "column": "value"}
 
 
@@ -293,11 +280,8 @@ class DbSettingsStore:
     the configured ``KEKProvider`` before insertion. Decryption happens
     on read. Non-secret keys are stored verbatim.
 
-    Async-only as of issue #1160. The store resolves
-    ``AsyncSessionLocal`` lazily so a store instantiated at import time
-    picks up test rebinding of the ``async_db`` fixture's session
-    factory. ``*_async`` aliases are kept as thin wrappers in case
-    out-of-tree callers still reference the suffix.
+    ``AsyncSessionLocal`` resolves lazily so import-time instances pick up
+    test rebinding. ``*_async`` methods are deprecated aliases.
     """
 
     _CONTEXT_TABLE = "app_settings"
