@@ -692,7 +692,7 @@ class AdminUserDetailResponse(BaseModel):
     items 3 + 4 land. Until then, admins debugging an incident see the
     metadata + integrations here, plus the audit log of who looked.
 
-    Channel routes carry a *masked* ``channel_identifier`` — phone
+    Channel routes carry a *masked* ``channel_identifier``. Phone
     numbers / iMessage emails / Telegram chat IDs are PII the admin
     rarely needs in full. The route applies ``_mask_channel_identifier``
     so admins see enough to recognize a route and confirm last-4 digits,
@@ -1058,7 +1058,7 @@ class AdminHeartbeatLogItem(BaseModel):
     """Heartbeat log metadata only.
 
     Content fields (``message_text``, ``reasoning``, ``tasks``) were
-    removed in #325 work item 2 — they were user-facing content the
+    removed in #325 work item 2. They were user-facing content the
     user-detail response also stripped. They surface only via the
     consent-gated paths once items 3 + 4 land.
     """
@@ -1301,11 +1301,7 @@ class SharedDataMessageItem(BaseModel):
 # Admin: turn-grouped conversation inspector (design 2026-05-01)
 # ---------------------------------------------------------------------------
 #
-# ``SharedDataMessageItem`` above is retained because the turn schema
-# nests it inside each turn for the user message and agent reply. The
-# flat ``GET /conversations/{id}/messages`` endpoint that originally
-# motivated it was retired in #361's follow-up: Turns covers every
-# real read pattern, and the second endpoint had no callers.
+# Turns nest ``SharedDataMessageItem`` for the user message and agent reply.
 
 
 class SharedDataReceipt(BaseModel):

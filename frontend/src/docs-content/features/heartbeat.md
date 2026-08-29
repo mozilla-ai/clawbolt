@@ -4,19 +4,17 @@ The heartbeat system lets Clawbolt proactively reach out with reminders and foll
 
 ## How it works
 
-The heartbeat runs on a timer and uses a two-stage design: **cheap checks first, LLM only when needed**.
+The heartbeat runs on a timer and uses a two-stage evaluation.
 
-### Stage 1: Deterministic checks (no LLM cost)
+Before either stage, Clawbolt skips users who have not opted in, have no heartbeat items, recently sent a message, or reached their daily proactive-message limit.
 
-Fast checks look for actionable items:
+### Stage 1: Lightweight evaluation
 
-- **Time-sensitive memory facts**: Facts containing keywords like "remind", "follow-up", "deadline"
-- **Idle users**: No inbound messages for a configurable number of days
-- **Heartbeat notes**: User-defined notes stored via the `update_heartbeat` tool
+A small LLM call reviews the user's heartbeat items, recent activity, and prior heartbeat history. It decides whether an item is actionable now.
 
-### Stage 2: LLM evaluation (only if flags found)
+### Stage 2: Task execution
 
-If any checks return results, the LLM composes an appropriate message. It can decide to send the message or take no action, based on priority and context.
+When Stage 1 selects work, the full agent executes the task and sends any useful result. If nothing is due, no message is sent.
 
 ## Quiet by default
 

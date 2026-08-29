@@ -4,7 +4,7 @@
 >
 > The QuickBooks integration is experimental. Do not connect it to a production QuickBooks account. Use a sandbox company only while this feature is being developed.
 
-Clawbolt can connect to QuickBooks Online so you can manage invoices, estimates, and customers directly from the chat. Ask a question like "what invoices do I have for Amy?" or dictate a job description and Clawbolt will create a draft estimate in QuickBooks.
+Clawbolt can connect to QuickBooks Online so you can manage invoices, estimates, and customers directly from chat. Ask what invoices exist for a test customer, or dictate a job description and Clawbolt will create a draft estimate in QuickBooks.
 
 ## What it can do
 
@@ -13,8 +13,8 @@ The integration provides four tools that the agent uses to interact with QuickBo
 | Tool | Purpose |
 |------|---------|
 | `qb_query` | Look up invoices, estimates, customers, items, payments, and more |
-| `qb_create` | Create new customers, estimates, or invoices |
-| `qb_update` | Update existing customers, estimates, or invoices |
+| `qb_create` | Create customers, estimates, invoices, or items |
+| `qb_update` | Update customers, estimates, invoices, or items |
 | `qb_send` | Email an invoice or estimate to a customer |
 
 The agent handles the queries and API calls itself, so you just talk in plain language.
@@ -51,82 +51,36 @@ Go to [developer.intuit.com](https://developer.intuit.com) and sign up (or sign 
 2. Under **Development** (for sandbox testing), copy:
    - **Client ID**
    - **Client Secret**
-3. Add a redirect URI (use `https://developer.intuit.com/v2/OAuth2Playground/RedirectUrl` for the playground)
+3. Add `https://<your-domain>/api/oauth/callback` as a redirect URI
 
-### 4. Note your sandbox company ID
-
-Intuit automatically creates a sandbox company with sample data (customers, items, invoices). Find the **Company ID** (also called **Realm ID**) in the sandbox section of the developer dashboard.
-
-### 5. Get OAuth tokens via the playground
-
-The OAuth 2.0 Playground is the easiest way to get your initial tokens without building a callback flow:
-
-1. From your app dashboard, click **Test connect to app (OAuth)** or open the OAuth 2.0 Playground directly
-2. Select your app and the **Accounting** scope
-3. Click **Connect to QuickBooks**
-4. Sign in and authorize the sandbox company
-5. The playground will show your **Access Token** and **Refresh Token**
-
-### 6. Configure Clawbolt
+### 4. Configure Clawbolt
 
 Add these to your `.env` file:
 
 ```bash
 QUICKBOOKS_CLIENT_ID=your_client_id
 QUICKBOOKS_CLIENT_SECRET=your_client_secret
-QUICKBOOKS_REALM_ID=your_company_id
-QUICKBOOKS_ACCESS_TOKEN=your_access_token
-QUICKBOOKS_REFRESH_TOKEN=your_refresh_token
 QUICKBOOKS_ENVIRONMENT=sandbox
+APP_BASE_URL=https://your-clawbolt-domain.example
 ```
 
-Restart Clawbolt and the QuickBooks tools will appear as a specialist capability.
+Restart Clawbolt. Users authorize their own company through Clawbolt's OAuth flow; tokens and company IDs are stored per user.
 
 Once the admin credentials are configured, users can connect their QuickBooks account in two ways:
 
 - **Over chat (preferred):** Ask the assistant "connect my QuickBooks" and it will generate an authorization link.
 - **From the dashboard:** Open the **Tools** page and connect from there.
 
-## Example conversations
-
-### Looking up data
-```
-You: Do I have any invoices for Amy's Bird Sanctuary?
-
-Clawbolt: Found 4 invoices for Amy's Bird Sanctuary:
-          - #1036 | $315.00 (Paid) | Date: 2024-01-10
-          - #1012 | $650.00 (Open, $400 paid) | Due: 2024-03-15
-          - #1009 | $1,250.00 (Paid) | Date: 2023-11-20
-          - #1003 | $475.00 (Paid) | Date: 2023-09-05
-```
-
-### Creating an estimate from a dictation
-```
-You: Just left the Johnson place. They want the bathroom remodeled.
-     About 3 days of labor at 65 an hour, plus around 800 in materials
-     for tile and fixtures.
-
-Clawbolt: I created a draft estimate for Johnson in QuickBooks:
-          - Labor (3 days @ $65/hr): $1,560.00
-          - Materials (tile & fixtures): $800.00
-          - Total: $2,360.00
-          Want to review or adjust anything?
-```
-
-## Token lifecycle
-
-- **Access tokens** expire after 1 hour. Clawbolt automatically refreshes them using the refresh token when it gets a 401 response.
-- **Refresh tokens** expire after 101 days. Each time a token is refreshed, Intuit issues a new refresh token and invalidates the old one.
-- Refreshed tokens are automatically persisted to the database (`oauth_tokens` table) and survive restarts. When `ENCRYPTION_KEY` is configured, tokens are encrypted at rest.
+For user workflows and chat examples, see [Estimates and Invoicing](/docs/guide/estimates).
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
 | Tools don't appear | Check that `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set. The integration is disabled when these are empty. |
-| 401 Unauthorized | Your access token has expired and the refresh token may be stale. Get fresh tokens from the OAuth playground. |
+| 401 Unauthorized | Reconnect QuickBooks from the Tools page to replace an expired or revoked grant. |
 | 400 Bad Request | The query syntax may be invalid. Check the Clawbolt logs for the full error. QBO does not support subqueries. |
-| Wrong company data | Verify `QUICKBOOKS_REALM_ID` is the numeric company ID (no letters). |
+| Wrong company data | Disconnect and reconnect, then authorize the intended QuickBooks company. |
 
 ## Reference
 

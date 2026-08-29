@@ -708,30 +708,17 @@ async def execute_heartbeat_tasks(
     # compose detailed reports (the default agent max_tokens may be lower).
     heartbeat_max_tokens = max(settings.llm_max_tokens_agent, 1024)
 
-    # Prefix the task so the agent knows to execute it rather than
-    # treating it as a user conversation message. Two task shapes are
-    # possible. Real-world action followed by post-cleanup (shape 1) is
-    # the durable counterpart to the Phase 1 stale-item rule; cleanup-
-    # only (shape 2) is what Phase 1 routes when the dated item is
-    # already past its window. Distinguishing them in the prompt
-    # prevents the agent from "doubling up" by performing the action
-    # AND issuing the cleanup, which would re-fire side effects on a
-    # date the user no longer cares about.
-    #
-    # Partial-state failures are acceptable: if the agent finishes the
-    # real-world action but errors before update_heartbeat lands, the
-    # line stays in HEARTBEAT.md and the next tick re-evaluates it via
-    # the Phase 1 stale-item rule (with its 24-hour dedup). Better a
-    # stale line for a few ticks than skipping the user-visible action.
+    # Distinguish real actions from cleanup-only work so removing a stale item
+    # cannot replay its side effect. Failed post-action cleanup is retried later.
     task_context = (
         f"{SCHEDULED_TASK_PREFIX} and write the result to the user.\n\n"
         "Two task shapes:\n\n"
-        '1. Real-world action ("Send the Smith estimate", '
+        '1. Real-world action ("Send the Test Customer estimate", '
         '"Follow up with the customer"): perform the action. If it '
         "corresponded to a one-time dated HEARTBEAT.md item, call "
         "update_heartbeat to delete that line. Recurring patterns "
         '("every morning", "Mondays", "weekly") must stay.\n\n'
-        '2. HEARTBEAT.md cleanup task ("Remove the stale Smith '
+        '2. HEARTBEAT.md cleanup task ("Remove the stale Test Customer '
         'follow-up"): call update_heartbeat to delete the named line '
         "and stop. Do not perform any underlying real-world action; "
         "the date has passed and the user did not ask for it again. "
@@ -943,20 +930,7 @@ async def run_heartbeat_for_user(
         )
         return None
 
-    # Gate: no heartbeat items configured. If the user has no items in their
-    # HEARTBEAT.md, there is nothing for the evaluator to act on. Skip the
-    # LLM call entirely to save tokens and avoid the LLM hallucinating tasks
-    # from conversation history or past heartbeat activity.
-    #
-    # The check looks for any non-heading, non-blank line. The earlier
-    # ``.strip()`` test let header-only documents like "# Reminders\n"
-    # pass — Phase 2 would rewrite the file to that header after handling
-    # one-time items (#1116), and the next 30m tick would call the LLM
-    # to evaluate an empty list and return skip. Production telemetry
-    # showed one user burning ~48 LLM calls/day on a header-only file.
-    # Treating header-only as empty fixes that without changing
-    # ``read_heartbeat_md``, which is also called by compaction and the
-    # heartbeat tools where the raw text is the right return.
+    # Skip empty and heading-only heartbeat files so they cannot trigger work.
     heartbeat_store = HeartbeatStore(user.id)
     heartbeat_text = await heartbeat_store.read_heartbeat_md_async()
     if not _has_actionable_heartbeat_content(heartbeat_text):
@@ -1012,19 +986,8 @@ async def run_heartbeat_for_user(
         )
 
         if not response or (not response.reply_text and not sent_reply):
-            # Phase 2 ran but produced no user-facing message: this is the
-            # cleanup-only path (e.g. heartbeat fired purely to prune a
-            # stale one-time item from HEARTBEAT.md, see #1116). We still
-            # need to record it so the next tick's heartbeat history
-            # shows the removal attempt; without that line, the Phase 1
-            # 24-hour dedup rule has no signal to dedup against and the
-            # LLM keeps re-issuing the same cleanup task.
-            #
-            # ``action_type="cleanup"`` is distinct from "skip" (which
-            # means Phase 1 took no action) and from "send" (which would
-            # count toward the daily nudge budget). ``get_daily_count``
-            # excludes both "skip" and "cleanup" so this log entry is
-            # purely an audit + dedup signal, not a budget consumer.
+            # Record silent cleanup for audit and dedup without consuming the
+            # proactive-message budget.
             if response is not None:
                 heartbeat_store = HeartbeatStore(user.id)
                 await heartbeat_store.log_heartbeat(
@@ -1067,19 +1030,8 @@ async def run_heartbeat_for_user(
                     priority=3,
                 )
 
-        # Record outbound message in session history. Serialize the
-        # full tool-call list so the admin conversation view can
-        # render heartbeat-driven turns with the same fidelity as
-        # user-driven turns; without this, a heartbeat that ran
-        # qb_send / qb_update / etc. shows up as a "Done, ..." outbound
-        # with zero tool calls and is indistinguishable from a
-        # hallucinated success. Mirrors ``router.py:persist_outbound``.
-        #
-        # ``mode="json"`` coerces non-JSON-native values inside ``args``
-        # (datetime, set, UUID, etc.) to their JSON forms so
-        # ``json.dumps`` cannot trip on a tool that puts a richly typed
-        # value in its arguments. Without it, one bad arg would raise
-        # ``TypeError`` and lose the entire outbound persist.
+        # Persist tool calls with heartbeat replies so admin history can verify
+        # actions. JSON mode converts typed arguments before serialization.
         tool_interactions = ""
         if response and response.tool_calls:
             tool_interactions = json.dumps(
@@ -1292,7 +1244,7 @@ class HeartbeatScheduler:
         for queued inbound messages to drain through normal processing.
         Without this gate, a Phase 1 LLM that fires within seconds of
         boot can decide to "complete" a request the previous container
-        was already partway through — risking double execution of
+        was already partway through, risking double execution of
         side-effecting tools (qb_send, qb_create, etc.).
         """
         warmup = settings.heartbeat_startup_warmup_seconds

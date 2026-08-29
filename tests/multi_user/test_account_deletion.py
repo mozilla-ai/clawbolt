@@ -1,11 +1,4 @@
-"""Tests for account deletion service (regression: #25).
-
-Phase C async DB migration (issue #395). The service now operates on an
-``AsyncSession``; setup and verification go through ``async_db()`` so all
-writes share the per-test connection bound by the ``async_db`` fixture.
-Mixing sync ``SessionLocal()`` with ``AsyncSessionLocal()`` here would hit
-the cross-API isolation trap documented in ``conftest.py``.
-"""
+"""Account-deletion service regression tests."""
 
 import datetime
 import uuid

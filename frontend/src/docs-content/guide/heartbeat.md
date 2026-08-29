@@ -4,7 +4,7 @@ Heartbeat lets your assistant reach out proactively. Instead of waiting for you 
 
 ```
 Clawbolt: Hey! Quick reminder: you mentioned wanting to
-          follow up with Mrs. Johnson about the kitchen
+          follow up with Test Customer about the kitchen
           estimate by end of week. Want me to draft a
           message to send her?
 ```
@@ -14,11 +14,11 @@ Clawbolt: Hey! Quick reminder: you mentioned wanting to
 Just tell your assistant what to track. It manages your heartbeat automatically:
 
 ```
-You: Add to my heartbeat: follow up with Davis about
+You: Add to my heartbeat: follow up with Test Customer about
      the bathroom estimate by Friday
 
 Clawbolt: Added to your heartbeat. I'll remind you about
-          the Davis estimate before Friday.
+          the Test Customer estimate before Friday.
 ```
 
 ```

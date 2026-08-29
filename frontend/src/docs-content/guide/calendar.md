@@ -8,17 +8,17 @@ With Google Calendar connected, you can check your schedule, book jobs, and mana
 You: What do I have tomorrow?
 
 Clawbolt: Here's your schedule for tomorrow (Tuesday):
-          - 8:00 AM: Site visit at Johnson residence
+          - 8:00 AM: Test Customer site visit
           - 11:30 AM: Lunch with supplier
-          - 2:00 PM: Estimate walkthrough at 42 Oak St
+          - 2:00 PM: Estimate walkthrough at 123 Main Street
 ```
 
 ```
-You: Schedule a bathroom remodel at the Davis place
+You: Schedule a bathroom remodel for Test Customer
      for next Monday 8am to 4pm
 
 Clawbolt: I'd like to create this event:
-          "Job: Davis - Bathroom remodel"
+          "Job: Test Customer - Bathroom remodel"
           Monday March 30, 8:00 AM - 4:00 PM
           Approve?
 
@@ -35,14 +35,4 @@ Your assistant uses your timezone when interpreting times. Make sure it's set co
 
 ## Getting connected
 
-Ask your assistant to connect Google Calendar:
-
-```
-You: Connect my Google Calendar
-
-Clawbolt: Here's a link to connect your Google account:
-          [link]
-          Tap it, sign in, and grant calendar access.
-```
-
-You can also connect from the Tools page in the web dashboard. You can control which calendar actions are enabled (list, create, update, delete) from there. See [Google Calendar](/docs/features/calendar) for technical setup details.
+Ask your assistant to connect Google Calendar, or use the Tools page in the web dashboard. See [Integrations](/docs/guide/integrations) for the connection flow and [Google Calendar](/docs/features/calendar) for operator setup.

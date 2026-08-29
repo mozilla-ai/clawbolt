@@ -1,18 +1,8 @@
 """AppFolio Vendor Portal tool registration and factories.
 
-Picked up by the registry's ``ensure_tool_modules_imported`` scan; the
-``_register()`` call at the bottom installs the ``appfolio_vendor``
-specialist factory at module-import time: the data tools (work-order reads +
-status updates, notes with photos, invoices). When the user is not yet
-connected, ``_appfolio_vendor_auth_check`` returns a reason string so the
-registry surfaces it under "Not connected" rather than letting the LLM
-believe AppFolio is ready to use. That closed a prod bug where the agent
-told users "AppFolio is connected" before they had connected.
-
-Connecting happens in the Clawbolt web app, not over chat: the magic link
-is a single-use secret, and pasting it into a chat thread would leave it in
-the user's message history (issue #1337). The connect form lives on the
-Integrations page and posts to ``/api/integrations/appfolio_vendor``.
+The specialist includes work-order reads and status updates, notes with photos,
+and invoices. Authentication status gates the tools. Users enter the single-use
+magic link on the Integrations page, never in chat history.
 """
 
 from __future__ import annotations

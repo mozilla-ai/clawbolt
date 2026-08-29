@@ -8,28 +8,6 @@ Covers:
   graceful empty list when the underlying session was deleted.
 - Dismiss endpoint: stamps dismissed_at + reviewed_admin_user_id;
   404 on unknown; 400 on already-dismissed.
-
-Async DB conversion (Phase C, issue #394). Routes use
-``Depends(get_async_db)`` and an ``AsyncSession``; tests drive them
-through ``httpx.AsyncClient`` + ``ASGITransport`` and shuttle row
-inserts through the per-test ``async_db`` fixture so the route reads
-back its own writes under READ COMMITTED.
-
-The audit dependency stays sync (it writes its own row through a
-fresh ``SessionLocal()``), and ``get_current_admin`` is overridden in
-the async client fixture to return ``async_test_user`` directly so
-the admin's row exists on the async connection where the dismiss
-route stamps ``reviewed_admin_user_id``. The sync per-test
-connection has no matching admin user, so the audit dep's FK insert
-fails best-effort here and no audit row is persisted under these
-tests; the audit dependency itself is exercised by the all-sync
-suite in ``tests/test_admin_audit.py``. The two pre-conversion tests
-that asserted on ``AdminAuditLog`` rows for these endpoints
-(``test_writes_audit_row_with_resource_id`` and
-``test_dismiss_writes_audit_row``) are dropped on conversion; if a
-regression net for those audit-context fields is needed later, add
-all-sync cases against the existing sync ``client`` fixture and the
-audit log table.
 """
 
 from __future__ import annotations

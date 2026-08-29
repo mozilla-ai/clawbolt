@@ -1,11 +1,4 @@
-"""Tests for the async API of ``IdempotencyStore`` (issue #1150).
-
-Mirrors ``tests/test_idempotency_pruning.py`` for the ``*_async`` peers
-added in the dual-API rollout pilot. All tests opt into the per-test
-``async_db`` fixture (see ``tests/conftest.py``) so writes are rolled
-back at teardown. Future per-store conversions (#1151-#1157) should
-mirror this file when validating their async peers.
-"""
+"""Async idempotency-store pruning and isolation tests."""
 
 from __future__ import annotations
 

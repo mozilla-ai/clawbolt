@@ -367,9 +367,9 @@ def _mask_channel_identifier(identifier: str) -> str:
     """Mask the user-routing identifier (phone, email, Telegram chat id).
 
     Channel identifiers are PII (phone numbers, iMessage emails, Telegram
-    chat IDs). Admins legitimately need to *recognize* a route — to
+    chat IDs). Admins legitimately need to *recognize* a route, to
     confirm "this is the user from ticket #123" or to verify the right
-    last-4 digits with the user — but they don't need the raw value at a
+    last-4 digits with the user, but they don't need the raw value at a
     glance. We show a prefix + suffix that's enough for recognition and
     last-4 confirmation, never enough to dial / message directly off the
     admin panel without going through user search.
@@ -390,7 +390,7 @@ def _mask_channel_identifier(identifier: str) -> str:
        than ~30% of any value.
 
     Identifiers shorter than the smallest meaningful mask are returned
-    verbatim — there's nothing useful to mask in 3-4 chars.
+    verbatim. There's nothing useful to mask in 3-4 chars.
     """
     if not identifier:
         return identifier
@@ -402,7 +402,7 @@ def _mask_channel_identifier(identifier: str) -> str:
     if len(identifier) > _MAX_IDENTIFIER_LEN:
         identifier = identifier[:_MAX_IDENTIFIER_LEN]
 
-    # Email-shaped (``foo@example.com``) — fires only when the domain has
+    # Email-shaped (``foo@example.com``). Fires only when the domain has
     # a ``.``; bare ``@handle`` values fall through to the generic mask.
     if "@" in identifier:
         local, _, domain = identifier.partition("@")
@@ -416,7 +416,7 @@ def _mask_channel_identifier(identifier: str) -> str:
             else:
                 masked_local = (local[:1] + "***") if local else "***"
             masked_host = (host[:1] + "***") if host else "***"
-            # TLD is masked too — custom enterprise / staging TLDs would
+            # TLD is masked too. Custom enterprise / staging TLDs would
             # otherwise leak the company name. Keep the leading char as a
             # weak hint (``.com``-shape vs ``.local``) without exposing
             # the full label.
@@ -432,7 +432,7 @@ def _mask_channel_identifier(identifier: str) -> str:
         return identifier[:4] + "·" * (len(identifier) - 8) + identifier[-4:]
 
     # Generic head+tail mask for handles, numeric IDs, short emails. The
-    # head/tail size scales down for shorter identifiers — a 5-char value
+    # head/tail size scales down for shorter identifiers. A 5-char value
     # masked at head=2+tail=2 leaves only 1 char hidden (40% leak); we
     # use head=1+tail=2 for short inputs and head=2+tail=2 only when the
     # identifier is at least 10 chars (so the leak ratio drops to ≤30%).
@@ -492,9 +492,9 @@ async def get_user_detail(
     Slimmed in #325 work item 2: user-authored content (memory, soul,
     user text, heartbeat directives, message bodies, tool-call args /
     results) was removed from this default response. Content surfaces
-    only via the consent-gated paths — ``/admin/reported-conversations``
+    only via the consent-gated paths. ``/admin/reported-conversations``
     (after a user reports a conversation) or ``/admin/shared-data``
-    (when a user opted into data sharing) — once items 3 + 4 land.
+    (when a user opted into data sharing) once items 3 + 4 land.
 
     Eager-loads ``tool_configs`` and ``channel_routes`` via selectinload
     so we make one round-trip instead of three.
@@ -533,7 +533,7 @@ async def get_user_detail(
 
     # Sort channels by last_inbound_at desc, nulls last. Frontend
     # elevates the first row visually; populated routes come first,
-    # most recent at the top. Identifier is masked — see
+    # most recent at the top. Identifier is masked; see
     # ``_mask_channel_identifier`` for why.
     routes_with_inbound = [c for c in user.channel_routes if c.last_inbound_at is not None]
     routes_without_inbound = [c for c in user.channel_routes if c.last_inbound_at is None]
@@ -583,7 +583,7 @@ async def activate_user(
     admin: User = Depends(get_current_admin),
 ) -> UserActiveResponse:
     """Re-activate a deactivated user."""
-    # ctx.target_user_id is set only after the existence check passes —
+    # ctx.target_user_id is set only after the existence check passes.
     # the column is FK-constrained, so writing an unknown UUID fails the
     # audit insert and leaves the row unrecorded entirely.
     ctx.resource_type = "user"

@@ -1,41 +1,10 @@
-"""Capture LLM request payloads for consenting users.
+"""Capture two eras of agent-main LLM requests for consenting users.
 
-Implements the observer that the agent dispatches to via the
-``set_llm_request_observer`` hook. The observer:
-
-1. Filters to ``purpose == PURPOSE_AGENT_MAIN`` -- the post-trim
-   follow-up, compaction, and heartbeat dispatches are not captured
-   here. Mixing them into the rotation would be wrong because they
-   carry no meaningful era marker (or a fake one), so they would
-   ping-pong against agent-main captures.
-2. Returns immediately and fires the actual work onto an ``asyncio``
-   task: the agent loop is on the user-facing latency hot path and
-   must not wait for a DB round-trip + JSONB upsert per LLM call.
-3. Inside the background task: skips users without
-   ``data_sharing_consent``, drops payloads that exceed a hard byte
-   cap (``MAX_CAPTURE_BYTES``, sized off the OSS trim ceiling so a
-   normal heavy user is captured and only a genuine runaway is
-   dropped), then persists exactly two payload slots
-   per user (current / previous era) via a single ``INSERT ... ON
-   CONFLICT`` upsert that rotates atomically. The era marker is the
-   ``min_message_seq_in_prompt`` field on the payload; when it
-   changes between captures, the existing current row is rotated
-   into the previous slot before the new payload overwrites current.
-
-Single-session assumption: this design relies on OSS migration 026
-("Collapse the sessions table to one row per user"), which enforces
-``UNIQUE(user_id)`` on ``chat_sessions``. With multiple concurrent
-sessions per user, two parallel agent loops would compete for the same
-``llm_payload_captures`` row with potentially different era markers,
-ping-ponging the rotation and silently destroying the "previous era"
-semantic. The PK on ``llm_payload_captures.user_id`` is sized for the
-one-session-per-user world; if OSS ever reintroduces multi-session, the
-PK must become ``(user_id, session_id)`` and the migration must
-backfill.
-
-The observer never raises -- OSS catches exceptions, and the background
-task body is wrapped in try/except so a transient DB error logs and
-moves on without crashing the worker task.
+The observer filters other LLM purposes, returns before its background DB write,
+drops oversize payloads, and atomically rotates current and previous captures by
+``min_message_seq_in_prompt``. The one-row-per-user design assumes one chat session
+per user; multi-session support would require a ``(user_id, session_id)`` key.
+Capture failures are logged and never reach the agent loop.
 """
 
 from __future__ import annotations
@@ -68,40 +37,11 @@ from backend.app.models import LLMPayloadCapture
 
 logger = logging.getLogger(__name__)
 
-# Hard cap on a single capture's serialized JSON size. Captures larger than
-# this are dropped.
-#
-# Was 256 KB, which dropped every capture for exactly the users worth
-# capturing. A real production payload for an active user measured 520 KB: a
-# ~113k-token prompt plus 61 tool schemas (39 KB) and the system prompt
-# (13 KB). Their newest stored capture was two days stale during an incident,
-# because every agent-main call since had logged "dropped (oversize)".
-#
-# 2 MiB is sized off the trim ceiling rather than that one observation. OSS
-# trims the prompt once it exceeds ``context_trim_trigger_tokens`` (default
-# 150k) and drops it back to ``context_trim_target_tokens`` (default 120k), so
-# at roughly 4 bytes per token a heavy user rests near 480 KB and peaks near
-# 600 KB, plus tool schemas and system prompt. 2 MiB leaves ~3x headroom over
-# that peak while still catching a genuine runaway.
-#
-# The trim thresholds bound the round-0 prompt, not every capture: the agent's
-# tool-round loop appends tool results without re-trimming (up to
-# ``max_tool_rounds``), and each round emits its own agent-main payload. The
-# real backstop for those is the model's context window, so re-check this
-# constant when switching to a much larger-context model.
-#
-# Storage: the cap applies independently to the request and response halves of
-# each of the two eras, so a single user's row bounds at 4 x 2 MiB = 8 MiB
-# worst case (responses are output-token-bounded in practice, so realistically
-# far less). Postgres stores those JSONB values out-of-line via TOAST.
+# Per-request or response JSON cap. Sized above the normal trimmed prompt plus
+# tool schemas; larger captures are dropped. A full row holds at most four halves.
 MAX_CAPTURE_BYTES = 2 * 1024 * 1024
 
-# Bounded retry for pairing a response with its request capture. The
-# request and response observers each spawn their own background task,
-# so a fast LLM round can fire the response task before the request
-# task has committed. Three attempts on exponential backoff (50ms,
-# 100ms, 200ms) covers the realistic commit latency without delaying
-# the captures' background-task work meaningfully.
+# Response observers can race the request commit, so pair with bounded backoff.
 _RESPONSE_PAIRING_ATTEMPTS = 3
 _RESPONSE_PAIRING_BACKOFF_S = 0.05
 
@@ -284,9 +224,7 @@ async def _observer_entrypoint(payload: LLMRequestPayload) -> None:
     """
     if payload.purpose != PURPOSE_AGENT_MAIN:
         # Compaction / heartbeat / agent-followup don't carry a meaningful
-        # era marker; capturing them would corrupt the rotation. The capture
-        # can grow per-purpose capture surfaces in a follow-up if there's
-        # demand.
+        # era marker; capturing them would corrupt the rotation.
         return
     task = asyncio.create_task(capture_llm_request(payload))
     _pending_tasks.add(task)

@@ -44,7 +44,7 @@ def redact_pii(text: str) -> str:
 
     Matches are replaced with bracketed labels so the surrounding
     sentence stays readable: ``"Call me at [PHONE]"`` instead of just
-    silent removal. This is intentional — admins reading shared
+    silent removal. This is intentional. Admins reading shared
     conversations need to know that PII *was* there even when the
     value itself is masked.
     """

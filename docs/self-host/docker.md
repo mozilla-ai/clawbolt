@@ -32,7 +32,7 @@ On startup, the app:
 
 Structured data (users, messages, memory, etc.) is stored in PostgreSQL. The Docker Compose file includes a PostgreSQL service with a named volume for persistence.
 
-File uploads and media are stored under the `data/` directory. By default, Docker Compose bind-mounts `./data` from your host into the container at `/app/data`.
+The `data/` bind mount holds staged inbound media and per-user workspace files. Saved user files live in each user's Google Drive.
 
 ## Verify it's running
 
@@ -58,14 +58,7 @@ docker compose build --no-cache
 # Stop existing containers
 docker compose down
 
-# Or use a different port
-docker compose up --build -e APP_PORT=8080
-```
-
-### Reset all data
-
-```bash
-# Remove all user data
-rm -rf data/users/
+# Or change the host side of the app mapping in docker-compose.yml,
+# for example "8080:8000", then start again
 docker compose up --build
 ```

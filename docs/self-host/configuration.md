@@ -19,14 +19,13 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `DATA_DIR` | `data/users` | Directory for file-based user data storage |
+| `DATA_DIR` | `data/users` | Directory for per-user workspace files such as `BOOTSTRAP.md` |
 | `DATABASE_URL` | `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt` | PostgreSQL connection URL |
 | `SETTINGS_STORE` | `db` | Backend for runtime-configurable settings (admin UI values). `db` writes to the `app_settings` table; `file` keeps the legacy `data/config.json` flow for file-based deployments |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated list of allowed CORS origins |
 | `AUTH_MODE` | `single_user` | Who the app authenticates, and the deployment's tenancy switch. `single_user` needs no credentials and resolves every request to the one user in the database. `multi_user` turns on the hosted surface described under [Multi-user deployment](#multi-user-deployment) |
 | `JWT_SECRET` | `change-me-in-production` | Secret key for JWT signing. **Change this in production** |
 | `JWT_EXPIRY_MINUTES` | `15` | JWT token expiry time in minutes |
-| `PREMIUM_PLUGIN` | (empty) | Python import path for premium auth plugin. Leave empty for OSS single-tenant mode |
 
 ## LLM configuration
 
@@ -143,30 +142,30 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 |----------|---------|-------------|
 | `APPROVAL_TIMEOUT_SECONDS` | `120` | Seconds to wait for user approval of a tool call before automatically denying |
 | `AGENT_PROCESSING_TIMEOUT_SECONDS` | `300` | Maximum seconds for a single message's agent processing (includes waiting for the per-user lock). Prevents one hung LLM call from blocking all subsequent messages for the same user |
-| `MESSAGE_BATCH_WINDOW_MS` | `1500` | Milliseconds to wait for more messages before processing. Groups rapid-fire messages into one agent call. Set to `0` to disable |
+| `MESSAGE_BATCH_WINDOW_MS` | `1500` | Milliseconds to wait for more messages before processing. Groups rapid-fire messages into one agent call |
 | `INBOUND_RECOVERY_LOOKBACK_MINUTES` | `30` | On startup, sweep for inbound messages persisted but never dispatched to the agent (worker died during the batcher window). Re-dispatch each one. Older orphans are skipped. Set to `0` to disable |
 | `COMPACTION_RETRY_LOOKBACK_MINUTES` | `10080` | On startup, retry compaction events stuck in `pending` (the background compaction LLM call crashed or the process restarted mid-call). Rows older than a week or already retried 3 times are skipped. Set to `0` to disable |
 | `MAX_TOOL_ROUNDS` | `10` | Maximum tool-calling rounds per agent invocation |
 | `MAX_INPUT_TOKENS` | `600000` | Hard ceiling on the input token budget; the trim trigger must stay at or below this |
-| `CONTEXT_TRIM_TARGET_TOKENS` | `120000` | Drop-to token budget after trimming. The token budget is the primary trim governor: the raw conversation window is bounded by tokens, not turns. Lower this to trade raw recall for per-turn cost, since the full window is sent every turn |
-| `CONTEXT_TRIM_TRIGGER_TOKENS` | `150000` | Trim fires when the estimated prompt token count exceeds this threshold and drops down to `CONTEXT_TRIM_TARGET_TOKENS`, leaving headroom before the next trim. Without this hysteresis (single threshold), the resting state sits at the cap and every subsequent message re-fires trim plus the downstream compaction LLM call. Invariant: `CONTEXT_TRIM_TARGET_TOKENS < CONTEXT_TRIM_TRIGGER_TOKENS <= MAX_INPUT_TOKENS` |
-| `CONTEXT_TRIM_TARGET_TURNS` | `600` | Turn-count backstop, not the primary governor. Tokens bind first in normal use; this only catches pathological message-count bloat (many tiny messages). Trims oldest turns past the cap and rolls them through compaction into `MEMORY.md`, `USER.md`, and `SOUL.md` |
-| `CONTEXT_TRIM_TRIGGER_TURNS` | unset (defaults to `CONTEXT_TRIM_TARGET_TURNS + 16`) | The turn backstop fires when user-turn count exceeds this threshold and drops down to `CONTEXT_TRIM_TARGET_TURNS`, leaving headroom (same hysteresis rationale as the token path). Set to `None` (omit the env var entirely) for the default 16-turn buffer |
-| `COMPACTION_EVENT_SNAPSHOT_MAX_BYTES_PER_FILE` | `100000` | Per-file truncation cap for memory-text snapshots persisted on `compaction_events` rows. When `MEMORY.md` / `HISTORY.md` / `USER.md` / `SOUL.md` exceeds this size, the snapshot column stores a structured truncation record (head, tail, size, sha256) so admin diff visibility is preserved while bounding worst-case row size |
+| `CONTEXT_TRIM_TARGET_TOKENS` | `120000` | Token budget to retain after trimming |
+| `CONTEXT_TRIM_TRIGGER_TOKENS` | `150000` | Token threshold that triggers trimming. Must be above the target and at or below `MAX_INPUT_TOKENS` |
+| `CONTEXT_TRIM_TARGET_TURNS` | `200` | Turn-count backstop for conversations with many small messages |
+| `CONTEXT_TRIM_TRIGGER_TURNS` | unset (target + 16) | Turn threshold that triggers trimming to `CONTEXT_TRIM_TARGET_TURNS` |
+| `COMPACTION_EVENT_SNAPSHOT_MAX_BYTES_PER_FILE` | `100000` | Per-file cap for compaction snapshots. Oversize content is represented by its head, tail, size, and hash |
 | `LLM_MAX_RETRIES` | `3` | Maximum number of retry attempts on rate limit errors |
 | `LLM_CACHE_EXTENDED_TTL` | `true` | Use Anthropic's 1-hour extended cache TTL instead of the default 5 minutes. Reduces cold-start cache misses for users with multi-hour gaps between messages. Set to `false` on non-Anthropic providers that reject the `ttl` field |
-| `LLM_PROMPT_CACHE` | `auto` | Whether to stamp Anthropic `cache_control` breakpoints: `auto` or `never`. `auto` marks whenever the provider serves the Messages API natively (`anthropic`, `azureanthropic`, `vertexaianthropic`), including through a custom `LLM_API_BASE`, since a downstream that cannot use the marker discards it during conversion. Set `never` if you front the `anthropic` provider with a gateway running any-llm older than 1.24, which rejects a marked request with `Extra inputs are not permitted ... cache_control` instead of dropping the marker. Marking is skipped for every other provider regardless, because any-llm's Messages-to-Completions bridge discards the markers anyway |
+| `LLM_PROMPT_CACHE` | `auto` | `auto` adds cache breakpoints for supported Anthropic Messages providers; `never` disables them. Use `never` with gateways running any-llm older than 1.24 |
 
 ## Conversation and memory
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CONVERSATION_HISTORY_LIMIT` | `20` | Max messages included in LLM context |
+| `CONVERSATION_HISTORY_LIMIT` | `500` | Maximum message rows loaded while building LLM context |
 | `MEMORY_RECALL_LIMIT` | `20` | Max memory facts recalled per query |
 | `COMPACTION_ENABLED` | `true` | Enable automatic conversation compaction |
 | `COMPACTION_MODEL` | (same as `LLM_MODEL`) | Model used for compaction |
 | `COMPACTION_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for compaction |
-| `COMPACTION_MAX_TOKENS` | `500` | Max tokens per compaction response |
+| `COMPACTION_MAX_TOKENS` | `16000` | Max tokens per compaction response |
 
 ## Rate limiting
 
@@ -204,7 +203,7 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CHAT_WEB_ATTACHMENTS_ENABLED` | `true` | Show the paperclip / file-input affordance on the chat page. Set to `false` behind proxies or CDNs that cap request body size below the typical photo upload (e.g. CloudFront's 1 MB default) so users do not see an attach button that silently 413s. Premium flips this off automatically. |
+| `CHAT_WEB_ATTACHMENTS_ENABLED` | `true` | Show the web-chat attachment control. Disable it behind proxies that reject typical photo sizes |
 
 ## OAuth
 
@@ -258,7 +257,7 @@ When both are set, users can connect CompanyCam via OAuth on the Tools page or t
 | `APPFOLIO_VENDOR_API_BASE` | `https://vendor.appf.io` | Base URL of the AppFolio Vendor Portal API. Override only for staging or test environments. |
 | `APPFOLIO_VENDOR_WEB_BASE` | `https://vendor.appfolio.com` | Web base shown to users when prompting them to request a magic link. |
 
-The integration uses passwordless magic-link auth: users paste the URL from their AppFolio email and the agent exchanges it for a Bearer JWT. No client ID or secret to configure. Once connected, the agent gains tools like `appfolio_list_work_orders`, `appfolio_search_work_orders`, and `appfolio_list_payments`.
+The integration uses passwordless magic-link authentication. Users enter the link from their AppFolio email on the Integrations page so the credential is not stored in chat history. No operator client ID or secret is required.
 
 ## ServiceTitan
 
@@ -269,7 +268,7 @@ The integration uses passwordless magic-link auth: users paste the URL from thei
 | `SERVICETITAN_AUTH_BASE_URL` | `https://auth.servicetitan.io` | Base URL of the ServiceTitan auth host that serves `/connect/token`. Distinct from the resource host. Override to `https://auth-integration.servicetitan.io` for the integration sandbox; flip both `API_BASE_URL` and `AUTH_BASE_URL` together when switching environments. |
 | `SERVICETITAN_USE_FAKE` | `true` | When true, route every call through the in-process fake backend (deterministic seed data, no real network). Flip to false once a real tenant is available. |
 
-ServiceTitan uses OAuth 2.0 client credentials (machine-to-machine), one set per tenant. The operator wires the integrator's app-level App Key here; each tenant pastes their own tenant ID, client ID, and client secret through the `connect_servicetitan` tool in chat. Stored credentials are envelope-encrypted at rest. ServiceTitan splits auth and resource traffic across two hosts, so `AUTH_BASE_URL` and `API_BASE_URL` are independent settings.
+ServiceTitan uses OAuth 2.0 client credentials, one set per tenant. The operator configures the app-level key; each tenant enters its tenant ID, client ID, and client secret on the Integrations page. Credentials are envelope-encrypted at rest. Auth and resource traffic use separate hosts.
 
 ## Web search
 
@@ -377,7 +376,7 @@ Neither threshold does anything on its own. Run `python -m backend.app.cli clean
 | `SMTP_FROM_EMAIL` | | Envelope sender |
 | `SMTP_TIMEOUT_SECONDS` | `10` | Per-operation socket timeout |
 
-Set `SMTP_HOST` and `SMTP_FROM_EMAIL` together or not at all: a partial config is rejected at startup rather than silently no-opping, because the usual cause is a typo and the usual symptom is users reporting missing email months later. The timeout is deliberately short: `socket.create_connection` retries every address a host resolves to, so a blocked outbound port on a three-record host would otherwise hold an admin request for three times as long.
+Set `SMTP_HOST` and `SMTP_FROM_EMAIL` together; partial configuration fails startup. See [Monitoring and alerting](./monitoring.md) for delivery diagnostics.
 
 ### Operator alerting
 
@@ -389,7 +388,7 @@ Set `SMTP_HOST` and `SMTP_FROM_EMAIL` together or not at all: a partial config i
 | `ALERT_DEDUPE_MINUTES` | `30` | Minimum gap between emails for the same fingerprint |
 | `ALERT_MAX_EMAILS_PER_HOUR` | `20` | Hard ceiling on outbound alert volume |
 
-Dormant unless SMTP is configured and a recipient resolves, so dev and CI never send. Alerts group by fingerprint (logger, exception type, log template) and carry a suppressed-occurrence count, so one broken integration logging thousands of identical errors a minute produces one email, not thousands. `POST /api/monitoring/test-alert` verifies the wiring; `POST /api/monitoring/diagnose-email` reports whether the relay is refusing or nothing is leaving the container at all.
+Alerts require SMTP and a recipient. They group repeated errors, enforce per-group cooldowns, and cap hourly sends. See [Monitoring and alerting](./monitoring.md) for testing and diagnostics.
 
 ### Health monitoring
 
@@ -402,7 +401,7 @@ Dormant unless SMTP is configured and a recipient resolves, so dev and CI never 
 | `HEALTH_PROBE_MAX_USERS` | `50` | Cap on users checked per tick by the integration probe |
 | `HEALTH_PROBE_TIMEOUT_SECONDS` | `45` | Per-probe wall-clock ceiling |
 
-Email goes out on state transitions (OK to DOWN, DOWN to OK), not on every failing tick, so a multi-hour outage is two emails. The failure threshold exists because one timed-out probe against a residential iMessage bridge is noise, not an outage. Current state is at `GET /api/monitoring/status`.
+Health email is sent on DOWN and recovery transitions after the configured failure threshold. Current state is available at `GET /api/monitoring/status`.
 
 ### KMS envelope encryption
 

@@ -26,9 +26,9 @@ Clawbolt is a messaging-first AI assistant that helps users manage their busines
 
 ## Features
 
-- **Memory** -- Clawbolt remembers your rates, clients, preferences, and past conversations
+- **Memory** -- Clawbolt remembers durable rates, preferences, and process rules
 - **Photo analysis** -- Send a job site photo and get an AI description for documentation
-- **File cataloging** -- Photos and documents auto-organized in your Google Drive
+- **File cataloging** -- Save and organize photos and documents in your Google Drive
 - **Proactive heartbeat** -- Clawbolt checks in periodically with reminders and follow-ups
 - **QuickBooks Online** -- Query, create, and send invoices and estimates via QuickBooks (experimental)
 - **Google Calendar** -- Check availability, schedule jobs, and manage events from chat (experimental)

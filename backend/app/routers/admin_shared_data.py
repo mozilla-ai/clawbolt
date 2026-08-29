@@ -41,7 +41,7 @@ already has the audit infrastructure in place from PR #330.
 Non-consenting users return 403 even when the calling admin has
 permission; consent is the gate, not admin role. A user who toggles
 consent off mid-investigation will start returning 403 on the next
-admin read, which is the correct behavior — admins lose access the
+admin read, which is the correct behavior. Admins lose access the
 moment the user revokes.
 """
 
@@ -258,7 +258,7 @@ async def get_shared_data_summary(
     # Open reports: dismissed_at is null for an open report. Not
     # restricted to consenting users because reports are admin triage
     # signal independent of consent (the report row itself does not
-    # surface message bodies — those are still gated).
+    # surface message bodies; those are still gated).
     open_reports_count = (
         await db.execute(
             select(sa_func.count(ReportedConversation.id)).where(
@@ -736,7 +736,7 @@ async def list_shared_data_heartbeat_logs(
     only metadata (id, action_type, channel, created_at) since #336.
     For consenting users the full content surfaces here: ``message_text``
     (what the agent sent on this tick), ``reasoning`` (why it sent /
-    skipped — often quotes the user back to themselves), and ``tasks``
+    skipped because it often quotes the user back to themselves), and ``tasks``
     (the serialized task state the LLM was deciding from). All three
     columns are envelope-encrypted at rest; ORM reads decrypt
     transparently and we redact PII shapes before serialization.
@@ -808,7 +808,7 @@ async def get_shared_data_memory(
 
     Both columns are envelope-encrypted at rest. A user with no
     document yet (never compacted, never wrote memory) returns empty
-    strings rather than 404 — consenting and "no memory yet" is a
+    strings rather than 404. Consenting and "no memory yet" is a
     valid combined state.
     """
     user = await _require_consenting_user(db, user_id)

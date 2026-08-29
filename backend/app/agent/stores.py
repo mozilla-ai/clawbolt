@@ -70,10 +70,7 @@ def _tool_config_to_dto(tc: ToolConfig) -> ToolConfigEntry:
 # ---------------------------------------------------------------------------
 
 
-# Builders shared by sync and async heartbeat methods (issue #1154).
-# Same dual-API pattern as the IdempotencyStore pilot in #1199: pure
-# ``select(...)`` builders so the two paths stay in lockstep without a
-# class hierarchy.
+# Typed query builders shared by heartbeat methods.
 def _heartbeat_user_select(user_id: str) -> Select[tuple[User]]:
     """Builder shared by ``read_heartbeat_md`` / ``write_heartbeat_md`` peers."""
     return select(User).filter_by(id=user_id)
@@ -116,13 +113,7 @@ def _today_window_utc() -> tuple[datetime.datetime, datetime.datetime]:
 
 
 class HeartbeatStore:
-    """Database-backed heartbeat storage using User.heartbeat_text and HeartbeatLog ORM models.
-
-    Async-only API after the issue #1160 final pass. The sync
-    ``read_heartbeat_md`` method introduced as a transition shim in
-    issue #1154 has been removed; all OSS and premium callers use
-    :meth:`read_heartbeat_md_async`.
-    """
+    """Database-backed heartbeat text and send history for one user."""
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
@@ -251,12 +242,7 @@ class HeartbeatStore:
 _SEEN_MAX = 10_000
 
 
-# Pilot for the per-store dual-API rollout (issue #1150). Internal
-# logic is factored into pure ``select(...) / delete(...)`` builders
-# so the sync and async methods stay in lockstep without a class
-# hierarchy. Each public sync method has an ``*_async`` peer; both
-# forward through the same builders. Stores #1151-#1157 should
-# follow this pattern.
+# Typed query builders shared by idempotency methods.
 def _seen_select(external_id: str) -> Select[tuple[IdempotencyKey]]:
     """Builder shared by ``has_seen`` and ``has_seen_async``."""
     return select(IdempotencyKey).filter_by(external_id=external_id)
@@ -288,11 +274,7 @@ class IdempotencyStore:
     Uses the IdempotencyKey ORM model. No user_id scoping -- external_id
     is globally unique.
 
-    Async-only as of issue #1160. The webhook entry path is async, the
-    test fixtures drive it through ``httpx.AsyncClient`` so the route
-    runs on the same event loop as the test's async DB connection.
-    ``*_async`` aliases are kept as thin wrappers for any out-of-tree
-    caller still on the suffix.
+    ``*_async`` aliases remain as deprecated compatibility wrappers.
     """
 
     async def has_seen(self, external_id: str) -> bool:
@@ -439,13 +421,7 @@ def _build_llm_usage_log(
 
 
 class LLMUsageStore:
-    """Database-backed LLM usage logging using LLMUsageLog ORM model.
-
-    Async-only API after the issue #1160 final pass. The sync ``log``
-    method has been removed; ``services.llm_usage.log_llm_usage`` is
-    the canonical async entry point and threads cost computation
-    plus the unpriced-model warning through ``_build_llm_usage_log``.
-    """
+    """Database-backed LLM usage logging for one user."""
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
@@ -492,10 +468,7 @@ class LLMUsageStore:
 # ---------------------------------------------------------------------------
 
 
-# Builders shared by sync and async tool-config methods (issue #1157).
-# Pure ``select(...) / delete(...)`` builders so the two paths stay in
-# lockstep without a class hierarchy. Same pattern as the
-# IdempotencyStore pilot.
+# Typed query builders shared by tool-configuration methods.
 def _tool_config_load_select(user_id: str) -> Select[tuple[ToolConfig]]:
     """Builder shared by ``load`` / ``load_async``."""
     return (
@@ -555,14 +528,7 @@ def _new_disabled_tool_config(user_id: str, name: str, enabled: bool) -> ToolCon
 
 
 class ToolConfigStore:
-    """Database-backed tool configuration using ToolConfig ORM model.
-
-    Async-only API (issue #1160). The dual sync+async surface from
-    issue #1157 has been collapsed: only the async implementation
-    remains. ``*_async`` aliases stay as thin wrappers in case any
-    out-of-tree caller still depends on the suffix; the OSS callers
-    have all been migrated to the bare names.
-    """
+    """Database-backed tool configuration for one user."""
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id

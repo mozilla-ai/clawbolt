@@ -1,10 +1,4 @@
-"""Tests for the async API of ``UserStore`` (issue #1151).
-
-Mirrors the sync ``UserStore`` surface for the ``*_async`` peers added
-in the dual-API rollout. All tests opt into the per-test ``async_db``
-fixture (see ``tests/conftest.py``) so writes are rolled back at
-teardown. Follows the IdempotencyStore pilot pattern from #1199.
-"""
+"""Async database-backed user-store tests."""
 
 from __future__ import annotations
 

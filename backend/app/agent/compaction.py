@@ -441,26 +441,9 @@ async def compact_session(
     # equal to ``current_history`` when no entry was appended this event.
     new_history: str = current_history
 
-    # Write updated MEMORY.md only when the rewrite actually differs.
-    # An LLM that returns a rewrite over the bounded-growth byte budget
-    # (see ``backend/app/agent/markdown_registry.py``) is treated as a
-    # failed compaction for that file: log a warning and keep the
-    # current memory rather than truncating mid-sentence and producing
-    # silently corrupt durable state. The conversation that triggered
-    # this compaction will still trim, and the next compaction will get
-    # another chance to produce an in-budget rewrite.
-    #
-    # All three writes are compare-and-swap against the value read at the
-    # top of this function (issue #1429). The LLM call between the read
-    # and the write takes tens of seconds, and the conversation keeps
-    # running: the agent's workspace tools can write a new fact in that
-    # window, and a second compaction for the same user can land first.
-    # A full rewrite computed from the stale read would silently clobber
-    # the newer value. On a CAS miss we keep the newer value and skip
-    # this rewrite: losing one batch's extraction is recoverable (the
-    # conversation that was sent to the LLM is preserved in the event
-    # row's ``prompt_text`` audit column), while clobbering a durable
-    # file, possibly holding an explicit user save, is not.
+    # Keep the prior file when a rewrite is oversize. Compare-and-swap all
+    # rewrites against their pre-LLM values so concurrent user or compaction
+    # writes win instead of being overwritten by stale output.
     if memory_changed:
         try:
             wrote = await memory_store.write_memory_async(
@@ -589,16 +572,8 @@ async def compact_session(
         _memory_lines_removed,
     )
 
-    # Compute "after" snapshots deterministically from what was written
-    # rather than re-reading the memory store. Two compact_session tasks
-    # for the same user can run concurrently (e.g. burst traffic crosses
-    # the trigger again during a still-running LLM compaction call), and
-    # they share ``get_memory_store(user_id)``. A re-read could pick up the
-    # other task's write and record a misleading "after" in this row's
-    # audit log. The compaction prompt returns full rewrites for memory /
-    # user / soul, and ``append_history`` returns the row's new full
-    # plaintext under the same row-level lock that wrote it, so all four
-    # "after" values are computable without re-reading.
+    # Build audit snapshots from this task's writes. A re-read could capture a
+    # concurrent compaction and record the wrong "after" value.
     new_memory = result.memory_update if memory_changed else current_memory
     new_user = result.user_profile_update if user_changed else current_user_profile
     new_soul = result.soul_update if soul_changed else current_soul

@@ -1,307 +1,142 @@
 # Monitoring and alerting
 
-Everything here requires `AUTH_MODE=multi_user`. A single-user self-host mounts
-neither the alerting stack nor the `/api/monitoring` router.
-
-Three layers live in the app, and each catches failures the others structurally
-cannot:
+Monitoring requires `AUTH_MODE=multi_user`. Single-user deployments do not mount the alerting stack or `/api/monitoring` routes.
 
 | Layer | Catches | Blind to |
 |---|---|---|
-| 1. Error alerts | Anything logged at `ERROR`: exceptions, unhandled 500s | Failures that do not raise; the app being down |
-| 2. Tool failures | Agent tool calls that failed: an integration down, a revoked token, a tool raising | Failures outside a tool call |
-| 3. Health probes | Silent breakage: dead bridge, expired token, unreachable provider | The app being down |
+| Error alerts | Exceptions and other `ERROR` logs | Silent failures and process outages |
+| Tool failures | Agent tool calls that failed: integration down, revoked token, tool raising | Failures outside a tool call |
+| Health probes | Unreachable or unhealthy dependencies | Process outages |
 
-Both go silent when the process dies, so a deployment also needs an external
-uptime check. That one cannot be code in this repo; see your deployment's own
-runbook.
+Use an external uptime check as well. In-process monitoring cannot report that its own process is down.
 
 ## Prerequisites
 
-All in-app alerting is dormant until both are true:
+Alerting is enabled when:
 
-1. `SMTP_HOST` and `SMTP_FROM_EMAIL` are set. Setting only one fails startup by
-   design, so a typo cannot silently disable email.
-2. A recipient resolves: `ALERT_EMAIL`, falling back to `ADMIN_EMAIL`.
+1. `SMTP_HOST` and `SMTP_FROM_EMAIL` are both set.
+2. `ALERT_EMAIL`, or its `ADMIN_EMAIL` fallback, resolves to a recipient.
 
-Verify with `GET /api/monitoring/status` (admin auth required):
+Check the current state with `GET /api/monitoring/status` using admin authentication:
 
 ```json
 {
   "alerts": {"enabled": true, "pending_groups": 0, "dedupe_minutes": 30},
-  "health_monitor": {"enabled": true, "interval_seconds": 300, "probes": {...}},
+  "health_monitor": {"enabled": true, "interval_seconds": 300, "probes": {}},
   "recipient_configured": true
 }
 ```
 
-Then send a synthetic alert to confirm delivery end to end, rather than
-discovering an `ALERT_EMAIL` typo during a real incident:
+Send a test alert after configuring email:
 
 ```bash
-curl -X POST https://your-domain/api/monitoring/test-alert \
+curl -X POST https://your-domain.example/api/monitoring/test-alert \
   -H "Authorization: Bearer $ADMIN_API_KEY"
 ```
 
-A failed test alert returns the transport's own explanation (blocked port,
-rejected credentials, unverified sender), not a bare "not sent".
+### Diagnose email delivery
 
-### When no email arrives at all
+`POST /api/monitoring/diagnose-email`, also available as **Diagnose delivery** in the admin Monitoring tab, checks TCP, EHLO, STARTTLS, and login from inside the application container without sending a message.
 
-`POST /api/monitoring/diagnose-email`, or `Diagnose delivery` in the admin
-Monitoring tab, probes the mail path from inside the running container: TCP
-reachability for every candidate SMTP port, then a full EHLO / STARTTLS / login
-handshake against the configured one. No message is sent. It exists to separate
-two failures that look identical from the outside:
+Its result distinguishes:
 
-- **Nothing is reachable.** The platform is blocking outbound SMTP. Some hosts
-  permit it only on paid tiers, in which case no `SMTP_PORT` value will work and
-  alerting needs an HTTPS email API instead.
-- **Only the configured port is blocked.** SES publishes `2587` as a STARTTLS
-  alternate for networks that filter `587`; the diagnostic names the reachable
-  ports so this is a one-line config fix. Ports 465 and 2465 expect TLS from
-  the first byte and are not supported by this sender.
-- **The port is open but the session is refused.** Then it is a credential,
-  sender-identity, or SES-sandbox problem, and the handshake error says which.
+- No candidate port is reachable: the hosting platform or network blocks SMTP.
+- Another STARTTLS port is reachable: change `SMTP_PORT`. Amazon SES also supports `2587`.
+- The configured port is reachable but login fails: check credentials, sender verification, and SES sandbox restrictions.
 
-`SMTP_TIMEOUT_SECONDS` (default 10) bounds one SMTP operation, and a send is
-capped at twice that. The cap matters because `socket.create_connection` retries
-every address the SMTP host resolves to: at a 15s timeout, a blocked port on a
-three-A-record host such as SES held the caller for 45s before reporting
-anything.
+Ports 465 and 2465 require implicit TLS and are not supported. `SMTP_TIMEOUT_SECONDS` bounds each operation; the overall send is capped at twice that value.
 
-The Monitoring tab's Email delivery card shows the configured endpoint, the last
-successful send, and the last failure with its explanation, so a dead transport
-is visible without anyone clicking a test.
+## Error alerts
 
-## Layer 1: error alerts
+A logging handler watches the `backend` and `uvicorn.error` trees. Every `ERROR` record enters the alert pipeline.
 
-A logging handler on the `backend` and `uvicorn.error` trees turns every `ERROR`
-record into an alert. No call-site changes are needed to cover a new failure
-path, because `logger.exception(...)` is already the convention.
+Alerts group by logger, exception type, and unformatted log template. Each group sends at most once per `ALERT_DEDUPE_MINUTES`, including the number of suppressed occurrences. `ALERT_MAX_EMAILS_PER_HOUR` caps total sends. A failed email does not start the cooldown.
 
-**Grouping.** Alerts collapse on `(logger, exception type, log template)`. The
-unformatted template is the key, so `"LLM failed for user %s"` with a thousand
-different user ids is one alert with `count: 1000`, not a thousand emails.
+Failures that do not raise or log at `ERROR` require a health probe or the tool-failure layer.
 
-**Throttling.** Each group emails at most once per `ALERT_DEDUPE_MINUTES`
-(default 30), carrying the suppressed occurrence count. A global
-`ALERT_MAX_EMAILS_PER_HOUR` (default 20) caps the worst case. Held-back alerts
-keep accumulating rather than being discarded, and a failed send deliberately
-does not start the cooldown, so a transient SES outage does not silence a
-fingerprint for half an hour.
+## Tool failures
 
-**What it will not catch.** Anything that does not raise or log at `ERROR`. A
-channel that quietly stops delivering, or an OAuth token that expired but has
-not been used yet: that is layer 3's job. Tool calls that failed without
-raising are layer 2's.
+Failed agent tool calls, reported from the agent loop rather than from a log record. The two most useful failures never reach the error-alert layer: a tool returning `SERVICE` (integration down) or `AUTH` (token revoked) logs at `WARNING`. Only a tool raising logs at `ERROR`, and that layer groups by log template, so every crashing tool collapses into one entry naming whichever ran most recently.
 
-## Layer 2: tool failures
+Only `INTERNAL`, `SERVICE`, and `AUTH` are reported. `VALIDATION` and `NOT_FOUND` are the model self-correcting, and `PERMISSION` and `INTERRUPTED` are the user declining or stopping a turn.
 
-Failed agent tool calls, reported from the agent loop rather than from a log
-record. This exists because the two most operationally interesting failures
-never reach layer 1: a tool returning `SERVICE` (the integration is down) or
-`AUTH` (the token was revoked) logs at `WARNING`. Only a tool *raising* logs at
-`ERROR`, and layer 1 fingerprints on the log template, so every crashing tool in
-the system collapses into one group naming whichever ran most recently.
+Alerts group by tool and error kind, carrying the occurrence count and the number of distinct users affected. Grouping, throttling, and delivery are shared with error alerts, so both arrive in one email per flush.
 
-**What counts.** Only `INTERNAL`, `SERVICE` and `AUTH`. The other
-`ToolErrorKind` values are the product working: `VALIDATION` and `NOT_FOUND` are
-the model self-correcting (the error hint exists to make it retry), and
-`PERMISSION` and `INTERRUPTED` are the user declining an approval prompt or
-stopping a turn. Alerting on those trains you to ignore the channel.
+Data-sharing consent gates detail, not visibility. Every qualifying failure raises the occurrence and distinct-user counts whatever the user's setting; tool arguments and result text attach only for users who opted in, after PII redaction. An outage confined to users who have not opted in stays visible as a count. Consent reads through a 60-second cache and an unknown user is treated as not consenting until it warms, so a sample can be one occurrence late.
 
-**Grouping.** Collapses on `(tool, error kind)`, carrying the occurrence count
-and the number of distinct users affected. One revoked QuickBooks token hitting
-forty users for an hour is one line reading `qb_query auth x340 across 40
-users`. Grouping, throttling and delivery are shared with layer 1, so both
-arrive in a single email per flush.
+## Health probes
 
-**Consent gates detail, not visibility.** Every qualifying failure raises the
-occurrence and distinct-user counts, whatever the user's data-sharing setting.
-Tool arguments and result text are attached only for users who opted in, and are
-run through the same PII redaction the admin console uses before they are. An
-outage confined to users who have not opted in is still visible as a number;
-only the diagnostic detail is withheld. Consent is read through a 60-second
-cache, and an unknown user is treated as not consenting until it warms, so a
-failure can occasionally be one occurrence late in carrying a sample.
+Probes run every `HEALTH_CHECK_INTERVAL_SECONDS` and alert on status transitions. `HEALTH_FAILURE_THRESHOLD` consecutive failures are required before a probe becomes DOWN. Each probe is capped by `HEALTH_PROBE_TIMEOUT_SECONDS`.
 
-## Layer 3: health probes
-
-Runs every `HEALTH_CHECK_INTERVAL_SECONDS` (default 300) and emails on **status
-transitions**, not on state. A six-hour outage is two emails (down, then
-recovered), not seventy-two. `HEALTH_FAILURE_THRESHOLD` consecutive failures
-(default 2) are required before declaring DOWN, so one timed-out request to a
-residential host is not an incident.
-
-| Probe | Mechanism | Detects |
+| Probe | Check | Detects |
 |---|---|---|
-| `database` | Calls the `/health` handler | Postgres unreachable |
-| `llm` | Single-token `amessages` call against the primary model | Revoked key, retired model, provider outage |
-| `bluebubbles` | Three checks in order: the channel's `/api/v1/server/info` result, the send-readiness flags in it, then webhook registration | Bridge asleep, rejected password, Mac signed out of iMessage, inbound webhook missing |
-| `integration:<name>:<user_id>` | Each factory's `auth_check` per user | Expired refresh token, revoked grant |
-| `integration_check:<user_id>` | Whether that user's sweep answered at all | A stuck or exploding `auth_check`, which leaves every integration under it unknown |
+| `database` | Calls the `/health` handler | Unreachable Postgres |
+| `llm` | Sends a single-token `amessages` request | Invalid credentials, retired model, provider outage |
+| `bluebubbles` | Checks server info, send readiness, and webhook registration | Sleeping bridge, rejected password, signed-out Mac, missing webhook |
+| `integration:<name>:<user_id>` | Runs the integration's `auth_check` | Expired or revoked user grant |
+| `integration_check:<user_id>` | Tracks whether a user's integration sweep completed | Timed-out or failed `auth_check` |
 
-Probes for unconfigured dependencies are not registered, so an unused
-integration is not a permanently-red check.
+Unconfigured dependencies are not registered as probes.
 
-Every probe is capped at `HEALTH_PROBE_TIMEOUT_SECONDS` (default 45, floor 5),
-including each user's turn in the integration sweep. A probe past its budget is
-abandoned and reported DOWN with a timeout detail, which is the honest reading: a
-dependency that cannot answer in 45s is not healthy. Without the cap one wedged
-socket, typically a residential BlueBubbles host or the scraping sidecar, stalls
-the entire run.
+### BlueBubbles
 
-### The BlueBubbles probe, and why reachable is not enough
+The BlueBubbles probe verifies three independent conditions:
 
-The bridge answering is necessary and nowhere near sufficient. Three distinct
-failures leave it answering normally while messages stop:
+1. The server accepts the configured password.
+2. iMessage is signed in and the configured send method is ready.
+3. A webhook targets the current `APP_BASE_URL` with the current credential.
 
-1. **A rejected password.** `/api/v1/server/info` returns 401. The old
-   reachability check accepted any status below 500, so this read as healthy.
-   Now `reachable` and `authenticated` are tracked separately and the alert
-   names the misconfiguration.
-2. **A Mac signed out of iMessage.** The server reports no iCloud account, so
-   every send fails. The probe reads that flag rather than only the status
-   code. `BLUEBUBBLES_SEND_METHOD=private-api` additionally requires the
-   Private API to be enabled and its helper connected.
-3. **No inbound webhook.** This is the one nothing else catches. Registration
-   is attempted once per deploy in a background task; if the Mac is asleep at
-   that moment the attempt fails, is never retried, and the bridge later comes
-   back with every reachability signal green while inbound stays dead. A
-   changed `APP_BASE_URL` produces the same silence, leaving the old
-   registration pointed at a URL that no longer answers.
+When the webhook is missing or stale, the probe attempts to register it and emits a throttled REPAIRED notice. Repair follows these limits:
 
-**Case 3 self-repairs.** When the webhook is missing or carries a token from a
-previous password, the probe re-registers it against the current
-`APP_BASE_URL` and emails a separate "REPAIRED" notice, throttled by
-`ALERT_DEDUPE_MINUTES`. The notice is separate because the repair resolves the
-failure before `HEALTH_FAILURE_THRESHOLD` consecutive failures accumulate, so
-no DOWN alert would ever fire for it: without its own email, inbound would keep
-breaking and silently fixing itself with nobody the wiser.
+- It does not modify registration when the webhook list cannot be read.
+- It stops after three consecutive unsuccessful repair attempts.
+- It skips repair on the process's first probe tick while startup registration may still be running.
 
-Three guards keep that self-repair from becoming its own problem, because
-registration is delete-then-POST and each attempt reopens a window with no
-webhook registered at all:
+Only one deployment should manage a given bridge. Multiple replicas or environments pointed at the same `BLUEBUBBLES_SERVER_URL` will compete over its single webhook registration. Leave the bridge unset in non-production environments or give each environment its own bridge.
 
-- **It never repairs on a guess.** If the webhook list cannot be retrieved, that
-  is reported as unverified rather than treated as missing, and nothing is
-  written to the operator's Mac.
-- **It stops after three consecutive attempts** that do not stick. Past that the
-  probe reports a plain failure and escalates through the ordinary DOWN alert,
-  rather than rewriting the registration every tick while the email cooldown
-  keeps the operator from hearing about it again. A passing check resets the
-  budget.
-- **It skips the process's first tick,** because the lifespan registers this
-  webhook in a background task and a check landing inside that window would
-  repair and email about a deploy where nothing was wrong.
-
-**One writer per bridge.** Every replica runs its own monitor, so more than one
-replica means several independent delete-and-register cycles against one
-BlueBubbles server. The same applies to any staging or preview environment that
-shares `BLUEBUBBLES_SERVER_URL` with production but has its own `APP_BASE_URL`:
-it will now assert its own registration on a schedule instead of failing once at
-boot, and the two environments will fight over the bridge. Point non-production
-environments at their own bridge, or leave `BLUEBUBBLES_SERVER_URL` unset there
-so the probe is not registered at all.
-
-Readiness flags are tri-state. Older BlueBubbles builds omit them, and a
-missing field is treated as unknown rather than as an outage.
+Older BlueBubbles versions may omit readiness flags. Missing flags are treated as unknown, not as a failure.
 
 ### Admin Monitoring tab
 
-`Admin -> Monitoring` in the web app shows every probe, not just BlueBubbles:
-current status and detail, when each was last checked, consecutive failures,
-and an activity log of status changes and self-repairs. `Run probes now` is the
-one action at the top; `Send test alert` and `Diagnose delivery` sit in the Email
-delivery card at the bottom, where a failure is explained rather than merely
-reported.
+`Admin -> Monitoring` shows current probe state, details, last-check time, consecutive failures, and recent transitions or repairs.
 
-**Runs are started, not awaited.** `POST /api/monitoring/run-probes` schedules a
-run and returns immediately with its step list, all pending. The tab polls
-`GET /api/monitoring/status` and reads `health_monitor.run`, showing each step as
-queued, checking, passed, or failed with its elapsed time. Awaiting the run
-instead meant a request open for minutes on a large tenant count, a tab stuck on
-"Running" with no way to tell a slow probe from a wedged one, and a lost result
-whenever a proxy timed out first. A run also reports the alert email as its own
-step, so a transition that could not be delivered is visible rather than silent.
+`POST /api/monitoring/run-probes` starts a run and returns immediately. Poll `GET /api/monitoring/status` for queued, checking, passed, or failed steps and elapsed times. Only one run executes at a time; a second request watches the run already in progress.
 
-Only one run happens at a time: an operator's run and the timer tick serialize on
-a lock, and a second `run-probes` request returns `started: false` and watches the
-run already in flight. Two overlapping passes would double every outbound call and
-race on the transition bookkeeping.
-
-**Per-user integrations are grouped by user, one row per account.** A flat list
-of every (user, integration) pair answers "is anything broken"; the question an
-admin actually has is "whose account is broken", and several hundred rows sorted
-by probe key cannot answer it without scrolling and grouping in your head. Each
-user gets a single verdict, worst first:
+Per-user integrations are grouped by account with these summary states:
 
 | Verdict | Meaning |
 |---|---|
-| `N not working` | At least one integration that used to work is DOWN |
-| `Status unknown` | The sweep could not check this user, so nothing below can be claimed |
-| `N unknown` | A failure that has not yet reached `HEALTH_FAILURE_THRESHOLD` |
+| `N not working` | At least one previously working integration is DOWN |
+| `Status unknown` | The account's sweep did not complete |
+| `N unknown` | Failures have not reached the threshold |
 | `All N working` | Every connected integration authenticates |
-| `Nothing connected` | This user has connected nothing |
+| `Nothing connected` | No integration is connected |
 
-Users are named by their subscription email rather than by `users.id`, because a
-UUID says something is broken without saying whose account to go fix. Rows expand
-under each user with the detail and timings, and accounts with a problem expand
-themselves. Only users with a problem are listed by default; `Show all N users`
-reveals the rest.
+Problem accounts appear first and expand automatically. The activity log is process-local and resets on deploy; alert emails are the durable record.
 
-An integration nobody ever connected shows as "Not connected" and is excluded
-from the verdict: baseline seeding records those as DOWN so a later disconnect is
-still reportable, but they are not breakage, and with 8 specialist integrations
-across `HEALTH_PROBE_MAX_USERS` accounts they would otherwise read as several
-hundred failures on a completely healthy deployment.
+### Per-user integration baselines
 
-The activity log lives in process memory, so a deploy resets it and each
-replica has its own. The alert emails are the durable record.
+An integration that was never connected and one with an expired token can both report "not authenticated." Initial integration observations are therefore silent; alerts begin after a genuine UP to DOWN transition. Recoveries are reported.
 
-### Per-user integration checks are baseline-silent
+`integration_check:<user_id>` is not baseline-silent. It reports when the user's integration sweep cannot run, preventing stale probe states from looking healthy.
 
-An integration a user never connected reports the same "not authenticated"
-reason as one whose token just expired. Alerting on the former would be constant
-noise, so these keys establish their baseline silently and alert only on a
-genuine UP to DOWN transition: it worked, then it stopped. Recoveries are always
-reported. That transition is the email you get when a tenant's connection
-breaks, and it names the tenant by email, not by user id.
+Probe state is process-local. A deploy resets whether an integration was previously UP, so a grant that lapses during replacement can appear as an initial disconnected state. Persisting that history remains a known gap.
 
-**The sweep reports on itself, and that key is not baseline-silent.** A user
-whose `auth_check` times out or raises used to be skipped in silence. Their probe
-states then kept their last known status forever, so an integration that broke
-while the check was failing produced no transition and no email. Now that user
-gets an `integration_check:<user_id>` failure, which alerts like any
-infrastructure probe: a check that cannot run has no legitimate steady state,
-unlike a connection the user never made.
-
-**Known gap: a deploy reseeds every baseline.** Probe state lives in process
-memory, and `ever_up` with it. An integration that lapses while the process is
-being replaced comes back as a first observation, so it is recorded silently and
-shows as "Not connected" rather than as breakage, which is indistinguishable
-from a user who never connected it. Closing that needs the "has this ever
-authenticated" bit persisted, which is not implemented.
-
-Start a run on demand instead of waiting out the interval, then poll for its
-progress:
+Run probes manually and inspect progress with:
 
 ```bash
-curl -X POST https://your-domain/api/monitoring/run-probes \
+curl -X POST https://your-domain.example/api/monitoring/run-probes \
   -H "Authorization: Bearer $ADMIN_API_KEY"
-curl -s https://your-domain/api/monitoring/status \
+curl -s https://your-domain.example/api/monitoring/status \
   -H "Authorization: Bearer $ADMIN_API_KEY" | jq .health_monitor.run
 ```
 
-## Tuning noise
+## Tuning alert volume
 
 If alert volume is too high:
 
-1. Raise `ALERT_DEDUPE_MINUTES` before disabling anything.
-2. Raise `HEALTH_FAILURE_THRESHOLD` if a flaky dependency flaps.
-3. Check whether an existing `logger.error` call is actually routine and should
-   be a `logger.warning`. That fixes the noise at the source, and warnings are
-   not captured.
+1. Raise `ALERT_DEDUPE_MINUTES`.
+2. Raise `HEALTH_FAILURE_THRESHOLD` for flaky dependencies.
+3. Change routine `logger.error` calls to `logger.warning` at the source.
 
-Lower `ALERT_MAX_EMAILS_PER_HOUR` as a blunt ceiling only if the above is not
-enough; held-back alerts are counted but their detail is dropped.
+Lower `ALERT_MAX_EMAILS_PER_HOUR` only as a final ceiling. Held-back alerts retain counts but discard individual details.

@@ -25,11 +25,11 @@ Clawbolt: Got it! I've saved your electrical rate at $95/hour.
 
 ## Everything happens through chat
 
-Your assistant manages everything for you as you talk. Your memory, personality, profile, heartbeat priorities, and integrations are all updated automatically through conversation. There's a [web dashboard](/docs/guide/dashboard) if you're curious, but you never need to open it.
+Your assistant can update its memory, personality, profile, heartbeat priorities, and integrations through conversation. The [web dashboard](/docs/guide/dashboard) provides a visual way to review and manage the same settings.
 
 ## Tips for getting started
 
 - **Talk naturally.** No special commands needed.
 - **Use voice dictation.** Tap the microphone on your keyboard and talk instead of typing.
-- **Teach it as you go.** Every time you mention a client, rate, or preference, it remembers.
+- **Teach it durable preferences.** Tell it your rates, shorthand, and process rules. It looks up changing customer and job data in connected systems.
 - **Connect integrations over chat.** Ask "connect my Google Calendar" and your assistant sends you a link. [Learn more](/docs/guide/integrations)

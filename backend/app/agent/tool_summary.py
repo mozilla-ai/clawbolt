@@ -113,7 +113,7 @@ _CC_TAIL_RE = re.compile(r"\s*(?:on\s+|to\s+)?companycam(?:\s+\w+)?\s*$", re.IGN
 # Generic single-noun fallback words an integration may set as
 # ``target`` when it does not have a human name for the entity
 # (archive_project, delete_photo, delete_project, etc.). These are
-# universal English nouns, not CompanyCam-specific — any future
+# universal English nouns, not CompanyCam-specific. Any future
 # integration using the same fallback approach benefits for free.
 # When grouping, prefer any real name over these.
 _GENERIC_TARGETS: frozenset[str] = frozenset(

@@ -1,14 +1,14 @@
 # Memory
 
-Your assistant has long-term memory. Tell it something about your business and it saves it for future conversations. You only need to say things once.
+Your assistant keeps durable business knowledge for future conversations. It looks up changing customer and job data in connected systems instead of copying values that can go stale.
 
 ## What it remembers
 
 - Rates and pricing
-- Client details (names, addresses, phone numbers, job history)
 - Preferences (suppliers, materials, brands)
 - Business info (trade, crew size, service area, hours)
-- Job notes (measurements, specs, special instructions)
+- Persistent process rules and shorthand
+- Cross-system context, such as which account bills for a client
 
 ## Saving and recalling facts
 
@@ -21,13 +21,10 @@ Clawbolt: Done! I've saved your plumbing rate at $85/hour.
 ```
 
 ```
-You: What do I know about the Davis job?
+You: What are my standard estimate terms?
 
-Clawbolt: Here's what I have on the Davis project:
-          - Bathroom remodel at 18 Pine St
-          - Started March 10
-          - Budget: $12,000
-          - Tile: marble subway, supplier is Floor & Decor
+Clawbolt: You use net-30 terms and include a 15-day
+          acceptance window on estimates.
 ```
 
 ## Updating and forgetting

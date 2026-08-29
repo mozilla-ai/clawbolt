@@ -108,14 +108,14 @@ uv run pytest -v
 
 ### Test infrastructure
 
-**Store isolation:** The `_isolate_file_stores` autouse fixture patches `settings.data_dir` and calls `reset_stores()` to clear cached store singletons between tests. Each test runs in a database transaction that is rolled back after the test completes.
+**Store isolation:** The `_isolate_async_engine` autouse fixture points the app at the test database. The `_isolate_stores` fixture resets cached stores and truncates all tables after each test. Tests that need transaction-level isolation can opt into the `async_db` fixture.
 
 **Mock factories:** All external services are mocked in tests. Mock factories live in `tests/mocks/`:
 
 | Mock | What it replaces |
 |------|------------------|
 | Telegram | Telegram Bot API calls |
-| LLM | any-llm `acompletion` calls |
+| LLM | any-llm async calls |
 | Storage | `MockStorageBackend` for Google Drive operations |
 
 **Auth override:** The `get_current_user` dependency is overridden in tests to return a fixed test user, bypassing authentication.
@@ -127,7 +127,7 @@ uv run pytest -v
 - **Line length**: 100 characters
 - **Pydantic v2** for all data classes and request/response schemas
 - **Async routes**: all route handlers use `async def`
-- **LLM calls**: all LLM calls via any-llm `acompletion` (async)
+- **LLM calls**: all LLM calls use the async any-llm APIs
 
 ## Commit messages
 
@@ -149,9 +149,12 @@ Every change should pass all checks:
 
 ```bash
 uv run pytest -v                                  # tests pass
-uv run ruff check backend/ tests/                 # lint passes
-uv run ruff format --check backend/ tests/        # format passes
-uv run ty check --python .venv backend/ tests/    # type checking passes
+uv run ruff check backend/ tests/ alembic/        # lint passes
+uv run ruff format --check backend/ tests/ alembic/ # format passes
+uv run ty check --python .venv backend/ tests/ alembic/ # type checking passes
+cd frontend && npm run typecheck                  # TypeScript passes
+cd frontend && npm run deadcode                   # no dead JS/TS code
+cd frontend && npm run test                       # frontend tests pass
 ```
 
 - Bug fixes include regression tests

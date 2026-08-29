@@ -378,12 +378,6 @@ async def _build_agent_prompt_builder(
             dynamic=True,
         )
 
-    # NOTE: the old "Recent Activity (other channel)" cross-session section
-    # was removed (issue #1433): migration 026 collapsed sessions to one per
-    # user, so the query excluding the current session always returned
-    # empty. All channels share the single session, so channel switches are
-    # already covered by ordinary history.
-
     return builder
 
 

@@ -46,7 +46,7 @@ async def resolve_staged_files(
     agent gets a deterministic "no photo found" message instead of a
     half-attached payload.
 
-    An empty ``media_refs`` returns an empty list — tools that want a
+    An empty ``media_refs`` returns an empty list. Tools that want a
     no-photo path should branch on the input rather than the output.
     """
     if not media_refs:
