@@ -71,6 +71,10 @@ _MAX_TRACEBACK_CHARS = 4000
 _MAX_MESSAGE_CHARS = 1000
 _MAX_PENDING_GROUPS = 200
 _MAX_GROUPS_PER_EMAIL = 25
+# Distinct argument/result samples kept per tool-failure group, and the cap on
+# each. One example of a broken call is diagnostic; twenty is a data dump.
+_MAX_SAMPLES_PER_GROUP = 3
+_MAX_SAMPLE_CHARS = 500
 
 
 def _recipient() -> str:
@@ -109,6 +113,64 @@ class AlertSummary:
     request_id: str
     first_seen: datetime
     last_seen: datetime
+
+
+@dataclass(frozen=True)
+class ToolFailureSummary:
+    """One grouped tool failure, ready to render into the operator email.
+
+    ``user_count`` counts distinct users, which is the number that separates
+    "one tenant's token expired" from "the integration is down for everyone".
+    ``samples`` carries argument and result detail and is populated only from
+    users who opted into data sharing; failures from everyone else still raise
+    ``count`` and ``user_count`` so an incident is never invisible.
+    """
+
+    tool_name: str
+    error_kind: str
+    count: int
+    user_count: int
+    consented_user_count: int
+    samples: list[str]
+    first_seen: datetime
+    last_seen: datetime
+
+
+@dataclass
+class _PendingToolFailure:
+    """Mutable accumulator for one (tool, error kind) between flushes."""
+
+    tool_name: str
+    error_kind: str
+    first_seen: datetime
+    last_seen: datetime
+    count: int = 1
+    user_ids: set[str] = field(default_factory=set)
+    consented_user_ids: set[str] = field(default_factory=set)
+    samples: list[str] = field(default_factory=list)
+
+    def merge(self, user_id: str, sample: str | None) -> None:
+        self.count += 1
+        self.last_seen = datetime.now(UTC)
+        self.user_ids.add(user_id)
+        if sample is not None:
+            self.consented_user_ids.add(user_id)
+            # Keep a bounded handful. Twenty copies of one stack of arguments
+            # tells you nothing the first one did not.
+            if len(self.samples) < _MAX_SAMPLES_PER_GROUP and sample not in self.samples:
+                self.samples.append(sample)
+
+    def to_summary(self) -> ToolFailureSummary:
+        return ToolFailureSummary(
+            tool_name=self.tool_name,
+            error_kind=self.error_kind,
+            count=self.count,
+            user_count=len(self.user_ids),
+            consented_user_count=len(self.consented_user_ids),
+            samples=list(self.samples),
+            first_seen=self.first_seen,
+            last_seen=self.last_seen,
+        )
 
 
 @dataclass
@@ -165,6 +227,7 @@ class _AlertStore:
 
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _pending: dict[str, _PendingGroup] = field(default_factory=dict)
+    _pending_tools: dict[str, _PendingToolFailure] = field(default_factory=dict)
     _last_emailed: dict[str, float] = field(default_factory=dict)
     _email_times: deque[float] = field(default_factory=deque)
     _overflow_dropped: int = 0
@@ -202,6 +265,68 @@ class _AlertStore:
                 first_seen=now,
                 last_seen=now,
             )
+
+    def record_tool_failure(
+        self,
+        tool_name: str,
+        error_kind: str,
+        user_id: str,
+        sample: str | None,
+    ) -> None:
+        """Accumulate one tool failure. Cheap, non-blocking, thread-safe.
+
+        *sample* carries argument and result detail and must already be
+        consent-gated and redacted by the caller; pass ``None`` for a user who
+        has not opted into data sharing. The occurrence still counts either
+        way, so an outage confined to non-consenting users is visible as a
+        number even when nothing about it can be shown.
+        """
+        now = datetime.now(UTC)
+        fingerprint = f"tool|{tool_name}|{error_kind}"
+        with self._lock:
+            existing = self._pending_tools.get(fingerprint)
+            if existing is not None:
+                existing.merge(user_id, sample)
+                return
+            if len(self._pending_tools) >= _MAX_PENDING_GROUPS:
+                self._overflow_dropped += 1
+                return
+            group = _PendingToolFailure(
+                tool_name=tool_name,
+                error_kind=error_kind,
+                first_seen=now,
+                last_seen=now,
+            )
+            group.user_ids.add(user_id)
+            if sample is not None:
+                group.consented_user_ids.add(user_id)
+                group.samples.append(sample)
+            self._pending_tools[fingerprint] = group
+
+    def _take_eligible_tools(self) -> list[tuple[str, _PendingToolFailure]]:
+        """Remove and return tool-failure groups past their dedupe cooldown.
+
+        Shares ``_last_emailed`` with the error groups so both kinds obey one
+        cooldown window, and shares the per-email cap so a tool-failure storm
+        cannot crowd application errors out of the message.
+        """
+        cooldown = max(0, settings.alert_dedupe_minutes) * 60
+        now = time.monotonic()
+        with self._lock:
+            # The accumulator is returned, not a summary: a failed send has to
+            # put the group back, and a summary has already collapsed the
+            # distinct-user sets into counts that cannot be merged with new
+            # arrivals without double counting.
+            eligible: list[tuple[str, _PendingToolFailure]] = []
+            for fingerprint, group in list(self._pending_tools.items()):
+                last = self._last_emailed.get(fingerprint)
+                if last is not None and now - last < cooldown:
+                    continue
+                eligible.append((fingerprint, group))
+                del self._pending_tools[fingerprint]
+                if len(eligible) >= _MAX_GROUPS_PER_EMAIL:
+                    break
+            return eligible
 
     def _take_eligible(self) -> tuple[list[tuple[str, AlertSummary]], int]:
         """Remove and return groups past their dedupe cooldown.
@@ -261,28 +386,89 @@ class _AlertStore:
         are still in the application log.
         """
         eligible, dropped = self._take_eligible()
-        if not eligible:
+        tool_eligible = self._take_eligible_tools()
+        if not eligible and not tool_eligible:
             return False
         summaries = [summary for _, summary in eligible]
-        sent = await email_service.send_admin_alert(_recipient(), summaries, dropped)
+        tool_summaries = [group.to_summary() for _, group in tool_eligible]
+        sent = await email_service.send_admin_alert(
+            _recipient(), summaries, dropped, tool_failures=tool_summaries
+        )
         if sent:
-            self._mark_emailed([fingerprint for fingerprint, _ in eligible])
+            self._mark_emailed(
+                [fingerprint for fingerprint, _ in eligible]
+                + [fingerprint for fingerprint, _ in tool_eligible]
+            )
+        else:
+            # Put the tool groups back so the next tick retries them. The error
+            # groups already behave this way by never starting their cooldown;
+            # these were removed from the pending dict, so returning them has to
+            # be explicit or the batch is lost outright.
+            self._restore_tool_groups(tool_eligible)
         return sent
+
+    def _restore_tool_groups(self, taken: list[tuple[str, _PendingToolFailure]]) -> None:
+        """Return groups to pending after a failed send, merging with new arrivals.
+
+        Without this a failed SMTP call silently discards the batch. The error
+        groups accept that loss (the underlying errors are still in the log);
+        a tool failure has no such second record, so it is put back.
+        """
+        if not taken:
+            return
+        with self._lock:
+            for fingerprint, group in taken:
+                current = self._pending_tools.get(fingerprint)
+                if current is None:
+                    self._pending_tools[fingerprint] = group
+                    continue
+                # Arrivals during the send attempt merge into the restored one.
+                current.count += group.count
+                current.first_seen = min(current.first_seen, group.first_seen)
+                current.user_ids |= group.user_ids
+                current.consented_user_ids |= group.consented_user_ids
+                for sample in group.samples:
+                    if (
+                        len(current.samples) < _MAX_SAMPLES_PER_GROUP
+                        and sample not in current.samples
+                    ):
+                        current.samples.append(sample)
 
     def pending_count(self) -> int:
         with self._lock:
-            return len(self._pending)
+            return len(self._pending) + len(self._pending_tools)
 
     def reset(self) -> None:
         """Clear all state. For tests."""
         with self._lock:
             self._pending.clear()
+            self._pending_tools.clear()
             self._last_emailed.clear()
             self._email_times.clear()
             self._overflow_dropped = 0
 
 
 _store = _AlertStore()
+
+
+def record_tool_failure(
+    tool_name: str,
+    error_kind: str,
+    user_id: str,
+    sample: str | None,
+) -> None:
+    """Accumulate one agent tool failure into the next operator email.
+
+    Module-level entry point mirroring the logging handler's ``emit``: callers
+    outside this module should not reach into the store. *sample* must already
+    be consent-gated and redacted, or ``None``.
+    """
+    _store.record_tool_failure(
+        tool_name=tool_name,
+        error_kind=error_kind,
+        user_id=user_id,
+        sample=sample[:_MAX_SAMPLE_CHARS] if sample is not None else None,
+    )
 
 
 class AdminAlertHandler(logging.Handler):

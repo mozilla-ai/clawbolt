@@ -85,6 +85,11 @@ from backend.app.agent.tool_errors import (
     build_error_hint,
     format_validation_error,
 )
+from backend.app.agent.tool_failure_hook import (
+    TOOL_FAILURE_SCHEMA_VERSION,
+    ToolFailurePayload,
+    report_tool_failure,
+)
 from backend.app.agent.tools.base import (
     Tool,
     ToolErrorKind,
@@ -956,6 +961,18 @@ class ClawboltAgent:
                 hint = build_error_hint(result)
                 result_str += "\n\n" + hint
                 action_label = f"Failed: {tool_name}"
+                await report_tool_failure(
+                    ToolFailurePayload(
+                        schema_version=TOOL_FAILURE_SCHEMA_VERSION,
+                        user_id=self.user.id,
+                        tool_name=tool_name,
+                        error_kind=str(result.error_kind) if result.error_kind else "",
+                        args=validated_args,
+                        # Pre-hint text: the hint is our own boilerplate and
+                        # would make every group's sample look identical.
+                        result_text=result.content,
+                    )
+                )
             else:
                 action_label = f"Called {tool_name}"
             stored_receipt = None
@@ -998,6 +1015,20 @@ class ClawboltAgent:
             result_str = f"Error: tool {tool_name} raised {err_text}\n\n{hint}"[:1500]
             is_error = True
             action_label = f"Failed: {tool_name}"
+            # The logger.exception above already feeds the ERROR-log alerting
+            # path, but that fingerprints on the log template, so every tool
+            # that raises collapses into one group. This reports which tool it
+            # actually was, and for whom.
+            await report_tool_failure(
+                ToolFailurePayload(
+                    schema_version=TOOL_FAILURE_SCHEMA_VERSION,
+                    user_id=self.user.id,
+                    tool_name=tool_name,
+                    error_kind=str(ToolErrorKind.INTERNAL),
+                    args=validated_args,
+                    result_text=err_text,
+                )
+            )
             record = StoredToolInteraction(
                 tool_call_id=tc_req.id,
                 name=tool_name,

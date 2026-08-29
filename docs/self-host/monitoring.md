@@ -3,13 +3,14 @@
 Everything here requires `AUTH_MODE=multi_user`. A single-user self-host mounts
 neither the alerting stack nor the `/api/monitoring` router.
 
-Two layers live in the app, and each catches failures the other structurally
+Three layers live in the app, and each catches failures the others structurally
 cannot:
 
 | Layer | Catches | Blind to |
 |---|---|---|
-| 1. Error alerts | Anything logged at `ERROR`: exceptions, failed tool calls, unhandled 500s | Failures that do not raise; the app being down |
-| 2. Health probes | Silent breakage: dead bridge, stale scraper, expired token, unreachable provider | The app being down |
+| 1. Error alerts | Anything logged at `ERROR`: exceptions, unhandled 500s | Failures that do not raise; the app being down |
+| 2. Tool failures | Agent tool calls that failed: an integration down, a revoked token, a tool raising | Failures outside a tool call |
+| 3. Health probes | Silent breakage: dead bridge, expired token, unreachable provider | The app being down |
 
 Both go silent when the process dies, so a deployment also needs an external
 uptime check. That one cannot be code in this repo; see your deployment's own
@@ -90,10 +91,41 @@ does not start the cooldown, so a transient SES outage does not silence a
 fingerprint for half an hour.
 
 **What it will not catch.** Anything that does not raise or log at `ERROR`. A
-scraper returning zero results, a channel that quietly stops delivering, an
-OAuth token that expired but has not been used yet. That is layer 2's job.
+channel that quietly stops delivering, or an OAuth token that expired but has
+not been used yet: that is layer 3's job. Tool calls that failed without
+raising are layer 2's.
 
-## Layer 2: health probes
+## Layer 2: tool failures
+
+Failed agent tool calls, reported from the agent loop rather than from a log
+record. This exists because the two most operationally interesting failures
+never reach layer 1: a tool returning `SERVICE` (the integration is down) or
+`AUTH` (the token was revoked) logs at `WARNING`. Only a tool *raising* logs at
+`ERROR`, and layer 1 fingerprints on the log template, so every crashing tool in
+the system collapses into one group naming whichever ran most recently.
+
+**What counts.** Only `INTERNAL`, `SERVICE` and `AUTH`. The other
+`ToolErrorKind` values are the product working: `VALIDATION` and `NOT_FOUND` are
+the model self-correcting (the error hint exists to make it retry), and
+`PERMISSION` and `INTERRUPTED` are the user declining an approval prompt or
+stopping a turn. Alerting on those trains you to ignore the channel.
+
+**Grouping.** Collapses on `(tool, error kind)`, carrying the occurrence count
+and the number of distinct users affected. One revoked QuickBooks token hitting
+forty users for an hour is one line reading `qb_query auth x340 across 40
+users`. Grouping, throttling and delivery are shared with layer 1, so both
+arrive in a single email per flush.
+
+**Consent gates detail, not visibility.** Every qualifying failure raises the
+occurrence and distinct-user counts, whatever the user's data-sharing setting.
+Tool arguments and result text are attached only for users who opted in, and are
+run through the same PII redaction the admin console uses before they are. An
+outage confined to users who have not opted in is still visible as a number;
+only the diagnostic detail is withheld. Consent is read through a 60-second
+cache, and an unknown user is treated as not consenting until it warms, so a
+failure can occasionally be one occurrence late in carrying a sample.
+
+## Layer 3: health probes
 
 Runs every `HEALTH_CHECK_INTERVAL_SECONDS` (default 300) and emails on **status
 transitions**, not on state. A six-hour outage is two emails (down, then

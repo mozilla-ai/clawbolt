@@ -85,6 +85,7 @@ from backend.app.services.llm_payload_capture import install_llm_payload_capture
 from backend.app.services.llm_resolver import install_user_llm_resolver
 from backend.app.services.oauth import oauth_refresh_scheduler
 from backend.app.services.telegram_webhook import discover_bot_username
+from backend.app.services.tool_failure_alerts import install_tool_failure_alerts
 
 # Whether this process runs the hosted, multi-tenant surface: OAuth
 # sign-in, the admin console, quota enforcement, and operator monitoring.
@@ -142,6 +143,11 @@ if MULTI_USER:
     # Capture LLM request payloads for users who opted into data sharing,
     # so admins can export them for offline token-efficiency analysis.
     install_llm_payload_capture()
+
+    # Route failed agent tool calls into the operator alert email. Covers the
+    # SERVICE and AUTH failures that log at WARNING and so never reach the
+    # ERROR-log alerting path at all.
+    install_tool_failure_alerts()
 
 
 async def _enforce_single_channel() -> None:
