@@ -1,19 +1,4 @@
-"""Database-backed session store.
-
-Replaces FileSessionStore from file_store.py. Uses ChatSession and Message
-ORM models for persistence, while keeping SessionState and StoredMessage
-Pydantic models as in-memory DTOs.
-
-Dual-API rollout (issue #1152, part of #1139): each public sync method
-has an ``*_async`` peer with identical semantics; the two share query
-construction via the ``_*_select`` / ``_*_delete`` / ``_advisory_*``
-builders below. Mirrors the pilot in
-``backend/app/agent/stores.py::IdempotencyStore`` (issue #1150 / PR #1199).
-Sync callers (CLI, Alembic, premium during the migration window) keep
-working unchanged while OSS-internal callers migrate to the async API
-one site at a time. SessionStore is the largest single store in the
-rollout, so this file is also the largest single conversion.
-"""
+"""Database-backed session storage and its in-memory DTO conversion."""
 
 from __future__ import annotations
 
@@ -88,14 +73,10 @@ def _session_to_state(
 
 
 # ---------------------------------------------------------------------------
-# Pure typed builders shared by sync and async paths
+# Typed query builders
 # ---------------------------------------------------------------------------
 #
-# Each builder returns a fully typed ``Select`` / ``Delete`` / ``TextClause``
-# so the sync and async methods stay in lockstep without subclassing.
-# Mirrors ``backend/app/agent/stores.py``'s pilot pattern (PR #1199).
-# Builders never touch a session and never return ``Any``; ``ty`` enforces
-# this at the Definition of Done.
+# Builders keep SQLAlchemy results concrete and free of ``Any``.
 
 
 def _advisory_lock_key(user_id: str) -> str:
@@ -258,14 +239,7 @@ _MESSAGE_UPDATABLE_FIELDS: frozenset[str] = frozenset(
 
 
 class SessionStore:
-    """Database-backed session storage using ChatSession and Message ORM models.
-
-    Async-only API after the issue #1160 final pass. The dual-API surface
-    from issue #1152 has been collapsed: only the async implementations
-    remain. The bare-name methods now delegate to their ``*_async`` peers
-    to keep the public surface stable for any out-of-tree caller; OSS and
-    premium have all migrated to the suffixed names.
-    """
+    """Database-backed session storage using ChatSession and Message models."""
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
@@ -781,13 +755,7 @@ class SessionStore:
     # ------------------------------------------------------------------
 
     async def get_recent_messages_async(self, count: int | None = None) -> list[StoredMessage]:
-        """Get the most recent messages in the user's session.
-
-        NOTE: the old ``get_other_session_messages_async`` peer (and the
-        ``exclude_session_id`` plumbing) was removed in issue #1433:
-        migration 026 collapsed sessions to one per user, so excluding
-        the current session always returned the empty list.
-        """
+        """Get the most recent messages in the user's session."""
         resolved = count if count is not None else settings.heartbeat_recent_messages_count
         db = AsyncSessionLocal()
         try:

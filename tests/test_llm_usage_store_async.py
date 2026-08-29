@@ -1,15 +1,4 @@
-"""Tests for the async API of ``LLMUsageStore`` (issue #1156).
-
-Mirrors the sync ``LLMUsageStore.log`` for the ``log_async`` peer
-added in the dual-API rollout. All tests opt into the per-test
-``async_db`` fixture (see ``tests/conftest.py``) so writes are rolled
-back at teardown. Follows the IdempotencyStore pilot pattern from
-PR #1199.
-
-This store matters for the request hot path: premium reads from
-``llm_usage_logs`` for quota enforcement, and the sync write was a
-known event-loop blocking risk.
-"""
+"""Async LLM-usage-store tests."""
 
 from __future__ import annotations
 

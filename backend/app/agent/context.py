@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 # Canonical trailers that ``format_approval_message`` /
 # ``format_plan_message`` append to every system-issued approval prompt.
 # Used to identify approval-prompt rows in stored history so they can be
-# filtered out before the LLM sees them (see ``load_history`` for the
-# rationale — persisted prompts trained the LLM to produce them as
+# filtered out before the LLM sees them. See ``load_history`` for the
+# rationale. Persisted prompts trained the LLM to produce them as
 # prose, creating an infinite-loop UX bug). The list is "old + current"
 # on purpose: rows persisted before the prompt rewording need to keep
 # matching after the new wording ships, otherwise the issue #1049 fix
@@ -65,26 +65,10 @@ def _is_approval_prompt(content: str) -> bool:
 
 DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 
-# Hysteresis for the window-overflow compaction path in
-# ``load_conversation_history``: when rows fall outside the loader window,
-# this many additional rows (oldest first) are compacted along with them.
-# Without the headroom, every message after the first overflow would push
-# one more row out of the window and re-fire compaction per message, the
-# exact churn the trim path's trigger/target gap exists to prevent. 32
-# rows is the row-equivalent of the trim path's default 16-turn trigger
-# buffer (a user turn is typically an inbound + outbound row pair).
+# Extra rows compacted at window overflow to avoid re-running on every message.
 _WINDOW_OVERFLOW_BATCH_ROWS = 32
 
-# Upper bound on rows compacted per turn by the window-overflow path. A
-# legacy session can arrive with a multi-thousand-row backlog above the
-# watermark (compaction disabled for a while, or rows accumulated before
-# the overflow path shipped). Compacting the whole backlog in one go
-# would feed the entire thing into a single compaction LLM call and blow
-# its context. The batch is always a contiguous prefix starting at the
-# oldest row above the watermark, so capping it is safe: the watermark
-# advances to the end of the capped batch and the next message picks up
-# the next chunk, converging over a handful of turns. At a token-light
-# ~300 tokens/row, 200 rows is roughly 60K tokens of compaction input.
+# Bound one compaction call; subsequent turns consume the remaining backlog.
 _WINDOW_OVERFLOW_MAX_ROWS_PER_TURN = 200
 
 # Strong references to fire-and-forget background tasks so they are not
@@ -525,19 +509,8 @@ async def load_conversation_history(
         all_messages = [m for m in all_messages if m.seq > session.last_trim_seq]
     total_count = len(all_messages)
 
-    # Window-overflow compaction (issue #1427). Rows older than the
-    # ``limit`` window never reach ``trim_messages``, so the trim-driven
-    # compaction path cannot see them, and a token-light conversation can
-    # grow past the row cap while staying under the token trigger forever.
-    # Route the overflowed rows, plus a headroom batch so this does not
-    # re-fire on every subsequent message, through the same watermark +
-    # compaction machinery the trim path uses. The batch is still returned
-    # in this turn's history; the advanced watermark filters it from the
-    # next turn, mirroring trim semantics (dropped messages are visible on
-    # the turn that drops them, gone afterwards). PR #843 removed the old
-    # loader-driven compaction because it re-fired per message; the
-    # watermark advance plus headroom batching is what makes this
-    # reintroduction safe.
+    # Compact rows beyond the loader window plus headroom. They remain visible
+    # this turn; the advanced watermark removes them from the next turn.
     if total_count > limit and settings.compaction_enabled:
         compact_count = min(
             total_count - 1,

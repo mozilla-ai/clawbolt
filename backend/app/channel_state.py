@@ -67,12 +67,7 @@ def realign_preferred_channel(db: Session, user: User) -> None:
 
 
 async def realign_preferred_channel_async(db: AsyncSession, user: User) -> None:
-    """Async peer of :func:`realign_preferred_channel`.
-
-    Same semantics; mirrors the dual-API store pattern (issue #1150) so
-    async write paths in OSS and premium can call the helper without
-    blocking on a sync session.
-    """
+    """Async peer of :func:`realign_preferred_channel`."""
     await db.flush()
     existing = (await db.execute(_preferred_match_select(user))).scalar_one_or_none()
     if existing is not None:

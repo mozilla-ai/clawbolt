@@ -43,8 +43,7 @@ Clawbolt: Google Calendar has been disconnected.
 
 ## Available integrations
 
-- **Google Calendar** -- check your schedule, book jobs, manage events. [Learn more](/docs/guide/calendar)
-- **QuickBooks Online** -- create estimates, look up invoices, manage customers. [Learn more](/docs/guide/estimates)
+What is available depends on which services your operator configured. Ask the assistant for integration status or check the Tools page for the current list. User guides cover [Google Calendar](/docs/guide/calendar) and [QuickBooks Online](/docs/guide/estimates).
 
 ## Dashboard alternative
 

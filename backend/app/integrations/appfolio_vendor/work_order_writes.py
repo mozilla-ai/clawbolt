@@ -1,15 +1,6 @@
-"""Write tools for AppFolio work-order status.
+"""AppFolio work-order status update and undo tools.
 
-Limited surface: status update and undo. Note writes live in
-:mod:`notes`; invoice writes in :mod:`invoices`. The accept/schedule
-and tenant-messaging tools that previously lived here were dropped in
-#1331 ("trim tool surface to reads, notes, and invoices") and are not
-restored.
-
-Brought back the status tools after vendor feedback: marking a work
-order complete from inside the assistant is the one write the trim
-left without a workaround, and users now have to flip status in the
-AppFolio UI by hand.
+Note writes live in :mod:`notes`; invoice writes live in :mod:`invoices`.
 """
 
 from __future__ import annotations

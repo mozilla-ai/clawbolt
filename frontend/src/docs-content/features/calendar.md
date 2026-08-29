@@ -4,14 +4,15 @@
 >
 > The Google Calendar integration is experimental. Use with caution while this feature is being developed. Double-check events created or modified by the assistant before relying on them.
 
-Clawbolt can connect to your Google Calendar so you can manage your schedule from the chat. Ask questions like "am I free Thursday afternoon?" or "schedule a site visit at the Johnson place for 9am tomorrow" and Clawbolt handles it.
+Clawbolt can connect to your Google Calendar so you can manage your schedule from chat. Ask "am I free Thursday afternoon?" or "schedule a site visit at 123 Main Street for 9am tomorrow."
 
 ## What it can do
 
-The integration provides five tools the agent uses to interact with Google Calendar:
+The integration provides six tools the agent uses to interact with Google Calendar:
 
 | Tool | Purpose | Approval |
 |------|---------|----------|
+| `calendar_list_calendars` | List enabled calendars and access roles | Automatic |
 | `calendar_list_events` | List events in a date range | Automatic |
 | `calendar_create_event` | Create a new event | Asks permission |
 | `calendar_update_event` | Update an existing event | Asks permission |
@@ -60,44 +61,7 @@ Users can connect their Google account in two ways:
 
 Once connected, the calendar tools become available to the agent.
 
-## Example conversations
-
-### Checking your schedule
-```
-You: What do I have tomorrow?
-
-Clawbolt: Here's your schedule for tomorrow (March 25):
-          - 8:00 AM: Site visit at Johnson residence
-          - 11:30 AM: Lunch with supplier
-          - 2:00 PM: Estimate walkthrough at 42 Oak St
-```
-
-### Scheduling a job
-```
-You: Schedule a bathroom remodel at the Davis place for next
-     Monday 8am to 4pm
-
-Clawbolt: I'd like to create this event:
-          "Job: Davis - Bathroom remodel"
-          Monday March 30, 8:00 AM - 4:00 PM
-          Approve?
-
-You: Yes
-
-Clawbolt: Done! Event created on your calendar.
-```
-
-### Checking availability
-```
-You: Am I free Friday afternoon?
-
-Clawbolt: You have a gap from 1:00 PM to 5:00 PM on Friday.
-          Want me to schedule something?
-```
-
-## Timezone handling
-
-Clawbolt uses your timezone (set in your user profile) when interpreting times. If you say "9am tomorrow", it means 9 AM in your local time, not UTC.
+For chat examples, timezone behavior, and approval behavior, see the [Calendar guide](/docs/guide/calendar).
 
 ## Disconnecting
 

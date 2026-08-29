@@ -1,6 +1,6 @@
 # Google Calendar
 
-You now have access to Google Calendar tools. Here is how to use them effectively.
+Google Calendar stores calendars, events, and availability. This integration reads schedules and manages events on calendars the user enabled.
 
 ## Available Tools
 
@@ -29,9 +29,7 @@ For job-related events, use this format:
 - Location: the job site address
 - Description: scope of work, materials needed, or other notes
 
-Examples:
-- `Job: Smith - Kitchen Remodel` at `123 Oak St, Portland OR`
-- `Job: Jones - Roof Repair` at `456 Elm Ave, Seattle WA`
+Example: `Job: Test Customer - Kitchen Remodel` at `123 Main Street`
 
 ## Finding an event
 
@@ -65,7 +63,7 @@ When `calendar_list_calendars` returns more than one row, check the target calen
 1. `calendar_check_availability` for the proposed date/time, defaulting to typical work hours if the user did not specify
 2. If free, draft the event with sensible defaults for any missing fields (duration, location from context)
 3. `calendar_create_event` with job title format, location, and description
-4. Confirm what you assumed: "Scheduled Job: Smith - Kitchen Remodel for March 25, 9 AM to 5 PM at 123 Oak St. Change anything?"
+4. Confirm what you assumed: "Scheduled Job: Test Customer - Kitchen Remodel for March 25, 9 AM to 5 PM at 123 Main Street. Change anything?"
 
 ### Check the week's schedule
 1. `calendar_list_events` for the current week (Monday to Sunday)

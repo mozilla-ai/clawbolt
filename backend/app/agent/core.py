@@ -119,53 +119,17 @@ MAX_INPUT_TOKENS = settings.max_input_tokens
 # context poisoning.
 _VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "stop_sequence", None}
 
-# Ceiling for the truncation auto-recovery ladder. A turn that keeps hitting
-# ``max_tokens`` doubles its budget each round (8192 -> 16384) and then gives
-# up rather than growing without bound.
-#
-# The bound is a *latency* budget, not a cost one: ``max_tokens`` is a ceiling
-# rather than a spend, so raising it is free on turns that finish early (the
-# common case runs 300-800 output tokens). It is only ever reached by a
-# degenerate turn that generates until something stops it, and there the cap
-# is the whole bill. Measured against a DeepSeek-family model: a runaway takes
-# ~30s to fill 8192 tokens and ~78s to fill 16384. Two rungs is therefore the
-# most a user should be asked to wait before we give up on the turn.
+# Maximum budget for retries after a response is truncated at ``max_tokens``.
 _MAX_TOKENS_CEILING = 16384
 
 _LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
 
-# How often to re-send the typing indicator while the agent is blocked on a
-# slow operation. Clients that render an indicator expire it on their own once
-# refreshes stop, so the single indicator fired before an LLM call or tool round
-# goes stale partway through and the user is left with no signal for the rest of
-# the wait.
-#
-# The keepalive is channel-agnostic, so the interval has to stay under the
-# shortest expiry of any channel that renders one. Telegram is both the tightest
-# and the only one that documents a number: ``sendChatAction`` holds the status
-# for "5 seconds or less". iMessage sits at the other end and clears slowly
-# rather than promptly, which is why ``stop_typing_indicator`` exists to cancel
-# it explicitly; its expiry has not been measured, so Telegram is the binding
-# constraint here. Also short enough that a self-hosted bridge dropping one
-# request self-heals on the next tick.
+# Telegram expires typing status within five seconds, the shortest documented
+# channel window. Refresh beneath that limit; explicit stop handles slow-clearing channels.
 _TYPING_KEEPALIVE_SECONDS = 4.0
 
-# Provider phrasings for "this prompt is longer than the model's context window"
-# that any-llm does NOT classify as ``ContextLengthExceededError``. Its
-# ``convert_exception`` matches ``context.*length``, ``length.*context``,
-# ``token limit``, and ``maximum.*length``; Anthropic's actual message,
-# "prompt is too long: 214231 tokens > 200000 maximum", matches none of them, so
-# a real overflow arrives as the more generic ``InvalidRequestError`` and would
-# skip the trim-and-retry recovery entirely.
-#
-# Kept narrow on purpose. A false positive here turns a genuinely malformed
-# request (an orphaned tool_use block, a bad tool schema) into a silent retry
-# with a shorter prompt, which hides the real error and burns a second call.
-#
-# Not every probe is strictly required: any-llm's regex already catches the two
-# entries containing "context_length" / "length of the messages", so those can
-# only arrive here if a provider rewords around it. They stay as defense in
-# depth. The first two are the ones any-llm genuinely misses today.
+# Narrow provider phrases that any-llm may not classify as context overflow.
+# False positives would hide malformed requests behind a trim-and-retry cycle.
 _CONTEXT_OVERFLOW_PROBES = (
     "prompt is too long",  # anthropic
     "input is too long",  # anthropic, older wording
@@ -195,17 +159,8 @@ def _is_context_overflow(exc: AnyLLMError) -> bool:
     return any(probe in haystack for probe in _CONTEXT_OVERFLOW_PROBES)
 
 
-# Last API-reported prompt size per user (input + cache-read +
-# cache-creation tokens, since ``usage.input_tokens`` alone excludes the
-# cached slice under prompt caching), surviving across agent
-# instances. A fresh ClawboltAgent is constructed per message, so without
-# this the proactive trim at the top of ``process_message`` always falls
-# back to the chars/4 + flat-overhead heuristic, which ignores tool
-# schemas and the real system prompt size and therefore fires later than
-# configured (issue #1433). Process-local by design: after a restart the
-# first message per user falls back to the heuristic once, then the real
-# count takes over. Bounded LRU so a multi-tenant deployment cannot grow
-# it without limit.
+# Bounded process-local cache of full API-reported prompt size per user.
+# The first turn after restart falls back to the token estimate.
 _LAST_INPUT_TOKENS: OrderedDict[str, int] = OrderedDict()
 _LAST_INPUT_TOKENS_MAX = 1024
 
@@ -965,16 +920,7 @@ class ClawboltAgent:
                     target=result.receipt.target,
                     url=result.receipt.url,
                 )
-                # We do not echo the rendered receipt into result_str.
-                # The earlier design appended a "the user already sees
-                # this" preview hoping the LLM would skip restating it;
-                # the LLM restated it anyway and ``append_receipts``
-                # then added a second copy at dispatch, doubling every
-                # receipt block in the outbound message. Migration 037
-                # also closes the cross-turn version of this loop by
-                # storing the LLM's pre-receipt prose in
-                # ``messages.llm_reply_text`` so the history rebuilder
-                # does not train the model on its own appended receipts.
+                # Receipts render at dispatch and stay out of LLM-facing tool results.
             record = StoredToolInteraction(
                 tool_call_id=tc_req.id,
                 name=tool_name,
@@ -1658,17 +1604,8 @@ class ClawboltAgent:
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)
 
-            # Guard: a turn truncated by ``max_tokens`` that yielded no tool
-            # call is a partial emission, not a reply. Providers that render
-            # tool calls as markup in the completion text (rather than as
-            # structured tool_call objects) rely on a server-side parser to
-            # extract them; when generation is cut before the block closes,
-            # that parser fails open and the raw markup arrives as ordinary
-            # content. Shipping it would both show the user provider
-            # internals and, once persisted, teach the model on the next turn
-            # that emitting markup-as-text is in-distribution here. Retry with
-            # a larger budget instead, and discard the partial output if the
-            # ceiling is already reached.
+            # An unparsed max-token response may contain incomplete tool markup.
+            # Retry at a larger budget instead of delivering or persisting it.
             if not parsed_raw and response.stop_reason == "max_tokens":
                 effective = max_tokens or settings.llm_max_tokens_agent
                 if effective < _MAX_TOKENS_CEILING:
@@ -1752,17 +1689,8 @@ class ClawboltAgent:
                 response_truncated=response_truncated,
             )
 
-            # If the response was truncated, auto-increase max_tokens for the
-            # next round so the LLM has enough room to finish the tool call
-            # payload. This is deliberately not gated on the round producing a
-            # validation error: truncation always means the model had more to
-            # say, and a truncated round whose tool calls happened to validate
-            # is just as likely to truncate again on the next one. The
-            # ``_MAX_TOKENS_CEILING`` cap bounds the ladder
-            # (8192 -> 16384) before we give up. The outer ``max`` keeps the
-            # cap from *lowering* a budget an operator (or the heartbeat
-            # caller) deliberately set above the ceiling: this branch only
-            # ever raises.
+            # Raise the next-round budget after truncation. Never lower an
+            # operator-supplied budget that already exceeds the recovery ceiling.
             if response_truncated:
                 effective = max_tokens or settings.llm_max_tokens_agent
                 max_tokens = max(effective, min(effective * 2, _MAX_TOKENS_CEILING))

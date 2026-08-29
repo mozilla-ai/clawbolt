@@ -5,11 +5,11 @@
 Tap the microphone on your phone keyboard and talk. Great for dictating job descriptions from the truck, adding notes with dirty hands, or sending quick updates without typing.
 
 ```
-You: [dictated] Just finished the demo at the Davis place,
+You: [dictated] Just finished the demo at the Test Customer job,
      kitchen is gutted, plumbing looks good, electrical
      needs updating, probably add a day for that
 
-Clawbolt: Got it. I've noted the Davis kitchen demo is
+Clawbolt: Got it. I've noted the Test Customer kitchen demo is
           complete. Plumbing is good, but electrical needs
           updating, which adds about a day. Want me to
           update the estimate?
@@ -20,16 +20,16 @@ Clawbolt: Got it. I've noted the Davis kitchen demo is
 Your assistant works best with clear requests:
 
 - **Good:** "Give me a rough estimate for painting a 200 sq ft bedroom, my rate is $65/hour"
-- **Better:** "Estimate for the Miller job: paint master bedroom, 200 sq ft, 2 coats, Benjamin Moore Regal. $65/hour rate, $150 materials."
+- **Better:** "Estimate for Test Customer: paint master bedroom, 200 sq ft, 2 coats. $65/hour rate, $150 materials."
 
 ## Ask follow-up questions
 
 Your assistant remembers the conversation:
 
 ```
-You: What's the Davis estimate total?
+You: What's the Test Customer estimate total?
 
-Clawbolt: The Davis bathroom remodel estimate is $2,360.
+Clawbolt: The Test Customer bathroom remodel estimate is $2,360.
 
 You: Add $200 for the electrical update
 
@@ -37,14 +37,14 @@ Clawbolt: Updated. New total is $2,560. Want me to update
           the QuickBooks estimate too?
 ```
 
-## Clean up outdated info
+## Update durable business info
 
-If your rates or client details change, just tell your assistant. It updates automatically. You can also ask it to forget outdated info:
+If a saved rate or preference changes, tell your assistant. For customer records, estimates, schedules, and job status, it checks the connected system directly.
 
 ```
-You: Forget everything about the old Davis job, that's done
+You: My standard plumbing rate is $90 now, not $85
 
-Clawbolt: Done. Removed the Davis project details from memory.
+Clawbolt: Updated. Your standard plumbing rate is now $90/hour.
 ```
 
 ## Tell your assistant what to do with a photo
@@ -82,11 +82,11 @@ When your assistant performs a real action (uploading a photo, creating an invoi
 
 ```
 Clawbolt: Kitchen demo looks good. Added the photo to
-          Davis and drafted the Johnson invoice.
+          Test Customer and drafted the Acme Plumbing invoice.
 
-          - Uploaded photo to CompanyCam project Davis
+          - Uploaded photo to CompanyCam project Test Customer
             companycam.com/p/abc123
-          - Created QuickBooks invoice for Johnson, $2,560.00
+          - Created QuickBooks invoice for Acme Plumbing, $2,560.00
             app.qbo.intuit.com/app/invoice?txnId=4782
 ```
 
@@ -94,6 +94,6 @@ Each line is generated from the actual API response, not from anything the assis
 
 **If the reply says "done" but there is no confirmation line for what you asked about, the action did not happen.** Ask again. Your assistant will either complete it (and show the line) or explain why it can't (for example, "QuickBooks signed me out, please reconnect").
 
-Read-only questions ("What's the Davis estimate?", "Any appointments tomorrow?") don't produce a confirmation block. The data in the reply is the answer. The confirmation block is only for things that change something in CompanyCam, QuickBooks, Google Calendar, or your storage.
+Read-only questions ("What's the Test Customer estimate?", "Any appointments tomorrow?") don't produce a confirmation block. The data in the reply is the answer. The confirmation block is only for things that change something in CompanyCam, QuickBooks, Google Calendar, or your storage.
 
 The same confirmation block appears everywhere your assistant talks to you: iMessage, SMS, Telegram, and the web dashboard. Whatever thread you're reading, the evidence is the same.

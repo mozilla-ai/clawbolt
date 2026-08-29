@@ -45,56 +45,16 @@ _LOCAL_PROVIDERS = {"ollama", "llamafile", "llamacpp", "lmstudio", "vllm"}
 # Meta-providers that proxy to other providers and should not be directly selectable.
 _HIDDEN_PROVIDERS = {"platform", "gateway"}
 
-# Providers that serve the Anthropic Messages API natively, so a ``cache_control``
-# marker survives to the wire. Every other provider reaches the wire through
-# any-llm's Messages-to-Completions bridge, which rebuilds every block and drops
-# the markers in the process, so stamping one for them buys nothing.
-#
-# This is an optimization, not a correctness requirement. It used to be the
-# latter: the bridge forwarded a block-list ``system`` verbatim into
-# ``messages[0].content`` and a strict OpenAI-compatible backend answered 400
-# ("Input should be a valid string, field: 'messages[0].content.str'") rather
-# than ignoring a marker it could not use. any-llm#1228 fixed that in 1.24.0 by
-# flattening ``system`` to a plain string, which is why the floor in
-# pyproject.toml is >=1.24: below it, an unhonored marker is fatal rather than
-# wasteful. Keep the set anyway, since serializing markers a provider will
-# discard is pointless work.
-#
-# Gateway provider names (``otari``, ``gateway``, ``mzai``) stay out, which is now
-# an inconsistency worth naming rather than a rule. any-llm's otari provider
-# forwards Messages natively (it exists to preserve exactly these markers), so a
-# marker would reach the gateway intact, the same as it does for ``anthropic``
-# pointed at a gateway base, which this set does mark. The two paths end at the
-# same place and are treated differently.
-#
-# Left as-is because #1484 scoped itself to dropping the endpoint check, and
-# widening the set is a behavior change that deserves its own measurement: it
-# would start marking for every operator who names a gateway provider directly.
-# Revisit once gateway deployments have real cache-hit numbers from the
-# ``anthropic``-plus-base path.
+# Providers whose Anthropic Messages path preserves ``cache_control`` markers.
+# Other provider bridges discard the markers, so stamping them adds no value.
 _CACHE_CONTROL_PROVIDERS = {"anthropic", "azureanthropic", "vertexaianthropic"}
 
 
 def provider_honors_cache_control(provider: str) -> bool:
-    """True when the agent should stamp a ``cache_control`` marker for *provider*.
+    """Return whether cache markers are enabled and useful for *provider*.
 
-    Gates every cache breakpoint the agent stamps. A marker a provider cannot use
-    is now discarded in conversion rather than rejected (any-llm#1228, released in
-    1.24.0), so this is a cost decision and no longer a correctness one.
-
-    The endpoint is deliberately not consulted. It used to be: a ``custom
-    llm_api_base`` on the ``anthropic`` provider meant a proxy or gateway, whose
-    real downstream is encoded in the model string and unreadable from here, and a
-    gateway fronting a non-Anthropic model answered a marked request with
-    ``Extra inputs are not permitted, field: 'messages[0].content.list[...]
-    .cache_control'``. That is a gateway-side conversion failure, not any-llm's, so
-    it needs the *gateway* to be running any-llm >= 1.24 to be fixed. Once it is,
-    an Anthropic downstream honors the marker and any other downstream drops it in
-    the same bridge, so the endpoint stops carrying information and gateway
-    deployments get prompt caching back.
-
-    ``llm_prompt_cache`` is a kill switch: ``"never"`` disables marking outright,
-    for an operator whose gateway is older than that and 400s on a marked request.
+    The endpoint is not consulted because it does not reveal a gateway's downstream
+    provider. ``llm_prompt_cache='never'`` supports older gateways that reject markers.
     """
     if settings.llm_prompt_cache == "never":
         return False

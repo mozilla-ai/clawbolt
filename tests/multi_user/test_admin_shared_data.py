@@ -6,27 +6,6 @@ Covers:
 - PII redaction: planted phone / email / card markers in message
   bodies do NOT appear in the wire response.
 - Audit logging: every read writes one ``AdminAuditLog`` row.
-
-Async DB conversion (issue #393, #429): the router runs on
-``Depends(get_async_db)`` and ``get_current_admin`` now also resolves
-through the async session, so the admin's User + Subscription must be
-visible to the per-test ASYNC connection. The ``audit_admin._try_commit``
-insert still runs sync (fresh ``SessionLocal()``) and FK-references
-``admin_audit_logs.admin_user_id`` -> ``users.id`` and
-``target_user_id`` -> ``users.id``, so the same rows must be visible
-to the sync connection too. Both bridges go through autocommit:
-``_autocommit_admin`` seeds the admin caller, ``_consenting_user``
-seeds the target users; rows commit outside both per-test transactions
-and both connections see them under READ COMMITTED.
-
-The two per-test connections (sync ``_isolate_stores`` and async
-``async_db``) are disjoint under READ COMMITTED. To bridge that, the
-``_consenting_user`` helper writes through a DIRECT engine connection
-that commits to the real DB outside both per-test transactions. Both
-transactions then read the row through the standard READ COMMITTED
-visibility rules. The rows leak between tests but UUID ids prevent
-cross-test conflicts; the session-scoped ``_pg_engine`` fixture drops
-all tables at session teardown, sweeping the leaks.
 """
 
 from __future__ import annotations

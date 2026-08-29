@@ -39,8 +39,7 @@ router = APIRouter(prefix="/auth/oauth", tags=["oauth"])
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
-# Temporary copy used while a parallel deployment is migrating users.
-# Replace with a generic deactivation message once the migration window closes.
+# Deactivated migrated accounts sign in through the hosted service.
 _DEACTIVATED_LOGIN_MESSAGE = "Your account has moved to clawbolt.ai. Sign in there to access it."
 
 # Enforce the Secure flag on cookies when the deployment uses HTTPS.
@@ -176,7 +175,7 @@ async def oauth_google_callback(
     try:
         # Pass the same redirect_uri we used in the auth redirect.
         # Google rejects the token exchange with HTTP 400 if these
-        # differ — historically this was the source of "OAuth works
+        # differ. Historically this was the source of "OAuth works
         # locally but breaks on prod" because each side read a
         # different setting (router: APP_BASE_URL, exchange: legacy
         # GOOGLE_REDIRECT_URI). One source of truth now.

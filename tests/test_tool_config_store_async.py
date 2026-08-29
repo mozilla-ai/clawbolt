@@ -1,11 +1,4 @@
-"""Tests for the async API of ``ToolConfigStore`` (issue #1157).
-
-Mirrors the sync ``ToolConfigStore`` surface for the ``*_async`` peers
-added in the dual-API rollout. All tests opt into the per-test
-``async_db`` fixture (see ``tests/conftest.py``) so writes are rolled
-back at teardown. Follows the IdempotencyStore pilot pattern from
-PR #1199.
-"""
+"""Async database-backed tool-configuration store tests."""
 
 from __future__ import annotations
 

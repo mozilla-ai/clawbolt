@@ -1,12 +1,4 @@
-"""Tests for the async API of ``DbSettingsStore`` (issue #1175).
-
-Mirrors the DB-store half of ``tests/test_config_store.py`` for the
-``*_async`` peers added in the dual-API rollout. All tests opt into the
-per-test ``async_db`` fixture (see ``tests/conftest.py``) so writes are
-rolled back at teardown. Follows the IdempotencyStore async pilot
-(``tests/test_idempotency_pruning_async.py``, #1199) and the per-store
-conversions in #1200, #1201, #1203.
-"""
+"""Async database-backed settings-store tests."""
 
 from __future__ import annotations
 

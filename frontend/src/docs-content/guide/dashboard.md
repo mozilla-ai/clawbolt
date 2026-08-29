@@ -1,8 +1,6 @@
 # Dashboard
 
-Everything in Clawbolt is designed to be managed through chat. Your assistant automatically updates your memory, heartbeat, personality, and profile as you talk to it. You never need to log into the dashboard.
-
-That said, the dashboard is there if you want a visual overview or prefer to make bulk edits.
+Most Clawbolt settings can be managed through chat. The dashboard provides a visual overview, bulk editing, permissions, and forms for integrations whose credentials should not enter chat history.
 
 ## Dashboard cards
 

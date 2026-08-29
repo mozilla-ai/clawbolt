@@ -1,9 +1,4 @@
-"""Database-backed memory store.
-
-Replaces FileMemoryStore from file_store.py. Uses MemoryDocument ORM model
-for MEMORY.md and HISTORY.md content, and User ORM model for soul_text and
-user_text.
-"""
+"""Database-backed storage for memory, history, user, and soul text."""
 
 from __future__ import annotations
 
@@ -31,13 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Pure typed builders shared by every async store method.
-#
-# Originally introduced as the dual sync/async pilot from issue #1150 /
-# PR #1199; the sync surface has since been removed (issue #1160 final
-# pass). Builders stay because they keep query construction in one place
-# and return concretely-typed SQLAlchemy core constructs that ``ty`` can
-# verify end-to-end without ``Any``.
+# Typed query builders shared by store methods.
 # ---------------------------------------------------------------------------
 
 
@@ -123,14 +112,7 @@ def _strip_section_prefix(raw: str, prefix: str) -> str:
 
 
 class MemoryStore:
-    """Database-backed memory storage using MemoryDocument ORM model.
-
-    Async-only API after the issue #1160 final pass. The dual sync/async
-    surface from issue #1153 (PR #1199 pilot) has been collapsed: only the
-    ``*_async`` peers remain, plus ``append_history`` which keeps its
-    historical plain name (issue #1221). Premium and OSS callers all reach
-    for the async API directly.
-    """
+    """Database-backed workspace-text storage for one user."""
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
