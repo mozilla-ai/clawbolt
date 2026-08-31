@@ -12,11 +12,12 @@ The two transformations applied are markup removal (in the provider, where
 ``<strong>`` highlight tags are stripped) and skipping keys whose value is null
 or an empty string, neither of which carries anything the model could use.
 
-The size of a response is therefore set by one number the operator can reason
-about, ``WEB_SEARCH_MAX_RESULTS``, rather than by a character budget hidden in
-here. A live Brave result runs roughly 2,000 characters, so the default of five
-lands near 10,000. If that is ever too much, the fix is to ask for fewer
-results, not to serve half of each one.
+The size of a response is therefore set by the result count, rather than by a
+character budget hidden in here. A live Brave result runs roughly 2,000
+characters, so the default of three lands near 6,000 and the ceiling of twenty
+near 40,000. ``WEB_SEARCH_MAX_RESULTS`` sets the count for a call that does not
+ask for one; the agent picks per call otherwise. If that is ever too much, the
+fix is to ask for fewer results, not to serve half of each one.
 """
 
 from typing import Any

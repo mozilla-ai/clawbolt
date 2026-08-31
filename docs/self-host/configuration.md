@@ -303,7 +303,7 @@ If that is too much for your deployment, lower `WEB_SEARCH_MAX_RESULTS`. That tr
 
 ### Swapping the search provider
 
-The provider seam is one method wide (`search(query, max_results) -> list[SearchResult]`). To add a backend, write a module in `backend/app/integrations/web_search/` satisfying the `SearchProvider` protocol, add it to `_PROVIDERS` in that package's `factory.py`, and point `WEB_SEARCH_PROVIDER` at it. The cache, retry policy, error handling, and result formatting are provider-agnostic and need no changes.
+The provider seam is one method wide (`search(query, *, max_results, freshness) -> list[dict[str, Any]]`). To add a backend, write a module in `backend/app/integrations/web_search/` satisfying the `SearchProvider` protocol, add it to `_PROVIDERS` in that package's `factory.py`, and point `WEB_SEARCH_PROVIDER` at it. A backend that cannot express `freshness` ignores it and returns unfiltered results. The cache, retry policy, error handling, and result formatting are provider-agnostic and need no changes.
 
 
 ## HTTP timeouts
