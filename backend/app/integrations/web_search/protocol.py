@@ -29,4 +29,20 @@ class SearchProvider(Protocol):
     name: str
     display_name: str
 
-    async def search(self, query: str, *, max_results: int = 5) -> list[dict[str, Any]]: ...
+    async def search(
+        self,
+        query: str,
+        *,
+        max_results: int = 3,
+        freshness: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run *query* and return the provider's own result records.
+
+        ``freshness`` is a best-effort recency hint (``pd``/``pw``/``pm``/``py``
+        for past day/week/month/year). It is on the seam rather than buried in
+        one backend because recency is a property of the question, not of the
+        vendor: a material price wants the last month, a building code from 2023
+        wants no filter at all. A provider that cannot express it ignores it,
+        which degrades to today's behavior rather than failing.
+        """
+        ...

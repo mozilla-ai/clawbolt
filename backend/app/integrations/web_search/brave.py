@@ -32,6 +32,14 @@ _TAG_RE = re.compile(r"<[^>]+>")
 # is waiting on a reply and a long retry chain reads as a hang. 4xx other than
 # 429 is a fault in our request and will fail identically on retry.
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+# Brave's own ceiling: count=30 returns 422.
+_MAX_COUNT = 20
+
+# Recency filters Brave accepts. Brave also takes a YYYY-MM-DDtoYYYY-MM-DD
+# range, deliberately not exposed: the agent has no use for a precision it
+# cannot justify, and a malformed range is a 422.
+_FRESHNESS_CODES = frozenset({"pd", "pw", "pm", "py"})
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 0.5
 
@@ -102,21 +110,35 @@ class BraveSearchProvider:
         # Unreachable: the loop either returns, raises, or continues.
         raise SearchUnavailableError("Brave search exhausted its retries")
 
-    async def search(self, query: str, *, max_results: int = 5) -> list[dict[str, Any]]:
-        data = await self._request(
-            {
-                "q": query,
-                "count": str(max_results),
-                # Plain web results only. Brave's news/video/location clusters
-                # have their own shapes and answer a different question than the
-                # one this tool asks. Product data is unaffected: Brave attaches
-                # it to ordinary web results, which is where the prices live.
-                "result_filter": "web",
-                # No extra_snippets flag: Brave returns those passages either
-                # way, measured identical byte counts with and without it, so
-                # asking for them only implies a control that does not exist.
-            }
-        )
+    async def search(
+        self,
+        query: str,
+        *,
+        max_results: int = 3,
+        freshness: str | None = None,
+    ) -> list[dict[str, Any]]:
+        # Brave rejects count above 20 with a 422, so a caller asking for more
+        # is clamped rather than handed an error it cannot act on.
+        count = max(1, min(max_results, _MAX_COUNT))
+        params = {
+            "q": query,
+            "count": str(count),
+            # Plain web results only. Brave's news/video/location clusters
+            # have their own shapes and answer a different question than the
+            # one this tool asks. Product data is unaffected: Brave attaches
+            # it to ordinary web results, which is where the prices live.
+            "result_filter": "web",
+            # No extra_snippets flag: Brave returns those passages either
+            # way, measured identical byte counts with and without it, so
+            # asking for them only implies a control that does not exist.
+        }
+        if freshness in _FRESHNESS_CODES:
+            # Omitted entirely when unset or unrecognized. Sending an invalid
+            # value is a 422, and an unfiltered search is the right fallback:
+            # the question may well have an old but correct answer.
+            params["freshness"] = freshness
+
+        data = await self._request(params)
 
         results = (data.get("web") or {}).get("results") or []
-        return [_clean(r) for r in results[:max_results] if isinstance(r, dict)]
+        return [_clean(r) for r in results[:count] if isinstance(r, dict)]

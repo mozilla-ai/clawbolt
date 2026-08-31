@@ -33,5 +33,17 @@ class SearchCache:
         self._cache.clear()
 
     @staticmethod
-    def make_key(provider: str, query: str, max_results: int) -> str:
-        return f"{provider}:{' '.join(query.split()).lower()}:{max_results}"
+    def make_key(
+        provider: str,
+        query: str,
+        max_results: int,
+        freshness: str | None = None,
+    ) -> str:
+        """Build the cache key.
+
+        ``freshness`` is part of the key because it changes the answer: without
+        it, a search restricted to the past month would be served an older
+        unfiltered hit, which is the exact staleness the caller asked to avoid.
+        """
+        normalized = " ".join(query.split()).lower()
+        return f"{provider}:{normalized}:{max_results}:{freshness or 'any'}"

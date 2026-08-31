@@ -10,14 +10,14 @@ The search API is mocked throughout; no test makes a network call.
 """
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.integrations.web_search.brave import BraveSearchProvider, _clean
 from backend.app.integrations.web_search.cache import SearchCache
 from backend.app.integrations.web_search.errors import SearchUnavailableError
@@ -373,11 +373,20 @@ class TestSearchCache:
     def test_make_key_normalizes_query(self) -> None:
         """A reworded-but-identical query should hit, so casing and runs of
         whitespace must not produce distinct keys."""
-        assert SearchCache.make_key("brave", "  Copper   PIPE ", 5) == "brave:copper pipe:5"
+        assert SearchCache.make_key("brave", "  Copper   PIPE ", 5) == "brave:copper pipe:5:any"
 
     def test_make_key_separates_providers_and_sizes(self) -> None:
         assert SearchCache.make_key("brave", "q", 5) != SearchCache.make_key("other", "q", 5)
         assert SearchCache.make_key("brave", "q", 5) != SearchCache.make_key("brave", "q", 10)
+
+    def test_make_key_separates_freshness(self) -> None:
+        """Otherwise a search restricted to the past month is served an older
+        unfiltered hit, which is the staleness the caller asked to avoid."""
+        unfiltered = SearchCache.make_key("brave", "q", 5)
+        assert unfiltered != SearchCache.make_key("brave", "q", 5, "pm")
+        assert SearchCache.make_key("brave", "q", 5, "pm") != SearchCache.make_key(
+            "brave", "q", 5, "pd"
+        )
 
     def test_clear(self) -> None:
         cache = SearchCache()
@@ -653,6 +662,170 @@ class TestRendering:
         assert "omitted" not in out
         for i in range(12):
             assert f"url: https://example.com/{i}" in out
+
+
+class TestSearchParameters:
+    """max_results and freshness are chosen per call by the agent."""
+
+    def _tool(self, provider: AsyncMock) -> Callable[..., Awaitable[ToolResult]]:
+        from backend.app.integrations.web_search.factory import _create_web_search_tools
+
+        return _create_web_search_tools(provider, SearchCache())[0].function
+
+    def _provider(self) -> AsyncMock:
+        provider = AsyncMock(spec=BraveSearchProvider)
+        provider.name = "brave"
+        provider.search = AsyncMock(return_value=[_record()])
+        return provider
+
+    @pytest.mark.asyncio
+    async def test_omitted_max_results_uses_the_configured_default(self) -> None:
+        provider = self._provider()
+        with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
+            mock_settings.web_search_max_results = 3
+            await self._tool(provider)(query="q")
+
+        assert provider.search.call_args.kwargs["max_results"] == 3
+
+    @pytest.mark.asyncio
+    async def test_agent_supplied_max_results_wins(self) -> None:
+        provider = self._provider()
+        with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
+            mock_settings.web_search_max_results = 3
+            await self._tool(provider)(query="q", max_results=10)
+
+        assert provider.search.call_args.kwargs["max_results"] == 10
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("asked", "expected"), [(50, 20), (0, 1), (-5, 1), (20, 20)])
+    async def test_max_results_is_clamped_not_rejected(self, asked: int, expected: int) -> None:
+        """A model asking for 50 wants "lots". Spending a turn on a validation
+        error teaches it nothing, and Brave 422s above 20."""
+        provider = self._provider()
+        with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
+            mock_settings.web_search_max_results = 3
+            result = await self._tool(provider)(query="q", max_results=asked)
+
+        assert not result.is_error
+        assert provider.search.call_args.kwargs["max_results"] == expected
+
+    @pytest.mark.asyncio
+    async def test_freshness_is_passed_through(self) -> None:
+        provider = self._provider()
+        with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
+            mock_settings.web_search_max_results = 3
+            await self._tool(provider)(query="q", freshness="pm")
+
+        assert provider.search.call_args.kwargs["freshness"] == "pm"
+
+    @pytest.mark.asyncio
+    async def test_freshness_defaults_to_unfiltered(self) -> None:
+        """Codes and standards have old but correct answers; filtering by
+        default would hide them."""
+        provider = self._provider()
+        with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
+            mock_settings.web_search_max_results = 3
+            await self._tool(provider)(query="q")
+
+        assert provider.search.call_args.kwargs["freshness"] is None
+
+    @pytest.mark.asyncio
+    async def test_different_freshness_does_not_share_a_cache_entry(self) -> None:
+        """Serving a filtered query from an unfiltered hit reintroduces exactly
+        the staleness the caller asked to avoid."""
+        provider = self._provider()
+        tool_fn = self._tool(provider)
+        with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
+            mock_settings.web_search_max_results = 3
+            await tool_fn(query="copper pipe")
+            await tool_fn(query="copper pipe", freshness="pm")
+
+        assert provider.search.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_different_result_counts_do_not_share_a_cache_entry(self) -> None:
+        provider = self._provider()
+        tool_fn = self._tool(provider)
+        with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
+            mock_settings.web_search_max_results = 3
+            await tool_fn(query="copper pipe", max_results=3)
+            await tool_fn(query="copper pipe", max_results=10)
+
+        assert provider.search.call_count == 2
+
+    def test_schema_offers_freshness_as_an_enum(self) -> None:
+        """A free-text field would let the model invent a value Brave 422s on."""
+        from backend.app.agent.tools.base import tool_to_function_schema
+        from backend.app.integrations.web_search.factory import _create_web_search_tools
+
+        provider = AsyncMock(spec=BraveSearchProvider)
+        provider.name = "brave"
+        tool = _create_web_search_tools(provider, SearchCache())[0]
+        schema = tool_to_function_schema(tool)
+
+        freshness = schema["input_schema"]["properties"]["freshness"]
+        allowed = {v for branch in freshness["anyOf"] for v in branch.get("enum", [])}
+        assert allowed == {"pd", "pw", "pm", "py"}
+
+    def test_only_query_is_required(self) -> None:
+        """Both new parameters are optional, so existing behavior is unchanged
+        when the model omits them."""
+        from backend.app.agent.tools.base import tool_to_function_schema
+        from backend.app.integrations.web_search.factory import _create_web_search_tools
+
+        provider = AsyncMock(spec=BraveSearchProvider)
+        provider.name = "brave"
+        tool = _create_web_search_tools(provider, SearchCache())[0]
+        schema = tool_to_function_schema(tool)
+
+        assert schema["input_schema"]["required"] == ["query"]
+
+
+class TestBraveParameterMapping:
+    @pytest.mark.asyncio
+    async def test_count_and_freshness_reach_the_request(self) -> None:
+        provider = BraveSearchProvider(api_key="k")
+        client = _mock_client([_make_httpx_response(200, _make_brave_response())])
+
+        with _patch_client(client):
+            await provider.search("test", max_results=7, freshness="pm")
+
+        params = client.get.call_args.kwargs["params"]
+        assert params["count"] == "7"
+        assert params["freshness"] == "pm"
+
+    @pytest.mark.asyncio
+    async def test_freshness_is_omitted_when_unset(self) -> None:
+        provider = BraveSearchProvider(api_key="k")
+        client = _mock_client([_make_httpx_response(200, _make_brave_response())])
+
+        with _patch_client(client):
+            await provider.search("test")
+
+        assert "freshness" not in client.get.call_args.kwargs["params"]
+
+    @pytest.mark.asyncio
+    async def test_unrecognized_freshness_is_dropped_rather_than_sent(self) -> None:
+        """Brave 422s on an invalid value. An unfiltered search is the better
+        fallback: the question may have an old but correct answer."""
+        provider = BraveSearchProvider(api_key="k")
+        client = _mock_client([_make_httpx_response(200, _make_brave_response())])
+
+        with _patch_client(client):
+            await provider.search("test", freshness="last-tuesday")
+
+        assert "freshness" not in client.get.call_args.kwargs["params"]
+
+    @pytest.mark.asyncio
+    async def test_count_is_clamped_to_the_api_ceiling(self) -> None:
+        """Brave returns 422 for count above 20."""
+        provider = BraveSearchProvider(api_key="k")
+        client = _mock_client([_make_httpx_response(200, _make_brave_response())])
+
+        with _patch_client(client):
+            await provider.search("test", max_results=999)
+
+        assert client.get.call_args.kwargs["params"]["count"] == "20"
 
 
 # ---------------------------------------------------------------------------
