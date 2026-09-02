@@ -1320,6 +1320,9 @@ export interface EvalSummary {
   turns_failed: number;
   agreement_counts: Record<string, number>;
   safety_counts: Record<string, number>;
+  // Subset of safety_counts that actually blocks a switch. A provider error
+  // is recorded above but is a failure to measure, not candidate behavior.
+  blocking_findings: number;
   judge_counts: Record<string, number>;
   identical_rate: number;
   divergence_rate: number;
@@ -1390,6 +1393,7 @@ export interface EvalTurn {
 export interface EvalReport {
   run: EvalRun;
   turns: EvalTurn[];
+  total_turns: number;
 }
 
 export async function listEvalRuns(userId: string): Promise<EvalRun[]> {
@@ -1424,8 +1428,10 @@ export async function startEvalRun(
   return data as EvalRun;
 }
 
-export async function getEvalReport(runId: number): Promise<EvalReport> {
-  const { data, error } = await client.GET(`/api/admin/llm-eval/runs/${runId}` as never);
+export async function getEvalReport(runId: number, limit = 50): Promise<EvalReport> {
+  const { data, error } = await client.GET(
+    `/api/admin/llm-eval/runs/${runId}?limit=${limit}` as never,
+  );
   if (error) throwApiError(error, 'Failed to load evaluation report');
   return data as EvalReport;
 }

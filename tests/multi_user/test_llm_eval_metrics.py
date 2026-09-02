@@ -273,6 +273,36 @@ def test_failed_turns_are_counted_separately_from_completed() -> None:
     assert result.turns_completed == 29
 
 
+def test_a_provider_error_does_not_block_a_switch() -> None:
+    """A failed call is a failure to measure, not candidate misbehavior.
+
+    Letting it block would mean one rate-limited call anywhere in a run
+    reports "do not switch".
+    """
+    comparisons = [_comparison(i) for i in range(40)]
+    comparisons[0].candidate = ModelCallResult(provider="p", model="m", error="RateLimitError")
+    comparisons[0].safety_issues = [
+        metrics.SafetyIssue(finding=SafetyFinding.CALL_FAILED, detail="RateLimitError")
+    ]
+    result = metrics.aggregate(comparisons)
+    assert result.recommendation is not Recommendation.DO_NOT_SWITCH
+    assert result.blocking_turns == 0
+    # Still recorded and still surfaced, just not as a blocker.
+    assert result.safety_counts[SafetyFinding.CALL_FAILED] == 1
+    assert any("could not be compared" in r for r in result.reasons)
+
+
+def test_blocking_count_excludes_provider_errors() -> None:
+    comparisons = [_comparison(i) for i in range(40)]
+    comparisons[0].safety_issues = [
+        metrics.SafetyIssue(finding=SafetyFinding.CALL_FAILED, detail="boom"),
+        metrics.SafetyIssue(finding=SafetyFinding.UNKNOWN_TOOL, tool_name="nope"),
+    ]
+    result = metrics.aggregate(comparisons)
+    assert result.blocking_turns == 1
+    assert result.recommendation is Recommendation.DO_NOT_SWITCH
+
+
 def test_cache_collapse_produces_a_warning() -> None:
     """A candidate that loses prompt caching makes the cost table a lie."""
     comparisons = []

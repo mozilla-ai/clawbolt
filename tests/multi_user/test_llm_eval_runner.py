@@ -220,6 +220,11 @@ async def test_cancelled_run_stops_and_keeps_the_turns_it_finished(
         patches[1],
         patches[2],
         patch("backend.app.services.llm_eval.runner.call_model", cancel_after_first),
+        # The watcher caches the flag for a second so a run does not open a
+        # session per turn to poll one column. Turns here finish in
+        # microseconds, so without this the cancellation lands inside the
+        # cache window and the run completes normally.
+        patch("backend.app.services.llm_eval.runner._CANCEL_POLL_SECONDS", 0),
         pytest.raises(asyncio.CancelledError),
     ):
         await execute_run(run_id, concurrency=1)
@@ -231,6 +236,60 @@ async def test_cancelled_run_stops_and_keeps_the_turns_it_finished(
         .all()
     )
     assert len(turns) < 4
+
+
+@pytest.mark.asyncio()
+async def test_a_turn_that_cannot_be_replayed_is_marked_not_compared(
+    db_session: Session, test_user: User
+) -> None:
+    """A turn that fails to assemble must keep a failure marker.
+
+    Otherwise the hardest failure is the least visible one: it carries a
+    fabricated agreement value and sorts below every turn that did run.
+    """
+    run_id = _make_run(db_session, test_user.id, samples=2)
+
+    async def explode(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("prompt could not be assembled")
+
+    patches = _patched_run(samples=_samples(2), call_side_effect=None)
+    with (
+        patches[0],
+        patches[1],
+        patch("backend.app.services.llm_eval.runner.assemble_for_sample", explode),
+        patches[3],
+    ):
+        await execute_run(run_id, concurrency=1)
+
+    db_session.expire_all()
+    turns = (
+        db_session.execute(select(LLMEvalTurnResult).where(LLMEvalTurnResult.run_id == run_id))
+        .scalars()
+        .all()
+    )
+    assert len(turns) == 2
+    for t in turns:
+        assert t.agreement == "not_compared"
+        assert "call_failed" in t.safety_issues
+        assert "prompt could not be assembled" in t.candidate_error
+
+
+@pytest.mark.asyncio()
+async def test_progress_never_walks_backwards_under_concurrency(
+    db_session: Session, test_user: User
+) -> None:
+    """Regression: the counter advanced under a lock but committed outside it,
+    so a worker holding a lower count could land last."""
+    run_id = _make_run(db_session, test_user.id, samples=8)
+    result = _result(text="ok")
+    patches = _patched_run(samples=_samples(8), call_side_effect=lambda *a, **k: result)
+    with patches[0], patches[1], patches[2], patches[3]:
+        await execute_run(run_id, concurrency=4)
+
+    db_session.expire_all()
+    run = db_session.get(LLMEvalRun, run_id)
+    assert run is not None
+    assert run.progress_completed == 8
 
 
 @pytest.mark.asyncio()

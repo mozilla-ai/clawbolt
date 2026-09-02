@@ -1798,6 +1798,10 @@ class AdminLLMEvalSummary(BaseModel):
     turns_failed: int = 0
     agreement_counts: dict[str, int] = Field(default_factory=dict)
     safety_counts: dict[str, int] = Field(default_factory=dict)
+    # Subset of ``safety_counts`` that actually disqualifies a switch. A
+    # provider error is recorded above but is a failure to measure, not
+    # something the candidate did, so it is excluded here.
+    blocking_findings: int = 0
     judge_counts: dict[str, int] = Field(default_factory=dict)
     identical_rate: float = 0.0
     divergence_rate: float = 0.0
@@ -1882,7 +1886,10 @@ class AdminLLMEvalTurn(BaseModel):
 
 
 class AdminLLMEvalReportResponse(BaseModel):
-    """A run plus its per-turn evidence, worst turns first."""
+    """A run plus a page of its per-turn evidence, worst turns first."""
 
     run: AdminLLMEvalRunItem
     turns: list[AdminLLMEvalTurn]
+    # Total turns stored for the run, so a caller can tell whether the page
+    # it received is the whole story.
+    total_turns: int = 0

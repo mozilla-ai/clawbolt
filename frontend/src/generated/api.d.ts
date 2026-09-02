@@ -2221,7 +2221,13 @@ export interface paths {
         };
         /**
          * Get Report
-         * @description Return a run with its per-turn evidence, most concerning turns first.
+         * @description Return a run and a page of its evidence, most concerning turns first.
+         *
+         *     Paged because every text column on a turn is envelope-encrypted and then
+         *     PII-redacted: serializing a 200-turn run whole is roughly twelve hundred
+         *     decrypts for a single page view. The ordering is what makes a page worth
+         *     reading, so the sort runs across the whole run and the page is taken from
+         *     the result, not the other way round.
          */
         get: operations["get_report_api_admin_llm_eval_runs__run_id__get"];
         put?: never;
@@ -3122,12 +3128,17 @@ export interface components {
         };
         /**
          * AdminLLMEvalReportResponse
-         * @description A run plus its per-turn evidence, worst turns first.
+         * @description A run plus a page of its per-turn evidence, worst turns first.
          */
         AdminLLMEvalReportResponse: {
             run: components["schemas"]["AdminLLMEvalRunItem"];
             /** Turns */
             turns: components["schemas"]["AdminLLMEvalTurn"][];
+            /**
+             * Total Turns
+             * @default 0
+             */
+            total_turns: number;
         };
         /**
          * AdminLLMEvalRunCreate
@@ -3241,6 +3252,11 @@ export interface components {
             safety_counts?: {
                 [key: string]: number;
             };
+            /**
+             * Blocking Findings
+             * @default 0
+             */
+            blocking_findings: number;
             /** Judge Counts */
             judge_counts?: {
                 [key: string]: number;
@@ -8291,7 +8307,10 @@ export interface operations {
     };
     get_report_api_admin_llm_eval_runs__run_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path: {
                 run_id: number;

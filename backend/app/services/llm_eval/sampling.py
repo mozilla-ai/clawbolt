@@ -188,7 +188,11 @@ async def assemble_for_sample(fixture: ReplayFixture, sample: ReplaySample) -> A
     """
     agent = ClawboltAgent(user=fixture.user)
     agent.register_tools(fixture.tools)
+    # Reproducibility: without this the trim decision reads a process-local
+    # estimate written by live traffic, so the same run can build a different
+    # prompt on a worker that recently served this user.
     return await agent.assemble_prompt(
         sample.message_context,
         _history_for(fixture, sample),
+        deterministic_trim=True,
     )

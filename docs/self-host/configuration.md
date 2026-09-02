@@ -157,6 +157,7 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 | `LLM_PROMPT_CACHE` | `auto` | `auto` adds cache breakpoints for supported Anthropic Messages providers; `never` disables them. Use `never` with gateways running any-llm older than 1.24 |
 | `LLM_EVAL_CONCURRENCY` | `4` | Turns replayed in parallel by an admin model-comparison run (`AUTH_MODE=multi_user`). Each turn issues one call per model, so this competes with live traffic for the provider rate limit |
 | `LLM_EVAL_MAX_SAMPLES` | `200` | Maximum turns one comparison run may replay. Bounds the cost of a mistyped value in the admin form |
+| `LLM_EVAL_MAX_CONCURRENT_RUNS` | `2` | Evaluations in flight across all users. One run per user is enforced separately; this bounds the total, since runs share the provider rate limit with live inbound traffic |
 
 ## Conversation and memory
 

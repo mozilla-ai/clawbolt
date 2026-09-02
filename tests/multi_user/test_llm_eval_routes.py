@@ -167,6 +167,34 @@ def test_second_concurrent_run_for_the_same_user_conflicts(
     assert _launch.call_count == 1
 
 
+def test_global_concurrency_cap_returns_429(
+    admin_client: TestClient, consenting_user: User, db_session: Session, _launch: MagicMock
+) -> None:
+    """Runs share the provider rate limit with live traffic, so the per-user
+    guard is not enough on its own."""
+    other = User(id=str(uuid.uuid4()), user_id=f"google_{uuid.uuid4().hex[:8]}")
+    db_session.add(other)
+    db_session.commit()
+    db_session.add(
+        LLMEvalRun(
+            user_id=other.id,
+            baseline_provider="anthropic",
+            baseline_model="incumbent-model",
+            candidate_provider="anthropic",
+            candidate_model="candidate-model",
+            requested_samples=10,
+            status=str(RunStatus.RUNNING),
+        )
+    )
+    db_session.commit()
+
+    with patch.object(settings, "llm_eval_max_concurrent_runs", 1):
+        response = admin_client.post(f"{BASE}/users/{consenting_user.id}/runs", json=_payload())
+    assert response.status_code == 429
+    assert "limit is 1" in response.json()["detail"]
+    _launch.assert_not_called()
+
+
 def test_judge_disabled_leaves_the_judge_model_empty(
     admin_client: TestClient, consenting_user: User, _launch: MagicMock
 ) -> None:
@@ -251,6 +279,67 @@ def test_report_orders_the_most_concerning_turns_first(
     # Safety finding first, then the silent no-op, then the quiet
     # divergence, with the matched turn last.
     assert order == [3, 4, 2, 1]
+
+
+def test_report_pages_turns_and_reports_the_total(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """Every text column on a turn is decrypted and redacted per request, so a
+    run's evidence is paged rather than shipped whole."""
+    run = _make_run(db_session, consenting_user.id)
+    db_session.add_all(
+        [
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=i,
+                user_message=f"turn {i}",
+                agreement=str(AgreementClass.IDENTICAL),
+            )
+            for i in range(1, 8)
+        ]
+    )
+    db_session.commit()
+
+    first = admin_client.get(f"{BASE}/runs/{run.id}?limit=3").json()
+    assert len(first["turns"]) == 3
+    assert first["total_turns"] == 7
+
+    second = admin_client.get(f"{BASE}/runs/{run.id}?limit=3&offset=3").json()
+    assert len(second["turns"]) == 3
+    # Pages must not overlap, or "show more" would repeat turns.
+    assert {t["message_seq"] for t in first["turns"]}.isdisjoint(
+        t["message_seq"] for t in second["turns"]
+    )
+
+
+def test_report_orders_before_paging(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """The first page has to be the worst turns, not an arbitrary three."""
+    run = _make_run(db_session, consenting_user.id)
+    rows = [
+        LLMEvalTurnResult(
+            run_id=run.id,
+            message_seq=i,
+            user_message=f"clean {i}",
+            agreement=str(AgreementClass.IDENTICAL),
+        )
+        for i in range(1, 7)
+    ]
+    rows.append(
+        LLMEvalTurnResult(
+            run_id=run.id,
+            message_seq=99,
+            user_message="the bad one",
+            agreement=str(AgreementClass.DIFFERENT_TOOLS),
+            safety_issues=json.dumps([{"finding": "unknown_tool", "tool_name": "nope"}]),
+        )
+    )
+    db_session.add_all(rows)
+    db_session.commit()
+
+    page = admin_client.get(f"{BASE}/runs/{run.id}?limit=1").json()
+    assert page["turns"][0]["message_seq"] == 99
 
 
 def test_report_redacts_pii_in_message_bodies(

@@ -1451,6 +1451,8 @@ class ClawboltAgent:
         message_context: str,
         conversation_history: list[AgentMessage] | None = None,
         system_prompt_override: str | None = None,
+        *,
+        deterministic_trim: bool = False,
     ) -> AssembledPrompt:
         """Build the exact message list a turn sends to the LLM, pre-flight.
 
@@ -1459,6 +1461,14 @@ class ClawboltAgent:
         through this same path. A second implementation would silently make
         every evaluation score a prompt no user ever received, so the assembly
         deliberately exists in exactly one place.
+
+        ``deterministic_trim`` drops the process-local token estimate and lets
+        the trimmer fall back to its own character heuristic. The estimate is
+        written by *live* agent turns and is shared per user across the
+        process, so a caller that is not serving a real message (the offline
+        model-comparison replay) would otherwise build a different prompt
+        depending on whether this worker happened to serve that user recently.
+        Live turns leave it False and keep the accurate count.
 
         Side effect: seeds ``self._delivered_skill_categories`` from the tool
         results that survived trimming, so first-use SKILL.md injection does
@@ -1507,12 +1517,17 @@ class ClawboltAgent:
         # per message), so fall back to the process-local per-user cache
         # of the last API-reported count. Only without either does the
         # trimmer use its chars/4 heuristic.
+        input_tokens = (
+            None
+            if deterministic_trim
+            else (self._last_input_tokens or _recall_input_tokens(self.user.id))
+        )
         trim_result = trim_messages(
             messages,
             target_tokens=settings.context_trim_target_tokens,
             target_turns=settings.context_trim_target_turns,
             trigger_tokens=settings.context_trim_trigger_tokens,
-            input_tokens=self._last_input_tokens or _recall_input_tokens(self.user.id),
+            input_tokens=input_tokens,
         )
         messages = trim_result.messages
         # Seed skill-delivery state from what actually survived trimming:

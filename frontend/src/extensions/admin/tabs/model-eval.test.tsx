@@ -57,6 +57,7 @@ function summary(overrides: Partial<EvalSummary> = {}): EvalSummary {
     turns_failed: 0,
     agreement_counts: { identical: 40 },
     safety_counts: {},
+    blocking_findings: 0,
     judge_counts: {},
     identical_rate: 1,
     divergence_rate: 0,
@@ -151,7 +152,7 @@ function turn(overrides: Partial<EvalTurn> = {}): EvalTurn {
 }
 
 function report(overrides: Partial<EvalReport> = {}): EvalReport {
-  return { run: run(), turns: [turn()], ...overrides };
+  return { run: run(), turns: [turn()], total_turns: 1, ...overrides };
 }
 
 
@@ -286,7 +287,7 @@ describe('ModelEvalTab', () => {
       .mockResolvedValueOnce([running])
       .mockResolvedValue([run({ status: 'completed' })]);
     vi.mocked(api.getEvalReport)
-      .mockResolvedValueOnce({ run: running, turns: [] })
+      .mockResolvedValueOnce({ run: running, turns: [], total_turns: 0 })
       .mockResolvedValue(report());
     renderTab();
 
@@ -298,6 +299,42 @@ describe('ModelEvalTab', () => {
     // The poll picks up the completed status, which has to re-drive the report.
     await waitFor(() => expect(api.getEvalReport).toHaveBeenCalledTimes(2), { timeout: 6000 });
     await waitFor(() => expect(screen.getAllByText('Safe to switch').length).toBeGreaterThan(0));
+  });
+
+  it('pages the turn list and offers to load the rest', async () => {
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue([run()]);
+    vi.mocked(api.getEvalReport).mockResolvedValue(
+      report({ turns: [turn()], total_turns: 120 }),
+    );
+    renderTab();
+
+    await screen.findByRole('option', { name: 'consenting@example.com' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
+    await userEvent.click(await screen.findByText('candidate'));
+
+    // The count has to be visible, or a partial report reads as the whole run.
+    expect(await screen.findByText(/1 of 120/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Show more turns' }));
+    await waitFor(() => expect(api.getEvalReport).toHaveBeenLastCalledWith(1, 100));
+  });
+
+  it('counts only blocking findings in the safety tile', async () => {
+    // A provider error is recorded on the turn but must not inflate the tile
+    // that says "any finding blocks a switch".
+    const api = await import('../admin-api');
+    const s = summary({ safety_counts: { call_failed: 3 }, blocking_findings: 0 });
+    vi.mocked(api.listEvalRuns).mockResolvedValue([run({ summary: s })]);
+    vi.mocked(api.getEvalReport).mockResolvedValue(report({ run: run({ summary: s }) }));
+    renderTab();
+
+    await screen.findByRole('option', { name: 'consenting@example.com' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
+    await userEvent.click(await screen.findByText('candidate'));
+
+    const tile = (await screen.findByText('Safety findings')).closest('div');
+    expect(tile).not.toBeNull();
+    expect(within(tile as HTMLElement).getByText('0')).toBeInTheDocument();
   });
 
   it('blocks a second run while one is in flight and offers to cancel', async () => {

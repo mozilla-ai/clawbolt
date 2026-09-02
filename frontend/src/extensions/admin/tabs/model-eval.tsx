@@ -45,6 +45,11 @@ const POLL_MS = 2000;
 
 const SAMPLE_CHOICES = [25, 50, 100, 200];
 
+// Turns are returned worst-first, so the first page is the part that decides
+// anything. The rest is available on request rather than shipped by default:
+// every text column on a turn is decrypted and PII-scrubbed per request.
+const TURN_PAGE_SIZE = 50;
+
 const ACTIVE_STATUSES = new Set(['pending', 'running']);
 
 const RECOMMENDATION_COPY: Record<EvalRecommendation, { label: string; className: string }> = {
@@ -73,6 +78,7 @@ const AGREEMENT_COPY: Record<string, string> = {
   replied_instead_of_acting: 'Replied instead of acting',
   acted_instead_of_replying: 'Acted where the incumbent replied',
   both_replied: 'Both replied',
+  not_compared: 'Could not be compared',
 };
 
 const FINDING_COPY: Record<string, string> = {
@@ -145,7 +151,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 }
 
 function SummaryGrid({ summary }: { summary: EvalSummary }) {
-  const safetyTotal = Object.values(summary.safety_counts).reduce((a, b) => a + b, 0);
+  const safetyTotal = summary.blocking_findings;
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Stat
@@ -308,6 +314,7 @@ export default function ModelEvalTab() {
   const [runs, setRuns] = useState<EvalRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [report, setReport] = useState<EvalReport | null>(null);
+  const [turnLimit, setTurnLimit] = useState(TURN_PAGE_SIZE);
 
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -337,6 +344,7 @@ export default function ModelEvalTab() {
   useEffect(() => {
     setSelectedRunId(null);
     setReport(null);
+    setTurnLimit(TURN_PAGE_SIZE);
     void refreshRuns(userId);
   }, [userId, refreshRuns]);
 
@@ -366,10 +374,10 @@ export default function ModelEvalTab() {
       setReport(null);
       return;
     }
-    getEvalReport(selectedRunId)
+    getEvalReport(selectedRunId, turnLimit)
       .then(setReport)
       .catch((e: Error) => setError(e.message));
-  }, [selectedRunId, selectedStatus]);
+  }, [selectedRunId, selectedStatus, turnLimit]);
 
   async function handleStart() {
     setError(null);
@@ -383,6 +391,7 @@ export default function ModelEvalTab() {
       });
       setRuns(prev => [run, ...prev]);
       setSelectedRunId(run.id);
+      setTurnLimit(TURN_PAGE_SIZE);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -559,7 +568,10 @@ export default function ModelEvalTab() {
                   return (
                     <tr
                       key={run.id}
-                      onClick={() => setSelectedRunId(run.id)}
+                      onClick={() => {
+                        setSelectedRunId(run.id);
+                        setTurnLimit(TURN_PAGE_SIZE);
+                      }}
                       className={`cursor-pointer border-t border-border ${
                         selectedRunId === run.id ? 'bg-panel' : ''
                       }`}
@@ -611,12 +623,24 @@ export default function ModelEvalTab() {
           <div>
             <h3 className="mb-2 text-sm font-semibold text-foreground">
               Turns, most concerning first
+              {report.total_turns > report.turns.length
+                ? ` (${report.turns.length} of ${report.total_turns})`
+                : ''}
             </h3>
             <div className="space-y-2">
               {report.turns.map(turn => (
                 <TurnCard key={turn.message_seq} turn={turn} />
               ))}
             </div>
+            {report.total_turns > report.turns.length ? (
+              <button
+                type="button"
+                onClick={() => setTurnLimit(n => n + TURN_PAGE_SIZE)}
+                className="mt-2 rounded-[--radius-md] border border-border px-3 py-1 text-sm text-muted-foreground"
+              >
+                Show more turns
+              </button>
+            ) : null}
           </div>
         </section>
       ) : null}

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
@@ -38,6 +39,8 @@ from backend.app.services.llm_eval.types import (
     Recommendation,
     ReplaySample,
     RunStatus,
+    SafetyFinding,
+    SafetyIssue,
     ToolCall,
     TurnComparison,
 )
@@ -80,12 +83,38 @@ async def _load_run(run_id: int) -> LLMEvalRun | None:
         ).scalar_one_or_none()
 
 
-async def _is_cancelled(run_id: int) -> bool:
-    async with db_session_async() as db:
-        status = (
-            await db.execute(select(LLMEvalRun.status).where(LLMEvalRun.id == run_id))
-        ).scalar_one_or_none()
-    return status == RunStatus.CANCELLED
+# How stale a cancellation check may be. Turns run concurrently and can each
+# finish in well under a second, so checking per turn opened a fresh session
+# per turn to read one column that changes at most once per run. A second of
+# lag on a job measured in minutes is not worth that.
+_CANCEL_POLL_SECONDS = 1.0
+
+
+class _CancellationWatcher:
+    """Caches the cancelled flag for a run across closely-spaced checks."""
+
+    def __init__(self, run_id: int) -> None:
+        self._run_id = run_id
+        self._cancelled = False
+        self._checked_at = 0.0
+        self._lock = asyncio.Lock()
+
+    async def is_cancelled(self) -> bool:
+        if self._cancelled:
+            # Latching: a run never un-cancels, so once seen there is nothing
+            # left to ask the database.
+            return True
+        async with self._lock:
+            now = time.monotonic()
+            if now - self._checked_at < _CANCEL_POLL_SECONDS:
+                return self._cancelled
+            async with db_session_async() as db:
+                status = (
+                    await db.execute(select(LLMEvalRun.status).where(LLMEvalRun.id == self._run_id))
+                ).scalar_one_or_none()
+            self._checked_at = now
+            self._cancelled = status == RunStatus.CANCELLED
+            return self._cancelled
 
 
 async def _finish(
@@ -263,6 +292,7 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
         )
         await db.commit()
 
+    cancellation = _CancellationWatcher(run_id)
     semaphore = asyncio.Semaphore(max(1, concurrency))
     comparisons: list[TurnComparison] = []
     completed = 0
@@ -271,7 +301,7 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
     async def worker(sample: ReplaySample) -> None:
         nonlocal completed
         async with semaphore:
-            if await _is_cancelled(run_id):
+            if await cancellation.is_cancelled():
                 raise asyncio.CancelledError
             try:
                 comparison = await _compare_turn(run, fixture, sample)
@@ -279,27 +309,41 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
                 logger.exception("Eval turn seq=%d failed in run %d", sample.seq, run_id)
                 # A turn that could not even be assembled still belongs in
                 # the report, as a failure rather than a silent omission.
+                detail = f"{type(exc).__name__}: {exc}"
                 comparison = TurnComparison(
                     sample=sample,
                     baseline=ModelCallResult(
-                        provider=run.baseline_provider, model=run.baseline_model
+                        provider=run.baseline_provider,
+                        model=run.baseline_model,
+                        error=detail,
                     ),
                     candidate=ModelCallResult(
                         provider=run.candidate_provider,
                         model=run.candidate_model,
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=detail,
                     ),
-                    agreement=AgreementClass.BOTH_REPLIED,
+                    agreement=AgreementClass.NOT_COMPARED,
+                    # Recorded so the turn carries the same marker as a turn
+                    # whose provider call returned an error, rather than
+                    # sorting to the bottom of the report with no badge. It is
+                    # not a blocking finding; see ``BLOCKING_FINDINGS``.
+                    safety_issues=[SafetyIssue(finding=SafetyFinding.CALL_FAILED, detail=detail)],
                     judge_verdict=JudgeVerdict.NOT_JUDGED,
                 )
         async with lock:
             comparisons.append(comparison)
             completed += 1
-            current = completed
         async with db_session_async() as db:
             db.add(_turn_row(run_id, comparison))
+            # Incremented in SQL rather than written from the Python counter.
+            # The counter advances under the lock but the commit happens
+            # outside it, so a worker holding a lower count could land last
+            # and walk progress backwards. This adds exactly one per committed
+            # turn regardless of the order the workers reach the database.
             await db.execute(
-                update(LLMEvalRun).where(LLMEvalRun.id == run_id).values(progress_completed=current)
+                update(LLMEvalRun)
+                .where(LLMEvalRun.id == run_id)
+                .values(progress_completed=LLMEvalRun.progress_completed + 1)
             )
             await db.commit()
 
@@ -354,6 +398,7 @@ def _summary_payload(aggregate: metrics.RunAggregate) -> dict:
         "turns_failed": aggregate.turns_failed,
         "agreement_counts": aggregate.agreement_counts,
         "safety_counts": aggregate.safety_counts,
+        "blocking_findings": aggregate.blocking_turns,
         "judge_counts": aggregate.judge_counts,
         "identical_rate": round(aggregate.identical_rate, 4),
         "divergence_rate": round(aggregate.divergence_rate, 4),

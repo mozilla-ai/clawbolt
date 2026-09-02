@@ -3921,7 +3921,7 @@
           "admin"
         ],
         "summary": "Get Report",
-        "description": "Return a run with its per-turn evidence, most concerning turns first.",
+        "description": "Return a run and a page of its evidence, most concerning turns first.\n\nPaged because every text column on a turn is envelope-encrypted and then\nPII-redacted: serializing a 200-turn run whole is roughly twelve hundred\ndecrypts for a single page view. The ordering is what makes a page worth\nreading, so the sort runs across the whole run and the page is taken from\nthe result, not the other way round.",
         "operationId": "get_report_api_admin_llm_eval_runs__run_id__get",
         "parameters": [
           {
@@ -3931,6 +3931,29 @@
             "schema": {
               "type": "integer",
               "title": "Run Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
             }
           }
         ],
@@ -5517,6 +5540,11 @@
             },
             "type": "array",
             "title": "Turns"
+          },
+          "total_turns": {
+            "type": "integer",
+            "title": "Total Turns",
+            "default": 0
           }
         },
         "type": "object",
@@ -5525,7 +5553,7 @@
           "turns"
         ],
         "title": "AdminLLMEvalReportResponse",
-        "description": "A run plus its per-turn evidence, worst turns first."
+        "description": "A run plus a page of its per-turn evidence, worst turns first."
       },
       "AdminLLMEvalRunCreate": {
         "properties": {
@@ -5741,6 +5769,11 @@
             },
             "type": "object",
             "title": "Safety Counts"
+          },
+          "blocking_findings": {
+            "type": "integer",
+            "title": "Blocking Findings",
+            "default": 0
           },
           "judge_counts": {
             "additionalProperties": {

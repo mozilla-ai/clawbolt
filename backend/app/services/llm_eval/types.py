@@ -70,6 +70,14 @@ class AgreementClass(StrEnum):
     BOTH_REPLIED = "both_replied"
     """Neither called a tool. Text quality is the judge's problem, not ours."""
 
+    NOT_COMPARED = "not_compared"
+    """The turn could not be replayed, so there is no decision to compare.
+
+    Distinct from every class above: those describe a choice the candidate
+    made. Recording one of them for a turn that never ran would put a
+    fabricated value in the stored ``agreement`` column and sort the hardest
+    failure to the bottom of the report."""
+
 
 class JudgeVerdict(StrEnum):
     """Adjudication of a divergence that already cleared the safety tier."""

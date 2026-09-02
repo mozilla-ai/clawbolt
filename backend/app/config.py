@@ -124,6 +124,11 @@ class Settings(BaseSettings):
     # Ceiling on turns an operator can request in one run, so a stray value in
     # the admin form cannot start a several-thousand-call job.
     llm_eval_max_samples: int = Field(default=200, ge=1, le=1000)
+    # Ceiling on evaluations in flight across all users. One run per user is
+    # enforced separately; without this, N users means N times
+    # ``llm_eval_concurrency`` calls at the same gateway, competing with the
+    # live inbound path for one rate limit.
+    llm_eval_max_concurrent_runs: int = Field(default=2, ge=1, le=20)
 
     # Conversation & memory
     conversation_history_limit: int = Field(default=500, ge=1)

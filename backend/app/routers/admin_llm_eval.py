@@ -29,8 +29,9 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
+from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import settings
@@ -245,6 +246,22 @@ async def start_run(
             detail="An evaluation is already running for this user.",
         )
 
+    # Runs compete with live inbound traffic for the same provider rate limit,
+    # so the per-user guard above is not enough on its own.
+    running_total = (
+        await db.execute(
+            select(sa_func.count(LLMEvalRun.id)).where(LLMEvalRun.status.in_(ACTIVE_STATUSES))
+        )
+    ).scalar_one()
+    if running_total >= settings.llm_eval_max_concurrent_runs:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"{running_total} evaluation(s) already running; the limit is "
+                f"{settings.llm_eval_max_concurrent_runs}. Try again when one finishes."
+            ),
+        )
+
     baseline_provider, baseline_model = await _effective_models(user_id, db)
     if not baseline_model:
         raise HTTPException(
@@ -312,10 +329,19 @@ async def list_runs(
 @router.get("/runs/{run_id}", response_model=AdminLLMEvalReportResponse)
 async def get_report(
     run_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     ctx: AdminAuditContext = Depends(audit_admin(AdminAction.VIEW_LLM_EVAL_REPORT)),
     db: AsyncSession = Depends(get_async_db),
 ) -> AdminLLMEvalReportResponse:
-    """Return a run with its per-turn evidence, most concerning turns first."""
+    """Return a run and a page of its evidence, most concerning turns first.
+
+    Paged because every text column on a turn is envelope-encrypted and then
+    PII-redacted: serializing a 200-turn run whole is roughly twelve hundred
+    decrypts for a single page view. The ordering is what makes a page worth
+    reading, so the sort runs across the whole run and the page is taken from
+    the result, not the other way round.
+    """
     run = (await db.execute(select(LLMEvalRun).where(LLMEvalRun.id == run_id))).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -328,9 +354,11 @@ async def get_report(
         .all()
     )
     ordered = sorted(turns, key=_turn_sort_key)
+    page = ordered[offset : offset + limit]
     return AdminLLMEvalReportResponse(
         run=_run_item(run),
-        turns=[_turn_item(t) for t in ordered],
+        turns=[_turn_item(t) for t in page],
+        total_turns=len(ordered),
     )
 
 
