@@ -91,7 +91,14 @@ async def build_fixture(user: User) -> ReplayFixture:
     # reads as a clean pass. Silent and completely wrong.
     ensure_tool_modules_imported()
 
-    storage = await init_storage(user)
+    # ``refresh=False``: a replay must not write the user's state or message
+    # them. Refreshing an expired Drive token writes ``oauth_tokens``, and a
+    # permanent refresh failure deletes the grant and sends the user a
+    # "Drive disconnected" message, which the ``_refuse_outbound`` sink below
+    # cannot intercept because it goes straight to the message bus. The token
+    # here is only ever read for its presence, to keep the file tools on the
+    # schema, so an expired one is as good as a fresh one.
+    storage = await init_storage(user, refresh=False)
     context = ToolContext(
         user=user,
         storage=storage,

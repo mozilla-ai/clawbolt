@@ -124,7 +124,7 @@ PipelineStep = Callable[[PipelineContext], Awaitable[PipelineContext]]
 # ---------------------------------------------------------------------------
 
 
-async def init_storage(user: User) -> StorageBackend | None:
+async def init_storage(user: User, *, refresh: bool = True) -> StorageBackend | None:
     """Build a storage backend for *user* if Google Drive is connected.
 
     File storage is per-user: each user grants ``drive.file`` scope through
@@ -134,13 +134,24 @@ async def init_storage(user: User) -> StorageBackend | None:
     Failures in token loading (network blip, OAuth provider 5xx) log and
     return ``None`` so the rest of the agent turn still serves the user
     instead of crashing the pipeline.
+
+    ``refresh=False`` reads the stored token as-is. Refreshing writes
+    ``oauth_tokens``, and on a permanently failed refresh it deletes the grant
+    and messages the user that Drive disconnected. A caller that only needs to
+    know whether Drive is connected, so the file tools land on the schema,
+    must not cause either. The credentials it gets back may be expired, which
+    is harmless precisely because such a caller never issues a Drive request.
     """
     if not (settings.google_drive_client_id and settings.google_drive_client_secret):
         logger.debug("Drive OAuth client not configured; skipping file features")
         return None
 
     try:
-        token = await oauth_service.get_valid_token(user.id, "google_drive")
+        token = (
+            await oauth_service.get_valid_token(user.id, "google_drive")
+            if refresh
+            else await oauth_service.load_token(user.id, "google_drive")
+        )
     except Exception:
         logger.exception("Failed to load Drive token for user %s", user.id)
         return None

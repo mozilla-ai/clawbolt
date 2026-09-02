@@ -11,12 +11,14 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
 
 from backend.app.agent.messages import AssistantMessage, UserMessage
 from backend.app.agent.session_db import reset_session_stores
+from backend.app.config import settings
 from backend.app.models import ChatSession, Message, User
 from backend.app.services.llm_eval.sampling import (
     ReplayFixture,
@@ -172,3 +174,33 @@ async def test_user_with_no_messages_yields_no_samples(
 ) -> None:
     fixture = await _fixture_for(test_user)
     assert select_samples(fixture, limit=100) == []
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.router.oauth_service.load_token", new_callable=AsyncMock)
+@patch("backend.app.agent.router.oauth_service.get_valid_token", new_callable=AsyncMock)
+async def test_building_a_fixture_never_refreshes_the_users_drive_token(
+    mock_get_valid_token: AsyncMock,
+    mock_load_token: AsyncMock,
+    test_user: User,
+    _reset_stores: None,
+) -> None:
+    """A run must not rotate the grant or tell the user Drive disconnected.
+
+    ``get_valid_token`` writes ``oauth_tokens`` on a refresh and, when the
+    refresh fails permanently, deletes the grant and messages the user. The
+    fixture only needs to know whether Drive is connected, so it reads the
+    stored token instead.
+    """
+    mock_load_token.return_value = None
+    with (
+        patch.object(settings, "google_drive_client_id", "client-id"),
+        patch.object(settings, "google_drive_client_secret", "client-secret"),
+    ):
+        await build_fixture(test_user)
+
+    mock_get_valid_token.assert_not_awaited()
+    # ``oauth_service`` is a singleton, so every specialist auth_check in the
+    # fixture reads through the same patched ``load_token``. Assert on the Drive
+    # read specifically rather than on the call count.
+    assert (test_user.id, "google_drive") in {call.args for call in mock_load_token.await_args_list}
