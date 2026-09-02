@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, User
-from backend.app.services.llm_eval.runner import execute_run
+from backend.app.services.llm_eval.runner import MAX_CONSECUTIVE_CALL_FAILURES, execute_run
 from backend.app.services.llm_eval.sampling import ReplayFixture
 from backend.app.services.llm_eval.types import (
     ModelCallResult,
@@ -335,3 +335,75 @@ async def test_user_with_no_turns_completes_as_inconclusive(
     assert run.status == RunStatus.COMPLETED
     assert run.recommendation == Recommendation.INCONCLUSIVE
     assert "no replayable turns" in run.error
+
+
+@pytest.mark.asyncio()
+async def test_run_stops_after_consecutive_provider_failures(
+    db_session: Session, test_user: User
+) -> None:
+    """A dead provider must not cost the whole sample budget.
+
+    Every remaining turn would fail identically, so the run stops, keeps the
+    turns it wrote, and says why.
+    """
+    run_id = _make_run(db_session, test_user.id, samples=20)
+    failing = ModelCallResult(provider="anthropic", model="m", error="APIStatusError: 503")
+
+    patches = _patched_run(
+        samples=_samples(20),
+        call_side_effect=lambda *a, **k: failing,
+    )
+    with patches[0], patches[1], patches[2], patches[3] as call:
+        await execute_run(run_id, concurrency=1)
+
+    run = db_session.get(LLMEvalRun, run_id)
+    assert run is not None
+    assert run.status == str(RunStatus.FAILED)
+    assert "consecutive provider failures" in run.error
+    assert "503" in run.error
+
+    turns = (
+        db_session.execute(select(LLMEvalTurnResult).where(LLMEvalTurnResult.run_id == run_id))
+        .scalars()
+        .all()
+    )
+    # The three that failed are kept as evidence; the other seventeen are not
+    # attempted, which is the point.
+    assert len(turns) == MAX_CONSECUTIVE_CALL_FAILURES
+    assert call.await_count == MAX_CONSECUTIVE_CALL_FAILURES * 2
+
+    # A run that stopped early cannot endorse a switch, and the banner reads
+    # the summary rather than the column, so both have to say so.
+    assert run.recommendation == str(Recommendation.INCONCLUSIVE)
+    summary = run.summary_json
+    assert summary is not None
+    assert summary["recommendation"] == str(Recommendation.INCONCLUSIVE)
+    assert "consecutive provider failures" in summary["reasons"][0]
+
+
+@pytest.mark.asyncio()
+async def test_an_intermittent_failure_does_not_stop_the_run(
+    db_session: Session, test_user: User
+) -> None:
+    """The count is consecutive, so a flaky call in a long run is survivable."""
+    run_id = _make_run(db_session, test_user.id, samples=6)
+    ok = _result(text="fine")
+    bad = ModelCallResult(provider="anthropic", model="m", error="APIStatusError: 429")
+    # Two calls per turn: alternate whole turns rather than individual calls.
+    outcomes = [bad, bad, ok, ok, bad, bad, ok, ok, bad, bad, ok, ok]
+    calls = iter(outcomes)
+
+    patches = _patched_run(samples=_samples(6), call_side_effect=lambda *a, **k: next(calls))
+    with patches[0], patches[1], patches[2], patches[3]:
+        await execute_run(run_id, concurrency=1)
+
+    run = db_session.get(LLMEvalRun, run_id)
+    assert run is not None
+    assert run.status == str(RunStatus.COMPLETED)
+    assert run.error == ""
+    turns = (
+        db_session.execute(select(LLMEvalTurnResult).where(LLMEvalTurnResult.run_id == run_id))
+        .scalars()
+        .all()
+    )
+    assert len(turns) == 6

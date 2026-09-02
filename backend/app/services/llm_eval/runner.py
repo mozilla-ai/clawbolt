@@ -8,7 +8,11 @@ through should leave behind the evidence it already gathered instead of
 nothing.
 
 Turn failures are recorded, not raised. One provider hiccup on turn 40 must
-not discard the 39 comparisons before it.
+not discard the 39 comparisons before it. Sustained failure is different: a
+dead provider, a rejected key, or an exhausted quota fails every remaining
+turn the same way, so after ``MAX_CONSECUTIVE_CALL_FAILURES`` turns in a row
+come back with an error the run stops, keeps what it gathered, and reports
+why rather than spending the rest of the samples proving the point.
 """
 
 from __future__ import annotations
@@ -89,6 +93,14 @@ async def _load_run(run_id: int) -> LLMEvalRun | None:
 # per turn to read one column that changes at most once per run. A second of
 # lag on a job measured in minutes is not worth that.
 _CANCEL_POLL_SECONDS = 1.0
+
+
+# Consecutive turns whose provider calls failed before the run gives up. A
+# dead provider, a bad key, or an exhausted quota fails every remaining turn
+# identically, and a 200-turn run would make 400 more calls discovering that.
+# Counted consecutively rather than in total so one flaky call in a long run
+# does not end it: any turn that comes back resets the count.
+MAX_CONSECUTIVE_CALL_FAILURES = 3
 
 
 class _CancellationWatcher:
@@ -316,13 +328,20 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
     semaphore = asyncio.Semaphore(max(1, concurrency))
     comparisons: list[TurnComparison] = []
     completed = 0
+    consecutive_failures = 0
+    breaker_error = ""
     lock = asyncio.Lock()
 
     async def worker(sample: ReplaySample) -> None:
-        nonlocal completed
+        nonlocal completed, consecutive_failures, breaker_error
         async with semaphore:
             if await cancellation.is_cancelled():
                 raise asyncio.CancelledError
+            if breaker_error:
+                # The provider is failing every call. Return rather than
+                # raise: the turns that already landed are the run's evidence
+                # and ``gather`` must not discard the bookkeeping for them.
+                return
             try:
                 comparison = await _compare_turn(run, fixture, sample)
             except Exception as exc:
@@ -350,9 +369,20 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
                     safety_issues=[SafetyIssue(finding=SafetyFinding.CALL_FAILED, detail=detail)],
                     judge_verdict=JudgeVerdict.NOT_JUDGED,
                 )
+        failure = comparison.baseline.error or comparison.candidate.error
         async with lock:
             comparisons.append(comparison)
             completed += 1
+            if failure:
+                consecutive_failures += 1
+                if consecutive_failures >= MAX_CONSECUTIVE_CALL_FAILURES and not breaker_error:
+                    breaker_error = (
+                        f"stopped after {consecutive_failures} consecutive provider "
+                        f"failures: {failure}"
+                    )
+                    logger.warning("LLM eval run %d %s", run_id, breaker_error)
+            else:
+                consecutive_failures = 0
         async with db_session_async() as db:
             db.add(_turn_row(run_id, comparison))
             # Incremented in SQL rather than written from the Python counter.
@@ -375,6 +405,25 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
 
     comparisons.sort(key=lambda c: c.sample.seq)
     aggregate = metrics.aggregate(comparisons)
+    if breaker_error:
+        # The evidence gathered before the provider went down is kept and
+        # still readable, but it cannot endorse a switch: the run stopped
+        # early, so whatever it measured is a fraction of what was asked for.
+        # Both the column and the summary are stamped, or the report's banner
+        # would contradict the run's status.
+        aggregate.recommendation = Recommendation.INCONCLUSIVE
+        aggregate.reasons = [breaker_error]
+        await _finish(
+            run_id,
+            RunStatus.FAILED,
+            recommendation=str(Recommendation.INCONCLUSIVE),
+            summary=_summary_payload(aggregate),
+            error=breaker_error,
+        )
+        logger.info(
+            "LLM eval run %d abandoned after %d turn(s): %s", run_id, completed, breaker_error
+        )
+        return
     await _finish(
         run_id,
         RunStatus.COMPLETED,

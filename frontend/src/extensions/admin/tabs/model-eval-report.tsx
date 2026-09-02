@@ -392,6 +392,15 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
         </section>
       ) : null}
 
+      {/* A run that stopped early still has a summary, so this cannot live in
+          the no-summary branch below: without it the reason the run gave up
+          would be invisible behind an "inconclusive" banner. */}
+      {run.error ? (
+        <div className="rounded-[--radius-md] bg-error-bg px-3 py-2 text-sm text-error-text">
+          {run.error}
+        </div>
+      ) : null}
+
       {run.summary ? (
         <>
           <VerdictBanner summary={run.summary} userId={run.user_id} />
@@ -411,7 +420,7 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
         <p className="text-sm text-muted-foreground">
           {isActive
             ? 'The verdict is written when the run finishes. Turns appear below as they land.'
-            : `This run has no summary${run.error ? `: ${run.error}` : '.'}`}
+            : 'This run has no summary.'}
         </p>
       )}
 

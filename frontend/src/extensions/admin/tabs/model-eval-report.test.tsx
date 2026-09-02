@@ -128,6 +128,27 @@ describe('ModelEvalReportPage', () => {
     await waitFor(() => expect(api.cancelEvalRun).toHaveBeenCalledWith('run-0001'));
   });
 
+  it('shows why a run stopped early, beside its partial verdict', async () => {
+    // A run the provider killed still carries a summary, so the reason has to
+    // be its own line: an "inconclusive" banner alone reads as "we looked and
+    // could not tell" rather than "the provider was down".
+    const api = await import('../admin-api');
+    vi.mocked(api.getEvalReport).mockResolvedValue(
+      report({
+        run: run({
+          status: 'failed',
+          error: 'stopped after 3 consecutive provider failures: APIStatusError: 503',
+          recommendation: 'inconclusive',
+          summary: summary({ recommendation: 'inconclusive', reasons: ['stopped after 3'] }),
+        }),
+      }),
+    );
+    renderReport();
+
+    expect(await screen.findByText(/3 consecutive provider failures/)).toBeInTheDocument();
+    expect(screen.getByText('Inconclusive')).toBeInTheDocument();
+  });
+
   it('offers a way back when the id in the URL is not a run', async () => {
     // A pasted link with a stale id is the common failure here, and a red
     // banner with no exit is a dead end.
