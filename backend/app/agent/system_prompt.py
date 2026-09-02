@@ -291,14 +291,21 @@ def build_date_section(user: User) -> str:
     return local.strftime("%A, %Y-%m-%d")
 
 
-def build_time_user_context(user: User) -> str:
+def build_time_user_context(user: User, now: datetime.datetime | None = None) -> str:
     """Build a time context string to prepend to user messages.
 
     Moves the current time out of the system prompt (which breaks prompt
     caching) and into the user message where it is visible to the LLM but
     does not affect system prompt cache keys.
+
+    ``now`` overrides the clock. Live turns leave it None and get wall time.
+    The model-swap replay passes the timestamp of the turn it is replaying,
+    because a turn is read alongside a history whose rows carry their own
+    absolute date markers: told it is Wednesday while reading a conversation
+    that ended the previous Friday, a model resolves "this past week" to a
+    different week than the one the user meant.
     """
-    now = datetime.datetime.now(datetime.UTC)
+    now = now or datetime.datetime.now(datetime.UTC)
     local = to_local_time(now, user.timezone)
     formatted = local.strftime("%A, %Y-%m-%d %I:%M %p").strip()
     if user.timezone:

@@ -17,6 +17,28 @@ class ToolTags(StrEnum):
     SENDS_REPLY = "sends_reply"
     MODIFIES_PROFILE = "modifies_profile"
 
+    READ_ONLY = "read_only"
+    """This tool only reads. Calling it changes nothing the user could notice.
+
+    Set it on every tool that looks something up, and leave it off anything
+    that writes, sends, uploads, or deletes. **Untagged means mutating**, so
+    forgetting the tag on a new read tool is a false accusation against a
+    candidate model rather than a real write nobody was shown.
+    ``test_every_tool_is_classified_read_or_write`` enforces the choice.
+
+    It exists because ``approval_policy`` cannot answer the question in either
+    direction. ``ApprovalPolicy`` defaults ``default_level`` to ``ASK``, so
+    most search and list tools are gated too and reading the gate as
+    "mutating" charges a candidate for running a search; while
+    ``write_file``, ``edit_file``, ``update_heartbeat`` and
+    ``manage_integration`` all write *without* being gated, so reading it the
+    other way misses them.
+
+    The model-swap evaluator is the consumer: it flags a candidate that
+    reaches for a mutating tool neither the incumbent nor the live turn
+    called. See ``llm_eval.metrics._is_mutating``.
+    """
+
 
 class ToolErrorKind(StrEnum):
     """Classification of tool errors to guide LLM self-correction."""

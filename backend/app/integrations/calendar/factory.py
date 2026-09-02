@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal
@@ -755,6 +755,7 @@ def create_calendar_tools(
     return [
         Tool(
             name=ToolName.CALENDAR_LIST_CALENDARS,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "List the calendars the user has enabled for the assistant. "
                 "Shows calendar names and IDs."
@@ -768,6 +769,7 @@ def create_calendar_tools(
         ),
         Tool(
             name=ToolName.CALENDAR_LIST_EVENTS,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "List events on Google Calendar within a date range. "
                 "Returns event titles, times, locations, and IDs. "
@@ -863,6 +865,7 @@ def create_calendar_tools(
         ),
         Tool(
             name=ToolName.CALENDAR_CHECK_AVAILABILITY,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Check free/busy status on Google Calendar for a date range. "
                 "Returns busy time slots. Use this before suggesting new "

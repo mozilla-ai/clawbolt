@@ -23,10 +23,13 @@ from backend.app.models import LLMEvalRun, LLMEvalTurnResult, User
 from backend.app.services.llm_eval.runner import MAX_CONSECUTIVE_CALL_FAILURES, execute_run
 from backend.app.services.llm_eval.sampling import ReplayFixture
 from backend.app.services.llm_eval.types import (
+    JudgeSkipReason,
+    JudgeVerdict,
     ModelCallResult,
     Recommendation,
     ReplaySample,
     RunStatus,
+    SafetyFinding,
     ToolCall,
 )
 
@@ -407,3 +410,114 @@ async def test_an_intermittent_failure_does_not_stop_the_run(
         .all()
     )
     assert len(turns) == 6
+
+
+# ---------------------------------------------------------------------------
+# The judge gate is blocking findings, not any finding
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_a_non_blocking_finding_does_not_suppress_the_judge(
+    db_session: Session, test_user: User
+) -> None:
+    """A retired tool name in the fixture is not a reason to skip adjudication.
+
+    Both models copy the name out of the replayed history, only the candidate
+    is inspected, and the finding is explicitly non-blocking. Skipping the
+    judge on it left those turns at the top of the report wearing a red badge
+    with nothing underneath to explain them.
+    """
+    run_id = _make_run(db_session, test_user.id, samples=1, judge=True)
+    # ``retired`` is absent from the schema but present in the turn's history,
+    # so it lands as UNRESOLVED_TOOL_NAME rather than UNKNOWN_TOOL.
+    samples = [
+        ReplaySample(
+            seq=1,
+            timestamp="2026-05-01T12:00:00+00:00",
+            message_context="price these",
+            historic_tool_names=["retired"],
+        )
+    ]
+    baseline = _result(tools=[ToolCall(name="lookup", arguments={"q": "a"})])
+    candidate = _result(tools=[ToolCall(name="retired", arguments={})])
+    calls = iter([baseline, candidate])
+
+    judge = AsyncMock(return_value=(JudgeVerdict.CANDIDATE_WORSE, "worse because"))
+    patches = _patched_run(
+        samples=samples,
+        call_side_effect=lambda *a, **k: next(calls),
+        tools_by_name={"lookup": _lookup_tool()},
+    )
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch("backend.app.services.llm_eval.runner.judge_turn", judge),
+    ):
+        await execute_run(run_id, concurrency=1)
+
+    row = db_session.execute(
+        select(LLMEvalTurnResult).where(LLMEvalTurnResult.run_id == run_id)
+    ).scalar_one()
+    findings = [i["finding"] for i in json.loads(row.safety_issues)]
+    assert findings == [str(SafetyFinding.UNRESOLVED_TOOL_NAME)]
+    assert judge.await_count == 1
+    assert row.judge_verdict == str(JudgeVerdict.CANDIDATE_WORSE)
+
+
+@pytest.mark.asyncio()
+async def test_a_blocking_finding_still_suppresses_the_judge(
+    db_session: Session, test_user: User
+) -> None:
+    """A disqualified turn cannot be rescued, so the judge call is wasted spend."""
+    run_id = _make_run(db_session, test_user.id, samples=1, judge=True)
+    baseline = _result(tools=[ToolCall(name="lookup", arguments={"q": "a"})])
+    candidate = _result(tools=[ToolCall(name="invented", arguments={})])
+    calls = iter([baseline, candidate])
+
+    judge = AsyncMock(return_value=(JudgeVerdict.EQUIVALENT, ""))
+    patches = _patched_run(
+        samples=_samples(1),
+        call_side_effect=lambda *a, **k: next(calls),
+        tools_by_name={"lookup": _lookup_tool()},
+    )
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch("backend.app.services.llm_eval.runner.judge_turn", judge),
+    ):
+        await execute_run(run_id, concurrency=1)
+
+    row = db_session.execute(
+        select(LLMEvalTurnResult).where(LLMEvalTurnResult.run_id == run_id)
+    ).scalar_one()
+    assert [i["finding"] for i in json.loads(row.safety_issues)] == [
+        str(SafetyFinding.UNKNOWN_TOOL)
+    ]
+    assert judge.await_count == 0
+    assert row.judge_verdict == str(JudgeVerdict.NOT_JUDGED)
+
+
+@pytest.mark.asyncio()
+async def test_the_summary_records_why_each_turn_went_unjudged(
+    db_session: Session, test_user: User
+) -> None:
+    run_id = _make_run(db_session, test_user.id, samples=2, judge=True)
+    agreeing = _result(tools=[ToolCall(name="lookup", arguments={"q": "a"})])
+
+    patches = _patched_run(
+        samples=_samples(2),
+        call_side_effect=lambda *a, **k: agreeing,
+        tools_by_name={"lookup": _lookup_tool()},
+    )
+    with patches[0], patches[1], patches[2], patches[3]:
+        await execute_run(run_id, concurrency=1)
+
+    run = db_session.execute(select(LLMEvalRun).where(LLMEvalRun.id == run_id)).scalar_one()
+    summary = run.summary_json
+    assert summary is not None
+    assert summary["judge_skip_counts"] == {str(JudgeSkipReason.IDENTICAL): 2}

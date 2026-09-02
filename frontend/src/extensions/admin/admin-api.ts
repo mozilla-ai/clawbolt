@@ -1306,6 +1306,13 @@ export interface EvalModelTotals {
   cache_read_tokens: number;
   cache_creation_tokens: number;
   cache_read_ratio: number;
+  /**
+   * Cached share of prompt tokens, read plus written. Prefer this over
+   * cache_read_ratio for any comparison: the read ratio depends on whether an
+   * earlier run left warm cache entries behind, so it swings between runs of
+   * the same models.
+   */
+  cache_participation_ratio: number;
   total_cost_usd: string;
   // False when the pricing library has no entry for this model. The cost is
   // then zero and must be rendered as "unknown", never as "free".
@@ -1324,9 +1331,24 @@ export interface EvalSummary {
   // is recorded above but is a failure to measure, not candidate behavior.
   blocking_findings: number;
   judge_counts: Record<string, number>;
+  /**
+   * Why the unjudged turns were skipped. Added to judge_counts these account
+   * for every turn, so the report never leaves a silent remainder between the
+   * judged count and the turn count.
+   */
+  judge_skip_counts: Record<string, number>;
   identical_rate: number;
   divergence_rate: number;
   silent_noop_rate: number;
+  /**
+   * The subset of silent_noop_rate the judge did not score for the candidate,
+   * which is what the recommendation blocks on. Prose is the right answer to
+   * some messages.
+   *
+   * null on a run whose summary predates the field. Zero and "never measured"
+   * mean opposite things, so do not coalesce them.
+   */
+  silent_noop_blocking_rate: number | null;
   baseline: EvalModelTotals;
   candidate: EvalModelTotals;
   recommendation: EvalRecommendation;
@@ -1370,6 +1392,10 @@ export interface EvalDecision {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
+  /** Prompt tokens written to cache. Needed to read the token columns: a
+   * model whose whole prompt is a fresh cache write reports a tiny
+   * input_tokens next to an uncached model's enormous one, same prompt. */
+  cache_creation_tokens: number;
   latency_ms: number;
   error: string;
 }
@@ -1378,6 +1404,12 @@ export interface EvalSafetyIssue {
   finding: string;
   tool_name: string;
   detail: string;
+  /**
+   * Whether this finding disqualifies a switch on its own. Served by the API
+   * so the report does not keep its own copy of metrics.BLOCKING_FINDINGS,
+   * which decides whether a badge reads as an accusation.
+   */
+  blocking: boolean;
 }
 
 export interface EvalTurn {
@@ -1392,6 +1424,8 @@ export interface EvalTurn {
   safety_issues: EvalSafetyIssue[];
   judge_verdict: string;
   judge_rationale: string;
+  /** Set when judge_verdict is 'not_judged': which skip reason applied. */
+  judge_skip_reason: string;
 }
 
 export interface EvalReport {

@@ -39,6 +39,7 @@ from backend.app.services.llm_eval.sampling import (
 )
 from backend.app.services.llm_eval.types import (
     AgreementClass,
+    JudgeSkipReason,
     JudgeVerdict,
     ModelCallResult,
     Recommendation,
@@ -261,24 +262,27 @@ async def _compare_turn(
     )
 
     # Judge only what is both informative and still in the running: an
-    # identical decision needs no opinion, a turn already carrying a safety
-    # finding is disqualified regardless of what a judge would say, and two
-    # models that produced the same prose have nothing to separate them. That
-    # last case is not just wasted spend: a verdict on it would land in the
-    # denominator of the judged-worse rate and dilute the turns that matter.
+    # identical decision needs no opinion, a turn already disqualified by a
+    # blocking finding cannot be rescued by a judge, and two models that
+    # produced the same prose have nothing to separate them. That last case is
+    # not just wasted spend: a verdict on it would land in the denominator of
+    # the judged-worse rate and dilute the turns that matter.
+    #
+    # The gate is *blocking* findings, not any finding. A non-blocking mark
+    # (a provider error on the incumbent side, or a tool name the fixture
+    # carries but the schema no longer has) says nothing about whether the
+    # candidate chose well, and skipping the judge on those left them sorted
+    # to the top of the report wearing a red badge with no explanation
+    # underneath it.
     same_prose = (
         comparison.agreement is AgreementClass.BOTH_REPLIED
         and baseline.text.strip() == candidate.text.strip()
     )
-    should_judge = (
-        bool(run.judge_model)
-        and comparison.diverged
-        and not same_prose
-        and not comparison.safety_issues
-        and not baseline.error
-        and not candidate.error
+    skip_reason = _judge_skip_reason(
+        comparison, run_has_judge=bool(run.judge_model), same_prose=same_prose
     )
-    if should_judge:
+    comparison.judge_skip_reason = skip_reason
+    if skip_reason is None:
         verdict, rationale = await judge_turn(
             sample,
             baseline,
@@ -290,6 +294,28 @@ async def _compare_turn(
         comparison.judge_rationale = rationale
 
     return comparison
+
+
+def _judge_skip_reason(
+    comparison: TurnComparison, *, run_has_judge: bool, same_prose: bool
+) -> JudgeSkipReason | None:
+    """Why this turn was not adjudicated, or None if it should be.
+
+    Recorded rather than inferred so the report can account for every turn.
+    A summary whose judge counts add up to 26 of 40 turns, with nothing
+    saying where the other 14 went, reads as a broken judge.
+    """
+    if not run_has_judge:
+        return JudgeSkipReason.JUDGE_DISABLED
+    if comparison.baseline.error or comparison.candidate.error:
+        return JudgeSkipReason.CALL_FAILED
+    if not comparison.diverged:
+        return JudgeSkipReason.IDENTICAL
+    if same_prose:
+        return JudgeSkipReason.SAME_PROSE
+    if comparison.has_blocking_finding:
+        return JudgeSkipReason.BLOCKING_FINDING
+    return None
 
 
 async def execute_run(run_id: int, *, concurrency: int) -> None:
@@ -455,6 +481,7 @@ def _model_totals_payload(totals: metrics.ModelTotals) -> dict:
         "cache_read_tokens": totals.cache_read_tokens,
         "cache_creation_tokens": totals.cache_creation_tokens,
         "cache_read_ratio": round(totals.cache_read_ratio, 4),
+        "cache_participation_ratio": round(totals.cache_participation_ratio, 4),
         "total_cost_usd": str(totals.total_cost),
         "pricing_available": totals.pricing_available,
         "latency_p50_ms": round(totals.percentile_latency_ms(0.50), 1),
@@ -476,9 +503,11 @@ def _summary_payload(aggregate: metrics.RunAggregate) -> dict:
         "safety_counts": aggregate.safety_counts,
         "blocking_findings": aggregate.blocking_turns,
         "judge_counts": aggregate.judge_counts,
+        "judge_skip_counts": aggregate.judge_skip_counts,
         "identical_rate": round(aggregate.identical_rate, 4),
         "divergence_rate": round(aggregate.divergence_rate, 4),
         "silent_noop_rate": round(aggregate.silent_noop_rate, 4),
+        "silent_noop_blocking_rate": round(aggregate.silent_noop_blocking_rate, 4),
         "baseline": _model_totals_payload(aggregate.baseline),
         "candidate": _model_totals_payload(aggregate.candidate),
         "recommendation": str(aggregate.recommendation),

@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.appfolio_vendor.concurrency import work_order_concurrency_key
 from backend.app.integrations.appfolio_vendor.errors import (
@@ -188,6 +188,7 @@ def build_note_tools(service: AppFolioVendorService, ctx: ToolContext) -> list[T
     return [
         Tool(
             name=ToolName.APPFOLIO_LIST_NOTES,
+            tags={ToolTags.READ_ONLY},
             description="List notes on an AppFolio work order.",
             function=appfolio_list_notes,
             params_model=AppFolioListNotesParams,

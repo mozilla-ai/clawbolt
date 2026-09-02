@@ -491,3 +491,156 @@ def test_cancelling_a_finished_run_conflicts(
 ) -> None:
     run = _make_run(db_session, consenting_user.id, status=str(RunStatus.COMPLETED))
     assert admin_client.post(f"{BASE}/runs/{run.public_id}/cancel").status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Report ordering and accounting
+# ---------------------------------------------------------------------------
+
+
+def test_report_ranks_blocking_findings_above_advisory_ones(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """An advisory badge must not outrank the turn that decided the verdict.
+
+    ``unresolved_tool_name`` is a property of the replayed fixture and the
+    summary says so, but keying the sort on "has any finding" put five of
+    them on the first screen and pushed a genuine unrequested mutation below
+    the fold.
+    """
+    run = _make_run(db_session, consenting_user.id, judge_model="incumbent-model")
+    db_session.add_all(
+        [
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=1,
+                user_message="retired tool in the history",
+                agreement=str(AgreementClass.DIFFERENT_TOOLS),
+                safety_issues=json.dumps(
+                    [{"finding": "unresolved_tool_name", "tool_name": "retired"}]
+                ),
+            ),
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=2,
+                user_message="wrote something nobody asked for",
+                agreement=str(AgreementClass.DIFFERENT_TOOLS),
+                safety_issues=json.dumps(
+                    [{"finding": "unrequested_mutation", "tool_name": "qb_update"}]
+                ),
+            ),
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=3,
+                user_message="judge scored it against the candidate",
+                agreement=str(AgreementClass.DIFFERENT_TOOLS),
+                judge_verdict="candidate_worse",
+            ),
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=4,
+                user_message="quiet agreement",
+                agreement=str(AgreementClass.IDENTICAL),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = admin_client.get(f"{BASE}/runs/{run.public_id}")
+    assert response.status_code == 200
+    assert [t["message_seq"] for t in response.json()["turns"]] == [2, 3, 1, 4]
+
+
+def test_report_exposes_cache_creation_so_the_columns_can_be_read(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """Without it the two token columns are unreadable side by side.
+
+    An incumbent whose whole prompt is a fresh cache write reports nine
+    thousand ``input_tokens`` next to a candidate reporting a hundred and
+    forty-five thousand, for the same prompt.
+    """
+    run = _make_run(db_session, consenting_user.id)
+    db_session.add(
+        LLMEvalTurnResult(
+            run_id=run.id,
+            message_seq=1,
+            user_message="a turn",
+            agreement=str(AgreementClass.IDENTICAL),
+            baseline_input_tokens=9329,
+            baseline_cache_read_tokens=18288,
+            baseline_cache_creation_tokens=223482,
+            candidate_input_tokens=145270,
+            candidate_cache_read_tokens=0,
+            candidate_cache_creation_tokens=0,
+        )
+    )
+    db_session.commit()
+
+    response = admin_client.get(f"{BASE}/runs/{run.public_id}")
+    turn = response.json()["turns"][0]
+    assert turn["baseline"]["cache_creation_tokens"] == 223482
+    assert turn["candidate"]["cache_creation_tokens"] == 0
+
+    billed_baseline = (
+        turn["baseline"]["input_tokens"]
+        + turn["baseline"]["cache_read_tokens"]
+        + turn["baseline"]["cache_creation_tokens"]
+    )
+    assert billed_baseline == 251099
+
+
+def test_report_says_why_an_unjudged_turn_was_skipped(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """A judged count that does not reach the turn count reads as a broken judge."""
+    run = _make_run(db_session, consenting_user.id, judge_model="incumbent-model")
+    db_session.add_all(
+        [
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=1,
+                user_message="same call both times",
+                agreement=str(AgreementClass.IDENTICAL),
+            ),
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=2,
+                user_message="disqualified already",
+                agreement=str(AgreementClass.DIFFERENT_TOOLS),
+                safety_issues=json.dumps([{"finding": "unrequested_mutation"}]),
+            ),
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=3,
+                user_message="could not be measured",
+                agreement=str(AgreementClass.NOT_COMPARED),
+                candidate_error="RateLimitError: slow down",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = admin_client.get(f"{BASE}/runs/{run.public_id}")
+    by_seq = {t["message_seq"]: t for t in response.json()["turns"]}
+    assert by_seq[1]["judge_skip_reason"] == "identical"
+    assert by_seq[2]["judge_skip_reason"] == "blocking_finding"
+    assert by_seq[3]["judge_skip_reason"] == "call_failed"
+
+
+def test_a_run_with_the_judge_off_says_so_rather_than_looking_broken(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    run = _make_run(db_session, consenting_user.id, judge_model="")
+    db_session.add(
+        LLMEvalTurnResult(
+            run_id=run.id,
+            message_seq=1,
+            user_message="a divergence nobody adjudicated",
+            agreement=str(AgreementClass.DIFFERENT_TOOLS),
+        )
+    )
+    db_session.commit()
+
+    response = admin_client.get(f"{BASE}/runs/{run.public_id}")
+    assert response.json()["turns"][0]["judge_skip_reason"] == "judge_disabled"

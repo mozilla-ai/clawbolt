@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import inspect
 import pkgutil
 import sys
 from typing import cast
@@ -13,6 +14,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 import backend.app.agent.tools.registry as _reg
+from backend.app.agent.approval import PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolResult, ToolTags, tool_to_function_schema
 from backend.app.agent.tools.registry import (
     ToolContext,
@@ -412,7 +414,6 @@ async def test_create_tools_uses_subtool_default_for_synthesized_policy() -> Non
     policy must reflect that, so users who haven't overridden the level still
     see the same auto-execution behavior they get today.
     """
-    from backend.app.agent.approval import PermissionLevel
 
     ensure_tool_modules_imported()
 
@@ -483,6 +484,27 @@ async def test_state_mutating_tools_have_concurrency_group() -> None:
     """
     ensure_tool_modules_imported()
 
+    requires_group = {ToolTags.MODIFIES_PROFILE, ToolTags.SENDS_REPLY}
+    missing: list[str] = []
+
+    for tool in await _instantiate_every_tool():
+        if tool.tags & requires_group and tool.concurrency_group is None:
+            tags = ", ".join(sorted(t.value for t in tool.tags & requires_group))
+            missing.append(f"{tool.name}: tagged [{tags}] but concurrency_group is None")
+
+    assert not missing, (
+        "Tools tagged MODIFIES_PROFILE or SENDS_REPLY must set a "
+        "concurrency_group so concurrent tool calls in a single turn do "
+        "not race on shared state:\n" + "\n".join(missing)
+    )
+
+
+def _mock_tool_context() -> MagicMock:
+    """A context complete enough for every factory to build its tools.
+
+    The factories only read these fields when constructing; nothing here is
+    ever invoked, because a registry test never executes a tool.
+    """
     ctx = MagicMock(spec=ToolContext)
     ctx.user = MagicMock()
     ctx.user.id = "test-user"
@@ -492,28 +514,195 @@ async def test_state_mutating_tools_have_concurrency_group() -> None:
     ctx.to_address = ""
     ctx.downloaded_media = []
     ctx.turn_text = ""
+    return ctx
 
-    requires_group = {ToolTags.MODIFIES_PROFILE, ToolTags.SENDS_REPLY}
-    missing: list[str] = []
 
-    for factory_name, factory in default_registry._factories.items():
+async def _instantiate_every_tool() -> list[Tool]:
+    """Every tool every registered factory can build, for the global invariants.
+
+    A factory that cannot construct against a mock context is skipped rather
+    than failing the suite: several need live credentials, and the invariants
+    below are about tool *declarations*, so a partial sweep still catches a
+    mis-declared tool in any factory that does build.
+    """
+    tools: list[Tool] = []
+    ctx = _mock_tool_context()
+    for factory in default_registry._factories.values():
         try:
-            import inspect
-
             result = factory.create(ctx)
-            tools: list[Tool] = await result if inspect.isawaitable(result) else result  # type: ignore[assignment]
+            built = await result if inspect.isawaitable(result) else result
         except Exception:
             continue
+        tools.extend(cast("list[Tool]", built))
+    return tools
 
-        for tool in tools:
-            if tool.tags & requires_group and tool.concurrency_group is None:
-                tags = ", ".join(sorted(t.value for t in tool.tags & requires_group))
-                missing.append(
-                    f"{factory_name}/{tool.name}: tagged [{tags}] but concurrency_group is None"
-                )
 
-    assert not missing, (
-        "Tools tagged MODIFIES_PROFILE or SENDS_REPLY must set a "
-        "concurrency_group so concurrent tool calls in a single turn do "
-        "not race on shared state:\n" + "\n".join(missing)
+@pytest.mark.asyncio()
+async def test_read_only_is_never_combined_with_a_mutating_tag() -> None:
+    """``READ_ONLY`` and the mutation tags are contradictory by construction."""
+    ensure_tool_modules_imported()
+
+    contradictions = [
+        f"{tool.name}: READ_ONLY plus [{', '.join(sorted(t.value for t in mutating))}]"
+        for tool in await _instantiate_every_tool()
+        if ToolTags.READ_ONLY in tool.tags
+        and (mutating := tool.tags & {ToolTags.MODIFIES_PROFILE, ToolTags.SENDS_REPLY})
+    ]
+    assert not contradictions, "A tool cannot be read-only and also write:\n" + "\n".join(
+        contradictions
+    )
+
+
+# Every tool that writes, sends, uploads, or deletes. The complement of
+# ``ToolTags.READ_ONLY``, kept as an explicit roster so a new tool cannot ship
+# unclassified: ``llm_eval.metrics._is_mutating`` reads "not READ_ONLY" as
+# "this call would mutate a real account" and blocks a model switch on it, so
+# an unconsidered default is a wrong answer in one direction or the other.
+# Adding a name here is a claim that calling it changes something a user would
+# notice.
+_MUTATING_TOOLS = frozenset(
+    {
+        "appfolio_add_note",
+        "appfolio_create_invoice",
+        "appfolio_undo_work_order_status",
+        "appfolio_update_note",
+        "appfolio_update_work_order_status",
+        "appfolio_upload_invoice_pdf",
+        "calendar_create_event",
+        "calendar_delete_event",
+        "calendar_update_event",
+        "companycam_add_comment",
+        "companycam_archive_project",
+        "companycam_create_checklist",
+        "companycam_create_project",
+        "companycam_delete_photo",
+        "companycam_delete_project",
+        "companycam_tag_photo",
+        "companycam_update_notepad",
+        "companycam_update_project",
+        "companycam_upload_photo",
+        "delete_file",
+        "discard_media",
+        "edit_file",
+        "edit_storage_file",
+        "gmail_send",
+        "manage_integration",
+        "move_file",
+        "qb_create",
+        "qb_send",
+        "qb_update",
+        "send_media_reply",
+        "st_add_job_note",
+        "update_heartbeat",
+        "upload_to_storage",
+        "write_file",
+        "write_to_storage",
+    }
+)
+
+
+async def _every_tool_including_integrations() -> list[Tool]:
+    """Every registered tool, integrations included.
+
+    ``_instantiate_every_tool`` goes through the registry factories, and each
+    integration factory returns ``[]`` unless the deployment has that
+    integration's OAuth client configured *and* the user has a stored token
+    (see ``_calendar_factory`` in
+    ``backend/app/integrations/calendar/factory.py``). That reaches 18 of
+    roughly 50 tools and none of the integration surface, which is most of the
+    tools that write.
+
+    So the integration halves are built through their own pure builders, which
+    take a service and return the tool list with no auth involved. Calling
+    them directly is what makes a declaration invariant enforceable across
+    every tool rather than across whatever happened to instantiate.
+    """
+    from backend.app.agent.tools.servicetitan_tools import build_servicetitan_tools
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+    from backend.app.integrations.appfolio_vendor.work_order_writes import (
+        build_work_order_write_tools,
+    )
+    from backend.app.integrations.appfolio_vendor.work_orders import build_work_order_tools
+    from backend.app.integrations.calendar.factory import create_calendar_tools
+    from backend.app.integrations.companycam.checklists import build_checklist_tools
+    from backend.app.integrations.companycam.photos import build_photo_tools
+    from backend.app.integrations.companycam.projects import build_project_tools
+    from backend.app.integrations.gmail.factory import create_gmail_tools
+    from backend.app.integrations.quickbooks.factory import create_quickbooks_tools
+    from backend.app.integrations.web_search.factory import _create_web_search_tools
+
+    ctx = _mock_tool_context()
+    service = MagicMock()
+    tools = list(await _instantiate_every_tool())
+    tools.extend(create_calendar_tools(service))
+    tools.extend(create_gmail_tools(service))
+    tools.extend(create_quickbooks_tools(service))
+    tools.extend(build_project_tools(service))
+    tools.extend(build_photo_tools(service, ctx))
+    tools.extend(build_checklist_tools(service))
+    tools.extend(build_work_order_tools(service))
+    tools.extend(build_work_order_write_tools(service))
+    tools.extend(build_note_tools(service, ctx))
+    tools.extend(build_invoice_tools(service, ctx))
+    tools.extend(build_servicetitan_tools(service))
+    tools.extend(_create_web_search_tools(service, MagicMock()))
+    return tools
+
+
+@pytest.mark.asyncio()
+async def test_the_classification_sweep_reaches_the_integration_tools() -> None:
+    """Guard the guard: a sweep that sees 18 tools enforces almost nothing.
+
+    The first version of the invariant below ran on ``_instantiate_every_tool``
+    and silently covered 3 of the 10 read tools it was written to protect.
+    """
+    names = {tool.name for tool in await _every_tool_including_integrations()}
+    for expected in ("qb_query", "calendar_list_events", "gmail_search", "companycam_upload_photo"):
+        assert expected in names, f"{expected} is unreachable, so the sweep proves nothing"
+    assert len(names) > 40, f"only {len(names)} tools reached"
+
+
+@pytest.mark.asyncio()
+async def test_every_tool_is_classified_read_or_write() -> None:
+    """``_is_mutating`` reads "not READ_ONLY" as "this writes", so decide once.
+
+    The evaluator blocks a model switch on a single unrequested mutation, so
+    both mistakes are expensive: a read left untagged sinks a run over a
+    lookup, and a writer left untagged lets a candidate rewrite MEMORY.md or
+    disconnect an integration with nothing reported at all.
+    """
+    unclassified = sorted(
+        tool.name
+        for tool in await _every_tool_including_integrations()
+        if ToolTags.READ_ONLY not in tool.tags and tool.name not in _MUTATING_TOOLS
+    )
+    assert not unclassified, (
+        "These tools are neither tagged ToolTags.READ_ONLY nor listed in "
+        "_MUTATING_TOOLS. Tag the ones that only look something up; add the ones "
+        "that write, send, upload, or delete to the roster:\n" + "\n".join(unclassified)
+    )
+
+
+@pytest.mark.asyncio()
+async def test_no_tool_is_both_read_only_and_mutating() -> None:
+    """A typo in the roster silently classifies nothing.
+
+    ``servicetitan_add_job_note`` sat in this roster while the tool is called
+    ``st_add_job_note``, so the entry matched nothing and the real tool went
+    unclassified.
+    """
+    names = {tool.name for tool in await _every_tool_including_integrations()}
+    tagged_read_only = {
+        tool.name
+        for tool in await _every_tool_including_integrations()
+        if ToolTags.READ_ONLY in tool.tags
+    }
+    assert not tagged_read_only & _MUTATING_TOOLS, (
+        "Tagged READ_ONLY but also listed as mutating:\n"
+        + "\n".join(sorted(tagged_read_only & _MUTATING_TOOLS))
+    )
+    assert not _MUTATING_TOOLS - names, (
+        "These roster entries match no registered tool, so nothing they meant is "
+        "classified:\n" + "\n".join(sorted(_MUTATING_TOOLS - names))
     )

@@ -228,7 +228,14 @@ Three invariants, each of which the feature is worthless without:
   ever received. If you change how the agent assembles a turn, the evaluator
   follows automatically; keep it that way.
 - **Safety findings are never averaged into a quality score.** `metrics.py`
-  keeps them in their own tier, and one occurrence forces `do_not_switch`.
+  keeps them in their own tier, and one occurrence of a *blocking* finding
+  forces `do_not_switch`. Not every finding blocks: `BLOCKING_FINDINGS` is the
+  set that does, and the rest (a provider error, a tool name the replayed
+  history carries but the current schema does not) describe the fixture or the
+  measurement rather than the candidate, so they surface as run warnings.
+  Anything reading `bool(safety_issues)` as "disqualified" is a bug.
+- **Whether a tool mutates comes from `ToolTags.READ_ONLY`, not the approval
+  policy.** Untagged means mutating. See step 7 of "Adding a New Agent Tool".
 - **A finding is judged against what the turn actually did,** not against the
   incumbent's first decision alone. A replay captures one decision, so
   `check_safety` takes the turn's `historic_tool_names`: a mutation the live
@@ -272,9 +279,11 @@ The agent's capabilities are extended by adding tools. Tools follow a factory/re
 
 6. **Set a `concurrency_group` if your tool mutates shared state.** The agent runs all approved tool calls from a single LLM turn concurrently by default. Tools with the same non-None `concurrency_group` serialize in submission order; tools with different keys (or `None`) may run in parallel. Set this whenever your tool could race with another tool in the same turn against a shared resource, for example a DB row, a workspace document, a disk file, or the user-facing message stream. Read-only and stateless tools should leave it `None`. Accepts either a static string or a callable that takes the validated args and returns a key, for the case where a single tool routes to distinct resources by argument (e.g. workspace writers keyed by file path). Existing keys: `"workspace_path:<path>"` for workspace document mutations (resolved per call by `_workspace_path_concurrency_key`), `"user_outbound"` for reply senders, `"user_integrations"` for integration toggles. The global test `test_state_mutating_tools_have_concurrency_group` in `test_tool_registry.py` enforces that any tool tagged `MODIFIES_PROFILE` or `SENDS_REPLY` declares one.
 
-7. **Write tests** at `tests/test_<name>_tools.py`. Call the factory function directly (e.g., `_create_calculator_tools()`) and invoke the tool function. No database needed for stateless tools.
+7. **Classify the tool as a read or a write.** Tag it `tags={ToolTags.READ_ONLY}` if calling it only looks something up; otherwise add its name to `_MUTATING_TOOLS` in `tests/test_tool_registry.py`. Untagged means mutating. The approval policy cannot stand in for this: `ApprovalPolicy` defaults `default_level` to `ASK`, so most search and list tools are gated too, while `write_file` and `manage_integration` write without being gated. The model-swap evaluator blocks a switch on a single unrequested mutation, so a read left untagged sinks a run over a lookup and a writer left unlisted lets a candidate rewrite MEMORY.md with nothing reported. The global test `test_every_tool_is_classified_read_or_write` in `test_tool_registry.py` enforces it, reaching integration tools through their own builders rather than the registry factories.
 
-8. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is delivered into the conversation as a tool result: either when the LLM calls `list_capabilities("<name>")`, or auto-appended to the first result of the category's tools when the model skips discovery (each delivery carries a `[skill-guidance: <name>]` marker so it happens at most once per context window). Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose. See "SKILL.md structure for specialist tools" below for the expected skeleton.
+8. **Write tests** at `tests/test_<name>_tools.py`. Call the factory function directly (e.g., `_create_calculator_tools()`) and invoke the tool function. No database needed for stateless tools.
+
+9. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is delivered into the conversation as a tool result: either when the LLM calls `list_capabilities("<name>")`, or auto-appended to the first result of the category's tools when the model skips discovery (each delivery carries a `[skill-guidance: <name>]` marker so it happens at most once per context window). Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose. See "SKILL.md structure for specialist tools" below for the expected skeleton.
 
 ### Key files
 

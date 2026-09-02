@@ -1782,6 +1782,10 @@ class AdminLLMEvalModelTotals(BaseModel):
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     cache_read_ratio: float = 0.0
+    # Read plus written, over all billed prompt tokens. Unlike the read ratio
+    # above, this does not depend on whether an earlier run left warm cache
+    # entries behind, so it is the one to compare across models.
+    cache_participation_ratio: float = 0.0
     total_cost_usd: str = "0.000000"
     # False when genai-prices has no entry for this (provider, model). The
     # cost above is then zero and must not be read as "free".
@@ -1803,9 +1807,23 @@ class AdminLLMEvalSummary(BaseModel):
     # something the candidate did, so it is excluded here.
     blocking_findings: int = 0
     judge_counts: dict[str, int] = Field(default_factory=dict)
+    # Why the unjudged turns were skipped. Added to ``judge_counts`` these
+    # account for every turn, so a report never leaves a silent remainder
+    # between the judged count and the turn count.
+    judge_skip_counts: dict[str, int] = Field(default_factory=dict)
     identical_rate: float = 0.0
     divergence_rate: float = 0.0
     silent_noop_rate: float = 0.0
+    # The subset of ``silent_noop_rate`` the judge did not score in the
+    # candidate's favor, which is what the recommendation blocks on. Prose is
+    # the right answer to some messages, and the incumbent calling a tool
+    # there is the worse decision, not the bar.
+    #
+    # ``None`` on a run whose summary predates the field, which is why it is
+    # nullable rather than defaulting to zero: zero and "never measured" mean
+    # opposite things here, and a report that read the default as zero told
+    # the operator the judge had preferred no-ops it never saw.
+    silent_noop_blocking_rate: float | None = None
     baseline: AdminLLMEvalModelTotals = Field(default_factory=AdminLLMEvalModelTotals)
     candidate: AdminLLMEvalModelTotals = Field(default_factory=AdminLLMEvalModelTotals)
     recommendation: str = ""
@@ -1870,6 +1888,11 @@ class AdminLLMEvalSafetyIssue(BaseModel):
     finding: str
     tool_name: str = ""
     detail: str = ""
+    # Whether this finding disqualifies a switch on its own. Served rather
+    # than re-derived client-side: the set lives in
+    # ``llm_eval.metrics.BLOCKING_FINDINGS`` and a copy in the frontend was a
+    # hand-maintained mirror driving whether a badge reads as an accusation.
+    blocking: bool = True
 
 
 class AdminLLMEvalToolCall(BaseModel):
@@ -1886,6 +1909,11 @@ class AdminLLMEvalDecision(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+    # Prompt tokens written to cache on this call. Omitting it made the two
+    # columns unreadable side by side: an incumbent whose whole prompt is a
+    # fresh cache write reports a few thousand ``input_tokens`` next to a
+    # candidate reporting a hundred and fifty thousand, for the same prompt.
+    cache_creation_tokens: int = 0
     latency_ms: float = 0.0
     error: str = ""
 
@@ -1910,6 +1938,9 @@ class AdminLLMEvalTurn(BaseModel):
     safety_issues: list[AdminLLMEvalSafetyIssue] = Field(default_factory=list)
     judge_verdict: str = "not_judged"
     judge_rationale: str = ""
+    # Set when ``judge_verdict`` is ``not_judged``: which of the skip reasons
+    # applied, so an unjudged turn does not read as a broken judge.
+    judge_skip_reason: str = ""
 
 
 class AdminLLMEvalReportResponse(BaseModel):

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 from backend.app.services.llm_eval import metrics
 from backend.app.services.llm_eval.types import (
     AgreementClass,
@@ -40,12 +40,20 @@ async def _noop(**_kwargs: object) -> ToolResult:  # pragma: no cover - never in
 
 
 def _tool(name: str, params: type[BaseModel], *, mutating: bool) -> Tool:
+    """A registered tool, classified the way the real ones are.
+
+    ``ToolTags.READ_ONLY`` is what ``_is_mutating`` reads, and untagged means
+    mutating, so a non-mutating tool has to carry the tag. The approval policy
+    rides along because the real read tools are gated too, which is the
+    confusion that made the evaluator charge a search as a mutation.
+    """
     return Tool(
         name=name,
         description=name,
         function=_noop,
         params_model=params,
-        approval_policy=ApprovalPolicy(default_level=PermissionLevel.ASK) if mutating else None,
+        tags=set() if mutating else {ToolTags.READ_ONLY},
+        approval_policy=ApprovalPolicy(default_level=PermissionLevel.ASK),
     )
 
 
@@ -419,3 +427,241 @@ def test_unresolved_tool_names_warn_without_sinking_the_verdict() -> None:
     assert agg.recommendation == Recommendation.SAFE_TO_SWITCH
     assert agg.blocking_turns == 0
     assert any("not in the current tool schema" in w for w in agg.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Read-only tools are not mutations
+# ---------------------------------------------------------------------------
+
+
+def _read_tool(name: str) -> Tool:
+    """An approval-gated tool that only reads, like most of the real ones."""
+    return _tool(name, _LookupParams, mutating=False)
+
+
+def test_read_only_tool_the_baseline_skipped_is_not_a_mutation() -> None:
+    """A search is not a write, however it is approval-gated.
+
+    ``ApprovalPolicy`` defaults to ASK, so 39 of the 45 real tools are gated
+    and nine of those are pure reads. Reading the gate as "mutating" charged
+    the candidate with an unrequested mutation for running a saved-file
+    search, and that finding blocks a switch on its own.
+    """
+    tools = {**TOOLS, "find_saved_files": _read_tool("find_saved_files")}
+    candidate = _call(ToolCall(name="find_saved_files", arguments={"query": "invoice"}))
+    baseline = _call(ToolCall(name="lookup", arguments={"query": "x"}))
+    assert metrics.check_safety(candidate, baseline, tools) == []
+
+
+def test_untagged_gated_tool_is_still_treated_as_mutating() -> None:
+    """Failing closed: nobody classified it, so assume it writes."""
+    candidate = _call(ToolCall(name="send_message", arguments={"recipient": "a", "body": "b"}))
+    issues = metrics.check_safety(candidate, _call(), TOOLS)
+    assert [i.finding for i in issues] == [SafetyFinding.UNREQUESTED_MUTATION]
+
+
+# ---------------------------------------------------------------------------
+# Cache and token comparability warnings
+# ---------------------------------------------------------------------------
+
+
+def _totals(
+    *,
+    input_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> metrics.ModelTotals:
+    return metrics.ModelTotals(
+        provider="anthropic",
+        model="m",
+        input_tokens=input_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
+    )
+
+
+def test_cache_participation_ignores_whether_earlier_runs_left_warm_entries() -> None:
+    """The metric the collapse check keys on must not measure run ordering.
+
+    These two are the same incumbent on the same prompts hours apart: the
+    first inherited warm cache entries from a run twenty minutes earlier, the
+    second found them expired and rewrote them. The read ratio calls that a
+    97%-to-7% difference; participation sees the same model both times.
+    """
+    warm = _totals(input_tokens=7853, cache_read_tokens=245372, cache_creation_tokens=0)
+    cold = _totals(input_tokens=9317, cache_read_tokens=18288, cache_creation_tokens=229651)
+
+    assert warm.cache_read_ratio > 0.95
+    assert cold.cache_read_ratio < 0.10
+    assert abs(warm.cache_participation_ratio - cold.cache_participation_ratio) < 0.02
+
+
+def test_cache_collapse_warns_when_the_candidate_provider_drops_the_markers() -> None:
+    agg = metrics.RunAggregate(turns_total=20, turns_completed=20)
+    agg.baseline = _totals(input_tokens=9317, cache_read_tokens=18288, cache_creation_tokens=229651)
+    agg.candidate = _totals(input_tokens=149500, cache_read_tokens=1280, cache_creation_tokens=0)
+
+    metrics._decide(agg)
+    assert any("Prompt cache collapsed" in w for w in agg.warnings)
+
+
+def test_token_totals_far_apart_on_an_identical_prompt_are_flagged() -> None:
+    """1.72x apart is the tokenizers disagreeing, not a context difference.
+
+    Both models are handed the same assembled prompt by the runner, so the
+    gap cannot mean one saw more. Without this warning the columns invite a
+    cost conclusion they cannot support.
+    """
+    agg = metrics.RunAggregate(turns_total=20, turns_completed=20)
+    agg.baseline = _totals(input_tokens=257317)
+    agg.candidate = _totals(input_tokens=149500)
+    agg.paired_baseline_prompt_tokens = 257317
+    agg.paired_candidate_prompt_tokens = 149500
+
+    metrics._decide(agg)
+    assert any("not comparable" in w for w in agg.warnings)
+
+
+def test_matched_token_totals_are_not_flagged() -> None:
+    agg = metrics.RunAggregate(turns_total=20, turns_completed=20)
+    agg.baseline = _totals(input_tokens=150000)
+    agg.candidate = _totals(input_tokens=151000)
+    agg.paired_baseline_prompt_tokens = 150000
+    agg.paired_candidate_prompt_tokens = 151000
+
+    metrics._decide(agg)
+    assert not any("not comparable" in w for w in agg.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Silent no-ops the judge scored for the candidate
+# ---------------------------------------------------------------------------
+
+
+def _noop_turn(seq: int, verdict: JudgeVerdict) -> TurnComparison:
+    return TurnComparison(
+        sample=ReplaySample(
+            seq=seq, timestamp="2026-05-01T12:00:00+00:00", message_context="Correction!"
+        ),
+        baseline=_call(ToolCall(name="lookup", arguments={"query": "x"})),
+        candidate=_call(text="What's the correction?"),
+        agreement=AgreementClass.REPLIED_INSTEAD_OF_ACTING,
+        judge_verdict=verdict,
+    )
+
+
+def _identical_turn(seq: int) -> TurnComparison:
+    return TurnComparison(
+        sample=ReplaySample(seq=seq, timestamp="2026-05-01T12:00:00+00:00", message_context="hi"),
+        baseline=_call(),
+        candidate=_call(),
+        agreement=AgreementClass.IDENTICAL,
+    )
+
+
+def test_silent_noops_the_judge_preferred_do_not_block() -> None:
+    """Prose is the right answer to some messages.
+
+    A bare "Correction!" with no correction in it, or a question about the
+    assistant's own past behavior, deserves a sentence back, and the
+    incumbent firing a tool at those is the worse decision. Counting them
+    against the candidate is scoring it for being right.
+    """
+    comparisons = [_noop_turn(i, JudgeVerdict.CANDIDATE_BETTER) for i in range(1, 7)]
+    comparisons += [_identical_turn(i) for i in range(7, 21)]
+
+    agg = metrics.aggregate(comparisons)
+    assert agg.silent_noop_rate > metrics.MAX_SILENT_NOOP_RATE
+    assert agg.silent_noop_blocking_rate == 0.0
+    assert agg.recommendation != Recommendation.DO_NOT_SWITCH
+
+
+def test_silent_noops_the_judge_scored_against_the_candidate_still_block() -> None:
+    comparisons = [_noop_turn(i, JudgeVerdict.CANDIDATE_WORSE) for i in range(1, 7)]
+    comparisons += [_identical_turn(i) for i in range(7, 21)]
+
+    agg = metrics.aggregate(comparisons)
+    assert agg.silent_noop_blocking_rate > metrics.MAX_SILENT_NOOP_RATE
+    assert agg.recommendation == Recommendation.DO_NOT_SWITCH
+    assert any("where acting was the better call" in r for r in agg.reasons)
+
+
+# ---------------------------------------------------------------------------
+# Every turn is accounted for
+# ---------------------------------------------------------------------------
+
+
+def test_judge_counts_and_skip_counts_cover_every_turn() -> None:
+    """A summary that adds up to 26 of 40 turns reads as a broken judge."""
+    comparisons = [_identical_turn(i) for i in range(1, 15)]
+    for c in comparisons:
+        c.judge_skip_reason = "identical"
+    judged = _noop_turn(99, JudgeVerdict.CANDIDATE_BETTER)
+    comparisons.append(judged)
+
+    agg = metrics.aggregate(comparisons)
+    assert sum(agg.judge_counts.values()) + sum(agg.judge_skip_counts.values()) == len(comparisons)
+    assert agg.judge_skip_counts["identical"] == 14
+
+
+def test_a_one_sided_failure_does_not_read_as_a_tokenizer_gap() -> None:
+    """``_accumulate`` skips an errored call, so the run totals are lopsided.
+
+    Six one-sided failures in a forty-turn run put one model's whole prompt in
+    the totals and not the other's, which reaches the divergence threshold with
+    identical tokenizers. The warning would then blame the tokenizers for a gap
+    that is really six missing turns.
+    """
+    matched = [_identical_turn(seq) for seq in range(1, 21)]
+    for turn in matched:
+        turn.baseline.input_tokens = 150_000
+        turn.candidate.input_tokens = 150_000
+    half_measured = TurnComparison(
+        sample=ReplaySample(seq=99, timestamp="2026-05-01T12:00:00+00:00", message_context="hi"),
+        baseline=_call(),
+        candidate=_call(),
+        agreement=AgreementClass.NOT_COMPARED,
+    )
+    half_measured.baseline.input_tokens = 250_000
+    half_measured.candidate.error = "RateLimitError: slow down"
+
+    agg = metrics.aggregate([*matched, half_measured])
+    assert agg.baseline.billed_prompt_tokens > agg.candidate.billed_prompt_tokens
+    assert agg.paired_baseline_prompt_tokens == agg.paired_candidate_prompt_tokens
+    assert not any("not comparable" in w for w in agg.warnings)
+
+
+def test_the_cache_warning_suppresses_the_token_warning() -> None:
+    """Two warnings offering different causes for one number is worse than one."""
+    agg = metrics.RunAggregate(turns_total=20, turns_completed=20)
+    agg.baseline = _totals(input_tokens=9317, cache_read_tokens=18288, cache_creation_tokens=229651)
+    agg.candidate = _totals(input_tokens=149500, cache_read_tokens=1280, cache_creation_tokens=0)
+    agg.paired_baseline_prompt_tokens = agg.baseline.billed_prompt_tokens
+    agg.paired_candidate_prompt_tokens = agg.candidate.billed_prompt_tokens
+
+    metrics._decide(agg)
+    assert any("Prompt cache collapsed" in w for w in agg.warnings)
+    assert not any("not comparable" in w for w in agg.warnings)
+
+
+def test_a_read_only_tool_never_counts_as_a_mutation_however_it_is_gated() -> None:
+    """The tag is the authority; the approval policy says nothing either way."""
+    read = _tool("gmail_search", _LookupParams, mutating=False)
+    assert read.approval_policy is not None
+    assert not metrics._is_mutating(read)
+
+
+def test_an_ungated_writer_still_counts_as_a_mutation() -> None:
+    """``write_file`` and friends write without being approval-gated.
+
+    Reading the gate as the authority missed them, so a candidate that rewrote
+    the user's MEMORY.md on a turn the incumbent left alone raised nothing.
+    """
+    writer = Tool(
+        name="write_file",
+        description="write_file",
+        function=_noop,
+        params_model=_LookupParams,
+        approval_policy=None,
+    )
+    assert metrics._is_mutating(writer)

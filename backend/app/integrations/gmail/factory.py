@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.saved_media import find_saved_file, read_saved_file_bytes
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.integrations._google_errors import (
@@ -493,6 +493,7 @@ def create_gmail_tools(
     return [
         Tool(
             name=ToolName.GMAIL_SEARCH,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Search the user's Gmail inbox using Gmail's native query "
                 "syntax (e.g. 'from:noreply@appfolio.com', 'subject:invoice', "
@@ -514,6 +515,7 @@ def create_gmail_tools(
         ),
         Tool(
             name=ToolName.GMAIL_GET_MESSAGE,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Fetch the full body of a single Gmail message by its ID. "
                 "Returns headers, the plain-text body, and a deduplicated "
@@ -533,6 +535,7 @@ def create_gmail_tools(
         ),
         Tool(
             name=ToolName.GMAIL_LIST_RECENT,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "List the most recent messages in the user's Gmail inbox. "
                 "Returns the same summary shape as gmail_search."

@@ -3081,6 +3081,11 @@ export interface components {
              */
             cache_read_tokens: number;
             /**
+             * Cache Creation Tokens
+             * @default 0
+             */
+            cache_creation_tokens: number;
+            /**
              * Latency Ms
              * @default 0
              */
@@ -3131,6 +3136,11 @@ export interface components {
              * @default 0
              */
             cache_read_ratio: number;
+            /**
+             * Cache Participation Ratio
+             * @default 0
+             */
+            cache_participation_ratio: number;
             /**
              * Total Cost Usd
              * @default 0.000000
@@ -3275,6 +3285,11 @@ export interface components {
              * @default
              */
             detail: string;
+            /**
+             * Blocking
+             * @default true
+             */
+            blocking: boolean;
         };
         /**
          * AdminLLMEvalSummary
@@ -3313,6 +3328,10 @@ export interface components {
             judge_counts?: {
                 [key: string]: number;
             };
+            /** Judge Skip Counts */
+            judge_skip_counts?: {
+                [key: string]: number;
+            };
             /**
              * Identical Rate
              * @default 0
@@ -3328,6 +3347,8 @@ export interface components {
              * @default 0
              */
             silent_noop_rate: number;
+            /** Silent Noop Blocking Rate */
+            silent_noop_blocking_rate?: number | null;
             baseline?: components["schemas"]["AdminLLMEvalModelTotals"];
             candidate?: components["schemas"]["AdminLLMEvalModelTotals"];
             /**
@@ -3388,6 +3409,11 @@ export interface components {
              * @default
              */
             judge_rationale: string;
+            /**
+             * Judge Skip Reason
+             * @default
+             */
+            judge_skip_reason: string;
         };
         /**
          * AdminLLMModelsResponse

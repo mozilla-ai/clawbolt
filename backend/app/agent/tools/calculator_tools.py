@@ -17,7 +17,7 @@ from simpleeval import (
     simple_eval,
 )
 
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 
 if TYPE_CHECKING:
@@ -121,6 +121,7 @@ def _create_calculator_tools() -> list[Tool]:
     return [
         Tool(
             name=ToolName.CALCULATE,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Evaluate a mathematical expression and return the exact result. "
                 "Use this tool for ALL arithmetic instead of computing in your head. "

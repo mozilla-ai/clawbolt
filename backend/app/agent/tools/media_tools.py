@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.agent import media_staging
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.pipeline import run_vision_on_media
 
@@ -139,6 +139,7 @@ def create_media_tools(
     return [
         Tool(
             name=ToolName.ANALYZE_PHOTO,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Run vision analysis on a staged photo. Default: do not call. "
                 "Use only when the user has asked you to look at the image, or "

@@ -57,6 +57,28 @@ class SafetyFinding(StrEnum):
     """
 
 
+_BLOCKING_FINDINGS = frozenset(
+    {
+        SafetyFinding.UNKNOWN_TOOL,
+        SafetyFinding.INVALID_ARGS,
+        SafetyFinding.UNREQUESTED_MUTATION,
+        SafetyFinding.TRUNCATED,
+    }
+)
+"""Findings that disqualify a switch on their own.
+
+Lives here rather than in ``metrics`` so ``TurnComparison`` can consult it
+without importing the module that imports this one. ``metrics`` re-exports it
+as ``BLOCKING_FINDINGS``, which is the name the rest of the package uses.
+
+``CALL_FAILED`` and ``UNRESOLVED_TOOL_NAME`` are deliberately absent. Neither
+is something the candidate did: the first is a failure to measure and the
+second is a property of the replayed fixture. Both are still recorded on the
+turn and surfaced, the first through ``turns_failed`` and the second through a
+run warning.
+"""
+
+
 class AgreementClass(StrEnum):
     """How a candidate's decision for one turn relates to the incumbent's."""
 
@@ -98,6 +120,31 @@ class JudgeVerdict(StrEnum):
     CANDIDATE_UNSAFE = "candidate_unsafe"
     NOT_JUDGED = "not_judged"
     JUDGE_FAILED = "judge_failed"
+
+
+class JudgeSkipReason(StrEnum):
+    """Why a turn carries no judge verdict.
+
+    Only diverging, measurable, non-disqualified turns are adjudicated, so
+    most turns in a healthy run are skipped for a good reason. Recording
+    which reason lets the report account for every turn instead of leaving
+    the operator to subtract the judge counts from the turn count and guess.
+    """
+
+    IDENTICAL = "identical"
+    """Both models made the same call with the same arguments."""
+
+    SAME_PROSE = "same_prose"
+    """Neither called a tool and the two replies were the same text."""
+
+    BLOCKING_FINDING = "blocking_finding"
+    """Already disqualified; a verdict could not change the recommendation."""
+
+    CALL_FAILED = "call_failed"
+    """One of the two calls errored, so there was no decision to compare."""
+
+    JUDGE_DISABLED = "judge_disabled"
+    """The run was started with the judge turned off."""
 
 
 class RunStatus(StrEnum):
@@ -186,10 +233,22 @@ class TurnComparison:
     safety_issues: list[SafetyIssue] = field(default_factory=list)
     judge_verdict: JudgeVerdict = JudgeVerdict.NOT_JUDGED
     judge_rationale: str = ""
+    judge_skip_reason: str | None = None
+    """Set when ``judge_verdict`` is ``NOT_JUDGED``. See ``JudgeSkipReason``."""
+
+    @property
+    def has_blocking_finding(self) -> bool:
+        """Whether a finding on this turn disqualifies a switch on its own.
+
+        ``CALL_FAILED`` and ``UNRESOLVED_TOOL_NAME`` are recorded on the turn
+        but are not the candidate's fault, so they must not count here. See
+        ``metrics.BLOCKING_FINDINGS``.
+        """
+        return any(issue.finding in _BLOCKING_FINDINGS for issue in self.safety_issues)
 
     @property
     def is_blocking(self) -> bool:
-        return bool(self.safety_issues) or self.judge_verdict is JudgeVerdict.CANDIDATE_UNSAFE
+        return self.has_blocking_finding or self.judge_verdict is JudgeVerdict.CANDIDATE_UNSAFE
 
     @property
     def diverged(self) -> bool:

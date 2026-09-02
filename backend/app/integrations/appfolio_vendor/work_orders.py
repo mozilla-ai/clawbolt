@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.appfolio_vendor.errors import log_unexpected_response_shape
 from backend.app.integrations.appfolio_vendor.params import (
@@ -286,6 +286,7 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
     return [
         Tool(
             name=ToolName.APPFOLIO_LIST_WORK_ORDERS,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "List the user's AppFolio work orders, filtered by status."
                 " Default returns in-progress and estimates needed."
@@ -300,6 +301,7 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
         ),
         Tool(
             name=ToolName.APPFOLIO_SEARCH_WORK_ORDERS,
+            tags={ToolTags.READ_ONLY},
             description="Search AppFolio work orders by number, address, or free text.",
             function=appfolio_search_work_orders,
             params_model=AppFolioSearchWorkOrdersParams,
@@ -310,6 +312,7 @@ def build_work_order_tools(service: AppFolioVendorService) -> list[Tool]:
         ),
         Tool(
             name=ToolName.APPFOLIO_GET_WORK_ORDER,
+            tags={ToolTags.READ_ONLY},
             description="Get full details for a single AppFolio work order.",
             function=appfolio_get_work_order,
             params_model=AppFolioGetWorkOrderParams,

@@ -7,6 +7,13 @@ now", so the prompt the candidate sees should be the prompt it would
 actually get. Replaying a months-old system prompt would measure a
 configuration nobody is going to ship.
 
+The clock is the one exception, and it is not a configuration choice. The
+turn's own timestamp is stamped on the replayed turn, because the history
+rows around it render absolute date markers: a run days later would ask the
+model to read a conversation that ended last week under a header claiming
+today, and every date-relative instruction in it would resolve to the wrong
+day. See ``assemble_for_sample``.
+
 The history for a turn is the window of rows immediately preceding it,
 bounded by ``conversation_history_limit`` and then trimmed by the same
 ``trim_messages`` governor the live loop uses. The session's current
@@ -19,6 +26,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 from backend.app.agent.approval import get_approval_store
 from backend.app.agent.context import _stored_messages_to_agent_messages
@@ -215,18 +223,74 @@ async def build_fixture(user: User, *, sample_limit: int | None = None) -> Repla
     return fixture
 
 
+def _parse_timestamp(raw: str) -> datetime | None:
+    """Parse a stored ISO timestamp, assuming UTC when it carries no offset."""
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+# How far apart two consecutive inbound rows can be and still be one turn.
+# Production batches rapid-fire messages with a 1.5 s window
+# (``settings.message_batch_window_ms``) and runs the pipeline only for the
+# last of them, so the rows of a real batch are seconds apart. A wider gap
+# means the earlier row was orphaned rather than batched: see
+# ``agent.inbound_recovery``, whose module docstring records a production
+# inbound that waited 29 hours for the next message to wake a batcher, and
+# which only re-dispatches orphans younger than 30 minutes.
+_BATCH_GAP_LIMIT = timedelta(minutes=2)
+
+
+def _same_batch(earlier: StoredMessage, later: StoredMessage) -> bool:
+    """Whether two consecutive inbound rows were answered as one turn.
+
+    An unreadable timestamp answers False, which reports "the agent did
+    nothing" for that turn. That is the safe direction: the credit this grants
+    is what stops ``check_safety`` raising ``UNREQUESTED_MUTATION``, so a
+    corrupt row must not hand out an exemption.
+    """
+    first = _parse_timestamp(earlier.timestamp)
+    second = _parse_timestamp(later.timestamp)
+    if first is None or second is None:
+        return False
+    return second - first <= _BATCH_GAP_LIMIT
+
+
 def _historic_response(rows: list[StoredMessage], start: int) -> tuple[str, list[str]]:
     """Return the reply text and tool names the agent produced for a turn.
 
-    Walks forward from the inbound row to the next inbound, since one user
-    turn can persist several outbound rows. Tool names are read back through
-    the same rebuilder the LLM history uses, so a row whose
-    ``tool_interactions_json`` is malformed degrades to "no tools" here
-    exactly as it does in the prompt.
+    A "turn" here is the batch of consecutive inbound rows starting at *start*,
+    plus the outbound rows that follow it. Skipping over the rest of the batch
+    is what makes this correct for rapid-fire messages: a user who sends four
+    messages in a row persists four inbound rows and the agent answers the
+    batch once, after the last of them. Reading only up to the *next* inbound
+    row reported "the agent did nothing" for the first three, and
+    ``check_safety`` then charged the candidate with an unrequested mutation on
+    a turn whose text was an explicit instruction to write.
+
+    The batch is bounded by ``_BATCH_GAP_LIMIT``, because two consecutive
+    inbound rows far apart in time are not a batch: the earlier one went
+    unanswered. Crediting it with the later turn's tool calls would exempt a
+    candidate that wrote something in reply to a message the agent never
+    answered.
+
+    Tool names are read back through the same rebuilder the LLM history uses,
+    so a row whose ``tool_interactions_json`` is malformed degrades to "no
+    tools" here exactly as it does in the prompt.
     """
     reply_parts: list[str] = []
     tool_names: list[str] = []
-    for row in rows[start + 1 :]:
+    index = start + 1
+    # Advance past the remainder of the inbound batch this row belongs to.
+    while (
+        index < len(rows)
+        and rows[index].direction == MessageDirection.INBOUND
+        and _same_batch(rows[index - 1], rows[index])
+    ):
+        index += 1
+    for row in rows[index:]:
         if row.direction == MessageDirection.INBOUND:
             break
         for msg in _stored_messages_to_agent_messages([row]):
@@ -272,6 +336,20 @@ def _history_for(fixture: ReplayFixture, sample: ReplaySample) -> list[AgentMess
     return _stored_messages_to_agent_messages(window, tz_name=fixture.tz_name)
 
 
+def _sample_clock(sample: ReplaySample) -> datetime | None:
+    """The wall time to stamp on *sample*'s replayed turn, or None for now.
+
+    Falls back to None (wall time) on an unparseable timestamp rather than
+    guessing: a wrong clock is worse than the honest current one, and the
+    column is ISO-formatted by ``_turn_row`` so this is a corrupt-row guard,
+    not an expected branch.
+    """
+    parsed = _parse_timestamp(sample.timestamp)
+    if parsed is None:
+        logger.warning("Unparseable timestamp %r on seq %d", sample.timestamp, sample.seq)
+    return parsed
+
+
 async def assemble_for_sample(fixture: ReplayFixture, sample: ReplaySample) -> AssembledPrompt:
     """Build the exact prompt the live agent would send for this turn.
 
@@ -280,6 +358,13 @@ async def assemble_for_sample(fixture: ReplayFixture, sample: ReplaySample) -> A
     reported input-token count) that would otherwise leak from one replayed
     turn into the next and change the prompt. Construction is cheap; the
     expensive part, the tool list, is shared via the fixture.
+
+    The clock is the turn's own timestamp, not now. Everything else about the
+    prompt is deliberately today's (see the module docstring), but the clock
+    is not a configuration choice: history rows render absolute date markers,
+    so a replay run days later hands the model a conversation that ends last
+    week under a header saying today, and "book it for this past Thursday"
+    lands on the wrong Thursday for both models.
     """
     agent = ClawboltAgent(user=fixture.user)
     agent.register_tools(fixture.tools)
@@ -290,4 +375,5 @@ async def assemble_for_sample(fixture: ReplayFixture, sample: ReplaySample) -> A
         sample.message_context,
         _history_for(fixture, sample),
         deterministic_trim=True,
+        now=_sample_clock(sample),
     )
