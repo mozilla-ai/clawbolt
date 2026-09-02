@@ -3929,7 +3929,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "type": "string",
               "title": "Run Id"
             }
           },
@@ -3939,7 +3939,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 200,
+              "maximum": 1000,
               "minimum": 1,
               "default": 50,
               "title": "Limit"
@@ -3995,7 +3995,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "type": "string",
               "title": "Run Id"
             }
           }
@@ -5592,7 +5592,7 @@
       "AdminLLMEvalRunItem": {
         "properties": {
           "id": {
-            "type": "integer",
+            "type": "string",
             "title": "Id"
           },
           "user_id": {
@@ -5708,13 +5708,24 @@
             },
             "type": "array",
             "title": "Runs"
+          },
+          "max_samples": {
+            "type": "integer",
+            "title": "Max Samples"
+          },
+          "min_turns_for_verdict": {
+            "type": "integer",
+            "title": "Min Turns For Verdict"
           }
         },
         "type": "object",
         "required": [
-          "runs"
+          "runs",
+          "max_samples",
+          "min_turns_for_verdict"
         ],
-        "title": "AdminLLMEvalRunListResponse"
+        "title": "AdminLLMEvalRunListResponse",
+        "description": "This user's runs, plus the bounds the run form has to respect.\n\n``max_samples`` is ``LLM_EVAL_MAX_SAMPLES``, which ``start_run`` enforces.\nWithout it on the wire the sample control can only guess, and a deployment\nthat lowers the setting gets a form offering values the API rejects.\n``min_turns_for_verdict`` is the floor below which a run reports\n``inconclusive`` rather than a pass, which is worth showing before someone\nspends a run finding out."
       },
       "AdminLLMEvalSafetyIssue": {
         "properties": {

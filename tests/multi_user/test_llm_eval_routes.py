@@ -18,11 +18,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.auth.admin_dep import get_current_admin
 from backend.app.config import settings
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, Subscription, User
+from backend.app.services.llm_eval.metrics import MIN_TURNS_FOR_VERDICT
 from backend.app.services.llm_eval.types import AgreementClass, RunStatus
 
 BASE = "/api/admin/llm-eval"
@@ -107,7 +109,10 @@ def test_start_run_creates_a_pending_row_and_launches(
     assert body["requested_samples"] == 50
     _launch.assert_called_once()
 
-    row = db_session.get(LLMEvalRun, body["id"])
+    # ``body["id"]`` is the public id, so the row is found by that column.
+    row = db_session.execute(
+        select(LLMEvalRun).filter_by(public_id=body["id"])
+    ).scalar_one_or_none()
     assert row is not None
     assert row.user_id == consenting_user.id
 
@@ -238,6 +243,38 @@ def test_list_runs_returns_the_users_runs(
     assert len(response.json()["runs"]) == 1
 
 
+def test_a_run_is_addressed_by_a_public_id_not_its_row_id(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """The report URL is pasted and bookmarked, so it must not be a row counter.
+
+    The integer primary key stays internal: the worker and the turn rows use
+    it, and it must not be reachable from the API.
+    """
+    run = _make_run(db_session, consenting_user.id)
+    assert admin_client.get(f"{BASE}/runs/{run.id}").status_code == 404
+
+    body = admin_client.get(f"{BASE}/runs/{run.public_id}").json()
+    assert body["run"]["id"] == run.public_id
+    assert body["run"]["id"] != str(run.id)
+
+
+def test_list_runs_reports_the_bounds_the_run_form_has_to_respect(
+    admin_client: TestClient, consenting_user: User
+) -> None:
+    """The sample control cannot hold its own ceiling.
+
+    ``LLM_EVAL_MAX_SAMPLES`` is configurable and ``start_run`` enforces it, so
+    a client guessing the cap offers sizes the API rejects with a bare 422.
+    """
+    with patch.object(settings, "llm_eval_max_samples", 40):
+        response = admin_client.get(f"{BASE}/users/{consenting_user.id}/runs")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["max_samples"] == 40
+    assert body["min_turns_for_verdict"] == MIN_TURNS_FOR_VERDICT
+
+
 def test_report_orders_the_most_concerning_turns_first(
     admin_client: TestClient, consenting_user: User, db_session: Session
 ) -> None:
@@ -273,7 +310,7 @@ def test_report_orders_the_most_concerning_turns_first(
     )
     db_session.commit()
 
-    response = admin_client.get(f"{BASE}/runs/{run.id}")
+    response = admin_client.get(f"{BASE}/runs/{run.public_id}")
     assert response.status_code == 200
     order = [t["message_seq"] for t in response.json()["turns"]]
     # Safety finding first, then the silent no-op, then the quiet
@@ -300,11 +337,11 @@ def test_report_pages_turns_and_reports_the_total(
     )
     db_session.commit()
 
-    first = admin_client.get(f"{BASE}/runs/{run.id}?limit=3").json()
+    first = admin_client.get(f"{BASE}/runs/{run.public_id}?limit=3").json()
     assert len(first["turns"]) == 3
     assert first["total_turns"] == 7
 
-    second = admin_client.get(f"{BASE}/runs/{run.id}?limit=3&offset=3").json()
+    second = admin_client.get(f"{BASE}/runs/{run.public_id}?limit=3&offset=3").json()
     assert len(second["turns"]) == 3
     # Pages must not overlap, or "show more" would repeat turns.
     assert {t["message_seq"] for t in first["turns"]}.isdisjoint(
@@ -338,7 +375,7 @@ def test_report_orders_before_paging(
     db_session.add_all(rows)
     db_session.commit()
 
-    page = admin_client.get(f"{BASE}/runs/{run.id}?limit=1").json()
+    page = admin_client.get(f"{BASE}/runs/{run.public_id}?limit=1").json()
     assert page["turns"][0]["message_seq"] == 99
 
 
@@ -359,21 +396,21 @@ def test_report_redacts_pii_in_message_bodies(
     )
     db_session.commit()
 
-    turn = admin_client.get(f"{BASE}/runs/{run.id}").json()["turns"][0]
+    turn = admin_client.get(f"{BASE}/runs/{run.public_id}").json()["turns"][0]
     assert "+15555550123" not in turn["user_message"]
     assert "[PHONE]" in turn["user_message"]
     assert turn["candidate"]["tool_calls"][0]["arguments"]["to"] == "[EMAIL]"
 
 
 def test_report_for_unknown_run_is_404(admin_client: TestClient) -> None:
-    assert admin_client.get(f"{BASE}/runs/999999").status_code == 404
+    assert admin_client.get(f"{BASE}/runs/{uuid.uuid4()}").status_code == 404
 
 
 def test_cancel_flips_an_active_run(
     admin_client: TestClient, consenting_user: User, db_session: Session
 ) -> None:
     run = _make_run(db_session, consenting_user.id, status=str(RunStatus.RUNNING))
-    response = admin_client.post(f"{BASE}/runs/{run.id}/cancel")
+    response = admin_client.post(f"{BASE}/runs/{run.public_id}/cancel")
     assert response.status_code == 200
     assert response.json()["status"] == RunStatus.CANCELLED
 
@@ -382,4 +419,4 @@ def test_cancelling_a_finished_run_conflicts(
     admin_client: TestClient, consenting_user: User, db_session: Session
 ) -> None:
     run = _make_run(db_session, consenting_user.id, status=str(RunStatus.COMPLETED))
-    assert admin_client.post(f"{BASE}/runs/{run.id}/cancel").status_code == 409
+    assert admin_client.post(f"{BASE}/runs/{run.public_id}/cancel").status_code == 409
