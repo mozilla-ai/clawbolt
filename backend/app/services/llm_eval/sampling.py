@@ -20,15 +20,18 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from backend.app.agent.approval import get_approval_store
 from backend.app.agent.context import _stored_messages_to_agent_messages
 from backend.app.agent.core import AssembledPrompt, ClawboltAgent
 from backend.app.agent.dto import StoredMessage
 from backend.app.agent.messages import AgentMessage, AssistantMessage
 from backend.app.agent.router import init_storage
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import Tool, tool_to_function_schema
 from backend.app.agent.tools.registry import (
     ToolContext,
+    create_list_capabilities_tool,
     default_registry,
     ensure_tool_modules_imported,
 )
@@ -105,8 +108,51 @@ async def build_fixture(user: User) -> ReplayFixture:
         downloaded_media=[],
         turn_text="",
     )
-    tools = await default_registry.create_core_tools(context)
-    tools.extend(await default_registry.create_ready_specialist_tools(context))
+    # Mirror ``router.run_agent_step`` exactly. A tool group the user disabled,
+    # or a sub-tool they set to NEVER, is absent from the schema the live agent
+    # is offered *and* from the tool-guidelines section of the system prompt, so
+    # including it here would score a prompt this user never received and let a
+    # candidate "call" a tool production would not have exposed.
+    #
+    # ``approval_store.ensure_complete`` is deliberately not called: it writes
+    # PERMISSIONS.json, and a replay must not mutate the user's state. It only
+    # ever backfills tools at their *default* level, and no default is NEVER,
+    # so skipping it cannot change the set read back here.
+    disabled_groups = await ToolConfigStore(user.id).get_disabled_tool_names()
+    disabled_sub_tools = await get_approval_store().get_never_tool_names(user.id)
+
+    tools = await default_registry.create_core_tools(
+        context,
+        excluded_factories=disabled_groups or None,
+        excluded_tool_names=disabled_sub_tools or None,
+    )
+    tools.extend(
+        await default_registry.create_ready_specialist_tools(
+            context,
+            excluded_factories=disabled_groups or None,
+            excluded_tool_names=disabled_sub_tools or None,
+        )
+    )
+    # ``list_capabilities`` is on almost every real turn (any unconnected
+    # integration is enough to add it) and carries a usage hint of its own, so
+    # omitting it changed both the schema and the system prompt.
+    specialist_summaries = await default_registry.get_available_specialist_summaries(
+        context, excluded_factories=disabled_groups or None
+    )
+    unauthenticated = await default_registry.get_unauthenticated_specialists(
+        context, excluded_factories=disabled_groups or None
+    )
+    if specialist_summaries or unauthenticated:
+        disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(
+            disabled_sub_tools or set()
+        )
+        tools.append(
+            create_list_capabilities_tool(
+                specialist_summaries,
+                unauthenticated=unauthenticated,
+                disabled_sub_tools=disabled_specialist_subs or None,
+            )
+        )
 
     fixture = ReplayFixture(user=user, rows=rows, tools=tools)
     fixture.tool_schemas = [tool_to_function_schema(t) for t in tools]

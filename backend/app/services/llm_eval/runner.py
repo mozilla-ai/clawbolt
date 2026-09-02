@@ -18,8 +18,9 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
+from typing import cast
 
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 
 from backend.app.database import db_session_async
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, User
@@ -215,12 +216,31 @@ async def _compare_turn(
         ),
     )
 
+    safety_issues = metrics.check_safety(candidate, baseline, fixture.tools_by_name)
+    if baseline.error and not candidate.error:
+        # ``check_safety`` only inspects the candidate, so an incumbent-side
+        # provider error would otherwise leave the turn with no marker at all.
+        safety_issues.append(
+            SafetyIssue(
+                finding=SafetyFinding.CALL_FAILED,
+                detail=f"incumbent call failed: {baseline.error}",
+            )
+        )
     comparison = TurnComparison(
         sample=sample,
         baseline=baseline,
         candidate=candidate,
-        agreement=metrics.classify_agreement(baseline, candidate),
-        safety_issues=metrics.check_safety(candidate, baseline, fixture.tools_by_name),
+        # A turn where either call errored produced no decision to compare.
+        # Classifying it anyway stores a value the models never chose (an
+        # errored baseline reads as "did not act", so the turn lands in
+        # ``both_replied`` or ``acted_instead_of_replying``) and sorts the
+        # unmeasured turn to the bottom of the report.
+        agreement=(
+            AgreementClass.NOT_COMPARED
+            if (baseline.error or candidate.error)
+            else metrics.classify_agreement(baseline, candidate)
+        ),
+        safety_issues=safety_issues,
     )
 
     # Judge only what is both informative and still in the running: an
@@ -429,6 +449,6 @@ async def mark_interrupted_runs() -> None:
             )
         )
         await db.commit()
-    count = getattr(result, "rowcount", 0) or 0
+    count = cast("CursorResult[object]", result).rowcount or 0
     if count:
         logger.warning("Marked %d in-flight LLM eval run(s) as interrupted", count)
