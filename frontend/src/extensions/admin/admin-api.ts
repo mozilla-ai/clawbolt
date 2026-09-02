@@ -1276,3 +1276,170 @@ export async function diagnoseEmailDelivery(): Promise<EmailDiagnostics> {
   if (error) throwApiError(error, 'Failed to run the email delivery diagnostic');
   return data as EmailDiagnostics;
 }
+
+// --- Model-swap evaluator ---
+//
+// Replays a user's recent turns through their current model and a candidate
+// model. Consent-gated: every endpoint 403s for a user who has not opted into
+// data sharing, because a run reads their real conversations and the report
+// renders them back. Content is PII-redacted server-side.
+
+export type EvalRunStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+  | 'cancelled';
+
+export type EvalRecommendation =
+  | 'safe_to_switch'
+  | 'switch_with_monitoring'
+  | 'do_not_switch'
+  | 'inconclusive';
+
+export interface EvalModelTotals {
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_ratio: number;
+  total_cost_usd: string;
+  // False when the pricing library has no entry for this model. The cost is
+  // then zero and must be rendered as "unknown", never as "free".
+  pricing_available: boolean;
+  latency_p50_ms: number;
+  latency_p95_ms: number;
+}
+
+export interface EvalSummary {
+  turns_total: number;
+  turns_completed: number;
+  turns_failed: number;
+  agreement_counts: Record<string, number>;
+  safety_counts: Record<string, number>;
+  // Subset of safety_counts that actually blocks a switch. A provider error
+  // is recorded above but is a failure to measure, not candidate behavior.
+  blocking_findings: number;
+  judge_counts: Record<string, number>;
+  identical_rate: number;
+  divergence_rate: number;
+  silent_noop_rate: number;
+  baseline: EvalModelTotals;
+  candidate: EvalModelTotals;
+  recommendation: EvalRecommendation;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface EvalRun {
+  id: number;
+  user_id: string;
+  baseline_provider: string;
+  baseline_model: string;
+  candidate_provider: string;
+  candidate_model: string;
+  judge_model: string;
+  requested_samples: number;
+  status: EvalRunStatus;
+  progress_completed: number;
+  progress_total: number;
+  recommendation: string;
+  error: string;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  summary?: EvalSummary | null;
+}
+
+export interface EvalToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface EvalDecision {
+  text: string;
+  tool_calls: EvalToolCall[];
+  stop_reason: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  latency_ms: number;
+  error: string;
+}
+
+export interface EvalSafetyIssue {
+  finding: string;
+  tool_name: string;
+  detail: string;
+}
+
+export interface EvalTurn {
+  message_seq: number;
+  message_timestamp: string;
+  user_message: string;
+  historic_reply: string;
+  historic_tool_names: string[];
+  baseline: EvalDecision;
+  candidate: EvalDecision;
+  agreement: string;
+  safety_issues: EvalSafetyIssue[];
+  judge_verdict: string;
+  judge_rationale: string;
+}
+
+export interface EvalReport {
+  run: EvalRun;
+  turns: EvalTurn[];
+  total_turns: number;
+}
+
+export async function listEvalRuns(userId: string): Promise<EvalRun[]> {
+  const { data, error } = await client.GET(
+    `/api/admin/llm-eval/users/${encodeURIComponent(userId)}/runs` as never,
+  );
+  if (error) throwApiError(error, 'Failed to load evaluation runs');
+  return (data as { runs: EvalRun[] }).runs;
+}
+
+export async function startEvalRun(
+  userId: string,
+  body: {
+    candidateProvider: string;
+    candidateModel: string;
+    sampleCount: number;
+    judgeEnabled: boolean;
+  },
+): Promise<EvalRun> {
+  const { data, error } = await client.POST(
+    `/api/admin/llm-eval/users/${encodeURIComponent(userId)}/runs` as never,
+    {
+      body: {
+        candidate_provider: body.candidateProvider,
+        candidate_model: body.candidateModel,
+        sample_count: body.sampleCount,
+        judge_enabled: body.judgeEnabled,
+      },
+    } as never,
+  );
+  if (error) throwApiError(error, 'Failed to start evaluation');
+  return data as EvalRun;
+}
+
+export async function getEvalReport(runId: number, limit = 50): Promise<EvalReport> {
+  const { data, error } = await client.GET(
+    `/api/admin/llm-eval/runs/${runId}?limit=${limit}` as never,
+  );
+  if (error) throwApiError(error, 'Failed to load evaluation report');
+  return data as EvalReport;
+}
+
+export async function cancelEvalRun(runId: number): Promise<EvalRun> {
+  const { data, error } = await client.POST(
+    `/api/admin/llm-eval/runs/${runId}/cancel` as never,
+  );
+  if (error) throwApiError(error, 'Failed to cancel evaluation');
+  return data as EvalRun;
+}

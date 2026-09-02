@@ -1750,3 +1750,146 @@ class HygieneCompactMemoryResponse(BaseModel):
 
     memory_updated: bool
     memory_text: str
+
+
+# ---------------------------------------------------------------------------
+# Model-swap evaluator (admin)
+# ---------------------------------------------------------------------------
+
+
+class AdminLLMEvalRunCreate(BaseModel):
+    """Request to replay a user's recent turns against a candidate model.
+
+    The baseline is not accepted from the client: it is resolved server-side
+    from the user's effective configuration (their subscription override, or
+    the global default), so a report can never compare against a model the
+    user was not actually on.
+    """
+
+    candidate_provider: str = Field(min_length=1, max_length=64)
+    candidate_model: str = Field(min_length=1, max_length=128)
+    sample_count: int = Field(default=100, ge=1)
+    judge_enabled: bool = True
+
+
+class AdminLLMEvalModelTotals(BaseModel):
+    """Cost, cache, and latency totals for one model across a run."""
+
+    provider: str = ""
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_ratio: float = 0.0
+    total_cost_usd: str = "0.000000"
+    # False when genai-prices has no entry for this (provider, model). The
+    # cost above is then zero and must not be read as "free".
+    pricing_available: bool = True
+    latency_p50_ms: float = 0.0
+    latency_p95_ms: float = 0.0
+
+
+class AdminLLMEvalSummary(BaseModel):
+    """The frozen aggregate stored on the run when it completed."""
+
+    turns_total: int = 0
+    turns_completed: int = 0
+    turns_failed: int = 0
+    agreement_counts: dict[str, int] = Field(default_factory=dict)
+    safety_counts: dict[str, int] = Field(default_factory=dict)
+    # Subset of ``safety_counts`` that actually disqualifies a switch. A
+    # provider error is recorded above but is a failure to measure, not
+    # something the candidate did, so it is excluded here.
+    blocking_findings: int = 0
+    judge_counts: dict[str, int] = Field(default_factory=dict)
+    identical_rate: float = 0.0
+    divergence_rate: float = 0.0
+    silent_noop_rate: float = 0.0
+    baseline: AdminLLMEvalModelTotals = Field(default_factory=AdminLLMEvalModelTotals)
+    candidate: AdminLLMEvalModelTotals = Field(default_factory=AdminLLMEvalModelTotals)
+    recommendation: str = ""
+    reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AdminLLMEvalRunItem(BaseModel):
+    """One run, without its per-turn evidence."""
+
+    id: int
+    user_id: str
+    baseline_provider: str
+    baseline_model: str
+    candidate_provider: str
+    candidate_model: str
+    judge_model: str
+    requested_samples: int
+    status: str
+    progress_completed: int
+    progress_total: int
+    recommendation: str
+    error: str
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    summary: AdminLLMEvalSummary | None = None
+
+
+class AdminLLMEvalRunListResponse(BaseModel):
+    runs: list[AdminLLMEvalRunItem]
+
+
+class AdminLLMEvalSafetyIssue(BaseModel):
+    finding: str
+    tool_name: str = ""
+    detail: str = ""
+
+
+class AdminLLMEvalToolCall(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminLLMEvalDecision(BaseModel):
+    """One model's decision for one replayed turn."""
+
+    text: str = ""
+    tool_calls: list[AdminLLMEvalToolCall] = Field(default_factory=list)
+    stop_reason: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    latency_ms: float = 0.0
+    error: str = ""
+
+
+class AdminLLMEvalTurn(BaseModel):
+    """One replayed turn: the user's message and both models' decisions.
+
+    ``historic_reply`` and ``historic_tool_names`` are what the agent actually
+    did for this turn when it happened. They are shown alongside, not scored:
+    that turn ran against an older system prompt and an older tool set, so it
+    is context for a human reading the diff rather than a third contestant.
+    """
+
+    message_seq: int
+    message_timestamp: str
+    user_message: str
+    historic_reply: str = ""
+    historic_tool_names: list[str] = Field(default_factory=list)
+    baseline: AdminLLMEvalDecision
+    candidate: AdminLLMEvalDecision
+    agreement: str
+    safety_issues: list[AdminLLMEvalSafetyIssue] = Field(default_factory=list)
+    judge_verdict: str = "not_judged"
+    judge_rationale: str = ""
+
+
+class AdminLLMEvalReportResponse(BaseModel):
+    """A run plus a page of its per-turn evidence, worst turns first."""
+
+    run: AdminLLMEvalRunItem
+    turns: list[AdminLLMEvalTurn]
+    # Total turns stored for the run, so a caller can tell whether the page
+    # it received is the whole story.
+    total_turns: int = 0

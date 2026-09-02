@@ -56,7 +56,7 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `calendar_configs` | Per-user calendar integration settings |
 | `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, Google Drive, QuickBooks, etc.) |
 
-Eight more tables exist for `AUTH_MODE=multi_user` and stay empty in a single-user deployment: `subscriptions`, `usage_quotas`, `deleted_user_usage`, `allowed_emails`, `waitlist_entries`, `admin_api_keys`, `admin_audit_logs`, `llm_payload_captures`. See "Multi-user mode" below.
+Ten more tables exist for `AUTH_MODE=multi_user` and stay empty in a single-user deployment: `subscriptions`, `usage_quotas`, `deleted_user_usage`, `allowed_emails`, `waitlist_entries`, `admin_api_keys`, `admin_audit_logs`, `llm_payload_captures`, `llm_eval_runs`, `llm_eval_turn_results`. See "Multi-user mode" below.
 
 Saved files are not tracked in Postgres. The Google Drive integration is the source of truth for filenames, locations, and descriptions. The agent quotes saved files by their storage path (e.g. `/Astro Home Management - 123 Main Street/photos/foo.jpg`).
 
@@ -197,6 +197,7 @@ What the mode switches on, and where it lives:
 | Account page, data export, deletion | `routers/account.py`, `services/data_export.py`, `services/user_deletion.py`, `services/inactive_cleanup.py` |
 | Per-tenant quotas and plans | `billing/` |
 | Operator monitoring and email | `routers/monitoring.py`, `services/health_monitor.py`, `services/admin_alerts.py`, `services/email_service.py` |
+| Model-swap evaluation | `routers/admin_llm_eval.py`, `services/llm_eval/` |
 | Request middleware (security headers, SEO meta, admin config guard) | `middleware/` |
 | KMS envelope encryption | `security/kms.py`, `security/dek_cache.py`, `security/validate.py` |
 
@@ -209,6 +210,30 @@ Three rules when touching this:
 - **`create_app()` is the only place that decides what mounts.** Routers and middleware are conditional there. Do not gate a route by checking the mode inside the handler.
 - **The agent-level hooks are process-global,** so they are installed at `main.py` import under `if MULTI_USER`: the quota pipeline, the `ChannelRoute` allowlist override, the heartbeat usage hook, the per-user LLM resolver, and the payload-capture observers. They cannot be per-app, which is why `create_app()` does not touch them.
 - **`get_kek_provider()` in `auth/loader.py` is load-bearing for data.** Returning a different provider than the one that wrote a row makes every `EncryptedString` column on it unreadable. Changing its resolution order is a data migration, not a refactor.
+
+### Model-swap evaluation
+
+`services/llm_eval/` answers "can this user be moved to a different model" by
+replaying their own recent turns through the incumbent and a candidate and
+diffing the two decisions. The admin console drives it; `routers/admin_llm_eval.py`
+owns the job lifecycle.
+
+Three invariants, each of which the feature is worthless without:
+
+- **A replay never executes a tool.** It stops at the model's first decision
+  for a turn. Executing would text real customers and mutate real job records
+  on every evaluation.
+- **Prompts are built by `ClawboltAgent.assemble_prompt`,** the same method the
+  live loop calls. A second assembly implementation would score prompts no user
+  ever received. If you change how the agent assembles a turn, the evaluator
+  follows automatically; keep it that way.
+- **Safety findings are never averaged into a quality score.** `metrics.py`
+  keeps them in their own tier, and one occurrence forces `do_not_switch`.
+
+Consent-gated like `/admin/shared-data`: a run reads real conversations and the
+report renders them back, so both require `User.data_sharing_consent`. Content is
+PII-redacted at serialization, after the comparison, so verdicts are computed on
+real values and only the human-readable drill-down is masked.
 
 ## Adding a New Agent Tool
 

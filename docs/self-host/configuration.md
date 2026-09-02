@@ -155,6 +155,9 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 | `LLM_MAX_RETRIES` | `3` | Maximum number of retry attempts on rate limit errors |
 | `LLM_CACHE_EXTENDED_TTL` | `true` | Use Anthropic's 1-hour extended cache TTL instead of the default 5 minutes. Reduces cold-start cache misses for users with multi-hour gaps between messages. Set to `false` on non-Anthropic providers that reject the `ttl` field |
 | `LLM_PROMPT_CACHE` | `auto` | `auto` adds cache breakpoints for supported Anthropic Messages providers; `never` disables them. Use `never` with gateways running any-llm older than 1.24 |
+| `LLM_EVAL_CONCURRENCY` | `4` | Turns replayed in parallel by an admin model-comparison run (`AUTH_MODE=multi_user`). Each turn issues one call per model, so this competes with live traffic for the provider rate limit |
+| `LLM_EVAL_MAX_SAMPLES` | `200` | Maximum turns one comparison run may replay. Bounds the cost of a mistyped value in the admin form |
+| `LLM_EVAL_MAX_CONCURRENT_RUNS` | `2` | Evaluations in flight across all users. One run per user is enforced separately; this bounds the total, since runs share the provider rate limit with live inbound traffic |
 
 ## Conversation and memory
 
