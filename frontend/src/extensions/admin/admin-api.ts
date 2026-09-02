@@ -1335,7 +1335,8 @@ export interface EvalSummary {
 }
 
 export interface EvalRun {
-  id: number;
+  /** The run's public id, which is also its report URL segment. */
+  id: string;
   user_id: string;
   baseline_provider: string;
   baseline_model: string;
@@ -1396,12 +1397,20 @@ export interface EvalReport {
   total_turns: number;
 }
 
-export async function listEvalRuns(userId: string): Promise<EvalRun[]> {
+export interface EvalRunList {
+  runs: EvalRun[];
+  /** LLM_EVAL_MAX_SAMPLES: the largest run the API will start. */
+  max_samples: number;
+  /** Below this many compared turns a run reports inconclusive, not a pass. */
+  min_turns_for_verdict: number;
+}
+
+export async function listEvalRuns(userId: string): Promise<EvalRunList> {
   const { data, error } = await client.GET(
     `/api/admin/llm-eval/users/${encodeURIComponent(userId)}/runs` as never,
   );
   if (error) throwApiError(error, 'Failed to load evaluation runs');
-  return (data as { runs: EvalRun[] }).runs;
+  return data as EvalRunList;
 }
 
 export async function startEvalRun(
@@ -1428,17 +1437,17 @@ export async function startEvalRun(
   return data as EvalRun;
 }
 
-export async function getEvalReport(runId: number, limit = 50): Promise<EvalReport> {
+export async function getEvalReport(runId: string, limit = 50): Promise<EvalReport> {
   const { data, error } = await client.GET(
-    `/api/admin/llm-eval/runs/${runId}?limit=${limit}` as never,
+    `/api/admin/llm-eval/runs/${encodeURIComponent(runId)}?limit=${limit}` as never,
   );
   if (error) throwApiError(error, 'Failed to load evaluation report');
   return data as EvalReport;
 }
 
-export async function cancelEvalRun(runId: number): Promise<EvalRun> {
+export async function cancelEvalRun(runId: string): Promise<EvalRun> {
   const { data, error } = await client.POST(
-    `/api/admin/llm-eval/runs/${runId}/cancel` as never,
+    `/api/admin/llm-eval/runs/${encodeURIComponent(runId)}/cancel` as never,
   );
   if (error) throwApiError(error, 'Failed to cancel evaluation');
   return data as EvalRun;

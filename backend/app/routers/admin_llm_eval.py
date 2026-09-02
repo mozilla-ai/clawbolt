@@ -50,6 +50,7 @@ from backend.app.schemas import (
 )
 from backend.app.services.admin_audit import AdminAction, AdminAuditContext, audit_admin
 from backend.app.services.llm_eval import launch_run
+from backend.app.services.llm_eval.metrics import MIN_TURNS_FOR_VERDICT
 from backend.app.services.llm_eval.types import AgreementClass, JudgeVerdict, RunStatus
 from backend.app.services.pii_redaction import redact_pii, redact_pii_recursive
 
@@ -99,7 +100,7 @@ def _summary_of(run: LLMEvalRun) -> AdminLLMEvalSummary | None:
 
 def _run_item(run: LLMEvalRun) -> AdminLLMEvalRunItem:
     return AdminLLMEvalRunItem(
-        id=run.id,
+        id=run.public_id,
         user_id=run.user_id,
         baseline_provider=run.baseline_provider,
         baseline_model=run.baseline_model,
@@ -323,13 +324,17 @@ async def list_runs(
         .scalars()
         .all()
     )
-    return AdminLLMEvalRunListResponse(runs=[_run_item(r) for r in runs])
+    return AdminLLMEvalRunListResponse(
+        runs=[_run_item(r) for r in runs],
+        max_samples=settings.llm_eval_max_samples,
+        min_turns_for_verdict=MIN_TURNS_FOR_VERDICT,
+    )
 
 
 @router.get("/runs/{run_id}", response_model=AdminLLMEvalReportResponse)
 async def get_report(
-    run_id: int,
-    limit: int = Query(default=50, ge=1, le=200),
+    run_id: str,
+    limit: int = Query(default=50, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     ctx: AdminAuditContext = Depends(audit_admin(AdminAction.VIEW_LLM_EVAL_REPORT)),
     db: AsyncSession = Depends(get_async_db),
@@ -342,14 +347,16 @@ async def get_report(
     reading, so the sort runs across the whole run and the page is taken from
     the result, not the other way round.
     """
-    run = (await db.execute(select(LLMEvalRun).where(LLMEvalRun.id == run_id))).scalar_one_or_none()
+    run = (
+        await db.execute(select(LLMEvalRun).where(LLMEvalRun.public_id == run_id))
+    ).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     await _consenting_user(run.user_id, db)
     ctx.target_user_id = run.user_id
 
     turns = (
-        (await db.execute(select(LLMEvalTurnResult).where(LLMEvalTurnResult.run_id == run_id)))
+        (await db.execute(select(LLMEvalTurnResult).where(LLMEvalTurnResult.run_id == run.id)))
         .scalars()
         .all()
     )
@@ -364,7 +371,7 @@ async def get_report(
 
 @router.post("/runs/{run_id}/cancel", response_model=AdminLLMEvalRunItem)
 async def cancel_run(
-    run_id: int,
+    run_id: str,
     ctx: AdminAuditContext = Depends(audit_admin(AdminAction.CANCEL_LLM_EVAL_RUN)),
     db: AsyncSession = Depends(get_async_db),
 ) -> AdminLLMEvalRunItem:
@@ -374,7 +381,9 @@ async def cancel_run(
     already written stay, so a cancelled run keeps whatever evidence it had
     gathered.
     """
-    run = (await db.execute(select(LLMEvalRun).where(LLMEvalRun.id == run_id))).scalar_one_or_none()
+    run = (
+        await db.execute(select(LLMEvalRun).where(LLMEvalRun.public_id == run_id))
+    ).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     ctx.target_user_id = run.user_id

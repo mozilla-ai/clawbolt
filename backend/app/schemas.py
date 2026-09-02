@@ -1816,7 +1816,9 @@ class AdminLLMEvalSummary(BaseModel):
 class AdminLLMEvalRunItem(BaseModel):
     """One run, without its per-turn evidence."""
 
-    id: int
+    id: str
+    """The run's ``public_id``. Its report is addressed by this, not by the row id."""
+
     user_id: str
     baseline_provider: str
     baseline_model: str
@@ -1836,7 +1838,19 @@ class AdminLLMEvalRunItem(BaseModel):
 
 
 class AdminLLMEvalRunListResponse(BaseModel):
+    """This user's runs, plus the bounds the run form has to respect.
+
+    ``max_samples`` is ``LLM_EVAL_MAX_SAMPLES``, which ``start_run`` enforces.
+    Without it on the wire the sample control can only guess, and a deployment
+    that lowers the setting gets a form offering values the API rejects.
+    ``min_turns_for_verdict`` is the floor below which a run reports
+    ``inconclusive`` rather than a pass, which is worth showing before someone
+    spends a run finding out.
+    """
+
     runs: list[AdminLLMEvalRunItem]
+    max_samples: int
+    min_turns_for_verdict: int
 
 
 class AdminLLMEvalSafetyIssue(BaseModel):

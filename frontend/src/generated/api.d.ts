@@ -3171,7 +3171,7 @@ export interface components {
          */
         AdminLLMEvalRunItem: {
             /** Id */
-            id: number;
+            id: string;
             /** User Id */
             user_id: string;
             /** Baseline Provider */
@@ -3204,10 +3204,24 @@ export interface components {
             completed_at?: string | null;
             summary?: components["schemas"]["AdminLLMEvalSummary"] | null;
         };
-        /** AdminLLMEvalRunListResponse */
+        /**
+         * AdminLLMEvalRunListResponse
+         * @description This user's runs, plus the bounds the run form has to respect.
+         *
+         *     ``max_samples`` is ``LLM_EVAL_MAX_SAMPLES``, which ``start_run`` enforces.
+         *     Without it on the wire the sample control can only guess, and a deployment
+         *     that lowers the setting gets a form offering values the API rejects.
+         *     ``min_turns_for_verdict`` is the floor below which a run reports
+         *     ``inconclusive`` rather than a pass, which is worth showing before someone
+         *     spends a run finding out.
+         */
         AdminLLMEvalRunListResponse: {
             /** Runs */
             runs: components["schemas"]["AdminLLMEvalRunItem"][];
+            /** Max Samples */
+            max_samples: number;
+            /** Min Turns For Verdict */
+            min_turns_for_verdict: number;
         };
         /** AdminLLMEvalSafetyIssue */
         AdminLLMEvalSafetyIssue: {
@@ -8313,7 +8327,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                run_id: number;
+                run_id: string;
             };
             cookie?: never;
         };
@@ -8344,7 +8358,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                run_id: number;
+                run_id: string;
             };
             cookie?: never;
         };

@@ -519,6 +519,12 @@ class LLMEvalRun(Base):
     __tablename__ = "llm_eval_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # The id the API and the report URL use. A run's report is a page an
+    # operator bookmarks, revisits, and pastes to someone else, so its address
+    # must not be a guessable row counter that also leaks how many runs exist.
+    public_id: Mapped[str] = mapped_column(
+        String(36), unique=True, index=True, nullable=False, default=lambda: str(_uuid.uuid4())
+    )
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )

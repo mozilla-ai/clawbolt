@@ -12,6 +12,7 @@ import ReportedTab from './tabs/reported';
 import ApiKeysTab from './tabs/api-keys';
 import MonitoringTab from './tabs/monitoring';
 import ModelEvalTab from './tabs/model-eval';
+import ModelEvalReportPage from './tabs/model-eval-report';
 
 // --- Navigation model ---
 //
@@ -183,6 +184,12 @@ function UsersRoute({ currentUserId }: { currentUserId?: string }) {
  * on the list response, so we page the list until the row shows up rather
  * than adding a backend endpoint.
  */
+function ModelEvalReportRoute() {
+  const { runId } = useParams<{ runId: string }>();
+  if (!runId) return <Navigate to={adminPath('model-eval')} replace />;
+  return <ModelEvalReportPage runId={runId} />;
+}
+
 function UserDetailRoute({ currentUserId }: { currentUserId?: string }) {
   const { userId, section } = useParams<{ userId: string; section?: string }>();
   const navigate = useNavigate();
@@ -300,6 +307,14 @@ export default function AdminPanel() {
         element={
           <AdminSection slug="model-eval">
             <ModelEvalTab />
+          </AdminSection>
+        }
+      />
+      <Route
+        path="model-eval/:runId"
+        element={
+          <AdminSection slug="model-eval">
+            <ModelEvalReportRoute />
           </AdminSection>
         }
       />
