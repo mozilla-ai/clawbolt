@@ -204,3 +204,74 @@ async def test_building_a_fixture_never_refreshes_the_users_drive_token(
     # fixture reads through the same patched ``load_token``. Assert on the Drive
     # read specifically rather than on the call count.
     assert (test_user.id, "google_drive") in {call.args for call in mock_load_token.await_args_list}
+
+
+# ---------------------------------------------------------------------------
+# Bounding the transcript read
+#
+# Every row is envelope-encrypted, so decryption happens on attribute access
+# in this process. A production user with 1827 messages had their whole
+# transcript loaded and decrypted to use the last few turns, five times in
+# half an hour, on the event loop that also serves their own messages.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_a_bounded_read_gives_the_same_samples_as_a_full_one(
+    db_session: Session, test_user: User, _reset_stores: None
+) -> None:
+    """The bound is an optimization, so it has to be invisible in the result."""
+    turns: list[tuple[str, str, list[dict] | None]] = []
+    for i in range(1, 61):
+        turns.append(("inbound", f"ask {i}", None))
+        turns.append(("outbound", f"answer {i}", None))
+    _seed(db_session, test_user, turns)
+
+    # The budget is dominated by ``conversation_history_limit`` (500 by
+    # default), so it is lowered here rather than seeding a transcript long
+    # enough to exceed it.
+    # The window has to stay patched through the assertions too: the budget is
+    # computed from ``conversation_history_limit`` and ``_history_for`` reads it
+    # again at call time, so comparing the two fixtures under a different limit
+    # compares windows neither was built for.
+    with patch.object(settings, "conversation_history_limit", 20):
+        full = await build_fixture(test_user)
+        bounded = await build_fixture(test_user, sample_limit=5)
+
+        assert len(bounded.rows) < len(full.rows)
+        full_samples = select_samples(full, limit=5)
+        bounded_samples = select_samples(bounded, limit=5)
+        assert [s.seq for s in bounded_samples] == [s.seq for s in full_samples]
+        assert [s.message_context for s in bounded_samples] == [
+            s.message_context for s in full_samples
+        ]
+        assert [s.historic_reply for s in bounded_samples] == [
+            s.historic_reply for s in full_samples
+        ]
+        # And the history each sample reconstructs is the same window.
+        assert [m.content for m in _history_for(bounded, bounded_samples[0])] == [
+            m.content for m in _history_for(full, full_samples[0])
+        ]
+
+
+@pytest.mark.asyncio()
+async def test_the_bound_falls_back_rather_than_shrinking_a_run(
+    db_session: Session, test_user: User, _reset_stores: None
+) -> None:
+    """A window that fills before holding the turns asked for is abandoned.
+
+    One inbound row can be followed by many outbound rows, so a fixed
+    allowance per turn is a guess. Getting it wrong must cost a slower load,
+    never a smaller evaluation than the operator chose.
+    """
+    turns: list[tuple[str, str, list[dict] | None]] = []
+    for i in range(1, 6):
+        turns.append(("inbound", f"ask {i}", None))
+        # Twenty outbound rows per turn blows through the per-turn allowance.
+        for j in range(20):
+            turns.append(("outbound", f"step {i}.{j}", None))
+    _seed(db_session, test_user, turns)
+
+    with patch.object(settings, "conversation_history_limit", 20):
+        bounded = await build_fixture(test_user, sample_limit=5)
+    assert len(select_samples(bounded, limit=5)) == 5

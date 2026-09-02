@@ -46,6 +46,16 @@ class SafetyFinding(StrEnum):
     CALL_FAILED = "call_failed"
     """The provider raised. Recorded per turn rather than failing the run."""
 
+    UNRESOLVED_TOOL_NAME = "unresolved_tool_name"
+    """Called a tool that is in the replayed history but not in today's schema.
+
+    A property of the fixture, not of the candidate: both models read the name
+    out of the conversation history and reach for it, but only the candidate is
+    inspected, so counting it would charge one model for what both do. The run
+    warns instead, because it means the replay is scoring a tool surface the
+    user no longer has.
+    """
+
 
 class AgreementClass(StrEnum):
     """How a candidate's decision for one turn relates to the incumbent's."""
