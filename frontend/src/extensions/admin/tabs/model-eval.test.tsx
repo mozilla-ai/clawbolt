@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import type { EvalReport, EvalRun, EvalSummary, EvalTurn } from '../admin-api';
 import ModelEvalTab from './model-eval';
 
@@ -153,19 +154,30 @@ function report(overrides: Partial<EvalReport> = {}): EvalReport {
   return { run: run(), turns: [turn()], ...overrides };
 }
 
+
+function renderTab() {
+  return render(
+    <MemoryRouter>
+      <ModelEvalTab />
+    </MemoryRouter>,
+  );
+}
+
 beforeEach(async () => {
   const api = await import('../admin-api');
   vi.mocked(api.getAdminUsers).mockReset().mockResolvedValue(USERS as never);
   vi.mocked(api.listEvalRuns).mockReset().mockResolvedValue([]);
   vi.mocked(api.startEvalRun).mockReset();
-  vi.mocked(api.getEvalReport).mockReset();
+  // Defaulted, not bare: starting a run now selects it, so every test that
+  // clicks Run analysis immediately fetches a report.
+  vi.mocked(api.getEvalReport).mockReset().mockResolvedValue(report());
   vi.mocked(api.cancelEvalRun).mockReset();
 });
 
 describe('ModelEvalTab', () => {
   it('only offers users who consented to data sharing', async () => {
     const api = await import('../admin-api');
-    render(<ModelEvalTab />);
+    renderTab();
 
     await waitFor(() => expect(api.getAdminUsers).toHaveBeenCalled());
     // A run reads real conversations, so a non-consenting user must not be
@@ -178,7 +190,7 @@ describe('ModelEvalTab', () => {
   it('starts a run with the chosen candidate and sample count', async () => {
     const api = await import('../admin-api');
     vi.mocked(api.startEvalRun).mockResolvedValue(run({ status: 'pending' }));
-    render(<ModelEvalTab />);
+    renderTab();
 
     await screen.findByRole('option', { name: 'consenting@example.com' });
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
@@ -201,7 +213,7 @@ describe('ModelEvalTab', () => {
     const api = await import('../admin-api');
     vi.mocked(api.listEvalRuns).mockResolvedValue([run()]);
     vi.mocked(api.getEvalReport).mockResolvedValue(report());
-    render(<ModelEvalTab />);
+    renderTab();
 
     await screen.findByRole('option', { name: 'consenting@example.com' });
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
@@ -213,6 +225,11 @@ describe('ModelEvalTab', () => {
     // the banner above the report.
     await waitFor(() => expect(screen.getAllByText('Safe to switch')).toHaveLength(2));
     expect(screen.getByText('no safety findings across 40 turns')).toBeInTheDocument();
+    // The switch itself lives on user detail; the report only points at it.
+    expect(screen.getByRole('link', { name: 'Model settings for this user' })).toHaveAttribute(
+      'href',
+      '/app/admin/users/user-1/llm',
+    );
   });
 
   it('surfaces a cost warning rather than reporting an unpriced model as free', async () => {
@@ -225,7 +242,7 @@ describe('ModelEvalTab', () => {
     vi.mocked(api.getEvalReport).mockResolvedValue(
       report({ run: run({ summary: withWarning }) }),
     );
-    render(<ModelEvalTab />);
+    renderTab();
 
     await screen.findByRole('option', { name: 'consenting@example.com' });
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
@@ -245,7 +262,7 @@ describe('ModelEvalTab', () => {
     });
     vi.mocked(api.listEvalRuns).mockResolvedValue([run()]);
     vi.mocked(api.getEvalReport).mockResolvedValue(report({ turns: [flagged] }));
-    render(<ModelEvalTab />);
+    renderTab();
 
     await screen.findByRole('option', { name: 'consenting@example.com' });
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
@@ -259,12 +276,36 @@ describe('ModelEvalTab', () => {
     expect(screen.getByText('Incumbent')).toBeInTheDocument();
   });
 
+  it('refetches the report when the selected run finishes', async () => {
+    // Regression: the report was fetched only when the selection changed, so a
+    // run selected while pending sat on "no summary" for good while the row
+    // beside it already read completed.
+    const api = await import('../admin-api');
+    const running = run({ status: 'running', progress_completed: 3, summary: null });
+    vi.mocked(api.listEvalRuns)
+      .mockResolvedValueOnce([running])
+      .mockResolvedValue([run({ status: 'completed' })]);
+    vi.mocked(api.getEvalReport)
+      .mockResolvedValueOnce({ run: running, turns: [] })
+      .mockResolvedValue(report());
+    renderTab();
+
+    await screen.findByRole('option', { name: 'consenting@example.com' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
+    await userEvent.click(await screen.findByText('candidate'));
+    await waitFor(() => expect(api.getEvalReport).toHaveBeenCalledTimes(1));
+
+    // The poll picks up the completed status, which has to re-drive the report.
+    await waitFor(() => expect(api.getEvalReport).toHaveBeenCalledTimes(2), { timeout: 6000 });
+    await waitFor(() => expect(screen.getAllByText('Safe to switch').length).toBeGreaterThan(0));
+  });
+
   it('blocks a second run while one is in flight and offers to cancel', async () => {
     const api = await import('../admin-api');
     vi.mocked(api.listEvalRuns).mockResolvedValue([
       run({ status: 'running', progress_completed: 12, progress_total: 40, summary: null }),
     ]);
-    render(<ModelEvalTab />);
+    renderTab();
 
     await screen.findByRole('option', { name: 'consenting@example.com' });
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');

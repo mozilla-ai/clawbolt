@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   cancelEvalRun,
   getAdminUsers,
@@ -15,6 +16,7 @@ import {
 } from '../admin-api';
 import { LLMProviderSelect, LLMModelSelect } from '../llm-picker';
 import { formatRelative } from '../format';
+import { adminPath } from '../nav-items';
 
 // Model comparison: "can I move this user to a different model without
 // breaking them". A run replays the user's own recent turns through their
@@ -106,7 +108,7 @@ function ms(value: number): string {
 // Report pieces
 // ---------------------------------------------------------------------------
 
-function VerdictBanner({ summary }: { summary: EvalSummary }) {
+function VerdictBanner({ summary, userId }: { summary: EvalSummary; userId: string }) {
   const copy = RECOMMENDATION_COPY[summary.recommendation] ?? RECOMMENDATION_COPY.inconclusive;
   return (
     <div className={`rounded-[--radius-lg] border p-4 ${copy.className}`}>
@@ -116,6 +118,18 @@ function VerdictBanner({ summary }: { summary: EvalSummary }) {
           <li key={reason}>{reason}</li>
         ))}
       </ul>
+      {/* Links out rather than applying the switch here. The per-user override
+          already has one owner (user detail -> LLM), and a second control
+          writing the same column is how the two drift. The wording stays
+          neutral across verdicts: this is also the page you visit to clear an
+          override, and a report saying "do not switch" should not be handing
+          out a button that reads like permission. */}
+      <Link
+        to={`${adminPath('users')}/${userId}/llm`}
+        className="mt-3 inline-block text-sm font-medium underline underline-offset-2"
+      >
+        Model settings for this user
+      </Link>
     </div>
   );
 }
@@ -342,6 +356,11 @@ export default function ModelEvalTab() {
     };
   }, [activeRunId, userId, refreshRuns]);
 
+  // Re-fetch as the selected run advances, not only when the selection
+  // changes. A run selected while it is still pending has no summary yet, and
+  // without the status in the dependencies the report would sit on "no
+  // summary" for good while the row beside it said completed.
+  const selectedStatus = runs.find(r => r.id === selectedRunId)?.status;
   useEffect(() => {
     if (selectedRunId == null) {
       setReport(null);
@@ -350,7 +369,7 @@ export default function ModelEvalTab() {
     getEvalReport(selectedRunId)
       .then(setReport)
       .catch((e: Error) => setError(e.message));
-  }, [selectedRunId]);
+  }, [selectedRunId, selectedStatus]);
 
   async function handleStart() {
     setError(null);
@@ -363,6 +382,7 @@ export default function ModelEvalTab() {
         judgeEnabled,
       });
       setRuns(prev => [run, ...prev]);
+      setSelectedRunId(run.id);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -411,14 +431,34 @@ export default function ModelEvalTab() {
             </select>
           </label>
 
+          {/* Both pickers need an explicit empty option. Without one the
+              <select> renders its first real entry as the visible choice while
+              this component's state is still empty, so the form looks filled
+              in, the model list stays on "pick a provider first", and the Run
+              button is disabled for no reason the operator can see. */}
           <label className="block">
             <span className="mb-1 block text-sm text-muted-foreground">Candidate provider</span>
-            <LLMProviderSelect value={provider} onChange={setProvider} />
+            <LLMProviderSelect
+              value={provider}
+              onChange={next => {
+                setProvider(next);
+                // A model id is only meaningful for the provider it came from.
+                setModel('');
+              }}
+              allowEmpty
+              emptyLabel="Select a provider"
+            />
           </label>
 
           <label className="block">
             <span className="mb-1 block text-sm text-muted-foreground">Candidate model</span>
-            <LLMModelSelect provider={provider} value={model} onChange={setModel} />
+            <LLMModelSelect
+              provider={provider}
+              value={model}
+              onChange={setModel}
+              allowEmpty
+              emptyLabel="Select a model"
+            />
           </label>
 
           <label className="block">
@@ -530,7 +570,9 @@ export default function ModelEvalTab() {
                       <td className="p-3 font-mono text-xs text-foreground">
                         {run.candidate_model}
                       </td>
-                      <td className="p-3 text-muted-foreground">{run.requested_samples}</td>
+                      <td className="p-3 text-muted-foreground">
+                        {run.progress_total || run.requested_samples}
+                      </td>
                       <td className="p-3 text-muted-foreground">{run.status}</td>
                       <td className="p-3">
                         {copy ? (
@@ -553,7 +595,7 @@ export default function ModelEvalTab() {
       {/* Report */}
       {report?.run.summary ? (
         <section className="space-y-4">
-          <VerdictBanner summary={report.run.summary} />
+          <VerdictBanner summary={report.run.summary} userId={report.run.user_id} />
 
           {report.run.summary.warnings.map(warning => (
             <div

@@ -195,11 +195,19 @@ async def _compare_turn(
     )
 
     # Judge only what is both informative and still in the running: an
-    # identical decision needs no opinion, and a turn already carrying a
-    # safety finding is disqualified regardless of what a judge would say.
+    # identical decision needs no opinion, a turn already carrying a safety
+    # finding is disqualified regardless of what a judge would say, and two
+    # models that produced the same prose have nothing to separate them. That
+    # last case is not just wasted spend: a verdict on it would land in the
+    # denominator of the judged-worse rate and dilute the turns that matter.
+    same_prose = (
+        comparison.agreement is AgreementClass.BOTH_REPLIED
+        and baseline.text.strip() == candidate.text.strip()
+    )
     should_judge = (
         bool(run.judge_model)
         and comparison.diverged
+        and not same_prose
         and not comparison.safety_issues
         and not baseline.error
         and not candidate.error

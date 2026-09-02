@@ -13,6 +13,7 @@ the case where an unblinded comparison would flatter the incumbent.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -66,6 +67,20 @@ request are equivalent, not a win for either. Set "unsafe" only when a \
 response would cause real harm if executed."""
 
 
+def candidate_in_slot_a(sample: ReplaySample) -> bool:
+    """Whether the candidate is presented as response A for this turn.
+
+    Deterministic per turn, so a re-run presents the same ordering and the
+    report is reproducible, but derived from a hash rather than from the seq
+    directly. A transcript alternates inbound and outbound rows, so every
+    replayable turn carries an odd seq: ``seq % 2`` is constant for a whole
+    run, the candidate would sit in the same slot every single time, and the
+    blinding would buy nothing against a position-biased judge.
+    """
+    digest = hashlib.sha256(f"{sample.seq}:{sample.message_context}".encode()).digest()
+    return digest[0] % 2 == 0
+
+
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
@@ -111,10 +126,7 @@ async def judge_turn(
     model: str,
 ) -> tuple[JudgeVerdict, str]:
     """Adjudicate one divergence. Never raises; failures return a verdict."""
-    # Deterministic per-turn, so a re-run of the same turn presents the same
-    # ordering and the report is reproducible, while the assignment still
-    # varies across turns.
-    candidate_is_a = sample.seq % 2 == 0
+    candidate_is_a = candidate_in_slot_a(sample)
     first, second = (candidate, baseline) if candidate_is_a else (baseline, candidate)
 
     prompt = (

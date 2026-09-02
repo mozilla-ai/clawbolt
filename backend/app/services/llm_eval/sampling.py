@@ -27,13 +27,25 @@ from backend.app.agent.messages import AgentMessage, AssistantMessage
 from backend.app.agent.router import init_storage
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.tools.base import Tool, tool_to_function_schema
-from backend.app.agent.tools.registry import ToolContext, default_registry
+from backend.app.agent.tools.registry import (
+    ToolContext,
+    default_registry,
+    ensure_tool_modules_imported,
+)
+from backend.app.bus import OutboundMessage
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
 from backend.app.models import User
 from backend.app.services.llm_eval.types import ReplaySample
 
 logger = logging.getLogger(__name__)
+
+
+async def _refuse_outbound(message: OutboundMessage) -> None:
+    """Outbound sink for replay tool contexts. Must never be reached."""
+    raise AssertionError(
+        "llm_eval attempted to publish an outbound message; a replay must never execute a tool"
+    )
 
 
 @dataclass
@@ -68,12 +80,27 @@ async def build_fixture(user: User) -> ReplayFixture:
         rows.extend(session.messages)
     rows.sort(key=lambda m: m.seq)
 
+    # Nothing populates the registry at startup: every entry point that needs
+    # tools calls this itself (``tool_assembly``, ``heartbeat``, ``onboarding``,
+    # ``approval``, ``user_tools``). Without it a run on a worker that has not
+    # yet processed a message builds an empty tool list, and then both models
+    # are offered no tools, agree perfectly on replying in prose, and the report
+    # reads as a clean pass. Silent and completely wrong.
+    ensure_tool_modules_imported()
+
     storage = await init_storage(user)
     context = ToolContext(
         user=user,
         storage=storage,
-        publish_outbound=None,
-        channel="",
+        # The messaging factory is registered ``requires_outbound=True`` and
+        # asserts on this, so passing None drops ``send_media_reply`` from the
+        # schema and the replay would offer a smaller tool list than production
+        # does. It is never invoked: a replay stops at the model's decision and
+        # executes nothing. It raises rather than passing so that if that
+        # invariant is ever broken, the run fails loudly instead of publishing
+        # a real message to a real user's channel.
+        publish_outbound=_refuse_outbound,
+        channel=user.preferred_channel or "",
         to_address="",
         downloaded_media=[],
         turn_text="",

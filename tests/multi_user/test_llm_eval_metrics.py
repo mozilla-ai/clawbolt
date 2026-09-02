@@ -243,6 +243,28 @@ def test_judge_scoring_against_candidate_blocks_past_the_ceiling() -> None:
     assert result.recommendation is Recommendation.DO_NOT_SWITCH
 
 
+def test_a_bad_verdict_on_a_handful_of_divergences_does_not_block() -> None:
+    """A candidate that agrees almost everywhere should not be sunk by one
+    lost verdict out of two judged turns."""
+    comparisons = [_comparison(i) for i in range(40)]
+    comparisons[0].agreement = AgreementClass.DIFFERENT_TOOLS
+    comparisons[0].judge_verdict = JudgeVerdict.CANDIDATE_WORSE
+    comparisons[1].agreement = AgreementClass.DIFFERENT_TOOLS
+    comparisons[1].judge_verdict = JudgeVerdict.EQUIVALENT
+    result = metrics.aggregate(comparisons)
+    assert result.recommendation is Recommendation.SWITCH_WITH_MONITORING
+
+
+def test_both_models_replying_is_agreement_not_divergence() -> None:
+    """Small talk must not push a run over the divergence ceiling."""
+    comparisons = [_comparison(i) for i in range(40)]
+    for c in comparisons[:20]:
+        c.agreement = AgreementClass.BOTH_REPLIED
+    result = metrics.aggregate(comparisons)
+    assert result.divergence_rate == 0.0
+    assert result.recommendation is Recommendation.SAFE_TO_SWITCH
+
+
 def test_failed_turns_are_counted_separately_from_completed() -> None:
     comparisons = [_comparison(i) for i in range(30)]
     comparisons[0].candidate = ModelCallResult(provider="p", model="m", error="boom")

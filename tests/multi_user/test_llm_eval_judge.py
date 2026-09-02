@@ -15,7 +15,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from any_llm.types.messages import TextBlock
 
-from backend.app.services.llm_eval.judge import _describe, judge_turn
+from backend.app.services.llm_eval.judge import (
+    _describe,
+    candidate_in_slot_a,
+    judge_turn,
+)
 from backend.app.services.llm_eval.types import (
     JudgeVerdict,
     ModelCallResult,
@@ -48,16 +52,30 @@ BASELINE = ModelCallResult(
 )
 CANDIDATE = ModelCallResult(provider="anthropic", model="candidate", text="I'll take a look.")
 
-# ``judge_turn`` assigns slots by ``seq % 2``: even seq puts the candidate in
-# slot A, odd puts it in B. Pinning both parities is the whole point.
-SEQ_CANDIDATE_IS_A = 2
-SEQ_CANDIDATE_IS_B = 3
+TURN_TEXT = "where is invoice 42?"
+
+
+def _seq_for_slot(candidate_is_a: bool) -> int:
+    """Find a seq whose turn puts the candidate in the requested slot.
+
+    Asks the implementation rather than recomputing the hash, so this cannot
+    drift into testing a second copy of the assignment rule.
+    """
+    for seq in range(1, 500):
+        sample = ReplaySample(seq=seq, timestamp="", message_context=TURN_TEXT)
+        if candidate_in_slot_a(sample) is candidate_is_a:
+            return seq
+    raise AssertionError("no seq produced the requested slot")
+
+
+SEQ_CANDIDATE_IS_A = _seq_for_slot(True)
+SEQ_CANDIDATE_IS_B = _seq_for_slot(False)
 
 
 async def _judge(seq: int, mock: AsyncMock) -> tuple[JudgeVerdict, str]:
     with patch("backend.app.services.llm_eval.judge.amessages", mock):
         return await judge_turn(
-            ReplaySample(seq=seq, timestamp="", message_context="where is invoice 42?"),
+            ReplaySample(seq=seq, timestamp="", message_context=TURN_TEXT),
             BASELINE,
             CANDIDATE,
             provider="anthropic",
@@ -149,3 +167,18 @@ def test_description_never_names_the_model() -> None:
     assert "incumbent" not in rendered
     assert "anthropic" not in rendered
     assert "lookup" in rendered
+
+
+def test_slot_assignment_varies_across_a_realistic_transcript() -> None:
+    """Regression: the assignment must not alias to message-seq parity.
+
+    A transcript alternates inbound and outbound rows, so every replayable
+    turn has an odd seq. An assignment keyed on ``seq % 2`` is constant for a
+    whole run, which silently pins the candidate to one slot and makes the
+    blinding decorative.
+    """
+    slots = {
+        candidate_in_slot_a(ReplaySample(seq=seq, timestamp="", message_context=f"turn {seq}"))
+        for seq in range(1, 60, 2)
+    }
+    assert slots == {True, False}

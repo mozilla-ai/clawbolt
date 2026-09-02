@@ -49,6 +49,13 @@ MAX_SILENT_NOOP_RATE = 0.10
 MAX_WORSE_RATE_BLOCKING = 0.20
 MAX_WORSE_RATE_CLEAN = 0.10
 
+# The worse-rate is a share of *judged* turns, and only divergences get judged.
+# A candidate that matches the incumbent on 98 of 100 turns and loses one of
+# its two divergences scores 50%, which should not read the same way as losing
+# half of forty. Below this many judged turns the rate can still raise a
+# caution, but it cannot block on its own.
+MIN_JUDGED_FOR_BLOCKING_RATE = 10
+
 # Above this share of diverging turns, the candidate is doing a different
 # job rather than the same job differently. Not blocking on its own.
 MAX_DIVERGENCE_RATE_CLEAN = 0.35
@@ -252,9 +259,19 @@ class RunAggregate:
 
     @property
     def divergence_rate(self) -> float:
+        """Share of turns where the two models chose a different *action*.
+
+        Turns where neither model called a tool are structural agreement, not
+        divergence: both read the message as something to answer rather than
+        act on, and whether the prose differs is the judge's tier, not this
+        one. Counting them here would push a chatty user's run over the
+        caution threshold on the strength of small talk.
+        """
         if not self.turns_completed:
             return 0.0
-        return 1.0 - self.identical_rate
+        agreed = self.agreement_counts.get(AgreementClass.IDENTICAL, 0)
+        agreed += self.agreement_counts.get(AgreementClass.BOTH_REPLIED, 0)
+        return 1.0 - (agreed / self.turns_completed)
 
     @property
     def silent_noop_rate(self) -> float:
@@ -299,7 +316,9 @@ def aggregate(comparisons: list[TurnComparison]) -> RunAggregate:
     return agg
 
 
-def _judged_worse_rate(agg: RunAggregate) -> float:
+def _judged_worse_rate(agg: RunAggregate) -> tuple[float, int]:
+    """Return the share of judged turns scored against the candidate, and how
+    many turns that share was computed over."""
     judged = sum(
         agg.judge_counts.get(str(v), 0)
         for v in (
@@ -310,10 +329,10 @@ def _judged_worse_rate(agg: RunAggregate) -> float:
         )
     )
     if not judged:
-        return 0.0
+        return 0.0, 0
     worse = agg.judge_counts.get(str(JudgeVerdict.CANDIDATE_WORSE), 0)
     worse += agg.judge_counts.get(str(JudgeVerdict.CANDIDATE_UNSAFE), 0)
-    return worse / judged
+    return worse / judged, judged
 
 
 def _decide(agg: RunAggregate) -> None:
@@ -338,11 +357,14 @@ def _decide(agg: RunAggregate) -> None:
             f"(ceiling {MAX_SILENT_NOOP_RATE:.0%})"
         )
 
-    worse_rate = _judged_worse_rate(agg)
-    if worse_rate > MAX_WORSE_RATE_BLOCKING:
-        blocking.append(f"judge scored {worse_rate:.0%} of divergences against the candidate")
+    worse_rate, judged = _judged_worse_rate(agg)
+    worse_note = (
+        f"judge scored {worse_rate:.0%} of {judged} judged divergence(s) against the candidate"
+    )
+    if worse_rate > MAX_WORSE_RATE_BLOCKING and judged >= MIN_JUDGED_FOR_BLOCKING_RATE:
+        blocking.append(worse_note)
     elif worse_rate > MAX_WORSE_RATE_CLEAN:
-        caution.append(f"judge scored {worse_rate:.0%} of divergences against the candidate")
+        caution.append(worse_note)
 
     if agg.turns_completed and agg.divergence_rate > MAX_DIVERGENCE_RATE_CLEAN:
         caution.append(f"diverged from the incumbent on {agg.divergence_rate:.0%} of turns")
