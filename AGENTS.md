@@ -229,6 +229,11 @@ Three invariants, each of which the feature is worthless without:
   follows automatically; keep it that way.
 - **Safety findings are never averaged into a quality score.** `metrics.py`
   keeps them in their own tier, and one occurrence forces `do_not_switch`.
+- **A failing provider stops the run.** `MAX_CONSECUTIVE_CALL_FAILURES`
+  consecutive errored turns end it with `FAILED`, the evidence already
+  gathered, and `inconclusive` stamped on both the column and the summary. A
+  run competes with live traffic at the same gateway, so it must not spend a
+  200-sample budget rediscovering that the provider is down.
 
 Consent-gated like `/admin/shared-data`: a run reads real conversations and the
 report renders them back, so both require `User.data_sharing_consent`. Content is
