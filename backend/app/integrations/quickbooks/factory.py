@@ -11,7 +11,7 @@ import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.integrations.quickbooks.service import (
@@ -771,6 +771,7 @@ def create_quickbooks_tools(
     return [
         Tool(
             name=ToolName.QB_QUERY,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Run a read-only query against QuickBooks Online using QBO query language "
                 "(SQL-like SELECT statements). Use this to look up invoices, estimates, "

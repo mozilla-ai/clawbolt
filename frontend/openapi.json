@@ -5484,6 +5484,11 @@
             "title": "Cache Read Tokens",
             "default": 0
           },
+          "cache_creation_tokens": {
+            "type": "integer",
+            "title": "Cache Creation Tokens",
+            "default": 0
+          },
           "latency_ms": {
             "type": "number",
             "title": "Latency Ms",
@@ -5534,6 +5539,11 @@
           "cache_read_ratio": {
             "type": "number",
             "title": "Cache Read Ratio",
+            "default": 0.0
+          },
+          "cache_participation_ratio": {
+            "type": "number",
+            "title": "Cache Participation Ratio",
             "default": 0.0
           },
           "total_cost_usd": {
@@ -5840,6 +5850,13 @@
             "type": "object",
             "title": "Judge Counts"
           },
+          "judge_skip_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Judge Skip Counts"
+          },
           "identical_rate": {
             "type": "number",
             "title": "Identical Rate",
@@ -5853,6 +5870,11 @@
           "silent_noop_rate": {
             "type": "number",
             "title": "Silent Noop Rate",
+            "default": 0.0
+          },
+          "silent_noop_blocking_rate": {
+            "type": "number",
+            "title": "Silent Noop Blocking Rate",
             "default": 0.0
           },
           "baseline": {
@@ -5954,6 +5976,11 @@
           "judge_rationale": {
             "type": "string",
             "title": "Judge Rationale",
+            "default": ""
+          },
+          "judge_skip_reason": {
+            "type": "string",
+            "title": "Judge Skip Reason",
             "default": ""
           }
         },

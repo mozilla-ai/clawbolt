@@ -17,6 +17,24 @@ class ToolTags(StrEnum):
     SENDS_REPLY = "sends_reply"
     MODIFIES_PROFILE = "modifies_profile"
 
+    READ_ONLY = "read_only"
+    """This tool only reads. Calling it changes nothing the user could notice.
+
+    Set it on every tool that looks something up, and leave it off anything
+    that writes, sends, uploads, or deletes. It exists because
+    ``approval_policy`` cannot answer the question: ``ApprovalPolicy``
+    defaults ``default_level`` to ``ASK``, so most search and list tools are
+    approval-gated too, and 9 of the 45 registered tools are gated reads.
+
+    The model-swap evaluator is the consumer. It flags a candidate that
+    reaches for a mutating tool the incumbent left alone, and without this
+    tag it read "approval-gated" as "mutating" and charged a candidate for
+    running a search.
+
+    Untagged means mutating, so a new tool that nobody classified is treated
+    as the dangerous case rather than waved through.
+    """
+
 
 class ToolErrorKind(StrEnum):
     """Classification of tool errors to guide LLM self-correction."""

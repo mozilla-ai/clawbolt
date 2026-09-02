@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import inspect
 import pkgutil
 import sys
 from typing import cast
@@ -13,6 +14,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 import backend.app.agent.tools.registry as _reg
+from backend.app.agent.approval import PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolResult, ToolTags, tool_to_function_schema
 from backend.app.agent.tools.registry import (
     ToolContext,
@@ -483,6 +485,27 @@ async def test_state_mutating_tools_have_concurrency_group() -> None:
     """
     ensure_tool_modules_imported()
 
+    requires_group = {ToolTags.MODIFIES_PROFILE, ToolTags.SENDS_REPLY}
+    missing: list[str] = []
+
+    for tool in await _instantiate_every_tool():
+        if tool.tags & requires_group and tool.concurrency_group is None:
+            tags = ", ".join(sorted(t.value for t in tool.tags & requires_group))
+            missing.append(f"{tool.name}: tagged [{tags}] but concurrency_group is None")
+
+    assert not missing, (
+        "Tools tagged MODIFIES_PROFILE or SENDS_REPLY must set a "
+        "concurrency_group so concurrent tool calls in a single turn do "
+        "not race on shared state:\n" + "\n".join(missing)
+    )
+
+
+def _mock_tool_context() -> MagicMock:
+    """A context complete enough for every factory to build its tools.
+
+    The factories only read these fields when constructing; nothing here is
+    ever invoked, because a registry test never executes a tool.
+    """
     ctx = MagicMock(spec=ToolContext)
     ctx.user = MagicMock()
     ctx.user.id = "test-user"
@@ -492,28 +515,111 @@ async def test_state_mutating_tools_have_concurrency_group() -> None:
     ctx.to_address = ""
     ctx.downloaded_media = []
     ctx.turn_text = ""
+    return ctx
 
-    requires_group = {ToolTags.MODIFIES_PROFILE, ToolTags.SENDS_REPLY}
-    missing: list[str] = []
 
-    for factory_name, factory in default_registry._factories.items():
+async def _instantiate_every_tool() -> list[Tool]:
+    """Every tool every registered factory can build, for the global invariants.
+
+    A factory that cannot construct against a mock context is skipped rather
+    than failing the suite: several need live credentials, and the invariants
+    below are about tool *declarations*, so a partial sweep still catches a
+    mis-declared tool in any factory that does build.
+    """
+    tools: list[Tool] = []
+    ctx = _mock_tool_context()
+    for factory in default_registry._factories.values():
         try:
-            import inspect
-
             result = factory.create(ctx)
-            tools: list[Tool] = await result if inspect.isawaitable(result) else result  # type: ignore[assignment]
+            built = await result if inspect.isawaitable(result) else result
         except Exception:
             continue
+        tools.extend(cast("list[Tool]", built))
+    return tools
 
-        for tool in tools:
-            if tool.tags & requires_group and tool.concurrency_group is None:
-                tags = ", ".join(sorted(t.value for t in tool.tags & requires_group))
-                missing.append(
-                    f"{factory_name}/{tool.name}: tagged [{tags}] but concurrency_group is None"
-                )
 
-    assert not missing, (
-        "Tools tagged MODIFIES_PROFILE or SENDS_REPLY must set a "
-        "concurrency_group so concurrent tool calls in a single turn do "
-        "not race on shared state:\n" + "\n".join(missing)
+@pytest.mark.asyncio()
+async def test_read_only_is_never_combined_with_a_mutating_tag() -> None:
+    """``READ_ONLY`` and the mutation tags are contradictory by construction."""
+    ensure_tool_modules_imported()
+
+    contradictions = [
+        f"{tool.name}: READ_ONLY plus [{', '.join(sorted(t.value for t in mutating))}]"
+        for tool in await _instantiate_every_tool()
+        if ToolTags.READ_ONLY in tool.tags
+        and (mutating := tool.tags & {ToolTags.MODIFIES_PROFILE, ToolTags.SENDS_REPLY})
+    ]
+    assert not contradictions, "A tool cannot be read-only and also write:\n" + "\n".join(
+        contradictions
+    )
+
+
+# Approval-gated tools that really do change something. Kept explicit so a new
+# gated tool cannot ship unclassified: the evaluator reads "not READ_ONLY" as
+# "this call would mutate a real account" and blocks a model switch on it, so
+# an unconsidered default is a wrong answer in one direction or the other.
+# Adding a tool here is a claim that calling it writes, sends, or deletes.
+_EXPECTED_MUTATING_ASK_TOOLS = frozenset(
+    {
+        "appfolio_add_note",
+        "appfolio_create_invoice",
+        "appfolio_undo_work_order_status",
+        "appfolio_update_note",
+        "appfolio_update_work_order_status",
+        "appfolio_upload_invoice_pdf",
+        "calendar_create_event",
+        "calendar_delete_event",
+        "calendar_update_event",
+        "companycam_add_comment",
+        "companycam_archive_project",
+        "companycam_create_checklist",
+        "companycam_create_project",
+        "companycam_delete_photo",
+        "companycam_delete_project",
+        "companycam_tag_photo",
+        "companycam_update_notepad",
+        "companycam_update_project",
+        "companycam_upload_photo",
+        "delete_file",
+        "discard_media",
+        "edit_storage_file",
+        "gmail_send",
+        "move_file",
+        "qb_create",
+        "qb_send",
+        "qb_update",
+        "servicetitan_add_job_note",
+        "upload_to_storage",
+        "write_to_storage",
+    }
+)
+
+
+@pytest.mark.asyncio()
+async def test_every_approval_gated_tool_is_classified_read_or_write() -> None:
+    """Force the read/write call to be made, not defaulted.
+
+    ``ApprovalPolicy`` defaults ``default_level`` to ASK, so the gate says
+    nothing about whether a tool writes: 39 of 45 tools are gated and 9 of
+    those are pure reads. The evaluator used the gate as a mutation proxy and
+    charged a candidate model with an unrequested mutation for running a
+    saved-file search, which blocks a switch on its own.
+
+    A new gated tool fails here until it is either tagged ``READ_ONLY`` or
+    named above.
+    """
+    ensure_tool_modules_imported()
+
+    unclassified = sorted(
+        tool.name
+        for tool in await _instantiate_every_tool()
+        if tool.approval_policy is not None
+        and tool.approval_policy.default_level is PermissionLevel.ASK
+        and ToolTags.READ_ONLY not in tool.tags
+        and tool.name not in _EXPECTED_MUTATING_ASK_TOOLS
+    )
+    assert not unclassified, (
+        "These approval-gated tools are neither tagged ToolTags.READ_ONLY nor listed in "
+        "_EXPECTED_MUTATING_ASK_TOOLS. Tag the ones that only read; add the ones that "
+        "write, send, or delete to the list:\n" + "\n".join(unclassified)
     )

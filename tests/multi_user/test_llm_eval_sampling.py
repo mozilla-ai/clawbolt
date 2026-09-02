@@ -23,9 +23,12 @@ from backend.app.models import ChatSession, Message, User
 from backend.app.services.llm_eval.sampling import (
     ReplayFixture,
     _history_for,
+    _sample_clock,
+    assemble_for_sample,
     build_fixture,
     select_samples,
 )
+from backend.app.services.llm_eval.types import ReplaySample
 
 BASE_TIME = _dt.datetime(2026, 5, 1, 12, 0, tzinfo=_dt.UTC)
 
@@ -275,3 +278,128 @@ async def test_the_bound_falls_back_rather_than_shrinking_a_run(
     with patch.object(settings, "conversation_history_limit", 20):
         bounded = await build_fixture(test_user, sample_limit=5)
     assert len(select_samples(bounded, limit=5)) == 5
+
+
+# ---------------------------------------------------------------------------
+# Rapid-fire messages
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_rapid_fire_turns_all_see_the_response_to_the_batch(
+    db_session: Session, test_user: User, _reset_stores: None
+) -> None:
+    """Four messages in a row are one turn as far as the agent is concerned.
+
+    The agent answers the batch once, after the last message. Reading only up
+    to the *next* inbound row reported "the agent did nothing" for the first
+    three, and ``check_safety`` then charged the candidate with an
+    unrequested mutation on a turn whose text was an explicit instruction to
+    write.
+    """
+    _seed(
+        db_session,
+        test_user,
+        [
+            ("inbound", "rebuild the stalls", None),
+            ("inbound", "add 5000 for the staircase", None),
+            ("inbound", "build and send", None),
+            (
+                "outbound",
+                "sent",
+                [
+                    {
+                        "tool_call_id": "t1",
+                        "name": "qb_update",
+                        "args": {"estimate_id": "635"},
+                        "result": "ok",
+                    }
+                ],
+            ),
+        ],
+    )
+    fixture = await _fixture_for(test_user)
+    samples = select_samples(fixture, limit=10)
+
+    assert [s.seq for s in samples] == [1, 2, 3]
+    for sample in samples:
+        assert sample.historic_tool_names == ["qb_update"], (
+            f"seq {sample.seq} lost the batch's response"
+        )
+        assert sample.historic_reply == "sent"
+
+
+@pytest.mark.asyncio()
+async def test_a_trailing_turn_with_no_response_yet_reports_no_tools(
+    db_session: Session, test_user: User, _reset_stores: None
+) -> None:
+    """The honest answer for an unanswered turn is "nothing", not a guess."""
+    _seed(
+        db_session,
+        test_user,
+        [
+            ("inbound", "first", None),
+            ("outbound", "answered", None),
+            ("inbound", "still waiting", None),
+        ],
+    )
+    fixture = await _fixture_for(test_user)
+    samples = select_samples(fixture, limit=10)
+
+    trailing = next(s for s in samples if s.seq == 3)
+    assert trailing.historic_tool_names == []
+    assert trailing.historic_reply == ""
+
+
+# ---------------------------------------------------------------------------
+# The replay clock is the turn's own timestamp
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_replayed_turn_is_stamped_with_its_own_time_not_now(
+    db_session: Session, test_user: User, _reset_stores: None
+) -> None:
+    """A date-relative ask must resolve against the day it was sent.
+
+    History rows render absolute date markers, so a run days later hands the
+    model a conversation that ends last week under a header claiming today.
+    Both models then resolve "this past week" to the wrong week, and the
+    calendar arguments they are scored on are wrong for a reason that has
+    nothing to do with either model.
+    """
+    _seed(
+        db_session,
+        test_user,
+        [("inbound", "put him down for Monday to Thursday this past week", None)],
+    )
+    fixture = await _fixture_for(test_user)
+    sample = select_samples(fixture, limit=1)[0]
+
+    assembled = await assemble_for_sample(fixture, sample)
+    turn_text = assembled.messages[-1].content
+    assert isinstance(turn_text, str)
+
+    # The stamp is the turn's own time, to the minute the row carries.
+    assert "[Current time: Friday, 2026-05-01 12:01 PM" in turn_text, turn_text
+    assert _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%d") not in turn_text
+
+
+def test_sample_clock_parses_the_stored_timestamp() -> None:
+    sample = ReplaySample(
+        seq=1, timestamp="2026-08-30T16:48:00+00:00", message_context="this past week"
+    )
+    assert _sample_clock(sample) == _dt.datetime(2026, 8, 30, 16, 48, tzinfo=_dt.UTC)
+
+
+def test_sample_clock_falls_back_to_wall_time_on_a_corrupt_timestamp() -> None:
+    """A wrong clock is worse than the honest current one."""
+    sample = ReplaySample(seq=1, timestamp="not a timestamp", message_context="hi")
+    assert _sample_clock(sample) is None
+
+
+def test_sample_clock_assumes_utc_for_a_naive_timestamp() -> None:
+    sample = ReplaySample(seq=1, timestamp="2026-08-30T16:48:00", message_context="hi")
+    clock = _sample_clock(sample)
+    assert clock is not None
+    assert clock.tzinfo is not None

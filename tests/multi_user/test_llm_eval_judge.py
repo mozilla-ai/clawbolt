@@ -35,10 +35,15 @@ class _Response:
     filters by ``isinstance``, so a duck-typed stub silently reads as an
     empty response and every mapping assertion below would pass for the
     wrong reason.
+
+    ``stop_reason`` carries the same default the providers send on a normal
+    completion, so a test that does not care about truncation does not have
+    to say so.
     """
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, stop_reason: str = "end_turn") -> None:
         self.content = [TextBlock(type="text", text=text)]
+        self.stop_reason = stop_reason
 
 
 def _judge_reply(**payload: Any) -> AsyncMock:

@@ -1453,6 +1453,7 @@ class ClawboltAgent:
         system_prompt_override: str | None = None,
         *,
         deterministic_trim: bool = False,
+        now: datetime | None = None,
     ) -> AssembledPrompt:
         """Build the exact message list a turn sends to the LLM, pre-flight.
 
@@ -1461,6 +1462,11 @@ class ClawboltAgent:
         through this same path. A second implementation would silently make
         every evaluation score a prompt no user ever received, so the assembly
         deliberately exists in exactly one place.
+
+        ``now`` overrides the clock stamped onto the current turn. Live turns
+        leave it None and get wall time; the replay passes the timestamp of
+        the turn it is replaying, so a date-relative instruction resolves
+        against the day the user actually sent it.
 
         ``deterministic_trim`` drops the process-local token estimate and lets
         the trimmer fall back to its own character heuristic. The estimate is
@@ -1496,7 +1502,7 @@ class ClawboltAgent:
         if conversation_history:
             messages.extend(conversation_history)
 
-        time_context = build_time_user_context(self.user)
+        time_context = build_time_user_context(self.user, now)
         # Order: time context, then dynamic context (memory, integrations,
         # cross-session), then the user's actual message last so the model
         # reads the ask after its context, mirroring how time is prepended.

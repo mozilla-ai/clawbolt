@@ -12,7 +12,7 @@ from backend.app.agent import media_staging
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.dto import slugify as _store_slugify
 from backend.app.agent.saved_media import find_saved_file, read_saved_file_bytes
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import MIME_EXTENSIONS
 from backend.app.media.pipeline import run_vision_on_media
@@ -901,6 +901,7 @@ def create_file_tools(
         ),
         Tool(
             name=ToolName.FIND_SAVED_FILES,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Find files that were already saved to durable storage. Use this "
                 "to pull up older receipts, photos, or documents by client name, "
@@ -922,6 +923,7 @@ def create_file_tools(
         ),
         Tool(
             name=ToolName.ANALYZE_SAVED_FILE,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Run vision analysis on a previously saved image in durable storage. "
                 "Quote the storage path returned by find_saved_files. Only works on images."
@@ -973,6 +975,7 @@ def create_file_tools(
         ),
         Tool(
             name=ToolName.READ_FROM_STORAGE,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Read a text file from cloud storage and return its contents. "
                 "Use this to view notes, documents, or config files that were "

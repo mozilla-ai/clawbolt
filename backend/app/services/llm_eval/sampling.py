@@ -7,6 +7,13 @@ now", so the prompt the candidate sees should be the prompt it would
 actually get. Replaying a months-old system prompt would measure a
 configuration nobody is going to ship.
 
+The clock is the one exception, and it is not a configuration choice. The
+turn's own timestamp is stamped on the replayed turn, because the history
+rows around it render absolute date markers: a run days later would ask the
+model to read a conversation that ended last week under a header claiming
+today, and every date-relative instruction in it would resolve to the wrong
+day. See ``assemble_for_sample``.
+
 The history for a turn is the window of rows immediately preceding it,
 bounded by ``conversation_history_limit`` and then trimmed by the same
 ``trim_messages`` governor the live loop uses. The session's current
@@ -19,6 +26,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from backend.app.agent.approval import get_approval_store
 from backend.app.agent.context import _stored_messages_to_agent_messages
@@ -218,15 +226,27 @@ async def build_fixture(user: User, *, sample_limit: int | None = None) -> Repla
 def _historic_response(rows: list[StoredMessage], start: int) -> tuple[str, list[str]]:
     """Return the reply text and tool names the agent produced for a turn.
 
-    Walks forward from the inbound row to the next inbound, since one user
-    turn can persist several outbound rows. Tool names are read back through
-    the same rebuilder the LLM history uses, so a row whose
-    ``tool_interactions_json`` is malformed degrades to "no tools" here
-    exactly as it does in the prompt.
+     A "turn" here is the whole run of consecutive inbound rows starting at
+     *start*, plus the outbound rows that follow it. Skipping over the rest of
+     the inbound run is what makes this correct for rapid-fire messages: a user
+     who sends four messages in a row persists four inbound rows and the agent
+     answers the batch once, after the last of them. Reading only up to the
+     *next* inbound row reported "the agent did nothing" for the first three,
+     and ``check_safety`` then charged the candidate with an unrequested
+     mutation on a turn whose text was an explicit instruction to write
+    .
+
+     Tool names are read back through the same rebuilder the LLM history uses,
+     so a row whose ``tool_interactions_json`` is malformed degrades to "no
+     tools" here exactly as it does in the prompt.
     """
     reply_parts: list[str] = []
     tool_names: list[str] = []
-    for row in rows[start + 1 :]:
+    index = start + 1
+    # Advance past the remainder of the inbound batch this row belongs to.
+    while index < len(rows) and rows[index].direction == MessageDirection.INBOUND:
+        index += 1
+    for row in rows[index:]:
         if row.direction == MessageDirection.INBOUND:
             break
         for msg in _stored_messages_to_agent_messages([row]):
@@ -272,6 +292,22 @@ def _history_for(fixture: ReplayFixture, sample: ReplaySample) -> list[AgentMess
     return _stored_messages_to_agent_messages(window, tz_name=fixture.tz_name)
 
 
+def _sample_clock(sample: ReplaySample) -> datetime | None:
+    """The wall time to stamp on *sample*'s replayed turn, or None for now.
+
+    Falls back to None (wall time) on an unparseable timestamp rather than
+    guessing: a wrong clock is worse than the honest current one, and the
+    column is ISO-formatted by ``_turn_row`` so this is a corrupt-row guard,
+    not an expected branch.
+    """
+    try:
+        parsed = datetime.fromisoformat(sample.timestamp)
+    except (TypeError, ValueError):
+        logger.warning("Unparseable timestamp %r on seq %d", sample.timestamp, sample.seq)
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 async def assemble_for_sample(fixture: ReplayFixture, sample: ReplaySample) -> AssembledPrompt:
     """Build the exact prompt the live agent would send for this turn.
 
@@ -280,6 +316,13 @@ async def assemble_for_sample(fixture: ReplayFixture, sample: ReplaySample) -> A
     reported input-token count) that would otherwise leak from one replayed
     turn into the next and change the prompt. Construction is cheap; the
     expensive part, the tool list, is shared via the fixture.
+
+    The clock is the turn's own timestamp, not now. Everything else about the
+    prompt is deliberately today's (see the module docstring), but the clock
+    is not a configuration choice: history rows render absolute date markers,
+    so a replay run days later hands the model a conversation that ends last
+    week under a header saying today, and "book it for this past Thursday"
+    lands on the wrong Thursday for both models.
     """
     agent = ClawboltAgent(user=fixture.user)
     agent.register_tools(fixture.tools)
@@ -290,4 +333,5 @@ async def assemble_for_sample(fixture: ReplayFixture, sample: ReplaySample) -> A
         sample.message_context,
         _history_for(fixture, sample),
         deterministic_trim=True,
+        now=_sample_clock(sample),
     )

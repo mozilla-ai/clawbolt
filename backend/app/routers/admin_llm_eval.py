@@ -51,8 +51,13 @@ from backend.app.schemas import (
 )
 from backend.app.services.admin_audit import AdminAction, AdminAuditContext, audit_admin
 from backend.app.services.llm_eval import launch_run
-from backend.app.services.llm_eval.metrics import MIN_TURNS_FOR_VERDICT
-from backend.app.services.llm_eval.types import AgreementClass, JudgeVerdict, RunStatus
+from backend.app.services.llm_eval.metrics import BLOCKING_FINDINGS, MIN_TURNS_FOR_VERDICT
+from backend.app.services.llm_eval.types import (
+    AgreementClass,
+    JudgeSkipReason,
+    JudgeVerdict,
+    RunStatus,
+)
 from backend.app.services.pii_redaction import redact_pii, redact_pii_recursive
 
 logger = logging.getLogger(__name__)
@@ -148,7 +153,46 @@ def _tool_calls(raw: str) -> list[AdminLLMEvalToolCall]:
     ]
 
 
-def _turn_item(turn: LLMEvalTurnResult) -> AdminLLMEvalTurn:
+def _blocking_findings(turn: LLMEvalTurnResult) -> bool:
+    """Whether this turn carries a finding that disqualifies a switch.
+
+    ``CALL_FAILED`` and ``UNRESOLVED_TOOL_NAME`` are recorded on the turn but
+    are not the candidate's fault, so neither the judge gate nor the report
+    ordering may treat them as disqualifying. See ``metrics.BLOCKING_FINDINGS``.
+    """
+    return any(
+        entry.get("finding") in BLOCKING_FINDINGS
+        for entry in _load_json(turn.safety_issues, [])
+        if isinstance(entry, dict)
+    )
+
+
+def _judge_skip_reason(turn: LLMEvalTurnResult, *, run_has_judge: bool) -> str:
+    """Which skip reason left *turn* unadjudicated, or "" if it was judged.
+
+    Derived at read time from the same signals ``runner._judge_skip_reason``
+    branches on, rather than stored, so this needs no column and no migration.
+    Keep the two in step: they answer the same question and a report that
+    disagrees with the run is worse than one that says nothing.
+    """
+    if turn.judge_verdict != str(JudgeVerdict.NOT_JUDGED):
+        return ""
+    if not run_has_judge:
+        return str(JudgeSkipReason.JUDGE_DISABLED)
+    if turn.baseline_error or turn.candidate_error:
+        return str(JudgeSkipReason.CALL_FAILED)
+    if turn.agreement == str(AgreementClass.IDENTICAL):
+        return str(JudgeSkipReason.IDENTICAL)
+    if turn.agreement == str(AgreementClass.BOTH_REPLIED) and (
+        turn.baseline_text.strip() == turn.candidate_text.strip()
+    ):
+        return str(JudgeSkipReason.SAME_PROSE)
+    if _blocking_findings(turn):
+        return str(JudgeSkipReason.BLOCKING_FINDING)
+    return ""
+
+
+def _turn_item(turn: LLMEvalTurnResult, *, run_has_judge: bool = True) -> AdminLLMEvalTurn:
     issues = _load_json(turn.safety_issues, [])
     return AdminLLMEvalTurn(
         message_seq=turn.message_seq,
@@ -163,6 +207,7 @@ def _turn_item(turn: LLMEvalTurnResult) -> AdminLLMEvalTurn:
             input_tokens=turn.baseline_input_tokens,
             output_tokens=turn.baseline_output_tokens,
             cache_read_tokens=turn.baseline_cache_read_tokens,
+            cache_creation_tokens=turn.baseline_cache_creation_tokens,
             latency_ms=turn.baseline_latency_ms,
             error=turn.baseline_error,
         ),
@@ -173,6 +218,7 @@ def _turn_item(turn: LLMEvalTurnResult) -> AdminLLMEvalTurn:
             input_tokens=turn.candidate_input_tokens,
             output_tokens=turn.candidate_output_tokens,
             cache_read_tokens=turn.candidate_cache_read_tokens,
+            cache_creation_tokens=turn.candidate_cache_creation_tokens,
             latency_ms=turn.candidate_latency_ms,
             error=turn.candidate_error,
         ),
@@ -188,6 +234,7 @@ def _turn_item(turn: LLMEvalTurnResult) -> AdminLLMEvalTurn:
         ],
         judge_verdict=turn.judge_verdict,
         judge_rationale=redact_pii(turn.judge_rationale),
+        judge_skip_reason=_judge_skip_reason(turn, run_has_judge=run_has_judge),
     )
 
 
@@ -205,15 +252,26 @@ _TURN_PRIORITY = {
 }
 
 
-def _turn_sort_key(turn: LLMEvalTurnResult) -> tuple[int, int, int]:
-    has_safety = 0 if _load_json(turn.safety_issues, []) else 1
+def _turn_sort_key(turn: LLMEvalTurnResult) -> tuple[int, int, int, int]:
+    """Rank turns by how much they should change the reader's mind.
+
+    Blocking findings are ranked separately from non-blocking ones, and that
+    ordering is the whole point. Keying on ``bool(safety_issues)`` put every
+    turn whose only mark was a retired tool name in the fixture above the
+    turns that actually decided the verdict, so the first screen of a report
+    was five red badges that the summary text goes on to say are not the
+    candidate's fault, while a genuine dozen-write burst sat below the fold
+    under a neutral badge.
+    """
+    has_blocking = 0 if _blocking_findings(turn) else 1
     judged_bad = (
         0
         if turn.judge_verdict
         in (str(JudgeVerdict.CANDIDATE_UNSAFE), str(JudgeVerdict.CANDIDATE_WORSE))
         else 1
     )
-    return (has_safety, judged_bad, _TURN_PRIORITY.get(turn.agreement, 7))
+    has_advisory = 0 if _load_json(turn.safety_issues, []) else 1
+    return (has_blocking, judged_bad, has_advisory, _TURN_PRIORITY.get(turn.agreement, 7))
 
 
 @router.post("/users/{user_id}/runs", response_model=AdminLLMEvalRunItem, status_code=201)
@@ -407,7 +465,7 @@ async def get_report(
     page = ordered[offset : offset + limit]
     return AdminLLMEvalReportResponse(
         run=_run_item(run),
-        turns=[_turn_item(t) for t in page],
+        turns=[_turn_item(t, run_has_judge=bool(run.judge_model)) for t in page],
         total_turns=len(ordered),
     )
 

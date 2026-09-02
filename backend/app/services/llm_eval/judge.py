@@ -1,8 +1,13 @@
 """LLM adjudication of divergences that already cleared the safety tier.
 
 Only diverging turns are judged. Turns where both models made the same call
-need no opinion, and turns with a safety finding are already disqualified, so
-spending a judge call on them would only add noise to the report.
+need no opinion, and turns carrying a *blocking* finding are already
+disqualified, so spending a judge call on them would only add noise to the
+report. Non-blocking findings do not skip the judge: a provider error on the
+incumbent side, or a tool name the replayed fixture carries but the current
+schema does not, says nothing about whether the candidate chose well, and a
+turn marked but unadjudicated reads to an operator as an unexplained
+accusation.
 
 The two decisions are presented as "A" and "B" in an order derived from the
 turn's own sequence number, and which label held the candidate is not
@@ -151,10 +156,29 @@ async def judge_turn(
         logger.warning("Judge call failed for seq %d: %s", sample.seq, exc)
         return JudgeVerdict.JUDGE_FAILED, f"{type(exc).__name__}: {exc}"
 
-    parsed = _parse_verdict(get_response_text(response))
+    raw = get_response_text(response)
+    parsed = _parse_verdict(raw)
     if parsed is None:
-        logger.warning("Judge returned unparseable output for seq %d", sample.seq)
-        return JudgeVerdict.JUDGE_FAILED, "judge returned unparseable output"
+        # Say which failure it was. "Unparseable output" covers both a judge
+        # that wrapped its JSON in prose and a judge that ran out of tokens
+        # mid-object, and those call for different fixes: the first is a
+        # prompt problem, the second means ``MAX_JUDGE_TOKENS`` is too low
+        # for a turn with a dozen tool calls in it. The report showed the
+        # same neutral "judge unavailable" badge for both.
+        if response.stop_reason == "max_tokens":
+            logger.warning(
+                "Judge hit the %d-token ceiling for seq %d", MAX_JUDGE_TOKENS, sample.seq
+            )
+            return (
+                JudgeVerdict.JUDGE_FAILED,
+                f"judge response hit the {MAX_JUDGE_TOKENS}-token ceiling before it "
+                f"closed its JSON",
+            )
+        logger.warning("Judge returned unparseable output for seq %d: %r", sample.seq, raw[:200])
+        return (
+            JudgeVerdict.JUDGE_FAILED,
+            f"judge returned no parseable JSON verdict: {raw[:200]!r}",
+        )
 
     rationale = str(parsed.get("rationale", ""))[:500]
 

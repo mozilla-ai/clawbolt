@@ -54,10 +54,32 @@ const AGREEMENT_COPY: Record<string, string> = {
 const FINDING_COPY: Record<string, string> = {
   unknown_tool: 'Called a tool that does not exist',
   invalid_args: 'Arguments the tool rejects',
-  unrequested_mutation: 'Reached for a mutating tool the incumbent did not',
+  unrequested_mutation: 'Wrote something neither the incumbent nor the live turn did',
   truncated: 'Response truncated mid-thought',
   call_failed: 'Provider call failed',
-  unresolved_tool_name: 'Tool in this history but not in the current schema',
+  unresolved_tool_name: 'Retired tool name, carried by this history',
+};
+
+// Findings that disqualify a switch, mirroring ``metrics.BLOCKING_FINDINGS``.
+// Everything else describes the replayed fixture or the measurement rather
+// than the candidate, and must not be dressed as an accusation: rendering all
+// six in the same red made the first screen of a report five badges the
+// summary text goes on to disown.
+const BLOCKING_FINDINGS = new Set([
+  'unknown_tool',
+  'invalid_args',
+  'unrequested_mutation',
+  'truncated',
+]);
+
+// Why a turn carries no judge verdict. Without this an operator subtracts the
+// judge counts from the turn count and concludes the judge is broken.
+const SKIP_COPY: Record<string, string> = {
+  identical: 'Not judged: both models made the same call',
+  same_prose: 'Not judged: both replied with the same text',
+  blocking_finding: 'Not judged: already disqualified by the finding above',
+  call_failed: 'Not judged: a provider call failed, so there was no decision',
+  judge_disabled: 'Not judged: this run had the judge turned off',
 };
 
 const VERDICT_COPY: Record<string, string> = {
@@ -65,7 +87,15 @@ const VERDICT_COPY: Record<string, string> = {
   candidate_better: 'Judge: candidate better',
   candidate_worse: 'Judge: candidate worse',
   candidate_unsafe: 'Judge: candidate unsafe',
-  judge_failed: 'Judge: unavailable',
+  judge_failed: 'Judge did not return a verdict',
+};
+
+// The judge scoring against the candidate is the finding; equivalent or
+// better is reassurance; a judge that never answered is neither.
+const VERDICT_CLASS: Record<string, string> = {
+  candidate_unsafe: 'bg-error-bg text-error-text',
+  candidate_worse: 'bg-error-bg text-error-text',
+  judge_failed: 'bg-warning-bg text-warning-text',
 };
 
 function pct(value: number): string {
@@ -79,6 +109,16 @@ function money(totals: { total_cost_usd: string; pricing_available: boolean }): 
 
 function ms(value: number): string {
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`;
+}
+
+/** Every prompt token a call was billed for, cached or not.
+ *
+ * ``input_tokens`` alone is not the prompt size: a provider reports the
+ * cached part separately, so a fully cached call shows a few thousand next to
+ * an uncached call's hundred and fifty thousand for the same prompt.
+ */
+function billedPrompt(decision: EvalDecision): number {
+  return decision.input_tokens + decision.cache_read_tokens + decision.cache_creation_tokens;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,12 +163,28 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 
 function SummaryGrid({ summary }: { summary: EvalSummary }) {
   const safetyTotal = summary.blocking_findings;
+  const advisory =
+    Object.entries(summary.safety_counts)
+      .filter(([finding]) => !BLOCKING_FINDINGS.has(finding))
+      .reduce((total, [, count]) => total + count, 0) || 0;
+  const judged = Object.values(summary.judge_counts).reduce((a, b) => a + b, 0);
+  const noopConceded = Math.round(summary.silent_noop_blocking_rate * summary.turns_completed);
+  // Cost is only reportable when the pricing library knows both models. A
+  // gateway alias never resolves, so this tile is usually "unknown" and must
+  // not imply "free".
+  const costKnown = summary.candidate.pricing_available && summary.baseline.pricing_available;
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Stat
-        label="Safety findings"
+        label="Blocking findings"
         value={String(safetyTotal)}
-        hint={safetyTotal ? 'Any finding blocks a switch' : 'None across the run'}
+        hint={
+          safetyTotal
+            ? 'Each one blocks a switch on its own'
+            : advisory
+              ? `None. ${advisory} advisory note${advisory === 1 ? '' : 's'} below`
+              : 'None across the run'
+        }
       />
       <Stat
         label="Matched the incumbent"
@@ -136,14 +192,20 @@ function SummaryGrid({ summary }: { summary: EvalSummary }) {
         hint={`${summary.turns_completed} turns compared`}
       />
       <Stat
-        label="Replied instead of acting"
-        value={pct(summary.silent_noop_rate)}
-        hint="Turns the incumbent acted on"
+        label="Replied where acting was better"
+        value={pct(summary.silent_noop_blocking_rate)}
+        hint={
+          summary.silent_noop_rate > summary.silent_noop_blocking_rate
+            ? `${noopConceded} of ${Math.round(
+                summary.silent_noop_rate * summary.turns_completed,
+              )} silent no-ops; the judge preferred the rest`
+            : 'Turns the incumbent acted on'
+        }
       />
       <Stat
         label="Cost per run"
-        value={money(summary.candidate)}
-        hint={`Incumbent ${money(summary.baseline)}`}
+        value={costKnown ? money(summary.candidate) : 'not priced'}
+        hint={costKnown ? `Incumbent ${money(summary.baseline)}` : 'No pricing for these models'}
       />
       <Stat
         label="Candidate latency (p95)"
@@ -151,19 +213,49 @@ function SummaryGrid({ summary }: { summary: EvalSummary }) {
         hint={`Incumbent ${ms(summary.baseline.latency_p95_ms)}`}
       />
       <Stat
-        label="Candidate cache reads"
-        value={pct(summary.candidate.cache_read_ratio)}
-        hint={`Incumbent ${pct(summary.baseline.cache_read_ratio)}`}
+        label="Candidate prompt caching"
+        value={pct(summary.candidate.cache_participation_ratio)}
+        hint={`Incumbent ${pct(summary.baseline.cache_participation_ratio)}. Cached share of prompt tokens`}
       />
       <Stat label="Turns that diverged" value={pct(summary.divergence_rate)} />
       <Stat
-        label="Turns that failed"
-        value={String(summary.turns_failed)}
-        hint="Could not be compared"
+        label="Turns the judge scored"
+        value={String(judged)}
+        hint={
+          summary.turns_total > judged
+            ? `${summary.turns_total - judged} not judged, see below`
+            : 'Every turn'
+        }
       />
     </div>
   );
 }
+
+// Where the unjudged turns went. Rendered as prose under the grid rather than
+// as another tile: it is an accounting reassurance, not a number anyone acts
+// on, and it exists so a judged count short of the turn count does not read
+// as a broken judge.
+function JudgeAccounting({ summary }: { summary: EvalSummary }) {
+  const entries = Object.entries(summary.judge_skip_counts).filter(([, count]) => count > 0);
+  if (entries.length === 0) return null;
+  return (
+    <p className="text-xs text-muted-foreground">
+      Only diverging, measurable turns are adjudicated. Not judged:{' '}
+      {entries
+        .map(([reason, count]) => `${count} ${SKIP_REASON_SHORT[reason] ?? reason}`)
+        .join(', ')}
+      .
+    </p>
+  );
+}
+
+const SKIP_REASON_SHORT: Record<string, string> = {
+  identical: 'where both models made the same call',
+  same_prose: 'where both replied with the same text',
+  blocking_finding: 'already disqualified by a finding',
+  call_failed: 'where a provider call failed',
+  judge_disabled: 'with the judge turned off',
+};
 
 function DecisionColumn({ title, decision }: { title: string; decision: EvalDecision }) {
   return (
@@ -202,7 +294,15 @@ function DecisionColumn({ title, decision }: { title: string; decision: EvalDeci
 }
 
 function TurnCard({ turn }: { turn: EvalTurn }) {
-  const [open, setOpen] = useState(turn.safety_issues.length > 0);
+  const blocking = turn.safety_issues.filter(i => BLOCKING_FINDINGS.has(i.finding));
+  const advisory = turn.safety_issues.filter(i => !BLOCKING_FINDINGS.has(i.finding));
+  // Expand what decides the verdict. An advisory note alone is not worth
+  // opening a diff for, and auto-expanding those buried the turns that were.
+  const [open, setOpen] = useState(
+    blocking.length > 0 ||
+      turn.judge_verdict === 'candidate_unsafe' ||
+      turn.judge_verdict === 'candidate_worse',
+  );
   return (
     <div className="rounded-[--radius-md] border border-border bg-card">
       <button
@@ -217,18 +317,36 @@ function TurnCard({ turn }: { turn: EvalTurn }) {
             <span className="text-muted-foreground">
               {AGREEMENT_COPY[turn.agreement] ?? turn.agreement}
             </span>
-            {turn.safety_issues.map((issue, index) => (
+            {blocking.map((issue, index) => (
               <span
-                key={`${issue.finding}-${index}`}
+                key={`blocking-${issue.finding}-${index}`}
                 className="rounded-full bg-error-bg px-2 py-0.5 text-error-text"
               >
                 {FINDING_COPY[issue.finding] ?? issue.finding}
                 {issue.tool_name ? `: ${issue.tool_name}` : ''}
               </span>
             ))}
+            {advisory.map((issue, index) => (
+              <span
+                key={`advisory-${issue.finding}-${index}`}
+                className="rounded-full bg-panel px-2 py-0.5 text-muted-foreground"
+                title="Not counted against the candidate"
+              >
+                {FINDING_COPY[issue.finding] ?? issue.finding}
+                {issue.tool_name ? `: ${issue.tool_name}` : ''}
+              </span>
+            ))}
             {turn.judge_verdict !== 'not_judged' ? (
-              <span className="rounded-full bg-panel px-2 py-0.5 text-muted-foreground">
+              <span
+                className={`rounded-full px-2 py-0.5 ${
+                  VERDICT_CLASS[turn.judge_verdict] ?? 'bg-panel text-muted-foreground'
+                }`}
+              >
                 {VERDICT_COPY[turn.judge_verdict] ?? turn.judge_verdict}
+              </span>
+            ) : turn.judge_skip_reason ? (
+              <span className="rounded-full bg-panel px-2 py-0.5 text-muted-foreground">
+                {SKIP_COPY[turn.judge_skip_reason] ?? turn.judge_skip_reason}
               </span>
             ) : null}
           </div>
@@ -238,10 +356,34 @@ function TurnCard({ turn }: { turn: EvalTurn }) {
 
       {open ? (
         <div className="border-t border-border p-3">
+          {advisory.length > 0 ? (
+            <ul className="mb-3 space-y-1 text-xs text-muted-foreground">
+              {advisory.map((issue, index) => (
+                <li key={`detail-${issue.finding}-${index}`}>
+                  <span className="font-medium">
+                    {FINDING_COPY[issue.finding] ?? issue.finding}
+                  </span>{' '}
+                  {issue.detail}
+                  {issue.finding === 'unresolved_tool_name'
+                    ? ' Not counted against the candidate.'
+                    : ''}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <div className="flex flex-col gap-4 sm:flex-row">
             <DecisionColumn title="Incumbent" decision={turn.baseline} />
             <DecisionColumn title="Candidate" decision={turn.candidate} />
           </div>
+          {/* Billed prompt tokens, not ``input_tokens``. The two are wildly
+              different for a cached call and reading the raw input column
+              side by side suggests one model was handed 16x the context when
+              both got a byte-identical prompt. */}
+          <p className="mt-3 font-mono text-xs text-muted-foreground">
+            billed prompt tokens: incumbent {billedPrompt(turn.baseline).toLocaleString()},
+            candidate {billedPrompt(turn.candidate).toLocaleString()} | latency{' '}
+            {ms(turn.baseline.latency_ms)} against {ms(turn.candidate.latency_ms)}
+          </p>
           {turn.judge_rationale ? (
             <p className="mt-3 border-t border-border pt-3 text-sm text-muted-foreground">
               {turn.judge_rationale}
@@ -416,6 +558,7 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
           ))}
 
           <SummaryGrid summary={run.summary} />
+          <JudgeAccounting summary={run.summary} />
         </>
       ) : (
         <p className="text-sm text-muted-foreground">
