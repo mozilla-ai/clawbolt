@@ -56,7 +56,7 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `calendar_configs` | Per-user calendar integration settings |
 | `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, Google Drive, QuickBooks, etc.) |
 
-Eight more tables exist for `AUTH_MODE=multi_user` and stay empty in a single-user deployment: `subscriptions`, `usage_quotas`, `deleted_user_usage`, `allowed_emails`, `waitlist_entries`, `admin_api_keys`, `admin_audit_logs`, `llm_payload_captures`. See "Multi-user mode" below.
+Ten more tables exist for `AUTH_MODE=multi_user` and stay empty in a single-user deployment: `subscriptions`, `usage_quotas`, `deleted_user_usage`, `allowed_emails`, `waitlist_entries`, `admin_api_keys`, `admin_audit_logs`, `llm_payload_captures`, `llm_eval_runs`, `llm_eval_turn_results`. See "Multi-user mode" below.
 
 Saved files are not tracked in Postgres. The Google Drive integration is the source of truth for filenames, locations, and descriptions. The agent quotes saved files by their storage path (e.g. `/Astro Home Management - 123 Main Street/photos/foo.jpg`).
 
