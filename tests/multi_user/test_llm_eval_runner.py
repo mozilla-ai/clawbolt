@@ -375,8 +375,10 @@ async def test_run_stops_after_consecutive_provider_failures(
     # A run that stopped early cannot endorse a switch, and the banner reads
     # the summary rather than the column, so both have to say so.
     assert run.recommendation == str(Recommendation.INCONCLUSIVE)
-    assert run.summary_json["recommendation"] == str(Recommendation.INCONCLUSIVE)
-    assert "consecutive provider failures" in run.summary_json["reasons"][0]
+    summary = run.summary_json
+    assert summary is not None
+    assert summary["recommendation"] == str(Recommendation.INCONCLUSIVE)
+    assert "consecutive provider failures" in summary["reasons"][0]
 
 
 @pytest.mark.asyncio()
