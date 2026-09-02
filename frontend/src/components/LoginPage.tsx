@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { BetaBadge } from '@/extensions/header-badge';
 import '@/styles/marketing.css';
 
 /**
@@ -106,7 +105,6 @@ export default function LoginPage() {
             <img src="/clawbolt-white.svg" alt="" className="w-16 h-16" />
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold font-display text-white">Clawbolt</h1>
-              <BetaBadge variant="dark" />
             </div>
           </Link>
           <p className="text-sm text-white/60 mt-1">AI assistant for the trades</p>

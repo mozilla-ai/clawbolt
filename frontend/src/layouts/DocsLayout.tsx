@@ -1,7 +1,6 @@
 import { Outlet, Link } from 'react-router-dom';
 import DocsSidebar from '@/pages/docs/DocsSidebar';
 import { LOGIN_PATH } from '@/extensions/routes';
-import { BetaBadge } from '@/extensions/header-badge';
 import '@/styles/marketing.css';
 
 export default function DocsLayout() {
@@ -37,7 +36,6 @@ export default function DocsLayout() {
           >
             <img src="/clawbolt-white.svg" alt="" className="w-10 h-10" />
             Clawbolt
-            <BetaBadge variant="dark" />
           </Link>
           <div className="flex items-center gap-5 text-sm">
             <Link to="/docs/guide" className="text-white/80 hover:text-white transition-colors">

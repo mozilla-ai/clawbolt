@@ -1,6 +1,5 @@
 import { Outlet, Link } from 'react-router-dom';
 import { LOGIN_PATH } from '@/extensions/routes';
-import { BetaBadge } from '@/extensions/header-badge';
 import '@/styles/marketing.css';
 
 export default function MarketingLayout() {
@@ -30,7 +29,6 @@ export default function MarketingLayout() {
           <Link to="/" className="flex items-center gap-3 text-3xl font-bold font-display text-white">
             <img src="/clawbolt-white.svg" alt="" className="w-14 h-14" />
             Clawbolt
-            <BetaBadge variant="dark" />
           </Link>
           <Link
             to={LOGIN_PATH}
