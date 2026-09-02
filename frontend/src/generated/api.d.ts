@@ -2184,6 +2184,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/llm-eval/users/{user_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description List this user's evaluation runs, newest first.
+         */
+        get: operations["list_runs_api_admin_llm_eval_users__user_id__runs_get"];
+        put?: never;
+        /**
+         * Start Run
+         * @description Queue a comparison run and return the row immediately.
+         *
+         *     The run executes on a background task; poll the returned ``id`` for
+         *     progress. One active run per user: a second concurrent replay of the
+         *     same history would double the provider load for no extra information.
+         */
+        post: operations["start_run_api_admin_llm_eval_users__user_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/llm-eval/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Report
+         * @description Return a run with its per-turn evidence, most concerning turns first.
+         */
+        get: operations["get_report_api_admin_llm_eval_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/llm-eval/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Run
+         * @description Ask an in-flight run to stop.
+         *
+         *     Flips the status; the worker checks it between turns and unwinds. Turns
+         *     already written stay, so a cancelled run keeps whatever evidence it had
+         *     gathered.
+         */
+        post: operations["cancel_run_api_admin_llm_eval_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/reported-conversations": {
         parameters: {
             query?: never;
@@ -2943,6 +3015,311 @@ export interface components {
             llm_model?: string | null;
             /** Llm Api Base */
             llm_api_base?: string | null;
+        };
+        /**
+         * AdminLLMEvalDecision
+         * @description One model's decision for one replayed turn.
+         */
+        AdminLLMEvalDecision: {
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /** Tool Calls */
+            tool_calls?: components["schemas"]["AdminLLMEvalToolCall"][];
+            /**
+             * Stop Reason
+             * @default
+             */
+            stop_reason: string;
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+            /**
+             * Error
+             * @default
+             */
+            error: string;
+        };
+        /**
+         * AdminLLMEvalModelTotals
+         * @description Cost, cache, and latency totals for one model across a run.
+         */
+        AdminLLMEvalModelTotals: {
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Creation Tokens
+             * @default 0
+             */
+            cache_creation_tokens: number;
+            /**
+             * Cache Read Ratio
+             * @default 0
+             */
+            cache_read_ratio: number;
+            /**
+             * Total Cost Usd
+             * @default 0.000000
+             */
+            total_cost_usd: string;
+            /**
+             * Pricing Available
+             * @default true
+             */
+            pricing_available: boolean;
+            /**
+             * Latency P50 Ms
+             * @default 0
+             */
+            latency_p50_ms: number;
+            /**
+             * Latency P95 Ms
+             * @default 0
+             */
+            latency_p95_ms: number;
+        };
+        /**
+         * AdminLLMEvalReportResponse
+         * @description A run plus its per-turn evidence, worst turns first.
+         */
+        AdminLLMEvalReportResponse: {
+            run: components["schemas"]["AdminLLMEvalRunItem"];
+            /** Turns */
+            turns: components["schemas"]["AdminLLMEvalTurn"][];
+        };
+        /**
+         * AdminLLMEvalRunCreate
+         * @description Request to replay a user's recent turns against a candidate model.
+         *
+         *     The baseline is not accepted from the client: it is resolved server-side
+         *     from the user's effective configuration (their subscription override, or
+         *     the global default), so a report can never compare against a model the
+         *     user was not actually on.
+         */
+        AdminLLMEvalRunCreate: {
+            /** Candidate Provider */
+            candidate_provider: string;
+            /** Candidate Model */
+            candidate_model: string;
+            /**
+             * Sample Count
+             * @default 100
+             */
+            sample_count: number;
+            /**
+             * Judge Enabled
+             * @default true
+             */
+            judge_enabled: boolean;
+        };
+        /**
+         * AdminLLMEvalRunItem
+         * @description One run, without its per-turn evidence.
+         */
+        AdminLLMEvalRunItem: {
+            /** Id */
+            id: number;
+            /** User Id */
+            user_id: string;
+            /** Baseline Provider */
+            baseline_provider: string;
+            /** Baseline Model */
+            baseline_model: string;
+            /** Candidate Provider */
+            candidate_provider: string;
+            /** Candidate Model */
+            candidate_model: string;
+            /** Judge Model */
+            judge_model: string;
+            /** Requested Samples */
+            requested_samples: number;
+            /** Status */
+            status: string;
+            /** Progress Completed */
+            progress_completed: number;
+            /** Progress Total */
+            progress_total: number;
+            /** Recommendation */
+            recommendation: string;
+            /** Error */
+            error: string;
+            /** Created At */
+            created_at: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            summary?: components["schemas"]["AdminLLMEvalSummary"] | null;
+        };
+        /** AdminLLMEvalRunListResponse */
+        AdminLLMEvalRunListResponse: {
+            /** Runs */
+            runs: components["schemas"]["AdminLLMEvalRunItem"][];
+        };
+        /** AdminLLMEvalSafetyIssue */
+        AdminLLMEvalSafetyIssue: {
+            /** Finding */
+            finding: string;
+            /**
+             * Tool Name
+             * @default
+             */
+            tool_name: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+        };
+        /**
+         * AdminLLMEvalSummary
+         * @description The frozen aggregate stored on the run when it completed.
+         */
+        AdminLLMEvalSummary: {
+            /**
+             * Turns Total
+             * @default 0
+             */
+            turns_total: number;
+            /**
+             * Turns Completed
+             * @default 0
+             */
+            turns_completed: number;
+            /**
+             * Turns Failed
+             * @default 0
+             */
+            turns_failed: number;
+            /** Agreement Counts */
+            agreement_counts?: {
+                [key: string]: number;
+            };
+            /** Safety Counts */
+            safety_counts?: {
+                [key: string]: number;
+            };
+            /** Judge Counts */
+            judge_counts?: {
+                [key: string]: number;
+            };
+            /**
+             * Identical Rate
+             * @default 0
+             */
+            identical_rate: number;
+            /**
+             * Divergence Rate
+             * @default 0
+             */
+            divergence_rate: number;
+            /**
+             * Silent Noop Rate
+             * @default 0
+             */
+            silent_noop_rate: number;
+            baseline?: components["schemas"]["AdminLLMEvalModelTotals"];
+            candidate?: components["schemas"]["AdminLLMEvalModelTotals"];
+            /**
+             * Recommendation
+             * @default
+             */
+            recommendation: string;
+            /** Reasons */
+            reasons?: string[];
+            /** Warnings */
+            warnings?: string[];
+        };
+        /** AdminLLMEvalToolCall */
+        AdminLLMEvalToolCall: {
+            /** Name */
+            name: string;
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * AdminLLMEvalTurn
+         * @description One replayed turn: the user's message and both models' decisions.
+         *
+         *     ``historic_reply`` and ``historic_tool_names`` are what the agent actually
+         *     did for this turn when it happened. They are shown alongside, not scored:
+         *     that turn ran against an older system prompt and an older tool set, so it
+         *     is context for a human reading the diff rather than a third contestant.
+         */
+        AdminLLMEvalTurn: {
+            /** Message Seq */
+            message_seq: number;
+            /** Message Timestamp */
+            message_timestamp: string;
+            /** User Message */
+            user_message: string;
+            /**
+             * Historic Reply
+             * @default
+             */
+            historic_reply: string;
+            /** Historic Tool Names */
+            historic_tool_names?: string[];
+            baseline: components["schemas"]["AdminLLMEvalDecision"];
+            candidate: components["schemas"]["AdminLLMEvalDecision"];
+            /** Agreement */
+            agreement: string;
+            /** Safety Issues */
+            safety_issues?: components["schemas"]["AdminLLMEvalSafetyIssue"][];
+            /**
+             * Judge Verdict
+             * @default not_judged
+             */
+            judge_verdict: string;
+            /**
+             * Judge Rationale
+             * @default
+             */
+            judge_rationale: string;
         };
         /**
          * AdminLLMModelsResponse
@@ -7833,6 +8210,134 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SharedDataExportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_admin_llm_eval_users__user_id__runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMEvalRunListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_run_api_admin_llm_eval_users__user_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminLLMEvalRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMEvalRunItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_report_api_admin_llm_eval_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMEvalReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_run_api_admin_llm_eval_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMEvalRunItem"];
                 };
             };
             /** @description Validation Error */

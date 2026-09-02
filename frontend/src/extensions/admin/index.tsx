@@ -11,6 +11,7 @@ import AccessAndWaitlistTab from './tabs/access-and-waitlist';
 import ReportedTab from './tabs/reported';
 import ApiKeysTab from './tabs/api-keys';
 import MonitoringTab from './tabs/monitoring';
+import ModelEvalTab from './tabs/model-eval';
 
 // --- Navigation model ---
 //
@@ -291,6 +292,14 @@ export default function AdminPanel() {
         element={
           <AdminSection slug="monitoring">
             <MonitoringTab />
+          </AdminSection>
+        }
+      />
+      <Route
+        path="model-eval"
+        element={
+          <AdminSection slug="model-eval">
+            <ModelEvalTab />
           </AdminSection>
         }
       />

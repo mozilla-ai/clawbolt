@@ -3821,6 +3821,186 @@
         }
       }
     },
+    "/api/admin/llm-eval/users/{user_id}/runs": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Start Run",
+        "description": "Queue a comparison run and return the row immediately.\n\nThe run executes on a background task; poll the returned ``id`` for\nprogress. One active run per user: a second concurrent replay of the\nsame history would double the provider load for no extra information.",
+        "operationId": "start_run_api_admin_llm_eval_users__user_id__runs_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLLMEvalRunCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLLMEvalRunItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Runs",
+        "description": "List this user's evaluation runs, newest first.",
+        "operationId": "list_runs_api_admin_llm_eval_users__user_id__runs_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLLMEvalRunListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/llm-eval/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Report",
+        "description": "Return a run with its per-turn evidence, most concerning turns first.",
+        "operationId": "get_report_api_admin_llm_eval_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLLMEvalReportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/llm-eval/runs/{run_id}/cancel": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Cancel Run",
+        "description": "Ask an in-flight run to stop.\n\nFlips the status; the worker checks it between turns and unwinds. Turns\nalready written stay, so a cancelled run keeps whatever evidence it had\ngathered.",
+        "operationId": "cancel_run_api_admin_llm_eval_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLLMEvalRunItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/reported-conversations": {
       "get": {
         "tags": [
@@ -5214,6 +5394,489 @@
         "type": "object",
         "title": "AdminLLMConfigUpdate",
         "description": "All fields optional. Pass only what you want to change."
+      },
+      "AdminLLMEvalDecision": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "default": ""
+          },
+          "tool_calls": {
+            "items": {
+              "$ref": "#/components/schemas/AdminLLMEvalToolCall"
+            },
+            "type": "array",
+            "title": "Tool Calls"
+          },
+          "stop_reason": {
+            "type": "string",
+            "title": "Stop Reason",
+            "default": ""
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "latency_ms": {
+            "type": "number",
+            "title": "Latency Ms",
+            "default": 0.0
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "AdminLLMEvalDecision",
+        "description": "One model's decision for one replayed turn."
+      },
+      "AdminLLMEvalModelTotals": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": ""
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "cache_creation_tokens": {
+            "type": "integer",
+            "title": "Cache Creation Tokens",
+            "default": 0
+          },
+          "cache_read_ratio": {
+            "type": "number",
+            "title": "Cache Read Ratio",
+            "default": 0.0
+          },
+          "total_cost_usd": {
+            "type": "string",
+            "title": "Total Cost Usd",
+            "default": "0.000000"
+          },
+          "pricing_available": {
+            "type": "boolean",
+            "title": "Pricing Available",
+            "default": true
+          },
+          "latency_p50_ms": {
+            "type": "number",
+            "title": "Latency P50 Ms",
+            "default": 0.0
+          },
+          "latency_p95_ms": {
+            "type": "number",
+            "title": "Latency P95 Ms",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "AdminLLMEvalModelTotals",
+        "description": "Cost, cache, and latency totals for one model across a run."
+      },
+      "AdminLLMEvalReportResponse": {
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/AdminLLMEvalRunItem"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/AdminLLMEvalTurn"
+            },
+            "type": "array",
+            "title": "Turns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run",
+          "turns"
+        ],
+        "title": "AdminLLMEvalReportResponse",
+        "description": "A run plus its per-turn evidence, worst turns first."
+      },
+      "AdminLLMEvalRunCreate": {
+        "properties": {
+          "candidate_provider": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Candidate Provider"
+          },
+          "candidate_model": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Candidate Model"
+          },
+          "sample_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Sample Count",
+            "default": 100
+          },
+          "judge_enabled": {
+            "type": "boolean",
+            "title": "Judge Enabled",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate_provider",
+          "candidate_model"
+        ],
+        "title": "AdminLLMEvalRunCreate",
+        "description": "Request to replay a user's recent turns against a candidate model.\n\nThe baseline is not accepted from the client: it is resolved server-side\nfrom the user's effective configuration (their subscription override, or\nthe global default), so a report can never compare against a model the\nuser was not actually on."
+      },
+      "AdminLLMEvalRunItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "baseline_provider": {
+            "type": "string",
+            "title": "Baseline Provider"
+          },
+          "baseline_model": {
+            "type": "string",
+            "title": "Baseline Model"
+          },
+          "candidate_provider": {
+            "type": "string",
+            "title": "Candidate Provider"
+          },
+          "candidate_model": {
+            "type": "string",
+            "title": "Candidate Model"
+          },
+          "judge_model": {
+            "type": "string",
+            "title": "Judge Model"
+          },
+          "requested_samples": {
+            "type": "integer",
+            "title": "Requested Samples"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress_completed": {
+            "type": "integer",
+            "title": "Progress Completed"
+          },
+          "progress_total": {
+            "type": "integer",
+            "title": "Progress Total"
+          },
+          "recommendation": {
+            "type": "string",
+            "title": "Recommendation"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminLLMEvalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "baseline_provider",
+          "baseline_model",
+          "candidate_provider",
+          "candidate_model",
+          "judge_model",
+          "requested_samples",
+          "status",
+          "progress_completed",
+          "progress_total",
+          "recommendation",
+          "error",
+          "created_at"
+        ],
+        "title": "AdminLLMEvalRunItem",
+        "description": "One run, without its per-turn evidence."
+      },
+      "AdminLLMEvalRunListResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/AdminLLMEvalRunItem"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "title": "AdminLLMEvalRunListResponse"
+      },
+      "AdminLLMEvalSafetyIssue": {
+        "properties": {
+          "finding": {
+            "type": "string",
+            "title": "Finding"
+          },
+          "tool_name": {
+            "type": "string",
+            "title": "Tool Name",
+            "default": ""
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "finding"
+        ],
+        "title": "AdminLLMEvalSafetyIssue"
+      },
+      "AdminLLMEvalSummary": {
+        "properties": {
+          "turns_total": {
+            "type": "integer",
+            "title": "Turns Total",
+            "default": 0
+          },
+          "turns_completed": {
+            "type": "integer",
+            "title": "Turns Completed",
+            "default": 0
+          },
+          "turns_failed": {
+            "type": "integer",
+            "title": "Turns Failed",
+            "default": 0
+          },
+          "agreement_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Agreement Counts"
+          },
+          "safety_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Safety Counts"
+          },
+          "judge_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Judge Counts"
+          },
+          "identical_rate": {
+            "type": "number",
+            "title": "Identical Rate",
+            "default": 0.0
+          },
+          "divergence_rate": {
+            "type": "number",
+            "title": "Divergence Rate",
+            "default": 0.0
+          },
+          "silent_noop_rate": {
+            "type": "number",
+            "title": "Silent Noop Rate",
+            "default": 0.0
+          },
+          "baseline": {
+            "$ref": "#/components/schemas/AdminLLMEvalModelTotals"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/AdminLLMEvalModelTotals"
+          },
+          "recommendation": {
+            "type": "string",
+            "title": "Recommendation",
+            "default": ""
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "title": "AdminLLMEvalSummary",
+        "description": "The frozen aggregate stored on the run when it completed."
+      },
+      "AdminLLMEvalToolCall": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Arguments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AdminLLMEvalToolCall"
+      },
+      "AdminLLMEvalTurn": {
+        "properties": {
+          "message_seq": {
+            "type": "integer",
+            "title": "Message Seq"
+          },
+          "message_timestamp": {
+            "type": "string",
+            "title": "Message Timestamp"
+          },
+          "user_message": {
+            "type": "string",
+            "title": "User Message"
+          },
+          "historic_reply": {
+            "type": "string",
+            "title": "Historic Reply",
+            "default": ""
+          },
+          "historic_tool_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Historic Tool Names"
+          },
+          "baseline": {
+            "$ref": "#/components/schemas/AdminLLMEvalDecision"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/AdminLLMEvalDecision"
+          },
+          "agreement": {
+            "type": "string",
+            "title": "Agreement"
+          },
+          "safety_issues": {
+            "items": {
+              "$ref": "#/components/schemas/AdminLLMEvalSafetyIssue"
+            },
+            "type": "array",
+            "title": "Safety Issues"
+          },
+          "judge_verdict": {
+            "type": "string",
+            "title": "Judge Verdict",
+            "default": "not_judged"
+          },
+          "judge_rationale": {
+            "type": "string",
+            "title": "Judge Rationale",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "message_seq",
+          "message_timestamp",
+          "user_message",
+          "baseline",
+          "candidate",
+          "agreement"
+        ],
+        "title": "AdminLLMEvalTurn",
+        "description": "One replayed turn: the user's message and both models' decisions.\n\n``historic_reply`` and ``historic_tool_names`` are what the agent actually\ndid for this turn when it happened. They are shown alongside, not scored:\nthat turn ran against an older system prompt and an older tool set, so it\nis context for a human reading the diff rather than a third contestant."
       },
       "AdminLLMModelsResponse": {
         "properties": {

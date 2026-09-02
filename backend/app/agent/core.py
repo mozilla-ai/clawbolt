@@ -332,6 +332,24 @@ class AgentResponse:
     thinking_text: str = ""
 
 
+@dataclass
+class AssembledPrompt:
+    """The exact prompt one agent turn hands to the LLM, before any round runs.
+
+    ``messages`` is post-trim and starts with the ``SystemMessage`` carrying
+    the stable half of the system prompt; ``dynamic_context`` has already been
+    folded into the trailing user turn. ``system_prompt`` is the two halves
+    rejoined for observers and debugging, and is not itself sent anywhere.
+    """
+
+    messages: list[AgentMessage]
+    stable_system: str
+    dynamic_context: str
+    system_prompt: str
+    dropped: list[AgentMessage] = field(default_factory=list)
+    trimmed_count: int = 0
+
+
 class ClawboltAgent:
     """Main agent that processes user messages and produces actions."""
 
@@ -1428,21 +1446,24 @@ class ClawboltAgent:
             is_error=msg.is_error,
         )
 
-    async def process_message(
+    async def assemble_prompt(
         self,
         message_context: str,
         conversation_history: list[AgentMessage] | None = None,
         system_prompt_override: str | None = None,
-        max_tokens: int | None = None,
-    ) -> AgentResponse:
-        """Process a message through the agent loop."""
-        agent_start_time = time.monotonic()
-        logger.debug(
-            "Agent starting for user %s, message length=%d, history=%d messages",
-            self.user.id,
-            len(message_context),
-            len(conversation_history) if conversation_history else 0,
-        )
+    ) -> AssembledPrompt:
+        """Build the exact message list a turn sends to the LLM, pre-flight.
+
+        Extracted from ``process_message`` so the offline model-comparison
+        replay (``backend/app/services/llm_eval``) constructs its prompts
+        through this same path. A second implementation would silently make
+        every evaluation score a prompt no user ever received, so the assembly
+        deliberately exists in exactly one place.
+
+        Side effect: seeds ``self._delivered_skill_categories`` from the tool
+        results that survived trimming, so first-use SKILL.md injection does
+        not repeat guidance already in context.
+        """
         # The system prompt splits into a stable half (cacheable, sent in
         # the ``system`` param) and a dynamic half (memory, integrations,
         # cross-session context). The dynamic half is appended to the
@@ -1458,12 +1479,6 @@ class ClawboltAgent:
         # reflects everything the model was given as instruction context.
         system_prompt = (
             f"{stable_system}\n\n{dynamic_context}" if dynamic_context else stable_system
-        )
-        await self._emit(
-            AgentStartEvent(
-                user_id=self.user.id,
-                message_context=message_context,
-            )
         )
 
         messages: list[AgentMessage] = [SystemMessage(content=stable_system)]
@@ -1500,7 +1515,6 @@ class ClawboltAgent:
             input_tokens=self._last_input_tokens or _recall_input_tokens(self.user.id),
         )
         messages = trim_result.messages
-        all_dropped = list(trim_result.dropped)
         # Seed skill-delivery state from what actually survived trimming:
         # a marker present in a reloaded tool result means that category's
         # SKILL.md is in context and first-use injection must not repeat it.
@@ -1515,6 +1529,46 @@ class ClawboltAgent:
                 settings.context_trim_target_tokens,
                 settings.context_trim_target_turns,
             )
+
+        return AssembledPrompt(
+            messages=messages,
+            stable_system=stable_system,
+            dynamic_context=dynamic_context,
+            system_prompt=system_prompt,
+            dropped=list(trim_result.dropped),
+            trimmed_count=trimmed_count,
+        )
+
+    async def process_message(
+        self,
+        message_context: str,
+        conversation_history: list[AgentMessage] | None = None,
+        system_prompt_override: str | None = None,
+        max_tokens: int | None = None,
+    ) -> AgentResponse:
+        """Process a message through the agent loop."""
+        agent_start_time = time.monotonic()
+        logger.debug(
+            "Agent starting for user %s, message length=%d, history=%d messages",
+            self.user.id,
+            len(message_context),
+            len(conversation_history) if conversation_history else 0,
+        )
+        assembled = await self.assemble_prompt(
+            message_context,
+            conversation_history,
+            system_prompt_override,
+        )
+        system_prompt = assembled.system_prompt
+        messages = assembled.messages
+        all_dropped = list(assembled.dropped)
+
+        await self._emit(
+            AgentStartEvent(
+                user_id=self.user.id,
+                message_context=message_context,
+            )
+        )
 
         actions_taken: list[str] = []
         memories_saved: list[dict[str, str]] = []

@@ -1,0 +1,296 @@
+"""Admin endpoints for the model-swap evaluator.
+
+Covers the things that gate real behavior: the consent requirement, the
+server-side baseline resolution (an operator cannot pick what they are
+comparing against), the one-run-per-user guard, cancellation, and the
+report's worst-first ordering and PII redaction.
+
+``launch_run`` is patched throughout. Letting it fire would start a real
+background evaluation against real providers.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from collections.abc import Generator
+from unittest.mock import MagicMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from backend.app.auth.admin_dep import get_current_admin
+from backend.app.config import settings
+from backend.app.models import LLMEvalRun, LLMEvalTurnResult, Subscription, User
+from backend.app.services.llm_eval.types import AgreementClass, RunStatus
+
+BASE = "/api/admin/llm-eval"
+
+
+@pytest.fixture()
+def admin_client(client: TestClient, test_user: User) -> Generator[TestClient]:
+    from tests.multi_user.conftest import MULTI_USER_APP as app
+
+    app.dependency_overrides[get_current_admin] = lambda: test_user
+    yield client
+    app.dependency_overrides.pop(get_current_admin, None)
+
+
+@pytest.fixture()
+def consenting_user(db_session: Session, test_user: User) -> User:
+    user = db_session.get(User, test_user.id)
+    assert user is not None
+    user.data_sharing_consent = True
+    db_session.commit()
+    return test_user
+
+
+@pytest.fixture()
+def _launch() -> Generator[MagicMock]:
+    with patch("backend.app.routers.admin_llm_eval.launch_run") as mock:
+        yield mock
+
+
+@pytest.fixture(autouse=True)
+def _global_model() -> Generator[None]:
+    with (
+        patch.object(settings, "llm_provider", "anthropic"),
+        patch.object(settings, "llm_model", "incumbent-model"),
+    ):
+        yield
+
+
+def _payload(**overrides: object) -> dict:
+    body = {
+        "candidate_provider": "anthropic",
+        "candidate_model": "candidate-model",
+        "sample_count": 50,
+        "judge_enabled": True,
+    }
+    body.update(overrides)
+    return body
+
+
+# ---------------------------------------------------------------------------
+# Consent gate
+# ---------------------------------------------------------------------------
+
+
+def test_starting_a_run_requires_consent(
+    admin_client: TestClient, test_user: User, _launch: MagicMock
+) -> None:
+    response = admin_client.post(f"{BASE}/users/{test_user.id}/runs", json=_payload())
+    assert response.status_code == 403
+    assert "consent" in response.json()["detail"].lower()
+    _launch.assert_not_called()
+
+
+def test_unknown_user_is_404(admin_client: TestClient, _launch: MagicMock) -> None:
+    response = admin_client.post(f"{BASE}/users/{uuid.uuid4()}/runs", json=_payload())
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Starting a run
+# ---------------------------------------------------------------------------
+
+
+def test_start_run_creates_a_pending_row_and_launches(
+    admin_client: TestClient, consenting_user: User, db_session: Session, _launch: MagicMock
+) -> None:
+    response = admin_client.post(f"{BASE}/users/{consenting_user.id}/runs", json=_payload())
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == RunStatus.PENDING
+    assert body["candidate_model"] == "candidate-model"
+    assert body["requested_samples"] == 50
+    _launch.assert_called_once()
+
+    row = db_session.get(LLMEvalRun, body["id"])
+    assert row is not None
+    assert row.user_id == consenting_user.id
+
+
+def test_baseline_comes_from_the_server_not_the_client(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    """A report must compare against the model the user is actually on."""
+    response = admin_client.post(
+        f"{BASE}/users/{consenting_user.id}/runs",
+        json=_payload(baseline_model="something-else"),
+    )
+    assert response.status_code == 201
+    assert response.json()["baseline_model"] == "incumbent-model"
+
+
+def test_baseline_prefers_the_users_subscription_override(
+    admin_client: TestClient,
+    consenting_user: User,
+    db_session: Session,
+    _launch: MagicMock,
+) -> None:
+    db_session.add(
+        Subscription(
+            user_id=consenting_user.id,
+            role="user",
+            plan="free",
+            status="active",
+            llm_model_override="pinned-model",
+        )
+    )
+    db_session.commit()
+
+    response = admin_client.post(f"{BASE}/users/{consenting_user.id}/runs", json=_payload())
+    assert response.status_code == 201
+    assert response.json()["baseline_model"] == "pinned-model"
+
+
+def test_sample_count_above_the_cap_is_rejected(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    with patch.object(settings, "llm_eval_max_samples", 10):
+        response = admin_client.post(
+            f"{BASE}/users/{consenting_user.id}/runs", json=_payload(sample_count=500)
+        )
+    assert response.status_code == 422
+    _launch.assert_not_called()
+
+
+def test_second_concurrent_run_for_the_same_user_conflicts(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    first = admin_client.post(f"{BASE}/users/{consenting_user.id}/runs", json=_payload())
+    assert first.status_code == 201
+    second = admin_client.post(f"{BASE}/users/{consenting_user.id}/runs", json=_payload())
+    assert second.status_code == 409
+    assert _launch.call_count == 1
+
+
+def test_judge_disabled_leaves_the_judge_model_empty(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    response = admin_client.post(
+        f"{BASE}/users/{consenting_user.id}/runs", json=_payload(judge_enabled=False)
+    )
+    assert response.status_code == 201
+    assert response.json()["judge_model"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Listing, reporting, cancelling
+# ---------------------------------------------------------------------------
+
+
+def _make_run(db: Session, user_id: str, **overrides: object) -> LLMEvalRun:
+    run = LLMEvalRun(
+        user_id=user_id,
+        baseline_provider="anthropic",
+        baseline_model="incumbent-model",
+        candidate_provider="anthropic",
+        candidate_model="candidate-model",
+        requested_samples=10,
+        status=str(RunStatus.COMPLETED),
+        recommendation="safe_to_switch",
+    )
+    for key, value in overrides.items():
+        setattr(run, key, value)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def test_list_runs_returns_the_users_runs(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    _make_run(db_session, consenting_user.id)
+    response = admin_client.get(f"{BASE}/users/{consenting_user.id}/runs")
+    assert response.status_code == 200
+    assert len(response.json()["runs"]) == 1
+
+
+def test_report_orders_the_most_concerning_turns_first(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    run = _make_run(db_session, consenting_user.id)
+    db_session.add_all(
+        [
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=1,
+                user_message="matched turn",
+                agreement=str(AgreementClass.IDENTICAL),
+            ),
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=2,
+                user_message="quiet divergence",
+                agreement=str(AgreementClass.SAME_TOOLS_DIFFERENT_ARGS),
+            ),
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=3,
+                user_message="unsafe turn",
+                agreement=str(AgreementClass.DIFFERENT_TOOLS),
+                safety_issues=json.dumps([{"finding": "unknown_tool", "tool_name": "nope"}]),
+            ),
+            LLMEvalTurnResult(
+                run_id=run.id,
+                message_seq=4,
+                user_message="stopped acting",
+                agreement=str(AgreementClass.REPLIED_INSTEAD_OF_ACTING),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = admin_client.get(f"{BASE}/runs/{run.id}")
+    assert response.status_code == 200
+    order = [t["message_seq"] for t in response.json()["turns"]]
+    # Safety finding first, then the silent no-op, then the quiet
+    # divergence, with the matched turn last.
+    assert order == [3, 4, 2, 1]
+
+
+def test_report_redacts_pii_in_message_bodies(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    run = _make_run(db_session, consenting_user.id)
+    db_session.add(
+        LLMEvalTurnResult(
+            run_id=run.id,
+            message_seq=1,
+            user_message="call me at +15555550123",
+            agreement=str(AgreementClass.IDENTICAL),
+            candidate_tool_calls=json.dumps(
+                [{"name": "send_message", "arguments": {"to": "jane.doe@example.com"}}]
+            ),
+        )
+    )
+    db_session.commit()
+
+    turn = admin_client.get(f"{BASE}/runs/{run.id}").json()["turns"][0]
+    assert "+15555550123" not in turn["user_message"]
+    assert "[PHONE]" in turn["user_message"]
+    assert turn["candidate"]["tool_calls"][0]["arguments"]["to"] == "[EMAIL]"
+
+
+def test_report_for_unknown_run_is_404(admin_client: TestClient) -> None:
+    assert admin_client.get(f"{BASE}/runs/999999").status_code == 404
+
+
+def test_cancel_flips_an_active_run(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    run = _make_run(db_session, consenting_user.id, status=str(RunStatus.RUNNING))
+    response = admin_client.post(f"{BASE}/runs/{run.id}/cancel")
+    assert response.status_code == 200
+    assert response.json()["status"] == RunStatus.CANCELLED
+
+
+def test_cancelling_a_finished_run_conflicts(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    run = _make_run(db_session, consenting_user.id, status=str(RunStatus.COMPLETED))
+    assert admin_client.post(f"{BASE}/runs/{run.id}/cancel").status_code == 409
