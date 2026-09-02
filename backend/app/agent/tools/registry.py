@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.skills.loader import get_skill_instructions, skill_delivery_marker
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
 from backend.app.models import User
@@ -252,6 +252,7 @@ def create_list_capabilities_tool(
         )
     return Tool(
         name=ToolName.LIST_CAPABILITIES,
+        tags={ToolTags.READ_ONLY},
         description=(
             "Discover specialist capabilities and look up usage guidance. "
             "Call without arguments to see connected and unconnected categories. "

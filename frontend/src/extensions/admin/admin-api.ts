@@ -1344,8 +1344,11 @@ export interface EvalSummary {
    * The subset of silent_noop_rate the judge did not score for the candidate,
    * which is what the recommendation blocks on. Prose is the right answer to
    * some messages.
+   *
+   * null on a run whose summary predates the field. Zero and "never measured"
+   * mean opposite things, so do not coalesce them.
    */
-  silent_noop_blocking_rate: number;
+  silent_noop_blocking_rate: number | null;
   baseline: EvalModelTotals;
   candidate: EvalModelTotals;
   recommendation: EvalRecommendation;
@@ -1401,6 +1404,12 @@ export interface EvalSafetyIssue {
   finding: string;
   tool_name: string;
   detail: string;
+  /**
+   * Whether this finding disqualifies a switch on its own. Served by the API
+   * so the report does not keep its own copy of metrics.BLOCKING_FINDINGS,
+   * which decides whether a badge reads as an accusation.
+   */
+  blocking: boolean;
 }
 
 export interface EvalTurn {

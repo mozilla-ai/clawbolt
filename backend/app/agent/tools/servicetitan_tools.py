@@ -32,7 +32,7 @@ from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.servicetitan.params import (
     StAddJobNoteParams,
@@ -399,6 +399,7 @@ def build_servicetitan_tools(service: ServiceTitanService) -> list[Tool]:
     return [
         Tool(
             name=ToolName.SERVICETITAN_SEARCH_CUSTOMERS,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Search ServiceTitan customers by name or phone substring."
                 " Returns a compact list of matches with id, name, type,"
@@ -415,6 +416,7 @@ def build_servicetitan_tools(service: ServiceTitanService) -> list[Tool]:
         ),
         Tool(
             name=ToolName.SERVICETITAN_GET_CUSTOMER,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Fetch the full ServiceTitan customer record by numeric"
                 " id. Returns name, type, address, contacts, balance,"
@@ -430,6 +432,7 @@ def build_servicetitan_tools(service: ServiceTitanService) -> list[Tool]:
         ),
         Tool(
             name=ToolName.SERVICETITAN_LIST_APPOINTMENTS,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "List ServiceTitan appointments in a date range. Defaults"
                 " to today (UTC) when no dates are given. Optionally"

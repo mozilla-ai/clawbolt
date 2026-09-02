@@ -414,7 +414,6 @@ async def test_create_tools_uses_subtool_default_for_synthesized_policy() -> Non
     policy must reflect that, so users who haven't overridden the level still
     see the same auto-execution behavior they get today.
     """
-    from backend.app.agent.approval import PermissionLevel
 
     ensure_tool_modules_imported()
 
@@ -554,12 +553,14 @@ async def test_read_only_is_never_combined_with_a_mutating_tag() -> None:
     )
 
 
-# Approval-gated tools that really do change something. Kept explicit so a new
-# gated tool cannot ship unclassified: the evaluator reads "not READ_ONLY" as
+# Every tool that writes, sends, uploads, or deletes. The complement of
+# ``ToolTags.READ_ONLY``, kept as an explicit roster so a new tool cannot ship
+# unclassified: ``llm_eval.metrics._is_mutating`` reads "not READ_ONLY" as
 # "this call would mutate a real account" and blocks a model switch on it, so
 # an unconsidered default is a wrong answer in one direction or the other.
-# Adding a tool here is a claim that calling it writes, sends, or deletes.
-_EXPECTED_MUTATING_ASK_TOOLS = frozenset(
+# Adding a name here is a claim that calling it changes something a user would
+# notice.
+_MUTATING_TOOLS = frozenset(
     {
         "appfolio_add_note",
         "appfolio_create_invoice",
@@ -582,44 +583,126 @@ _EXPECTED_MUTATING_ASK_TOOLS = frozenset(
         "companycam_upload_photo",
         "delete_file",
         "discard_media",
+        "edit_file",
         "edit_storage_file",
         "gmail_send",
+        "manage_integration",
         "move_file",
         "qb_create",
         "qb_send",
         "qb_update",
-        "servicetitan_add_job_note",
+        "send_media_reply",
+        "st_add_job_note",
+        "update_heartbeat",
         "upload_to_storage",
+        "write_file",
         "write_to_storage",
     }
 )
 
 
-@pytest.mark.asyncio()
-async def test_every_approval_gated_tool_is_classified_read_or_write() -> None:
-    """Force the read/write call to be made, not defaulted.
+async def _every_tool_including_integrations() -> list[Tool]:
+    """Every registered tool, integrations included.
 
-    ``ApprovalPolicy`` defaults ``default_level`` to ASK, so the gate says
-    nothing about whether a tool writes: 39 of 45 tools are gated and 9 of
-    those are pure reads. The evaluator used the gate as a mutation proxy and
-    charged a candidate model with an unrequested mutation for running a
-    saved-file search, which blocks a switch on its own.
+    ``_instantiate_every_tool`` goes through the registry factories, and each
+    integration factory returns ``[]`` unless the deployment has that
+    integration's OAuth client configured *and* the user has a stored token
+    (see ``_calendar_factory`` in
+    ``backend/app/integrations/calendar/factory.py``). That reaches 18 of
+    roughly 50 tools and none of the integration surface, which is most of the
+    tools that write.
 
-    A new gated tool fails here until it is either tagged ``READ_ONLY`` or
-    named above.
+    So the integration halves are built through their own pure builders, which
+    take a service and return the tool list with no auth involved. Calling
+    them directly is what makes a declaration invariant enforceable across
+    every tool rather than across whatever happened to instantiate.
     """
-    ensure_tool_modules_imported()
+    from backend.app.agent.tools.servicetitan_tools import build_servicetitan_tools
+    from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
+    from backend.app.integrations.appfolio_vendor.notes import build_note_tools
+    from backend.app.integrations.appfolio_vendor.work_order_writes import (
+        build_work_order_write_tools,
+    )
+    from backend.app.integrations.appfolio_vendor.work_orders import build_work_order_tools
+    from backend.app.integrations.calendar.factory import create_calendar_tools
+    from backend.app.integrations.companycam.checklists import build_checklist_tools
+    from backend.app.integrations.companycam.photos import build_photo_tools
+    from backend.app.integrations.companycam.projects import build_project_tools
+    from backend.app.integrations.gmail.factory import create_gmail_tools
+    from backend.app.integrations.quickbooks.factory import create_quickbooks_tools
+    from backend.app.integrations.web_search.factory import _create_web_search_tools
 
+    ctx = _mock_tool_context()
+    service = MagicMock()
+    tools = list(await _instantiate_every_tool())
+    tools.extend(create_calendar_tools(service))
+    tools.extend(create_gmail_tools(service))
+    tools.extend(create_quickbooks_tools(service))
+    tools.extend(build_project_tools(service))
+    tools.extend(build_photo_tools(service, ctx))
+    tools.extend(build_checklist_tools(service))
+    tools.extend(build_work_order_tools(service))
+    tools.extend(build_work_order_write_tools(service))
+    tools.extend(build_note_tools(service, ctx))
+    tools.extend(build_invoice_tools(service, ctx))
+    tools.extend(build_servicetitan_tools(service))
+    tools.extend(_create_web_search_tools(service, MagicMock()))
+    return tools
+
+
+@pytest.mark.asyncio()
+async def test_the_classification_sweep_reaches_the_integration_tools() -> None:
+    """Guard the guard: a sweep that sees 18 tools enforces almost nothing.
+
+    The first version of the invariant below ran on ``_instantiate_every_tool``
+    and silently covered 3 of the 10 read tools it was written to protect.
+    """
+    names = {tool.name for tool in await _every_tool_including_integrations()}
+    for expected in ("qb_query", "calendar_list_events", "gmail_search", "companycam_upload_photo"):
+        assert expected in names, f"{expected} is unreachable, so the sweep proves nothing"
+    assert len(names) > 40, f"only {len(names)} tools reached"
+
+
+@pytest.mark.asyncio()
+async def test_every_tool_is_classified_read_or_write() -> None:
+    """``_is_mutating`` reads "not READ_ONLY" as "this writes", so decide once.
+
+    The evaluator blocks a model switch on a single unrequested mutation, so
+    both mistakes are expensive: a read left untagged sinks a run over a
+    lookup, and a writer left untagged lets a candidate rewrite MEMORY.md or
+    disconnect an integration with nothing reported at all.
+    """
     unclassified = sorted(
         tool.name
-        for tool in await _instantiate_every_tool()
-        if tool.approval_policy is not None
-        and tool.approval_policy.default_level is PermissionLevel.ASK
-        and ToolTags.READ_ONLY not in tool.tags
-        and tool.name not in _EXPECTED_MUTATING_ASK_TOOLS
+        for tool in await _every_tool_including_integrations()
+        if ToolTags.READ_ONLY not in tool.tags and tool.name not in _MUTATING_TOOLS
     )
     assert not unclassified, (
-        "These approval-gated tools are neither tagged ToolTags.READ_ONLY nor listed in "
-        "_EXPECTED_MUTATING_ASK_TOOLS. Tag the ones that only read; add the ones that "
-        "write, send, or delete to the list:\n" + "\n".join(unclassified)
+        "These tools are neither tagged ToolTags.READ_ONLY nor listed in "
+        "_MUTATING_TOOLS. Tag the ones that only look something up; add the ones "
+        "that write, send, upload, or delete to the roster:\n" + "\n".join(unclassified)
+    )
+
+
+@pytest.mark.asyncio()
+async def test_no_tool_is_both_read_only_and_mutating() -> None:
+    """A typo in the roster silently classifies nothing.
+
+    ``servicetitan_add_job_note`` sat in this roster while the tool is called
+    ``st_add_job_note``, so the entry matched nothing and the real tool went
+    unclassified.
+    """
+    names = {tool.name for tool in await _every_tool_including_integrations()}
+    tagged_read_only = {
+        tool.name
+        for tool in await _every_tool_including_integrations()
+        if ToolTags.READ_ONLY in tool.tags
+    }
+    assert not tagged_read_only & _MUTATING_TOOLS, (
+        "Tagged READ_ONLY but also listed as mutating:\n"
+        + "\n".join(sorted(tagged_read_only & _MUTATING_TOOLS))
+    )
+    assert not _MUTATING_TOOLS - names, (
+        "These roster entries match no registered tool, so nothing they meant is "
+        "classified:\n" + "\n".join(sorted(_MUTATING_TOOLS - names))
     )

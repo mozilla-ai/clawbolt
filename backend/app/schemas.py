@@ -1818,7 +1818,12 @@ class AdminLLMEvalSummary(BaseModel):
     # candidate's favor, which is what the recommendation blocks on. Prose is
     # the right answer to some messages, and the incumbent calling a tool
     # there is the worse decision, not the bar.
-    silent_noop_blocking_rate: float = 0.0
+    #
+    # ``None`` on a run whose summary predates the field, which is why it is
+    # nullable rather than defaulting to zero: zero and "never measured" mean
+    # opposite things here, and a report that read the default as zero told
+    # the operator the judge had preferred no-ops it never saw.
+    silent_noop_blocking_rate: float | None = None
     baseline: AdminLLMEvalModelTotals = Field(default_factory=AdminLLMEvalModelTotals)
     candidate: AdminLLMEvalModelTotals = Field(default_factory=AdminLLMEvalModelTotals)
     recommendation: str = ""
@@ -1883,6 +1888,11 @@ class AdminLLMEvalSafetyIssue(BaseModel):
     finding: str
     tool_name: str = ""
     detail: str = ""
+    # Whether this finding disqualifies a switch on its own. Served rather
+    # than re-derived client-side: the set lives in
+    # ``llm_eval.metrics.BLOCKING_FINDINGS`` and a copy in the frontend was a
+    # hand-maintained mirror driving whether a badge reads as an accusation.
+    blocking: bool = True
 
 
 class AdminLLMEvalToolCall(BaseModel):

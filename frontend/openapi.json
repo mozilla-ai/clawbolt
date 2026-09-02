@@ -5799,6 +5799,11 @@
             "type": "string",
             "title": "Detail",
             "default": ""
+          },
+          "blocking": {
+            "type": "boolean",
+            "title": "Blocking",
+            "default": true
           }
         },
         "type": "object",
@@ -5873,9 +5878,15 @@
             "default": 0.0
           },
           "silent_noop_blocking_rate": {
-            "type": "number",
-            "title": "Silent Noop Blocking Rate",
-            "default": 0.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Silent Noop Blocking Rate"
           },
           "baseline": {
             "$ref": "#/components/schemas/AdminLLMEvalModelTotals"

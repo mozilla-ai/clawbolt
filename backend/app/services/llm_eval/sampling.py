@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from backend.app.agent.approval import get_approval_store
 from backend.app.agent.context import _stored_messages_to_agent_messages
@@ -223,28 +223,72 @@ async def build_fixture(user: User, *, sample_limit: int | None = None) -> Repla
     return fixture
 
 
+def _parse_timestamp(raw: str) -> datetime | None:
+    """Parse a stored ISO timestamp, assuming UTC when it carries no offset."""
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+# How far apart two consecutive inbound rows can be and still be one turn.
+# Production batches rapid-fire messages with a 1.5 s window
+# (``settings.message_batch_window_ms``) and runs the pipeline only for the
+# last of them, so the rows of a real batch are seconds apart. A wider gap
+# means the earlier row was orphaned rather than batched: see
+# ``agent.inbound_recovery``, whose module docstring records a production
+# inbound that waited 29 hours for the next message to wake a batcher, and
+# which only re-dispatches orphans younger than 30 minutes.
+_BATCH_GAP_LIMIT = timedelta(minutes=2)
+
+
+def _same_batch(earlier: StoredMessage, later: StoredMessage) -> bool:
+    """Whether two consecutive inbound rows were answered as one turn.
+
+    An unreadable timestamp answers False, which reports "the agent did
+    nothing" for that turn. That is the safe direction: the credit this grants
+    is what stops ``check_safety`` raising ``UNREQUESTED_MUTATION``, so a
+    corrupt row must not hand out an exemption.
+    """
+    first = _parse_timestamp(earlier.timestamp)
+    second = _parse_timestamp(later.timestamp)
+    if first is None or second is None:
+        return False
+    return second - first <= _BATCH_GAP_LIMIT
+
+
 def _historic_response(rows: list[StoredMessage], start: int) -> tuple[str, list[str]]:
     """Return the reply text and tool names the agent produced for a turn.
 
-     A "turn" here is the whole run of consecutive inbound rows starting at
-     *start*, plus the outbound rows that follow it. Skipping over the rest of
-     the inbound run is what makes this correct for rapid-fire messages: a user
-     who sends four messages in a row persists four inbound rows and the agent
-     answers the batch once, after the last of them. Reading only up to the
-     *next* inbound row reported "the agent did nothing" for the first three,
-     and ``check_safety`` then charged the candidate with an unrequested
-     mutation on a turn whose text was an explicit instruction to write
-    .
+    A "turn" here is the batch of consecutive inbound rows starting at *start*,
+    plus the outbound rows that follow it. Skipping over the rest of the batch
+    is what makes this correct for rapid-fire messages: a user who sends four
+    messages in a row persists four inbound rows and the agent answers the
+    batch once, after the last of them. Reading only up to the *next* inbound
+    row reported "the agent did nothing" for the first three, and
+    ``check_safety`` then charged the candidate with an unrequested mutation on
+    a turn whose text was an explicit instruction to write.
 
-     Tool names are read back through the same rebuilder the LLM history uses,
-     so a row whose ``tool_interactions_json`` is malformed degrades to "no
-     tools" here exactly as it does in the prompt.
+    The batch is bounded by ``_BATCH_GAP_LIMIT``, because two consecutive
+    inbound rows far apart in time are not a batch: the earlier one went
+    unanswered. Crediting it with the later turn's tool calls would exempt a
+    candidate that wrote something in reply to a message the agent never
+    answered.
+
+    Tool names are read back through the same rebuilder the LLM history uses,
+    so a row whose ``tool_interactions_json`` is malformed degrades to "no
+    tools" here exactly as it does in the prompt.
     """
     reply_parts: list[str] = []
     tool_names: list[str] = []
     index = start + 1
     # Advance past the remainder of the inbound batch this row belongs to.
-    while index < len(rows) and rows[index].direction == MessageDirection.INBOUND:
+    while (
+        index < len(rows)
+        and rows[index].direction == MessageDirection.INBOUND
+        and _same_batch(rows[index - 1], rows[index])
+    ):
         index += 1
     for row in rows[index:]:
         if row.direction == MessageDirection.INBOUND:
@@ -300,12 +344,10 @@ def _sample_clock(sample: ReplaySample) -> datetime | None:
     column is ISO-formatted by ``_turn_row`` so this is a corrupt-row guard,
     not an expected branch.
     """
-    try:
-        parsed = datetime.fromisoformat(sample.timestamp)
-    except (TypeError, ValueError):
+    parsed = _parse_timestamp(sample.timestamp)
+    if parsed is None:
         logger.warning("Unparseable timestamp %r on seq %d", sample.timestamp, sample.seq)
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 async def assemble_for_sample(fixture: ReplayFixture, sample: ReplaySample) -> AssembledPrompt:

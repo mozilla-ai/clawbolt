@@ -60,18 +60,6 @@ const FINDING_COPY: Record<string, string> = {
   unresolved_tool_name: 'Retired tool name, carried by this history',
 };
 
-// Findings that disqualify a switch, mirroring ``metrics.BLOCKING_FINDINGS``.
-// Everything else describes the replayed fixture or the measurement rather
-// than the candidate, and must not be dressed as an accusation: rendering all
-// six in the same red made the first screen of a report five badges the
-// summary text goes on to disown.
-const BLOCKING_FINDINGS = new Set([
-  'unknown_tool',
-  'invalid_args',
-  'unrequested_mutation',
-  'truncated',
-]);
-
 // Why a turn carries no judge verdict. Without this an operator subtracts the
 // judge counts from the turn count and concludes the judge is broken.
 const SKIP_COPY: Record<string, string> = {
@@ -163,12 +151,14 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 
 function SummaryGrid({ summary }: { summary: EvalSummary }) {
   const safetyTotal = summary.blocking_findings;
-  const advisory =
-    Object.entries(summary.safety_counts)
-      .filter(([finding]) => !BLOCKING_FINDINGS.has(finding))
-      .reduce((total, [, count]) => total + count, 0) || 0;
-  const judged = Object.values(summary.judge_counts).reduce((a, b) => a + b, 0);
-  const noopConceded = Math.round(summary.silent_noop_blocking_rate * summary.turns_completed);
+  const allFindings = Object.values(summary.safety_counts).reduce((a, b) => a + b, 0);
+  const advisory = Math.max(0, allFindings - summary.blocking_findings);
+  // null means the run predates the field, so the judge's opinion of its
+  // silent no-ops was never recorded. Falling back to the raw rate keeps the
+  // tile honest instead of reporting a measured zero.
+  const noopBlocking = summary.silent_noop_blocking_rate;
+  const noopMeasured = noopBlocking !== null && noopBlocking !== undefined;
+  const noopConceded = Math.round((noopBlocking ?? 0) * summary.turns_completed);
   // Cost is only reportable when the pricing library knows both models. A
   // gateway alias never resolves, so this tile is usually "unknown" and must
   // not imply "free".
@@ -192,10 +182,10 @@ function SummaryGrid({ summary }: { summary: EvalSummary }) {
         hint={`${summary.turns_completed} turns compared`}
       />
       <Stat
-        label="Replied where acting was better"
-        value={pct(summary.silent_noop_blocking_rate)}
+        label={noopMeasured ? 'Replied where acting was better' : 'Replied instead of acting'}
+        value={pct(noopMeasured ? (noopBlocking as number) : summary.silent_noop_rate)}
         hint={
-          summary.silent_noop_rate > summary.silent_noop_blocking_rate
+          noopMeasured && summary.silent_noop_rate > (noopBlocking as number)
             ? `${noopConceded} of ${Math.round(
                 summary.silent_noop_rate * summary.turns_completed,
               )} silent no-ops; the judge preferred the rest`
@@ -219,13 +209,9 @@ function SummaryGrid({ summary }: { summary: EvalSummary }) {
       />
       <Stat label="Turns that diverged" value={pct(summary.divergence_rate)} />
       <Stat
-        label="Turns the judge scored"
-        value={String(judged)}
-        hint={
-          summary.turns_total > judged
-            ? `${summary.turns_total - judged} not judged, see below`
-            : 'Every turn'
-        }
+        label="Turns that failed"
+        value={String(summary.turns_failed)}
+        hint="Could not be compared"
       />
     </div>
   );
@@ -240,7 +226,8 @@ function JudgeAccounting({ summary }: { summary: EvalSummary }) {
   if (entries.length === 0) return null;
   return (
     <p className="text-xs text-muted-foreground">
-      Only diverging, measurable turns are adjudicated. Not judged:{' '}
+      The judge scored {Object.values(summary.judge_counts).reduce((a, b) => a + b, 0)} of{' '}
+      {summary.turns_total} turns; only diverging, measurable turns are adjudicated. Not judged:{' '}
       {entries
         .map(([reason, count]) => `${count} ${SKIP_REASON_SHORT[reason] ?? reason}`)
         .join(', ')}
@@ -294,8 +281,11 @@ function DecisionColumn({ title, decision }: { title: string; decision: EvalDeci
 }
 
 function TurnCard({ turn }: { turn: EvalTurn }) {
-  const blocking = turn.safety_issues.filter(i => BLOCKING_FINDINGS.has(i.finding));
-  const advisory = turn.safety_issues.filter(i => !BLOCKING_FINDINGS.has(i.finding));
+  // ``blocking`` comes from the API rather than a local set: a copy here was
+  // a hand-maintained mirror of metrics.BLOCKING_FINDINGS, and it decides
+  // whether a badge reads as an accusation.
+  const blocking = turn.safety_issues.filter(i => i.blocking);
+  const advisory = turn.safety_issues.filter(i => !i.blocking);
   // Expand what decides the verdict. An advisory note alone is not worth
   // opening a diff for, and auto-expanding those buried the turns that were.
   const [open, setOpen] = useState(

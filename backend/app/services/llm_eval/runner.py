@@ -298,7 +298,7 @@ async def _compare_turn(
 
 def _judge_skip_reason(
     comparison: TurnComparison, *, run_has_judge: bool, same_prose: bool
-) -> str | None:
+) -> JudgeSkipReason | None:
     """Why this turn was not adjudicated, or None if it should be.
 
     Recorded rather than inferred so the report can account for every turn.

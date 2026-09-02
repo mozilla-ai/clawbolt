@@ -21,18 +21,22 @@ class ToolTags(StrEnum):
     """This tool only reads. Calling it changes nothing the user could notice.
 
     Set it on every tool that looks something up, and leave it off anything
-    that writes, sends, uploads, or deletes. It exists because
-    ``approval_policy`` cannot answer the question: ``ApprovalPolicy``
-    defaults ``default_level`` to ``ASK``, so most search and list tools are
-    approval-gated too, and 9 of the 45 registered tools are gated reads.
+    that writes, sends, uploads, or deletes. **Untagged means mutating**, so
+    forgetting the tag on a new read tool is a false accusation against a
+    candidate model rather than a real write nobody was shown.
+    ``test_every_tool_is_classified_read_or_write`` enforces the choice.
 
-    The model-swap evaluator is the consumer. It flags a candidate that
-    reaches for a mutating tool the incumbent left alone, and without this
-    tag it read "approval-gated" as "mutating" and charged a candidate for
-    running a search.
+    It exists because ``approval_policy`` cannot answer the question in either
+    direction. ``ApprovalPolicy`` defaults ``default_level`` to ``ASK``, so
+    most search and list tools are gated too and reading the gate as
+    "mutating" charges a candidate for running a search; while
+    ``write_file``, ``edit_file``, ``update_heartbeat`` and
+    ``manage_integration`` all write *without* being gated, so reading it the
+    other way misses them.
 
-    Untagged means mutating, so a new tool that nobody classified is treated
-    as the dangerous case rather than waved through.
+    The model-swap evaluator is the consumer: it flags a candidate that
+    reaches for a mutating tool neither the incumbent nor the live turn
+    called. See ``llm_eval.metrics._is_mutating``.
     """
 
 

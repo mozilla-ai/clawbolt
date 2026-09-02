@@ -18,7 +18,7 @@ from backend.app.agent.saved_media import (
     find_saved_file,
     read_saved_file_bytes,
 )
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.companycam.errors import classify_companycam_error
 from backend.app.integrations.companycam.params import (
@@ -505,6 +505,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         ),
         Tool(
             name=ToolName.COMPANYCAM_LIST_COMMENTS,
+            tags={ToolTags.READ_ONLY},
             description="List comments on a CompanyCam project or photo",
             function=companycam_list_comments,
             params_model=CompanyCamListCommentsParams,
@@ -539,6 +540,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         ),
         Tool(
             name=ToolName.COMPANYCAM_SEARCH_PHOTOS,
+            tags={ToolTags.READ_ONLY},
             description="Search photos across all CompanyCam projects",
             function=companycam_search_photos,
             params_model=CompanyCamSearchPhotosParams,

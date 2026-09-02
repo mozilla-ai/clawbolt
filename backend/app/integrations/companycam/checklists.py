@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.companycam.errors import classify_companycam_error
 from backend.app.integrations.companycam.params import (
@@ -107,6 +107,7 @@ def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
     return [
         Tool(
             name=ToolName.COMPANYCAM_LIST_CHECKLISTS,
+            tags={ToolTags.READ_ONLY},
             description="List checklists for a CompanyCam project",
             function=companycam_list_checklists,
             params_model=CompanyCamListChecklistsParams,
@@ -114,6 +115,7 @@ def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
         ),
         Tool(
             name=ToolName.COMPANYCAM_GET_CHECKLIST,
+            tags={ToolTags.READ_ONLY},
             description="Get checklist details with tasks and completion status",
             function=companycam_get_checklist,
             params_model=CompanyCamGetChecklistParams,

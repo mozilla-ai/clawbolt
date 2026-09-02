@@ -31,7 +31,6 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from backend.app.agent.approval import PermissionLevel
 from backend.app.agent.core import _stringify_numbers_for_string_fields
 from backend.app.agent.tools.base import Tool, ToolTags
 from backend.app.services.llm_eval.types import (
@@ -144,22 +143,23 @@ def _first_error(exc: ValidationError) -> str:
 def _is_mutating(tool: Tool) -> bool:
     """Whether calling this tool would change something real.
 
-    ``ToolTags.READ_ONLY`` is the authority and the approval policy is only a
-    fallback for tools nobody has classified yet, so an untagged tool is still
-    treated as mutating.
+    Untagged means mutating, which is why every read tool carries
+    ``ToolTags.READ_ONLY`` and ``test_every_tool_is_classified_read_or_write``
+    refuses to pass while one does not. A tool nobody classified is treated as
+    the dangerous case, so the cost of forgetting the tag is a false finding an
+    operator can dismiss rather than a real write nobody was shown.
 
-    The policy cannot answer this on its own. ``ApprovalPolicy`` defaults
-    ``default_level`` to ``ASK``, so 39 of the 45 registered tools are gated
-    and 9 of those are pure reads: a saved-file search, a calendar list, a
-    free/busy check, a QuickBooks query, three Gmail readers. Reading the
-    gate as "mutating" charged a candidate with an unrequested mutation for
-    running a search, and that finding blocks a switch on its own, so one
-    curious lookup was enough to sink a run.
+    The approval policy cannot answer this, in either direction.
+    ``ApprovalPolicy`` defaults ``default_level`` to ``ASK``, so most search
+    and list tools are gated too: reading the gate as "mutating" charged a
+    candidate with an unrequested mutation for running a saved-file search,
+    and that finding blocks a switch on its own, so one curious lookup sank a
+    run. Reading it the other way is just as wrong, because ``write_file``,
+    ``edit_file``, ``update_heartbeat`` and ``manage_integration`` all write
+    without being gated, and a candidate that rewrote the user's MEMORY.md or
+    disconnected an integration raised nothing at all.
     """
-    if ToolTags.READ_ONLY in tool.tags:
-        return False
-    policy = tool.approval_policy
-    return policy is not None and policy.default_level is PermissionLevel.ASK
+    return ToolTags.READ_ONLY not in tool.tags
 
 
 def check_safety(
@@ -322,6 +322,11 @@ class ModelTotals:
         return ordered[index]
 
 
+def _billed_prompt(call: ModelCallResult) -> int:
+    """Every prompt token one call was billed for, cached or not."""
+    return call.input_tokens + call.cache_read_input_tokens + call.cache_creation_input_tokens
+
+
 def _accumulate(totals: ModelTotals, call: ModelCallResult) -> None:
     if call.error:
         return
@@ -361,6 +366,18 @@ class RunAggregate:
 
     silent_noop_conceded: int = 0
     """Silent no-ops the judge did not score in the candidate's favor."""
+
+    paired_baseline_prompt_tokens: int = 0
+    paired_candidate_prompt_tokens: int = 0
+    """Billed prompt tokens over turns where *both* calls returned.
+
+    The token-comparability warning below divides one of these by the other,
+    and the run totals cannot be used for that: ``_accumulate`` skips an
+    errored call, so a one-sided failure adds one model's ~250k prompt and
+    not the other's. Six of those in a forty-turn run reach the divergence
+    threshold with identical tokenizers, and the warning would then blame the
+    tokenizers for a gap that is really six missing turns.
+    """
     baseline: ModelTotals = field(default_factory=ModelTotals)
     candidate: ModelTotals = field(default_factory=ModelTotals)
     recommendation: Recommendation = Recommendation.INCONCLUSIVE
@@ -452,6 +469,9 @@ def aggregate(comparisons: list[TurnComparison]) -> RunAggregate:
 
         _accumulate(agg.baseline, comparison.baseline)
         _accumulate(agg.candidate, comparison.candidate)
+        if not failed:
+            agg.paired_baseline_prompt_tokens += _billed_prompt(comparison.baseline)
+            agg.paired_candidate_prompt_tokens += _billed_prompt(comparison.candidate)
 
     for totals in (agg.baseline, agg.candidate):
         totals.pricing_available = is_known_model(totals.model, provider=totals.provider)
@@ -528,10 +548,11 @@ def _decide(agg: RunAggregate) -> None:
             f"user no longer has."
         )
 
-    if (
+    cache_collapsed = (
         agg.baseline.cache_participation_ratio > CACHE_COLLAPSE_BASELINE_MIN
         and agg.candidate.cache_participation_ratio < CACHE_COLLAPSE_CANDIDATE_MAX
-    ):
+    )
+    if cache_collapsed:
         agg.warnings.append(
             f"Prompt cache collapsed: {agg.baseline.cache_participation_ratio:.0%} of the "
             f"incumbent's prompt tokens are cached (read or written) against "
@@ -541,17 +562,21 @@ def _decide(agg: RunAggregate) -> None:
             f"looks."
         )
 
-    baseline_billed = agg.baseline.billed_prompt_tokens
-    candidate_billed = agg.candidate.billed_prompt_tokens
-    if baseline_billed and candidate_billed:
+    # Skipped when the cache warning already fired: that one explains the same
+    # gap by the candidate's provider discarding the cache markers, and two
+    # warnings offering different causes for one number is worse than one.
+    baseline_billed = agg.paired_baseline_prompt_tokens
+    candidate_billed = agg.paired_candidate_prompt_tokens
+    if baseline_billed and candidate_billed and not cache_collapsed:
         ratio = max(baseline_billed, candidate_billed) / min(baseline_billed, candidate_billed)
         if ratio > MAX_TOKEN_ACCOUNTING_DIVERGENCE:
             agg.warnings.append(
-                f"Token counts are not comparable: the two models report billed prompt "
-                f"totals {ratio:.2f}x apart ({baseline_billed:,} incumbent against "
-                f"{candidate_billed:,} candidate) for a byte-identical prompt. That gap is "
-                f"their tokenizers and usage accounting disagreeing, not a difference in "
-                f"context. Do not read cost or efficiency off these numbers."
+                f"Token counts are not comparable: over the turns both models answered, "
+                f"they report billed prompt totals {ratio:.2f}x apart ({baseline_billed:,} "
+                f"incumbent against {candidate_billed:,} candidate) for a byte-identical "
+                f"prompt. That gap is their tokenizers and usage accounting disagreeing, "
+                f"not a difference in context. Do not read cost or efficiency off these "
+                f"numbers."
             )
     for totals, label in ((agg.baseline, "incumbent"), (agg.candidate, "candidate")):
         if not totals.pricing_available and totals.model:

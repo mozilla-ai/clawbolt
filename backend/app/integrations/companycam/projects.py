@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.integrations.companycam.errors import classify_companycam_error
 from backend.app.integrations.companycam.params import (
@@ -241,6 +241,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
     return [
         Tool(
             name=ToolName.COMPANYCAM_SEARCH_PROJECTS,
+            tags={ToolTags.READ_ONLY},
             description="Search CompanyCam projects by name or address",
             function=companycam_search_projects,
             params_model=CompanyCamSearchParams,
@@ -281,6 +282,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
         ),
         Tool(
             name=ToolName.COMPANYCAM_GET_PROJECT,
+            tags={ToolTags.READ_ONLY},
             description="Get full details for a CompanyCam project",
             function=companycam_get_project,
             params_model=CompanyCamGetProjectParams,
@@ -331,6 +333,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
         ),
         Tool(
             name=ToolName.COMPANYCAM_LIST_DOCUMENTS,
+            tags={ToolTags.READ_ONLY},
             description="List documents attached to a CompanyCam project",
             function=companycam_list_documents,
             params_model=CompanyCamListDocumentsParams,

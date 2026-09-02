@@ -228,6 +228,7 @@ def _turn_item(turn: LLMEvalTurnResult, *, run_has_judge: bool = True) -> AdminL
                 finding=str(entry.get("finding", "")),
                 tool_name=str(entry.get("tool_name", "")),
                 detail=redact_pii(str(entry.get("detail", ""))),
+                blocking=entry.get("finding") in BLOCKING_FINDINGS,
             )
             for entry in issues
             if isinstance(entry, dict)
@@ -255,13 +256,10 @@ _TURN_PRIORITY = {
 def _turn_sort_key(turn: LLMEvalTurnResult) -> tuple[int, int, int, int]:
     """Rank turns by how much they should change the reader's mind.
 
-    Blocking findings are ranked separately from non-blocking ones, and that
-    ordering is the whole point. Keying on ``bool(safety_issues)`` put every
-    turn whose only mark was a retired tool name in the fixture above the
-    turns that actually decided the verdict, so the first screen of a report
-    was five red badges that the summary text goes on to say are not the
-    candidate's fault, while a genuine dozen-write burst sat below the fold
-    under a neutral badge.
+    Blocking findings rank above non-blocking ones, which is the whole point:
+    a turn marked only for a retired tool name in the fixture is not evidence
+    against the candidate, and ranking it first fills the readable part of the
+    report with badges the summary goes on to disown.
     """
     has_blocking = 0 if _blocking_findings(turn) else 1
     judged_bad = (

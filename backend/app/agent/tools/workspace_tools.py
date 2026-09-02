@@ -577,6 +577,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
     return [
         Tool(
             name=ToolName.READ_FILE,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Read a markdown or JSON file from your workspace. "
                 "Use to check USER.md, SOUL.md, memory files, or PERMISSIONS.json."

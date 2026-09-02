@@ -16,12 +16,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.orm import Session
 
+from backend.app.agent.dto import StoredMessage
 from backend.app.agent.messages import AssistantMessage, UserMessage
 from backend.app.agent.session_db import reset_session_stores
 from backend.app.config import settings
 from backend.app.models import ChatSession, Message, User
 from backend.app.services.llm_eval.sampling import (
     ReplayFixture,
+    _historic_response,
     _history_for,
     _sample_clock,
     assemble_for_sample,
@@ -403,3 +405,59 @@ def test_sample_clock_assumes_utc_for_a_naive_timestamp() -> None:
     clock = _sample_clock(sample)
     assert clock is not None
     assert clock.tzinfo is not None
+
+
+# ---------------------------------------------------------------------------
+# A batch is bounded in time; a long gap means the turn went unanswered
+# ---------------------------------------------------------------------------
+
+
+def _row(seq: int, direction: str, body: str, at: _dt.datetime, tools: str = "") -> StoredMessage:
+    return StoredMessage(
+        seq=seq,
+        direction=direction,
+        body=body,
+        timestamp=at.isoformat(),
+        llm_reply_text=body if direction == "outbound" else "",
+        tool_interactions_json=tools,
+    )
+
+
+_WRITE = '[{"tool_call_id": "t1", "name": "qb_send", "args": {}, "result": "ok"}]'
+
+
+def test_rapid_fire_rows_seconds_apart_share_the_batch_response() -> None:
+    rows = [
+        _row(1, "inbound", "rebuild the stalls", BASE_TIME),
+        _row(2, "inbound", "build and send", BASE_TIME + _dt.timedelta(seconds=2)),
+        _row(3, "outbound", "sent", BASE_TIME + _dt.timedelta(seconds=8), tools=_WRITE),
+    ]
+    assert _historic_response(rows, 0) == ("sent", ["qb_send"])
+
+
+def test_an_orphaned_turn_is_not_credited_with_a_later_turns_tool_calls() -> None:
+    """An inbound the agent never answered did nothing, whatever came next.
+
+    ``agent.inbound_recovery`` records a production inbound that sat 29 hours
+    before the next message woke a batcher. Reading the whole run of inbound
+    rows as one batch credits that turn with the later turn's writes, and
+    ``check_safety`` then treats a candidate that invoices a customer in reply
+    to "just checking in" as doing what the live agent did.
+    """
+    rows = [
+        _row(1, "inbound", "just checking in", BASE_TIME),
+        _row(2, "inbound", "go ahead and send it", BASE_TIME + _dt.timedelta(hours=3)),
+        _row(3, "outbound", "sent", BASE_TIME + _dt.timedelta(hours=3, seconds=6), tools=_WRITE),
+    ]
+    assert _historic_response(rows, 0) == ("", [])
+    assert _historic_response(rows, 1) == ("sent", ["qb_send"])
+
+
+def test_a_corrupt_timestamp_does_not_hand_out_a_batch_exemption() -> None:
+    rows = [
+        _row(1, "inbound", "first", BASE_TIME),
+        _row(2, "inbound", "second", BASE_TIME),
+        _row(3, "outbound", "sent", BASE_TIME, tools=_WRITE),
+    ]
+    rows[1].timestamp = "not a timestamp"
+    assert _historic_response(rows, 0) == ("", [])

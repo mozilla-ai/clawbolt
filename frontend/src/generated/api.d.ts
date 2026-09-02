@@ -3285,6 +3285,11 @@ export interface components {
              * @default
              */
             detail: string;
+            /**
+             * Blocking
+             * @default true
+             */
+            blocking: boolean;
         };
         /**
          * AdminLLMEvalSummary
@@ -3342,11 +3347,8 @@ export interface components {
              * @default 0
              */
             silent_noop_rate: number;
-            /**
-             * Silent Noop Blocking Rate
-             * @default 0
-             */
-            silent_noop_blocking_rate: number;
+            /** Silent Noop Blocking Rate */
+            silent_noop_blocking_rate?: number | null;
             baseline?: components["schemas"]["AdminLLMEvalModelTotals"];
             candidate?: components["schemas"]["AdminLLMEvalModelTotals"];
             /**

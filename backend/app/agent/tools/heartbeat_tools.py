@@ -10,7 +10,7 @@ from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.heartbeat import SCHEDULED_TASK_PREFIX
 from backend.app.agent.markdown_registry import BudgetExceededError
 from backend.app.agent.stores import HeartbeatStore
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 
 if TYPE_CHECKING:
@@ -60,6 +60,7 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
     return [
         Tool(
             name=ToolName.GET_HEARTBEAT,
+            tags={ToolTags.READ_ONLY},
             description="Read the user's heartbeat notes.",
             function=get_heartbeat,
             params_model=GetHeartbeatParams,

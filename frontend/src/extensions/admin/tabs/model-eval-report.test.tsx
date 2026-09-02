@@ -102,6 +102,7 @@ describe('ModelEvalReportPage', () => {
           finding: 'unresolved_tool_name',
           tool_name: 'retired_tool',
           detail: 'in the replayed history but not in the current tool schema',
+          blocking: false,
         },
       ],
     });
@@ -117,7 +118,12 @@ describe('ModelEvalReportPage', () => {
     const api = await import('../admin-api');
     const blocking = turn({
       safety_issues: [
-        { finding: 'unrequested_mutation', tool_name: 'qb_update', detail: 'nobody asked' },
+        {
+          finding: 'unrequested_mutation',
+          tool_name: 'qb_update',
+          detail: 'nobody asked',
+          blocking: true,
+        },
       ],
     });
     vi.mocked(api.getEvalReport).mockResolvedValue(report({ turns: [blocking] }));
@@ -152,6 +158,27 @@ describe('ModelEvalReportPage', () => {
 
     expect(await screen.findByText(/9 where both models made the same call/)).toBeInTheDocument();
     expect(screen.getByText(/5 already disqualified by a finding/)).toBeInTheDocument();
+  });
+
+  it('reports a pre-field run without claiming the judge saw its no-ops', async () => {
+    // null means never measured; reading it as a measured zero told the
+    // operator the judge had preferred no-ops it never saw.
+    const api = await import('../admin-api');
+    const s = summary({
+      turns_completed: 40,
+      silent_noop_rate: 0.05,
+      silent_noop_blocking_rate: null,
+    });
+    vi.mocked(api.getEvalReport).mockResolvedValue(report({ run: run({ summary: s }) }));
+    renderReport();
+
+    // The same words are the agreement label on a turn card, so scope to the
+    // tile: only the summary grid renders the label as a <p>.
+    const labels = await screen.findAllByText('Replied instead of acting');
+    const tile = labels.find(el => el.tagName === 'P')?.closest('div');
+    expect(tile).toBeDefined();
+    expect(within(tile as HTMLElement).getByText('5%')).toBeInTheDocument();
+    expect(within(tile as HTMLElement).queryByText(/the judge preferred/)).toBeNull();
   });
 
   it('does not count a silent no-op the judge preferred against the candidate', async () => {
@@ -192,7 +219,12 @@ describe('ModelEvalReportPage', () => {
     const api = await import('../admin-api');
     const t = turn({
       safety_issues: [
-        { finding: 'unrequested_mutation', tool_name: 'qb_update', detail: 'nobody asked' },
+        {
+          finding: 'unrequested_mutation',
+          tool_name: 'qb_update',
+          detail: 'nobody asked',
+          blocking: true,
+        },
       ],
     });
     t.baseline = {

@@ -22,7 +22,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.integrations.web_search.brave import BraveSearchProvider
@@ -206,6 +206,7 @@ def _create_web_search_tools(provider: SearchProvider, cache: SearchCache) -> li
     return [
         Tool(
             name=ToolName.WEB_SEARCH,
+            tags={ToolTags.READ_ONLY},
             description=(
                 "Search the web. Returns the top results with their source "
                 "URLs and whatever details the search engine has for each one. "

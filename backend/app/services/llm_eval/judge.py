@@ -159,12 +159,10 @@ async def judge_turn(
     raw = get_response_text(response)
     parsed = _parse_verdict(raw)
     if parsed is None:
-        # Say which failure it was. "Unparseable output" covers both a judge
-        # that wrapped its JSON in prose and a judge that ran out of tokens
-        # mid-object, and those call for different fixes: the first is a
-        # prompt problem, the second means ``MAX_JUDGE_TOKENS`` is too low
-        # for a turn with a dozen tool calls in it. The report showed the
-        # same neutral "judge unavailable" badge for both.
+        # Which failure it was matters: prose around the JSON is a prompt
+        # problem, while running out of tokens mid-object means
+        # ``MAX_JUDGE_TOKENS`` is too low for a turn with a dozen tool calls
+        # in it. One message for both leaves an operator unable to tell.
         if response.stop_reason == "max_tokens":
             logger.warning(
                 "Judge hit the %d-token ceiling for seq %d", MAX_JUDGE_TOKENS, sample.seq
