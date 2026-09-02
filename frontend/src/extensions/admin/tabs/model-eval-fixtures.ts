@@ -72,6 +72,8 @@ export function run(overrides: Partial<EvalRun> = {}): EvalRun {
   return {
     id: 'run-0001',
     user_id: 'user-1',
+    user_email: 'consenting@example.com',
+    user_consented: true,
     baseline_provider: 'anthropic',
     baseline_model: 'incumbent',
     candidate_provider: 'anthropic',
@@ -132,6 +134,12 @@ export function report(overrides: Partial<EvalReport> = {}): EvalReport {
 // ``listEvalRuns`` returns the run list plus the bounds the sample slider has
 // to respect, so a mock has to carry them or the slider falls back to its own
 // defaults and the test stops exercising the wired value.
-export function runList(runs: EvalRun[] = [], overrides: Partial<EvalRunList> = {}) {
-  return { runs, max_samples: 200, min_turns_for_verdict: 20, ...overrides };
+export function runList(runs: EvalRun[] = [], overrides: Partial<EvalRunList> = {}): EvalRunList {
+  return {
+    runs,
+    total: runs.length,
+    max_samples: 200,
+    min_turns_for_verdict: 20,
+    ...overrides,
+  };
 }

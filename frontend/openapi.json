@@ -3872,22 +3872,54 @@
             }
           }
         }
-      },
+      }
+    },
+    "/api/admin/llm-eval/runs": {
       "get": {
         "tags": [
           "admin"
         ],
         "summary": "List Runs",
-        "description": "List this user's evaluation runs, newest first.",
-        "operationId": "list_runs_api_admin_llm_eval_users__user_id__runs_get",
+        "description": "Evaluation runs, newest first, across every user or one of them.\n\nUnfiltered by default so the console can answer \"what has been evaluated\nlately\", which is how an operator finds a run again weeks later without\nremembering whose it was. ``user_id`` narrows it to one user for the run\nform beside it.\n\nNo consent gate here, unlike the report: a row is run metadata (which\nmodels, what verdict, how many turns), not the user's conversations. Each\nrow carries ``user_consented`` so the console can show that a run's\nevidence is no longer readable rather than offering a link that 403s.",
+        "operationId": "list_runs_api_admin_llm_eval_runs_get",
         "parameters": [
           {
             "name": "user_id",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "User Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
             }
           }
         ],
@@ -5599,6 +5631,16 @@
             "type": "string",
             "title": "User Id"
           },
+          "user_email": {
+            "type": "string",
+            "title": "User Email",
+            "default": ""
+          },
+          "user_consented": {
+            "type": "boolean",
+            "title": "User Consented",
+            "default": true
+          },
           "baseline_provider": {
             "type": "string",
             "title": "Baseline Provider"
@@ -5709,6 +5751,10 @@
             "type": "array",
             "title": "Runs"
           },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
           "max_samples": {
             "type": "integer",
             "title": "Max Samples"
@@ -5721,6 +5767,7 @@
         "type": "object",
         "required": [
           "runs",
+          "total",
           "max_samples",
           "min_turns_for_verdict"
         ],

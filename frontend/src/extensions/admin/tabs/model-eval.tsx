@@ -35,6 +35,10 @@ const SAMPLE_STEP = 5;
 const SAMPLE_MAX_FALLBACK = 200;
 const SAMPLE_DEFAULT = 100;
 
+// Rows per page in the run table. Each row is one run's metadata, so this is
+// about scanning, not cost.
+const RUN_PAGE_SIZE = 25;
+
 
 // ---------------------------------------------------------------------------
 // Page
@@ -54,6 +58,8 @@ export default function ModelEvalTab() {
   const [judgeEnabled, setJudgeEnabled] = useState(true);
 
   const [runs, setRuns] = useState<EvalRun[]>([]);
+  const [runTotal, setRunTotal] = useState(0);
+  const [runsShown, setRunsShown] = useState(RUN_PAGE_SIZE);
 
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,14 +74,14 @@ export default function ModelEvalTab() {
       .finally(() => setUsersLoading(false));
   }, []);
 
-  const refreshRuns = useCallback(async (id: string) => {
-    if (!id) {
-      setRuns([]);
-      return;
-    }
+  // Unfiltered when no user is picked: the table's job is answering "what has
+  // been evaluated lately" so a run can be found again without remembering
+  // whose it was. Picking a user in the form above narrows it.
+  const refreshRuns = useCallback(async (id: string, limit: number) => {
     try {
-      const list = await listEvalRuns(id);
+      const list = await listEvalRuns({ userId: id || undefined, limit });
       setRuns(list.runs);
+      setRunTotal(list.total);
       setSampleMax(list.max_samples);
       setMinTurnsForVerdict(list.min_turns_for_verdict);
       // A cap below the current selection would leave the thumb pinned past
@@ -87,10 +93,15 @@ export default function ModelEvalTab() {
   }, []);
 
   useEffect(() => {
-    void refreshRuns(userId);
-  }, [userId, refreshRuns]);
+    void refreshRuns(userId, runsShown);
+  }, [userId, runsShown, refreshRuns]);
 
-  const activeRun = runs.find(r => ACTIVE_STATUSES.has(r.status));
+  // Scoped to the selected user on purpose. ``start_run`` allows one active
+  // run per user, so another tenant's run in the unfiltered list must not
+  // disable this form.
+  const activeRun = runs.find(
+    r => ACTIVE_STATUSES.has(r.status) && (!userId || r.user_id === userId),
+  );
 
   // One interval, restarted whenever what we are watching changes. While a run
   // is active we re-read the list so progress advances; once it settles the
@@ -100,11 +111,11 @@ export default function ModelEvalTab() {
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     if (activeRunId == null || !userId) return;
-    pollRef.current = setInterval(() => void refreshRuns(userId), POLL_MS);
+    pollRef.current = setInterval(() => void refreshRuns(userId, runsShown), POLL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [activeRunId, userId, refreshRuns]);
+  }, [activeRunId, userId, runsShown, refreshRuns]);
 
   async function handleStart() {
     setError(null);
@@ -285,18 +296,35 @@ export default function ModelEvalTab() {
         </section>
       ) : null}
 
-      {/* Past runs */}
-      {runs.length > 0 ? (
-        <section className="rounded-[--radius-lg] border border-border bg-card">
-          <h3 className="border-b border-border p-3 text-sm font-semibold text-foreground">
-            Runs for this user
+      {/* The run browser. Present whether or not a user is selected: with no
+          selection it is every run, newest first, which is how a run gets
+          found again weeks later. */}
+      <section className="rounded-[--radius-lg] border border-border bg-card">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border p-3">
+          <h3 className="text-sm font-semibold text-foreground">
+            {userId ? 'Runs for this user' : 'Recent evaluations'}
           </h3>
+          <p className="text-xs text-muted-foreground">
+            {runTotal > runs.length
+              ? `${runs.length} of ${runTotal}`
+              : `${runTotal} run${runTotal === 1 ? '' : 's'}`}
+          </p>
+        </div>
+        {runs.length === 0 ? (
+          <p className="p-3 text-sm text-muted-foreground">
+            {userId
+              ? 'No evaluations for this user yet.'
+              : 'No evaluations yet. Pick a user above to run the first one.'}
+          </p>
+        ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="p-3">Started</th>
+                  {userId ? null : <th className="p-3">User</th>}
                   <th className="p-3">Candidate</th>
+                  <th className="p-3">Incumbent</th>
                   <th className="p-3">Turns</th>
                   <th className="p-3">Status</th>
                   <th className="p-3">Verdict</th>
@@ -305,32 +333,55 @@ export default function ModelEvalTab() {
               <tbody>
                 {runs.map(run => {
                   const copy = RECOMMENDATION_COPY[run.recommendation as EvalRecommendation];
+                  const href = `${adminPath('model-eval')}/${run.id}`;
                   return (
                     <tr
                       key={run.id}
-                      onClick={() => navigate(`${adminPath('model-eval')}/${run.id}`)}
-                      className="cursor-pointer border-t border-border hover:bg-panel"
+                      onClick={() => {
+                        // A run whose user withdrew consent has no readable
+                        // report, so the row is not a way into one.
+                        if (run.user_consented) navigate(href);
+                      }}
+                      className={`border-t border-border ${
+                        run.user_consented ? 'cursor-pointer hover:bg-panel' : 'opacity-60'
+                      }`}
                     >
-                      <td className="p-3 text-muted-foreground">
-                        {/* A real link in the first cell, so the row is
-                            keyboard reachable and its URL is copyable, while
-                            the row click stays the large target. */}
-                        <Link
-                          to={`${adminPath('model-eval')}/${run.id}`}
-                          className="text-primary hover:underline"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          {formatRelative(run.created_at)}
-                        </Link>
+                      <td className="whitespace-nowrap p-3 text-muted-foreground">
+                        {run.user_consented ? (
+                          // A real link, so the row is keyboard reachable and
+                          // its URL is copyable.
+                          <Link
+                            to={href}
+                            className="text-primary hover:underline"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            {formatRelative(run.created_at)}
+                          </Link>
+                        ) : (
+                          formatRelative(run.created_at)
+                        )}
                       </td>
-                      <td className="p-3 font-mono text-xs text-foreground">
+                      {userId ? null : (
+                        <td className="whitespace-nowrap p-3 text-muted-foreground">
+                          {run.user_email || run.user_id}
+                          {run.user_consented ? null : (
+                            <span className="ml-2 text-xs text-warning-text">
+                              consent withdrawn
+                            </span>
+                          )}
+                        </td>
+                      )}
+                      <td className="whitespace-nowrap p-3 font-mono text-xs text-foreground">
                         {run.candidate_model}
+                      </td>
+                      <td className="whitespace-nowrap p-3 font-mono text-xs text-muted-foreground">
+                        {run.baseline_model}
                       </td>
                       <td className="p-3 text-muted-foreground">
                         {run.progress_total || run.requested_samples}
                       </td>
-                      <td className="p-3 text-muted-foreground">{run.status}</td>
-                      <td className="p-3">
+                      <td className="whitespace-nowrap p-3 text-muted-foreground">{run.status}</td>
+                      <td className="whitespace-nowrap p-3">
                         {copy ? (
                           <span className={`rounded-full px-2 py-0.5 text-xs ${copy.className}`}>
                             {copy.label}
@@ -345,8 +396,19 @@ export default function ModelEvalTab() {
               </tbody>
             </table>
           </div>
-        </section>
-      ) : null}
+        )}
+        {runTotal > runs.length ? (
+          <div className="border-t border-border p-3">
+            <button
+              type="button"
+              onClick={() => setRunsShown(n => n + RUN_PAGE_SIZE)}
+              className="rounded-[--radius-md] border border-border px-3 py-1 text-sm text-muted-foreground"
+            >
+              Show more runs
+            </button>
+          </div>
+        ) : null}
+      </section>
 
     </div>
   );

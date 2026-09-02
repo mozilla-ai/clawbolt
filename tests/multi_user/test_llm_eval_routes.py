@@ -234,13 +234,84 @@ def _make_run(db: Session, user_id: str, **overrides: object) -> LLMEvalRun:
     return run
 
 
-def test_list_runs_returns_the_users_runs(
+def test_list_runs_spans_every_user_by_default(
     admin_client: TestClient, consenting_user: User, db_session: Session
 ) -> None:
+    """Unfiltered is the useful default: it is how a run is found again.
+
+    An operator looking for last week's evaluation does not necessarily
+    remember which user it was against.
+    """
+    other = User(id=str(uuid.uuid4()), user_id="other-user")
+    db_session.add(other)
+    db_session.commit()
+    # The email lives on Subscription, and the base fixture user has no row,
+    # so both sides of the join are covered: one with an email, one without.
+    db_session.add(Subscription(user_id=other.id, email="other@example.com"))
+    db_session.commit()
     _make_run(db_session, consenting_user.id)
-    response = admin_client.get(f"{BASE}/users/{consenting_user.id}/runs")
-    assert response.status_code == 200
-    assert len(response.json()["runs"]) == 1
+    _make_run(db_session, other.id)
+
+    body = admin_client.get(f"{BASE}/runs").json()
+    assert body["total"] == 2
+    owners = {r["user_id"] for r in body["runs"]}
+    assert owners == {consenting_user.id, other.id}
+    # The listing names whose run each row is, or the table cannot be read.
+    # A user with no subscription row reports an empty email rather than
+    # dropping out of the listing.
+    assert {r["user_email"] for r in body["runs"]} == {"other@example.com", ""}
+
+
+def test_list_runs_filters_to_one_user(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    other = User(id=str(uuid.uuid4()), user_id="other-user")
+    db_session.add(other)
+    db_session.commit()
+    _make_run(db_session, consenting_user.id)
+    _make_run(db_session, other.id)
+
+    body = admin_client.get(f"{BASE}/runs?user_id={consenting_user.id}").json()
+    assert body["total"] == 1
+    assert body["runs"][0]["user_id"] == consenting_user.id
+
+
+def test_list_runs_404s_an_unknown_user_filter(admin_client: TestClient) -> None:
+    """An empty page would read as "never evaluated" rather than "no such user"."""
+    assert admin_client.get(f"{BASE}/runs?user_id={uuid.uuid4()}").status_code == 404
+
+
+def test_list_runs_pages(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    for _ in range(3):
+        _make_run(db_session, consenting_user.id)
+
+    body = admin_client.get(f"{BASE}/runs?limit=2").json()
+    assert len(body["runs"]) == 2
+    assert body["total"] == 3
+    assert len(admin_client.get(f"{BASE}/runs?limit=2&offset=2").json()["runs"]) == 1
+
+
+def test_list_runs_keeps_a_run_whose_user_withdrew_consent_and_says_so(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """A row is run metadata, not conversation content, so it survives.
+
+    The report does not: it is consent-gated, which is why the row carries the
+    flag rather than the console offering a link that 403s.
+    """
+    run = _make_run(db_session, consenting_user.id)
+    user = db_session.get(User, consenting_user.id)
+    assert user is not None
+    user.data_sharing_consent = False
+    db_session.commit()
+
+    body = admin_client.get(f"{BASE}/runs").json()
+    assert [r["id"] for r in body["runs"]] == [run.public_id]
+    assert body["runs"][0]["user_consented"] is False
+    # And the evidence really is refused.
+    assert admin_client.get(f"{BASE}/runs/{run.public_id}").status_code == 403
 
 
 def test_a_run_is_addressed_by_a_public_id_not_its_row_id(
@@ -268,7 +339,7 @@ def test_list_runs_reports_the_bounds_the_run_form_has_to_respect(
     a client guessing the cap offers sizes the API rejects with a bare 422.
     """
     with patch.object(settings, "llm_eval_max_samples", 40):
-        response = admin_client.get(f"{BASE}/users/{consenting_user.id}/runs")
+        response = admin_client.get(f"{BASE}/runs?user_id={consenting_user.id}")
     assert response.status_code == 200
     body = response.json()
     assert body["max_samples"] == 40

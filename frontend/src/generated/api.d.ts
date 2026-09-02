@@ -2191,11 +2191,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Runs
-         * @description List this user's evaluation runs, newest first.
-         */
-        get: operations["list_runs_api_admin_llm_eval_users__user_id__runs_get"];
+        get?: never;
         put?: never;
         /**
          * Start Run
@@ -2206,6 +2202,36 @@ export interface paths {
          *     same history would double the provider load for no extra information.
          */
         post: operations["start_run_api_admin_llm_eval_users__user_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/llm-eval/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description Evaluation runs, newest first, across every user or one of them.
+         *
+         *     Unfiltered by default so the console can answer "what has been evaluated
+         *     lately", which is how an operator finds a run again weeks later without
+         *     remembering whose it was. ``user_id`` narrows it to one user for the run
+         *     form beside it.
+         *
+         *     No consent gate here, unlike the report: a row is run metadata (which
+         *     models, what verdict, how many turns), not the user's conversations. Each
+         *     row carries ``user_consented`` so the console can show that a run's
+         *     evidence is no longer readable rather than offering a link that 403s.
+         */
+        get: operations["list_runs_api_admin_llm_eval_runs_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3174,6 +3200,16 @@ export interface components {
             id: string;
             /** User Id */
             user_id: string;
+            /**
+             * User Email
+             * @default
+             */
+            user_email: string;
+            /**
+             * User Consented
+             * @default true
+             */
+            user_consented: boolean;
             /** Baseline Provider */
             baseline_provider: string;
             /** Baseline Model */
@@ -3218,6 +3254,8 @@ export interface components {
         AdminLLMEvalRunListResponse: {
             /** Runs */
             runs: components["schemas"]["AdminLLMEvalRunItem"][];
+            /** Total */
+            total: number;
             /** Max Samples */
             max_samples: number;
             /** Min Turns For Verdict */
@@ -8253,37 +8291,6 @@ export interface operations {
             };
         };
     };
-    list_runs_api_admin_llm_eval_users__user_id__runs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                user_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdminLLMEvalRunListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     start_run_api_admin_llm_eval_users__user_id__runs_post: {
         parameters: {
             query?: never;
@@ -8306,6 +8313,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminLLMEvalRunItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_admin_llm_eval_runs_get: {
+        parameters: {
+            query?: {
+                user_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMEvalRunListResponse"];
                 };
             };
             /** @description Validation Error */

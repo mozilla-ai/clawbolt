@@ -1338,6 +1338,9 @@ export interface EvalRun {
   /** The run's public id, which is also its report URL segment. */
   id: string;
   user_id: string;
+  user_email: string;
+  /** False once the user withdraws consent: the report is no longer readable. */
+  user_consented: boolean;
   baseline_provider: string;
   baseline_model: string;
   candidate_provider: string;
@@ -1399,15 +1402,24 @@ export interface EvalReport {
 
 export interface EvalRunList {
   runs: EvalRun[];
+  /** Runs matching the query, not just this page. */
+  total: number;
   /** LLM_EVAL_MAX_SAMPLES: the largest run the API will start. */
   max_samples: number;
   /** Below this many compared turns a run reports inconclusive, not a pass. */
   min_turns_for_verdict: number;
 }
 
-export async function listEvalRuns(userId: string): Promise<EvalRunList> {
+/** Runs across every user, or one user's when ``userId`` is given. */
+export async function listEvalRuns(
+  opts: { userId?: string; limit?: number; offset?: number } = {},
+): Promise<EvalRunList> {
+  const params = new URLSearchParams();
+  if (opts.userId) params.set('user_id', opts.userId);
+  params.set('limit', String(opts.limit ?? 25));
+  if (opts.offset) params.set('offset', String(opts.offset));
   const { data, error } = await client.GET(
-    `/api/admin/llm-eval/users/${encodeURIComponent(userId)}/runs` as never,
+    `/api/admin/llm-eval/runs?${params.toString()}` as never,
   );
   if (error) throwApiError(error, 'Failed to load evaluation runs');
   return data as EvalRunList;
