@@ -16,7 +16,8 @@ drill-down is masked.
 Endpoints:
 
 - ``POST /admin/llm-eval/users/{user_id}/runs`` starts a run.
-- ``GET  /admin/llm-eval/users/{user_id}/runs`` lists that user's runs.
+- ``GET  /admin/llm-eval/runs`` lists runs, newest first, across every user
+  or one of them (``?user_id=``).
 - ``GET  /admin/llm-eval/runs/{run_id}`` returns a run plus its per-turn
   evidence, worst turns first.
 - ``POST /admin/llm-eval/runs/{run_id}/cancel`` stops an in-flight run.
@@ -98,9 +99,13 @@ def _summary_of(run: LLMEvalRun) -> AdminLLMEvalSummary | None:
     return AdminLLMEvalSummary.model_validate(run.summary_json)
 
 
-def _run_item(run: LLMEvalRun) -> AdminLLMEvalRunItem:
+def _run_item(
+    run: LLMEvalRun, *, user_email: str = "", user_consented: bool = True
+) -> AdminLLMEvalRunItem:
     return AdminLLMEvalRunItem(
         id=run.public_id,
+        user_email=user_email,
+        user_consented=user_consented,
         user_id=run.user_id,
         baseline_provider=run.baseline_provider,
         baseline_model=run.baseline_model,
@@ -303,29 +308,67 @@ async def start_run(
     return _run_item(run)
 
 
-@router.get("/users/{user_id}/runs", response_model=AdminLLMEvalRunListResponse)
+@router.get("/runs", response_model=AdminLLMEvalRunListResponse)
 async def list_runs(
-    user_id: str,
+    user_id: str | None = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     ctx: AdminAuditContext = Depends(audit_admin(AdminAction.VIEW_LLM_EVAL_RUNS)),
     db: AsyncSession = Depends(get_async_db),
 ) -> AdminLLMEvalRunListResponse:
-    """List this user's evaluation runs, newest first."""
-    user = await _consenting_user(user_id, db)
-    ctx.target_user_id = user.id
-    runs = (
-        (
+    """Evaluation runs, newest first, across every user or one of them.
+
+    Unfiltered by default so the console can answer "what has been evaluated
+    lately", which is how an operator finds a run again weeks later without
+    remembering whose it was. ``user_id`` narrows it to one user for the run
+    form beside it.
+
+    No consent gate here, unlike the report: a row is run metadata (which
+    models, what verdict, how many turns), not the user's conversations. Each
+    row carries ``user_consented`` so the console can show that a run's
+    evidence is no longer readable rather than offering a link that 403s.
+    """
+    query = select(LLMEvalRun).order_by(desc(LLMEvalRun.created_at))
+    total_query = select(sa_func.count()).select_from(LLMEvalRun)
+    if user_id is not None:
+        # Existence still matters: a typo'd id should 404 rather than quietly
+        # return an empty list that reads as "this user has never been run".
+        user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        ctx.target_user_id = user.id
+        query = query.where(LLMEvalRun.user_id == user_id)
+        total_query = total_query.where(LLMEvalRun.user_id == user_id)
+
+    runs = (await db.execute(query.limit(limit).offset(offset))).scalars().all()
+    total = await db.scalar(total_query) or 0
+
+    # One query for the identities on this page rather than one per row.
+    owner_ids = {r.user_id for r in runs}
+    emails: dict[str, str] = {}
+    consented: dict[str, bool] = {}
+    if owner_ids:
+        rows = (
             await db.execute(
-                select(LLMEvalRun)
-                .where(LLMEvalRun.user_id == user_id)
-                .order_by(desc(LLMEvalRun.created_at))
-                .limit(50)
+                select(User.id, User.data_sharing_consent, Subscription.email)
+                .outerjoin(Subscription, Subscription.user_id == User.id)
+                .where(User.id.in_(owner_ids))
             )
-        )
-        .scalars()
-        .all()
-    )
+        ).all()
+        for owner_id, consent, email in rows:
+            emails[owner_id] = email or ""
+            consented[owner_id] = bool(consent)
+
     return AdminLLMEvalRunListResponse(
-        runs=[_run_item(r) for r in runs],
+        runs=[
+            _run_item(
+                r,
+                user_email=emails.get(r.user_id, ""),
+                user_consented=consented.get(r.user_id, False),
+            )
+            for r in runs
+        ],
+        total=total,
         max_samples=settings.llm_eval_max_samples,
         min_turns_for_verdict=MIN_TURNS_FOR_VERDICT,
     )

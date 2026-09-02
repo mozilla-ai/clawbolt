@@ -117,6 +117,96 @@ describe('ModelEvalTab', () => {
     expect(await screen.findByText(/reports inconclusive/)).toBeInTheDocument();
   });
 
+  it('lists runs across every user before one is picked', async () => {
+    // The table is how a run is found again weeks later, when nobody
+    // remembers whose it was.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(
+      runList([
+        run(),
+        run({
+          id: 'run-0002',
+          user_id: 'user-2',
+          user_email: 'other@example.com',
+          candidate_model: 'other-candidate',
+        }),
+      ]),
+    );
+    renderTab();
+
+    expect(await screen.findByText('Recent evaluations')).toBeInTheDocument();
+    expect(await screen.findByText('other@example.com')).toBeInTheDocument();
+    expect(screen.getByText('other-candidate')).toBeInTheDocument();
+    // Unfiltered: the API is asked for every user's runs.
+    expect(api.listEvalRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: undefined }),
+    );
+  });
+
+  it('narrows the table to the selected user', async () => {
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
+    renderTab();
+
+    await screen.findByRole('option', { name: 'consenting@example.com' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
+
+    await waitFor(() =>
+      expect(api.listEvalRuns).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-1' })),
+    );
+    expect(await screen.findByText('Runs for this user')).toBeInTheDocument();
+  });
+
+  it('does not offer a report for a run whose user withdrew consent', async () => {
+    // The run row survives, because it is metadata rather than conversation
+    // content, but its evidence is no longer readable and the link would 403.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(
+      runList([run({ user_consented: false })]),
+    );
+    renderTab();
+
+    expect(await screen.findByText('consent withdrawn')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /ago|2026/ })).not.toBeInTheDocument();
+  });
+
+  it('pages the run table', async () => {
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()], { total: 60 }));
+    renderTab();
+
+    expect(await screen.findByText('1 of 60')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Show more runs' }));
+    await waitFor(() =>
+      expect(api.listEvalRuns).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 50 })),
+    );
+  });
+
+  it('lets a run start while another user has one in flight', async () => {
+    // start_run allows one active run per user, so someone else's run in the
+    // unfiltered table must not disable this form.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(
+      runList([
+        run({
+          id: 'run-0009',
+          user_id: 'user-2',
+          user_email: 'other@example.com',
+          status: 'running',
+          summary: null,
+        }),
+      ]),
+    );
+    renderTab();
+
+    await screen.findByRole('option', { name: 'consenting@example.com' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
+    await userEvent.type(screen.getByLabelText('provider'), 'anthropic');
+    await userEvent.type(screen.getByLabelText('model'), 'candidate');
+
+    expect(screen.getByRole('button', { name: 'Run analysis' })).not.toBeDisabled();
+  });
+
   it('links each past run to its own report URL', async () => {
     // The report is a page an operator returns to and shares, so the row has
     // to carry a real, copyable link rather than only a click handler.

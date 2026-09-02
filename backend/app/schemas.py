@@ -1820,6 +1820,16 @@ class AdminLLMEvalRunItem(BaseModel):
     """The run's ``public_id``. Its report is addressed by this, not by the row id."""
 
     user_id: str
+    user_email: str = ""
+    """Whose run this is, for the cross-user listing. Empty when unknown."""
+
+    user_consented: bool = True
+    """Whether this run's evidence is still readable.
+
+    A run survives its user withdrawing data-sharing consent, but the report
+    endpoint refuses it from then on. The listing says so rather than offering
+    a link that 403s.
+    """
     baseline_provider: str
     baseline_model: str
     candidate_provider: str
@@ -1849,6 +1859,9 @@ class AdminLLMEvalRunListResponse(BaseModel):
     """
 
     runs: list[AdminLLMEvalRunItem]
+    total: int
+    """Runs matching the query, not just this page, so the console can page."""
+
     max_samples: int
     min_turns_for_verdict: int
 
