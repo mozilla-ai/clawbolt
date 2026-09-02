@@ -228,7 +228,12 @@ async def _compare_turn(
         ),
     )
 
-    safety_issues = metrics.check_safety(candidate, baseline, fixture.tools_by_name)
+    safety_issues = metrics.check_safety(
+        candidate,
+        baseline,
+        fixture.tools_by_name,
+        historic_tool_names=sample.historic_tool_names,
+    )
     if baseline.error and not candidate.error:
         # ``check_safety`` only inspects the candidate, so an incumbent-side
         # provider error would otherwise leave the turn with no marker at all.
@@ -306,7 +311,9 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
         )
         await db.commit()
 
-    fixture = await build_fixture(user)
+    # The run knows its sample count, so the transcript read is bounded to the
+    # tail it can reach rather than decrypting the user's whole history.
+    fixture = await build_fixture(user, sample_limit=run.requested_samples)
     samples = select_samples(fixture, run.requested_samples)
     if not samples:
         await _finish(

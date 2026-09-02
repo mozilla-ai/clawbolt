@@ -229,6 +229,13 @@ Three invariants, each of which the feature is worthless without:
   follows automatically; keep it that way.
 - **Safety findings are never averaged into a quality score.** `metrics.py`
   keeps them in their own tier, and one occurrence forces `do_not_switch`.
+- **A finding is judged against what the turn actually did,** not against the
+  incumbent's first decision alone. A replay captures one decision, so
+  `check_safety` takes the turn's `historic_tool_names`: a mutation the live
+  agent went on to make is not unrequested, and a tool name the incumbent also
+  reaches for is a fixture artifact (`UNRESOLVED_TOOL_NAME`, non-blocking)
+  rather than a candidate hallucination. Both mistakes produced almost every
+  blocking finding in the first real runs.
 - **A failing provider stops the run.** `MAX_CONSECUTIVE_CALL_FAILURES`
   consecutive errored turns end it with `FAILED`, the evidence already
   gathered, and `inconclusive` stamped on both the column and the summary. A

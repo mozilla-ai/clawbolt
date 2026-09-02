@@ -74,13 +74,55 @@ class ReplayFixture:
         return self.user.timezone or ""
 
 
-async def build_fixture(user: User) -> ReplayFixture:
-    """Load the user's full transcript and materialize their live tool set."""
+# Rows a single user turn can occupy. One inbound row plus the outbound rows
+# the agent wrote answering it; four covers a turn with several tool receipts
+# and a final reply, and the fallback below covers the rest.
+_ROWS_PER_TURN_ALLOWANCE = 6
+
+
+def _row_budget(sample_limit: int) -> int:
+    """Rows worth loading to sample ``sample_limit`` turns with their history.
+
+    A run needs the last N inbound turns, the outbound rows that follow each of
+    them, and ``conversation_history_limit`` rows before the oldest one, since
+    that is the window ``_history_for`` slices. Everything older is loaded,
+    decrypted, and discarded.
+    """
+    return sample_limit * _ROWS_PER_TURN_ALLOWANCE + settings.conversation_history_limit
+
+
+async def build_fixture(user: User, *, sample_limit: int | None = None) -> ReplayFixture:
+    """Materialize the user's live tool set and enough transcript to replay.
+
+    ``sample_limit`` bounds the transcript read to the tail a run of that size
+    can reach. Every row is envelope-encrypted, so decryption happens on
+    attribute access in this process: loading a long transcript to use its last
+    few turns spends real CPU on the event loop that also serves the user's own
+    messages. Omit it to load everything, which is what a caller that does not
+    know its sample count has to do.
+    """
     store = get_session_store(user.id)
-    sessions = await store.list_sessions_async()
     rows: list[StoredMessage] = []
-    for session in sessions:
-        rows.extend(session.messages)
+    if sample_limit is not None and sample_limit > 0:
+        budget = _row_budget(sample_limit)
+        rows = await store.get_recent_messages_async(budget)
+        inbound = sum(1 for r in rows if r.direction == MessageDirection.INBOUND)
+        if len(rows) == budget and inbound < sample_limit:
+            # The window filled up before it held the turns asked for, which
+            # means this user's turns are unusually long. Fall back rather than
+            # quietly running a smaller evaluation than the operator chose.
+            logger.info(
+                "Replay window of %d rows held only %d inbound turn(s) for user %s; "
+                "loading the full transcript",
+                budget,
+                inbound,
+                user.id,
+            )
+            rows = []
+    if not rows:
+        sessions = await store.list_sessions_async()
+        for session in sessions:
+            rows.extend(session.messages)
     rows.sort(key=lambda m: m.seq)
 
     # Nothing populates the registry at startup: every entry point that needs

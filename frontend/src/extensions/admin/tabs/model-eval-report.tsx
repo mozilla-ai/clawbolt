@@ -57,6 +57,7 @@ const FINDING_COPY: Record<string, string> = {
   unrequested_mutation: 'Reached for a mutating tool the incumbent did not',
   truncated: 'Response truncated mid-thought',
   call_failed: 'Provider call failed',
+  unresolved_tool_name: 'Tool in this history but not in the current schema',
 };
 
 const VERDICT_COPY: Record<string, string> = {
