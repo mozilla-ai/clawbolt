@@ -2258,7 +2258,28 @@ export interface paths {
         get: operations["get_report_api_admin_llm_eval_runs__run_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Run
+         * @description Discard a run and every turn it recorded.
+         *
+         *     Runs accumulate: a verdict is only as good as the harness that produced
+         *     it, so a scoring change strands every earlier run at a number nobody
+         *     should act on. Leaving them listed is worse than losing them, because the
+         *     console sorts newest-first and an operator reading a stale
+         *     ``do_not_switch`` has no way to tell it was measured by since-fixed code.
+         *
+         *     Not consent-gated, unlike the report. A run belonging to a user who has
+         *     since withdrawn consent is exactly the run most worth removing, and a
+         *     gate here would pin it in the list permanently.
+         *
+         *     Refuses while the run is still going, because the worker writes turn rows
+         *     as it goes and would resurrect the run's children under an id that no
+         *     longer exists. Cancel first, then delete. The turn results themselves go
+         *     with the run through ``llm_eval_turn_results.run_id``'s ``ON DELETE
+         *     CASCADE``; the audit row this request writes survives, and is the only
+         *     remaining evidence the run was ever here.
+         */
+        delete: operations["delete_run_api_admin_llm_eval_runs__run_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8407,6 +8428,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AdminLLMEvalReportResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_run_api_admin_llm_eval_runs__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

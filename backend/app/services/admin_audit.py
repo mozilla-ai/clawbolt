@@ -96,12 +96,16 @@ class AdminAction(StrEnum):
 
     # Model-swap evaluator. Starting a run replays the user's real
     # conversations through two models, and the report renders their message
-    # bodies back to the admin, so all four are consent-gated content access
-    # in the same sense as the shared-data routes below.
+    # bodies back to the admin, so those two are consent-gated content access
+    # in the same sense as the shared-data routes below. Listing, cancelling
+    # and deleting touch run metadata rather than content and are not gated.
     VIEW_LLM_EVAL_RUNS = "view_llm_eval_runs"
     START_LLM_EVAL_RUN = "start_llm_eval_run"
     VIEW_LLM_EVAL_REPORT = "view_llm_eval_report"
     CANCEL_LLM_EVAL_RUN = "cancel_llm_eval_run"
+    # Deleting a run destroys the evidence a verdict was drawn from, so the
+    # audit row is the only remaining record that the run existed at all.
+    DELETE_LLM_EVAL_RUN = "delete_llm_eval_run"
 
     # Consent-gated content access (issue #325 item 3). These are the
     # only routes that surface message bodies / memory text to admins;

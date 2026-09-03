@@ -20,6 +20,7 @@ vi.mock('../admin-api', () => ({
   startEvalRun: vi.fn(),
   getEvalReport: vi.fn(),
   cancelEvalRun: vi.fn(),
+  deleteEvalRun: vi.fn(),
 }));
 
 vi.mock('../llm-picker', () => ({
@@ -46,6 +47,7 @@ beforeEach(async () => {
   vi.mocked(api.startEvalRun).mockReset();
   vi.mocked(api.getEvalReport).mockReset().mockResolvedValue(report());
   vi.mocked(api.cancelEvalRun).mockReset();
+  vi.mocked(api.deleteEvalRun).mockReset().mockResolvedValue(undefined);
 });
 
 describe('ModelEvalTab', () => {
@@ -254,5 +256,100 @@ describe('ModelEvalTab', () => {
       'href',
       '/app/admin/model-eval/run-0001',
     );
+  });
+
+  it('will not delete a run until the confirmation is accepted', async () => {
+    // The gate is the whole feature: the row itself navigates to the report,
+    // so a delete control that fired on the first click would be one stray
+    // click away from destroying evidence that costs a replay to rebuild.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
+    renderTab();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Delete run against candidate' }),
+    );
+    expect(api.deleteEvalRun).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('cannot be undone');
+    await userEvent.click(screen.getByRole('button', { name: 'Delete run' }));
+
+    await waitFor(() => expect(api.deleteEvalRun).toHaveBeenCalledWith('run-0001'));
+  });
+
+  it('drops the deleted row without refetching the list', async () => {
+    // Refetching would snap a list paged several clicks deep back to page one.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(
+      runList([run(), run({ id: 'run-0002', candidate_model: 'other-candidate' })]),
+    );
+    renderTab();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Delete run against candidate' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Delete run' }));
+
+    await waitFor(() => expect(screen.queryByText('candidate')).not.toBeInTheDocument());
+    expect(screen.getByText('other-candidate')).toBeInTheDocument();
+    expect(vi.mocked(api.listEvalRuns).mock.calls.length).toBe(1);
+  });
+
+  it('cancelling the dialog leaves the run alone', async () => {
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
+    renderTab();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Delete run against candidate' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(api.deleteEvalRun).not.toHaveBeenCalled();
+    expect(screen.getByText('candidate')).toBeInTheDocument();
+  });
+
+  it('offers no delete control while a run is still going', async () => {
+    // The API refuses it with a 409, so the remedy is Cancel, not Delete.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(
+      runList([run({ status: 'running', summary: null })]),
+    );
+    renderTab();
+
+    await screen.findByText('candidate');
+    expect(
+      screen.queryByRole('button', { name: 'Delete run against candidate' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the delete control on a run whose user withdrew consent', async () => {
+    // Its report already 403s, so this is the row most worth clearing out and
+    // the only control that can still act on it.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run({ user_consented: false })]));
+    renderTab();
+
+    expect(
+      await screen.findByRole('button', { name: 'Delete run against candidate' }),
+    ).toBeInTheDocument();
+  });
+
+  it('surfaces a failed delete and keeps the row', async () => {
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
+    vi.mocked(api.deleteEvalRun).mockRejectedValue(
+      new Error('Run is still running. Cancel it before deleting.'),
+    );
+    renderTab();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Delete run against candidate' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Delete run' }));
+
+    expect(await screen.findByText(/Cancel it before deleting/)).toBeInTheDocument();
+    expect(screen.getByText('candidate')).toBeInTheDocument();
   });
 });

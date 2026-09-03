@@ -23,7 +23,14 @@ from sqlalchemy.orm import Session
 
 from backend.app.auth.admin_dep import get_current_admin
 from backend.app.config import settings
-from backend.app.models import LLMEvalRun, LLMEvalTurnResult, Subscription, User
+from backend.app.models import (
+    AdminAuditLog,
+    LLMEvalRun,
+    LLMEvalTurnResult,
+    Subscription,
+    User,
+)
+from backend.app.services.admin_audit import AdminAction
 from backend.app.services.llm_eval.metrics import MIN_TURNS_FOR_VERDICT
 from backend.app.services.llm_eval.types import AgreementClass, RunStatus
 
@@ -491,6 +498,106 @@ def test_cancelling_a_finished_run_conflicts(
 ) -> None:
     run = _make_run(db_session, consenting_user.id, status=str(RunStatus.COMPLETED))
     assert admin_client.post(f"{BASE}/runs/{run.public_id}/cancel").status_code == 409
+
+
+def test_delete_removes_the_run_and_its_turns(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """The turn rows go with the run, via the FK's ON DELETE CASCADE.
+
+    Worth asserting rather than assuming: nothing in Python deletes them, so
+    a migration that recreated the constraint without the cascade would leave
+    orphaned turns behind and this is the only thing that would notice.
+    """
+    run = _make_run(db_session, consenting_user.id)
+    db_session.add(
+        LLMEvalTurnResult(
+            run_id=run.id,
+            message_seq=1,
+            user_message="evidence",
+            agreement=str(AgreementClass.IDENTICAL),
+        )
+    )
+    db_session.commit()
+    run_pk = run.id
+
+    assert admin_client.delete(f"{BASE}/runs/{run.public_id}").status_code == 204
+
+    db_session.expire_all()
+    assert db_session.get(LLMEvalRun, run_pk) is None
+    assert (
+        db_session.query(LLMEvalTurnResult).filter(LLMEvalTurnResult.run_id == run_pk).count() == 0
+    )
+
+
+def test_delete_leaves_other_runs_alone(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    doomed = _make_run(db_session, consenting_user.id)
+    keeper = _make_run(db_session, consenting_user.id)
+
+    assert admin_client.delete(f"{BASE}/runs/{doomed.public_id}").status_code == 204
+
+    db_session.expire_all()
+    assert db_session.get(LLMEvalRun, keeper.id) is not None
+
+
+@pytest.mark.parametrize("status", [RunStatus.PENDING, RunStatus.RUNNING])
+def test_deleting_an_active_run_conflicts(
+    admin_client: TestClient,
+    consenting_user: User,
+    db_session: Session,
+    status: RunStatus,
+) -> None:
+    """An in-flight worker keeps writing turns, so the row has to stay put.
+
+    Deleting under it would either fail on the FK or resurrect children
+    against an id that no longer exists, depending on where the worker was.
+    """
+    run = _make_run(db_session, consenting_user.id, status=str(status))
+    response = admin_client.delete(f"{BASE}/runs/{run.public_id}")
+    assert response.status_code == 409
+    assert "Cancel it before deleting" in response.json()["detail"]
+
+    db_session.expire_all()
+    assert db_session.get(LLMEvalRun, run.id) is not None
+
+
+def test_delete_is_not_consent_gated(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """A withdrawn-consent run is the one most worth removing.
+
+    Its report already 403s, so gating the delete too would pin an
+    unreadable row in the list with no way to clear it.
+    """
+    run = _make_run(db_session, consenting_user.id)
+    user = db_session.get(User, consenting_user.id)
+    assert user is not None
+    user.data_sharing_consent = False
+    db_session.commit()
+
+    assert admin_client.get(f"{BASE}/runs/{run.public_id}").status_code == 403
+    assert admin_client.delete(f"{BASE}/runs/{run.public_id}").status_code == 204
+
+
+def test_deleting_an_unknown_run_is_404(admin_client: TestClient) -> None:
+    assert admin_client.delete(f"{BASE}/runs/{uuid.uuid4()}").status_code == 404
+
+
+def test_delete_writes_an_audit_row(
+    admin_client: TestClient, consenting_user: User, db_session: Session
+) -> None:
+    """The audit row is the only record left once the run is gone."""
+    run = _make_run(db_session, consenting_user.id)
+    assert admin_client.delete(f"{BASE}/runs/{run.public_id}").status_code == 204
+
+    row = (
+        db_session.query(AdminAuditLog)
+        .filter(AdminAuditLog.action == AdminAction.DELETE_LLM_EVAL_RUN)
+        .one()
+    )
+    assert row.target_user_id == consenting_user.id
 
 
 # ---------------------------------------------------------------------------
