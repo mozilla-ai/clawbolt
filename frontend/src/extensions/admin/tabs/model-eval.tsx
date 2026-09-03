@@ -155,7 +155,11 @@ export default function ModelEvalTab() {
       setRunTotal(n => Math.max(0, n - 1));
       setDeleteTarget(null);
     } catch (e) {
+      // Close the dialog rather than leaving it open over the banner. The
+      // likely failure is the 409 telling the operator to cancel the run
+      // first, and that is acted on out here, not in the dialog.
       setError((e as Error).message);
+      setDeleteTarget(null);
     } finally {
       setDeleting(false);
     }

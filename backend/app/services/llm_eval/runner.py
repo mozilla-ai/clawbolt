@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from sqlalchemy import CursorResult, select, update
+from sqlalchemy.exc import IntegrityError
 
 from backend.app.database import db_session_async
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, User
@@ -416,19 +417,38 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
                     logger.warning("LLM eval run %d %s", run_id, breaker_error)
             else:
                 consecutive_failures = 0
-        async with db_session_async() as db:
-            db.add(_turn_row(run_id, comparison))
-            # Incremented in SQL rather than written from the Python counter.
-            # The counter advances under the lock but the commit happens
-            # outside it, so a worker holding a lower count could land last
-            # and walk progress backwards. This adds exactly one per committed
-            # turn regardless of the order the workers reach the database.
-            await db.execute(
-                update(LLMEvalRun)
-                .where(LLMEvalRun.id == run_id)
-                .values(progress_completed=LLMEvalRun.progress_completed + 1)
+        try:
+            async with db_session_async() as db:
+                db.add(_turn_row(run_id, comparison))
+                # Incremented in SQL rather than written from the Python counter.
+                # The counter advances under the lock but the commit happens
+                # outside it, so a worker holding a lower count could land last
+                # and walk progress backwards. This adds exactly one per committed
+                # turn regardless of the order the workers reach the database.
+                await db.execute(
+                    update(LLMEvalRun)
+                    .where(LLMEvalRun.id == run_id)
+                    .values(progress_completed=LLMEvalRun.progress_completed + 1)
+                )
+                await db.commit()
+        except IntegrityError:
+            # The run was deleted while this turn was in flight. Reachable on
+            # the documented remedy for deleting an active run: cancel, then
+            # delete. Cancellation is only checked at the top of the turn and
+            # the latch may be a second stale, so a worker can still be inside
+            # a provider call when the row goes away.
+            #
+            # Nothing is lost by returning: the turn's own row is gone with
+            # its parent, which is what the operator asked for. Raising would
+            # reach ``_guarded``, which would log a stack trace and stamp a
+            # deleted row as FAILED, turning a deliberate deletion into what
+            # reads like a crashed run.
+            logger.info(
+                "LLM eval run %d was deleted mid-flight; discarding turn seq=%d",
+                run_id,
+                sample.seq,
             )
-            await db.commit()
+            return
 
     try:
         await asyncio.gather(*(worker(s) for s in samples))
