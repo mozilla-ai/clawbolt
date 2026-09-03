@@ -549,10 +549,10 @@ def test_deleting_an_active_run_conflicts(
     db_session: Session,
     status: RunStatus,
 ) -> None:
-    """An in-flight worker keeps writing turns, so the row has to stay put.
+    """Stopping a run is a decision the operator has to make explicitly.
 
-    Deleting under it would either fail on the FK or resurrect children
-    against an id that no longer exists, depending on where the worker was.
+    Its workers are mid-flight against a paid provider, so deleting under
+    them throws that spend away for a result nobody asked to abandon.
     """
     run = _make_run(db_session, consenting_user.id, status=str(status))
     response = admin_client.delete(f"{BASE}/runs/{run.public_id}")

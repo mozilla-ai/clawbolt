@@ -1502,9 +1502,9 @@ export async function cancelEvalRun(runId: string): Promise<EvalRun> {
 /**
  * Discard a run and its per-turn evidence. Irreversible.
  *
- * Rejects an in-flight run with a 409: the worker is still writing turns, so
- * it has to be cancelled first. Callers should surface that message rather
- * than swallow it, since "cancel, then delete" is the whole remedy.
+ * Rejects an in-flight run with a 409: its workers are mid-flight against a
+ * paid provider, so it has to be cancelled first. Callers should surface that
+ * message rather than swallow it, since "cancel, then delete" is the remedy.
  */
 export async function deleteEvalRun(runId: string): Promise<void> {
   const { error } = await client.DELETE(
