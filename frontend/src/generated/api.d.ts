@@ -2272,12 +2272,17 @@ export interface paths {
          *     since withdrawn consent is exactly the run most worth removing, and a
          *     gate here would pin it in the list permanently.
          *
-         *     Refuses while the run is still going, because the worker writes turn rows
-         *     as it goes and would resurrect the run's children under an id that no
-         *     longer exists. Cancel first, then delete. The turn results themselves go
-         *     with the run through ``llm_eval_turn_results.run_id``'s ``ON DELETE
-         *     CASCADE``; the audit row this request writes survives, and is the only
-         *     remaining evidence the run was ever here.
+         *     Refuses while the run is still going. Its workers are mid-flight against
+         *     a paid provider, and deleting under them throws that spend away for a
+         *     result nobody asked to abandon, so stopping the run is a decision the
+         *     operator makes explicitly: cancel first, then delete. A worker that is
+         *     already inside a turn when the row goes away unwinds quietly; see the
+         *     ``IntegrityError`` branch in ``llm_eval.runner``.
+         *
+         *     The turn results go with the run through
+         *     ``llm_eval_turn_results.run_id``'s ``ON DELETE CASCADE``. The audit row
+         *     this request writes survives, and is the only remaining evidence the run
+         *     was ever here.
          */
         delete: operations["delete_run_api_admin_llm_eval_runs__run_id__delete"];
         options?: never;
