@@ -38,6 +38,9 @@ vi.mock('../llm-picker', () => ({
 // themselves go through these; the layouts are checked against each other in
 // "shows every run in both layouts".
 const listed = (text: string) => screen.queryAllByText(text).length;
+// The card's. Both layouts render the same ``DeleteRunButton``, so a test
+// about the delete flow rather than about the layouts gets nothing from
+// clicking each one.
 const deleteControl = (model: string) => {
   const [control] = screen.getAllByRole('button', { name: `Delete run against ${model}` });
   if (!control) throw new Error(`no delete control for ${model}`);
@@ -280,12 +283,21 @@ describe('ModelEvalTab', () => {
     // is invisible to whoever changed it: a column added to the table and
     // forgotten on the card costs nothing on a desktop and hides the field on
     // every phone. So whatever the table says about a run, the card says too.
+    //
+    // The field list below catches a field dropped from either layout. It
+    // cannot catch one added to only the table, since it never asked about
+    // that field, hence the column count: a ninth column fails here until
+    // whoever added it decides where it goes on the card.
     const api = await import('../admin-api');
     vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
     renderTab();
 
     const table = await screen.findByRole('table');
-    const cards = screen.getByRole('list');
+    const cards = screen.getByRole('list', { name: 'Evaluation runs' });
+
+    // Started, User, Candidate, Incumbent, Turns, Status, Verdict, actions.
+    // The list is unfiltered here, so the User column is present.
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(8);
 
     for (const layout of [table, cards]) {
       expect(within(layout).getByText('candidate')).toBeInTheDocument();
@@ -302,14 +314,11 @@ describe('ModelEvalTab', () => {
   });
 
   it('keeps the table scroller a containing block', async () => {
-    // Not styling. The header's "Actions" label is ``sr-only``, which is
-    // absolutely positioned, so without a positioned ancestor its containing
-    // block is the viewport rather than this scroller. It then escapes the
-    // clip, sits at the far edge of a table wider than the screen, and drags
-    // the document out to match, at which point a phone renders the whole
-    // page zoomed out to fit. That was the original mobile bug here, and it
-    // came back the moment the class was dropped. jsdom has no layout engine,
-    // so the class is the only part of this that can be asserted.
+    // Not styling: dropping this class stretches the document past the
+    // viewport and the browser zooms the page out to fit. See the comment on
+    // the wrapper for the mechanism. jsdom has no layout engine, so the class
+    // is the only part of it that can be asserted here; the widths are in the
+    // commit message.
     const api = await import('../admin-api');
     vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
     renderTab();

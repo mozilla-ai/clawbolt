@@ -403,7 +403,18 @@ export default function ModelEvalTab() {
                 Both layouts sit in the DOM and CSS picks one. Choosing in JS
                 would need a media query, which is only readable after mount,
                 so the first paint would show the wrong one and then jump. */}
-            <ul className="grid gap-2 p-3 sm:grid-cols-2 xl:hidden">
+            <ul
+              aria-label="Evaluation runs"
+              // ``grid-cols-1`` is not redundant. Without an explicit track
+              // the single implicit column is sized to max-content, and the
+              // card's nowrap user line then sets the card's width instead of
+              // the reverse: ``truncate`` never fires, the card grows past
+              // the viewport, and the delete control ends up off-screen. At
+              // 320px with a 47-character email that was a 420px card in a
+              // 320px window. ``main`` absorbs the overflow, so the document
+              // width stays honest and only the scroller shows it.
+              className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 xl:hidden"
+            >
               {runs.map(run => {
                 const href = `${adminPath('model-eval')}/${run.id}`;
                 return (
@@ -415,7 +426,7 @@ export default function ModelEvalTab() {
                       if (run.user_consented) navigate(href);
                     }}
                     className={`space-y-1 rounded-[--radius-md] border border-border p-3 ${
-                      run.user_consented ? '' : 'opacity-60'
+                      run.user_consented ? 'cursor-pointer hover:bg-panel' : 'opacity-60'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -447,12 +458,12 @@ export default function ModelEvalTab() {
                     <div className="flex items-end justify-between gap-2">
                       <div className="min-w-0 text-xs text-muted-foreground">
                         {userId ? null : (
-                          <p className="truncate">
-                            {run.user_email || run.user_id}
+                          <>
+                            <p className="truncate">{run.user_email || run.user_id}</p>
                             {run.user_consented ? null : (
-                              <span className="ml-2 text-warning-text">consent withdrawn</span>
+                              <p className="text-warning-text">consent withdrawn</p>
                             )}
-                          </p>
+                          </>
                         )}
                         <p>
                           {run.status} | {run.progress_total || run.requested_samples} turns
@@ -469,10 +480,16 @@ export default function ModelEvalTab() {
                 ``sr-only`` span is absolutely positioned, so without a
                 positioned ancestor its containing block is the viewport
                 rather than this scroller. It then escapes the clip, sits at
-                the far edge of a table wider than the screen, and stretches
-                the document to match, at which point the browser renders the
-                whole page zoomed out to fit. Nothing else about the page
-                looks wrong, which is what made it hard to find. */}
+                the far edge of the table, and stretches the document to
+                match, at which point the browser renders the whole page
+                zoomed out to fit. Nothing else about the page looks wrong,
+                which is what made it hard to find.
+
+                It still matters at the widths this table is shown at, not
+                only at the phone widths that first surfaced it: whenever the
+                table exceeds this scroller, dropping the class stretches the
+                document. Measured at 1280px with a long user email, where the
+                table wants 1112px in a 1006px box. */}
             <div className="relative hidden overflow-x-auto xl:block">
               <table className="w-full text-sm">
                 <thead>
