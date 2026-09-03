@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import ModelEvalTab from './model-eval';
@@ -31,6 +31,21 @@ vi.mock('../llm-picker', () => ({
     <input aria-label="model" value={value} onChange={e => onChange(e.target.value)} />
   ),
 }));
+
+// The run history renders twice: a card list up to ``xl`` and a table above
+// it, swapped by a CSS media query that jsdom does not evaluate. So a query
+// naming a run matches once per layout. Tests that are not about the layouts
+// themselves go through these; the layouts are checked against each other in
+// "shows every run in both layouts".
+const listed = (text: string) => screen.queryAllByText(text).length;
+// The card's. Both layouts render the same ``DeleteRunButton``, so a test
+// about the delete flow rather than about the layouts gets nothing from
+// clicking each one.
+const deleteControl = (model: string) => {
+  const [control] = screen.getAllByRole('button', { name: `Delete run against ${model}` });
+  if (!control) throw new Error(`no delete control for ${model}`);
+  return control;
+};
 
 function renderTab() {
   return render(
@@ -137,8 +152,8 @@ describe('ModelEvalTab', () => {
     renderTab();
 
     expect(await screen.findByText('Recent evaluations')).toBeInTheDocument();
-    expect(await screen.findByText('other@example.com')).toBeInTheDocument();
-    expect(screen.getByText('other-candidate')).toBeInTheDocument();
+    await screen.findAllByText('other@example.com');
+    expect(listed('other-candidate')).toBeGreaterThan(0);
     // Unfiltered: the API is asked for every user's runs.
     expect(api.listEvalRuns).toHaveBeenCalledWith(
       expect.objectContaining({ userId: undefined }),
@@ -168,7 +183,7 @@ describe('ModelEvalTab', () => {
     );
     renderTab();
 
-    expect(await screen.findByText('consent withdrawn')).toBeInTheDocument();
+    await screen.findAllByText('consent withdrawn');
     expect(screen.queryByRole('link', { name: /ago|2026/ })).not.toBeInTheDocument();
   });
 
@@ -219,8 +234,13 @@ describe('ModelEvalTab', () => {
     await screen.findByRole('option', { name: 'consenting@example.com' });
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
 
-    const link = await screen.findByRole('link', { name: /ago|2026/ });
-    expect(link).toHaveAttribute('href', '/app/admin/model-eval/run-0001');
+    // One per layout, and both have to point at the run: a card whose
+    // timestamp went nowhere would strand every phone visitor on the list.
+    const links = await screen.findAllByRole('link', { name: /ago|2026/ });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', '/app/admin/model-eval/run-0001');
+    }
   });
 
   it('does not render a report inline', async () => {
@@ -232,7 +252,7 @@ describe('ModelEvalTab', () => {
 
     await screen.findByRole('option', { name: 'consenting@example.com' });
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
-    await screen.findByText('candidate');
+    await screen.findAllByText('candidate');
 
     expect(api.getEvalReport).not.toHaveBeenCalled();
     expect(screen.queryByText('Turns, most concerning first')).not.toBeInTheDocument();
@@ -258,6 +278,56 @@ describe('ModelEvalTab', () => {
     );
   });
 
+  it('shows every run in both layouts', async () => {
+    // Two pieces of markup for one row can drift, and the direction it drifts
+    // is invisible to whoever changed it: a column added to the table and
+    // forgotten on the card costs nothing on a desktop and hides the field on
+    // every phone. So whatever the table says about a run, the card says too.
+    //
+    // The field list below catches a field dropped from either layout. It
+    // cannot catch one added to only the table, since it never asked about
+    // that field, hence the column count: a ninth column fails here until
+    // whoever added it decides where it goes on the card.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
+    renderTab();
+
+    const table = await screen.findByRole('table');
+    const cards = screen.getByRole('list', { name: 'Evaluation runs' });
+
+    // Started, User, Candidate, Incumbent, Turns, Status, Verdict, actions.
+    // The list is unfiltered here, so the User column is present.
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(8);
+
+    for (const layout of [table, cards]) {
+      expect(within(layout).getByText('candidate')).toBeInTheDocument();
+      expect(within(layout).getByText(/incumbent/)).toBeInTheDocument();
+      expect(within(layout).getByText('consenting@example.com')).toBeInTheDocument();
+      expect(within(layout).getByText('Safe to switch')).toBeInTheDocument();
+      expect(within(layout).getByText(/completed/)).toBeInTheDocument();
+      expect(within(layout).getByText(/\b40\b/)).toBeInTheDocument();
+      expect(within(layout).getByRole('link', { name: /ago|2026/ })).toBeInTheDocument();
+      expect(
+        within(layout).getByRole('button', { name: 'Delete run against candidate' }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it('keeps the table scroller a containing block', async () => {
+    // Not styling: dropping this class stretches the document past the
+    // viewport and the browser zooms the page out to fit. See the comment on
+    // the wrapper for the mechanism. jsdom has no layout engine, so the class
+    // is the only part of it that can be asserted here; the widths are in the
+    // commit message.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
+    renderTab();
+
+    const scroller = (await screen.findByRole('table')).parentElement;
+    expect(scroller).toHaveClass('overflow-x-auto');
+    expect(scroller).toHaveClass('relative');
+  });
+
   it('will not delete a run until the confirmation is accepted', async () => {
     // The gate is the whole feature: the row itself navigates to the report,
     // so a delete control that fired on the first click would be one stray
@@ -266,9 +336,8 @@ describe('ModelEvalTab', () => {
     vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
     renderTab();
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Delete run against candidate' }),
-    );
+    await screen.findAllByText('candidate');
+    await userEvent.click(deleteControl('candidate'));
     expect(api.deleteEvalRun).not.toHaveBeenCalled();
 
     const dialog = await screen.findByRole('dialog');
@@ -286,13 +355,13 @@ describe('ModelEvalTab', () => {
     );
     renderTab();
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Delete run against candidate' }),
-    );
+    await screen.findAllByText('candidate');
+    await userEvent.click(deleteControl('candidate'));
     await userEvent.click(screen.getByRole('button', { name: 'Delete run' }));
 
-    await waitFor(() => expect(screen.queryByText('candidate')).not.toBeInTheDocument());
-    expect(screen.getByText('other-candidate')).toBeInTheDocument();
+    // Gone from both layouts, not just the one the click went through.
+    await waitFor(() => expect(listed('candidate')).toBe(0));
+    expect(listed('other-candidate')).toBeGreaterThan(0);
     expect(vi.mocked(api.listEvalRuns).mock.calls.length).toBe(1);
   });
 
@@ -301,13 +370,12 @@ describe('ModelEvalTab', () => {
     vi.mocked(api.listEvalRuns).mockResolvedValue(runList([run()]));
     renderTab();
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Delete run against candidate' }),
-    );
+    await screen.findAllByText('candidate');
+    await userEvent.click(deleteControl('candidate'));
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(api.deleteEvalRun).not.toHaveBeenCalled();
-    expect(screen.getByText('candidate')).toBeInTheDocument();
+    expect(listed('candidate')).toBeGreaterThan(0);
   });
 
   it('offers no delete control while a run is still going', async () => {
@@ -318,10 +386,11 @@ describe('ModelEvalTab', () => {
     );
     renderTab();
 
-    await screen.findByText('candidate');
-    expect(
-      screen.queryByRole('button', { name: 'Delete run against candidate' }),
-    ).not.toBeInTheDocument();
+    await screen.findAllByText('candidate');
+    // In neither layout, so a phone cannot reach what the table withholds.
+    expect(screen.queryAllByRole('button', { name: 'Delete run against candidate' })).toHaveLength(
+      0,
+    );
   });
 
   it('keeps the delete control on a run whose user withdrew consent', async () => {
@@ -332,8 +401,8 @@ describe('ModelEvalTab', () => {
     renderTab();
 
     expect(
-      await screen.findByRole('button', { name: 'Delete run against candidate' }),
-    ).toBeInTheDocument();
+      await screen.findAllByRole('button', { name: 'Delete run against candidate' }),
+    ).toHaveLength(2);
   });
 
   it('surfaces a failed delete and keeps the row', async () => {
@@ -344,12 +413,11 @@ describe('ModelEvalTab', () => {
     );
     renderTab();
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Delete run against candidate' }),
-    );
+    await screen.findAllByText('candidate');
+    await userEvent.click(deleteControl('candidate'));
     await userEvent.click(screen.getByRole('button', { name: 'Delete run' }));
 
     expect(await screen.findByText(/Cancel it before deleting/)).toBeInTheDocument();
-    expect(screen.getByText('candidate')).toBeInTheDocument();
+    expect(listed('candidate')).toBeGreaterThan(0);
   });
 });

@@ -167,7 +167,7 @@ function SummaryGrid({ summary }: { summary: EvalSummary }) {
   // not imply "free".
   const costKnown = summary.candidate.pricing_available && summary.baseline.pricing_available;
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <Stat
         label="Blocking findings"
         value={String(safetyTotal)}
@@ -260,9 +260,13 @@ function DecisionColumn({ title, decision }: { title: string; decision: EvalDeci
           {decision.tool_calls.length > 0 ? (
             <ul className="mb-2 space-y-1">
               {decision.tool_calls.map((call, index) => (
+                // ``break-all``: a serialized argument payload is one
+                // unbroken token, so without it the line runs past the card
+                // and the tail is clipped away rather than wrapped. On a
+                // phone that hid most of every call.
                 <li
                   key={`${call.name}-${index}`}
-                  className="rounded-[--radius-sm] bg-panel px-2 py-1 font-mono text-xs text-foreground"
+                  className="break-all rounded-[--radius-sm] bg-panel px-2 py-1 font-mono text-xs text-foreground"
                 >
                   <span className="font-semibold">{call.name}</span>
                   <span className="text-muted-foreground">
@@ -305,7 +309,13 @@ function TurnCard({ turn }: { turn: EvalTurn }) {
         className="flex w-full items-start gap-3 p-3 text-left"
       >
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-foreground">{turn.user_message}</p>
+          {/* One line while collapsed, so a list of turns stays scannable.
+              Expanding is the only place the question is shown in full: it is
+              not repeated in the diff below, and one truncated line is about
+              six words on a phone. */}
+          <p className={`text-sm text-foreground ${open ? 'break-words' : 'truncate'}`}>
+            {turn.user_message}
+          </p>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
             <span className="text-muted-foreground">
               {AGREEMENT_COPY[turn.agreement] ?? turn.agreement}
@@ -391,7 +401,7 @@ function TurnCard({ turn }: { turn: EvalTurn }) {
                 {turn.historic_reply}
               </p>
               {turn.historic_tool_names.length > 0 ? (
-                <p className="mt-1 font-mono text-xs text-muted-foreground">
+                <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
                   {turn.historic_tool_names.join(', ')}
                 </p>
               ) : null}
@@ -535,15 +545,15 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
 
       {isActive ? (
         <section className="rounded-[--radius-lg] border border-border bg-card p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-foreground">
+          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-w-0 break-words text-sm text-foreground">
               Replaying {run.progress_completed} of {run.progress_total || '?'} turns against{' '}
               {run.candidate_model}
             </p>
             <button
               type="button"
               onClick={() => void handleCancel()}
-              className="rounded-[--radius-md] border border-border px-3 py-1 text-sm text-muted-foreground"
+              className="shrink-0 rounded-[--radius-md] border border-border px-3 py-1 text-sm text-muted-foreground"
             >
               Cancel
             </button>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   deleteEvalRun,
@@ -41,6 +41,50 @@ const SAMPLE_DEFAULT = 100;
 // about scanning, not cost.
 const RUN_PAGE_SIZE = 25;
 
+
+// ---------------------------------------------------------------------------
+// Row pieces, shared by the two layouts
+// ---------------------------------------------------------------------------
+
+/** The run's verdict, or *empty* when it has none.
+ *
+ * The table passes a dash: a blank cell in a column of pills reads as a
+ * rendering fault. A card has no column to keep aligned, so it passes
+ * nothing and lets the status line carry "running" or "cancelled".
+ */
+function VerdictPill({ run, empty = null }: { run: EvalRun; empty?: ReactNode }) {
+  const copy = RECOMMENDATION_COPY[run.recommendation as EvalRecommendation];
+  if (!copy) return <>{empty}</>;
+  return <span className={`rounded-full px-2 py-0.5 text-xs ${copy.className}`}>{copy.label}</span>;
+}
+
+/** Withheld while the run is in flight, since the API refuses to delete an
+ *  active run and wants it cancelled first.
+ *
+ * Present on every settled run, including one whose user withdrew consent:
+ * its report can no longer be opened, which makes it the row most worth
+ * clearing out.
+ */
+function DeleteRunButton({ run, onPick }: { run: EvalRun; onPick: (run: EvalRun) => void }) {
+  if (ACTIVE_STATUSES.has(run.status)) return null;
+  return (
+    <button
+      type="button"
+      aria-label={`Delete run against ${run.candidate_model}`}
+      onClick={e => {
+        // The row and the card both navigate to the report.
+        e.stopPropagation();
+        onPick(run);
+      }}
+      // A 44px target on the card, compact in the table row. DESIGN.md sets
+      // the density for a phone held in gloves, and on the card this button
+      // sits inside a tap area that navigates to the report.
+      className="min-h-11 shrink-0 rounded-[--radius-md] border border-border px-3 text-xs text-muted-foreground hover:bg-error-bg hover:text-error-text xl:min-h-0 xl:px-2 xl:py-1"
+    >
+      Delete
+    </button>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Page
@@ -300,14 +344,14 @@ export default function ModelEvalTab() {
           this user already has a run going before they try to start one. */}
       {activeRun ? (
         <section className="rounded-[--radius-lg] border border-border bg-card p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-foreground">
+          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-w-0 break-words text-sm text-foreground">
               Replaying {activeRun.progress_completed} of {activeRun.progress_total || '?'} turns
               against {activeRun.candidate_model}
             </p>
             <Link
               to={`${adminPath('model-eval')}/${activeRun.id}`}
-              className="rounded-[--radius-md] border border-border px-3 py-1 text-sm text-muted-foreground"
+              className="shrink-0 rounded-[--radius-md] border border-border px-3 py-1 text-sm text-muted-foreground"
             >
               Open report
             </Link>
@@ -346,109 +390,194 @@ export default function ModelEvalTab() {
               : 'No evaluations yet. Pick a user above to run the first one.'}
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="p-3">Started</th>
-                  {userId ? null : <th className="p-3">User</th>}
-                  <th className="p-3">Candidate</th>
-                  <th className="p-3">Incumbent</th>
-                  <th className="p-3">Turns</th>
-                  <th className="p-3">Status</th>
-                  <th className="p-3">Verdict</th>
-                  <th className="p-3">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map(run => {
-                  const copy = RECOMMENDATION_COPY[run.recommendation as EvalRecommendation];
-                  const href = `${adminPath('model-eval')}/${run.id}`;
-                  return (
-                    <tr
-                      key={run.id}
-                      onClick={() => {
-                        // A run whose user withdrew consent has no readable
-                        // report, so the row is not a way into one.
-                        if (run.user_consented) navigate(href);
-                      }}
-                      className={`border-t border-border ${
-                        run.user_consented ? 'cursor-pointer hover:bg-panel' : 'opacity-60'
-                      }`}
-                    >
-                      <td className="whitespace-nowrap p-3 text-muted-foreground">
-                        {run.user_consented ? (
-                          // A real link, so the row is keyboard reachable and
-                          // its URL is copyable.
-                          <Link
-                            to={href}
-                            className="text-primary hover:underline"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            {formatRelative(run.created_at)}
-                          </Link>
-                        ) : (
-                          formatRelative(run.created_at)
+          <>
+            {/* Cards up to the width where the table below fits. Eight
+                columns of it measure 990px, and the sidebar leaves 750px at
+                1024px of viewport, so the switch is ``xl``: anything narrower
+                showed Started and User and hid the verdict and the delete
+                control behind a sideways scroll inside the card, which is the
+                same complaint on a laptop as on a phone. Two-up from ``sm``,
+                since one column of cards across a 1200px window is mostly
+                empty space.
+
+                Both layouts sit in the DOM and CSS picks one. Choosing in JS
+                would need a media query, which is only readable after mount,
+                so the first paint would show the wrong one and then jump. */}
+            <ul
+              aria-label="Evaluation runs"
+              // ``grid-cols-1`` is not redundant. Without an explicit track
+              // the single implicit column is sized to max-content, and the
+              // card's nowrap user line then sets the card's width instead of
+              // the reverse: ``truncate`` never fires, the card grows past
+              // the viewport, and the delete control ends up off-screen. At
+              // 320px with a 47-character email that was a 420px card in a
+              // 320px window. ``main`` absorbs the overflow, so the document
+              // width stays honest and only the scroller shows it.
+              className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 xl:hidden"
+            >
+              {runs.map(run => {
+                const href = `${adminPath('model-eval')}/${run.id}`;
+                return (
+                  <li
+                    key={run.id}
+                    onClick={() => {
+                      // A run whose user withdrew consent has no readable
+                      // report, so the card is not a way into one.
+                      if (run.user_consented) navigate(href);
+                    }}
+                    className={`space-y-1 rounded-[--radius-md] border border-border p-3 ${
+                      run.user_consented ? 'cursor-pointer hover:bg-panel' : 'opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      {run.user_consented ? (
+                        <Link
+                          to={href}
+                          className="text-sm text-primary hover:underline"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          {formatRelative(run.created_at)}
+                        </Link>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          {formatRelative(run.created_at)}
+                        </span>
+                      )}
+                      <VerdictPill run={run} />
+                    </div>
+                    {/* ``break-all`` rather than a truncation: a
+                        gateway-qualified model id is one unbroken 40-character
+                        token whose tail is the part that identifies it, and it
+                        is the reason an operator opened this list. */}
+                    <p className="break-all font-mono text-xs text-foreground">
+                      {run.candidate_model}
+                    </p>
+                    <p className="break-all font-mono text-xs text-muted-foreground">
+                      against {run.baseline_model}
+                    </p>
+                    <div className="flex items-end justify-between gap-2">
+                      <div className="min-w-0 text-xs text-muted-foreground">
+                        {userId ? null : (
+                          <>
+                            <p className="truncate">{run.user_email || run.user_id}</p>
+                            {run.user_consented ? null : (
+                              <p className="text-warning-text">consent withdrawn</p>
+                            )}
+                          </>
                         )}
-                      </td>
-                      {userId ? null : (
+                        <p>
+                          {run.status} | {run.progress_total || run.requested_samples} turns
+                        </p>
+                      </div>
+                      <DeleteRunButton run={run} onPick={setDeleteTarget} />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {/* ``relative`` is load-bearing, not decoration. The header's
+                ``sr-only`` span is absolutely positioned, so without a
+                positioned ancestor its containing block is the viewport
+                rather than this scroller. It then escapes the clip, sits at
+                the far edge of the table, and stretches the document to
+                match, at which point the browser renders the whole page
+                zoomed out to fit. Nothing else about the page looks wrong,
+                which is what made it hard to find.
+
+                It still matters at the widths this table is shown at, not
+                only at the phone widths that first surfaced it: whenever the
+                table exceeds this scroller, dropping the class stretches the
+                document. Measured at 1280px with a long user email, where the
+                table wants 1112px in a 1006px box. */}
+            <div className="relative hidden overflow-x-auto xl:block">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="p-3">Started</th>
+                    {userId ? null : <th className="p-3">User</th>}
+                    <th className="p-3">Candidate</th>
+                    <th className="p-3">Incumbent</th>
+                    <th className="p-3">Turns</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3">Verdict</th>
+                    <th className="p-3">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map(run => {
+                    const href = `${adminPath('model-eval')}/${run.id}`;
+                    return (
+                      <tr
+                        key={run.id}
+                        onClick={() => {
+                          if (run.user_consented) navigate(href);
+                        }}
+                        className={`border-t border-border ${
+                          run.user_consented ? 'cursor-pointer hover:bg-panel' : 'opacity-60'
+                        }`}
+                      >
                         <td className="whitespace-nowrap p-3 text-muted-foreground">
-                          {run.user_email || run.user_id}
-                          {run.user_consented ? null : (
-                            <span className="ml-2 text-xs text-warning-text">
-                              consent withdrawn
-                            </span>
+                          {run.user_consented ? (
+                            // A real link, so the row is keyboard reachable
+                            // and its URL is copyable.
+                            <Link
+                              to={href}
+                              className="text-primary hover:underline"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {formatRelative(run.created_at)}
+                            </Link>
+                          ) : (
+                            formatRelative(run.created_at)
                           )}
                         </td>
-                      )}
-                      <td className="whitespace-nowrap p-3 font-mono text-xs text-foreground">
-                        {run.candidate_model}
-                      </td>
-                      <td className="whitespace-nowrap p-3 font-mono text-xs text-muted-foreground">
-                        {run.baseline_model}
-                      </td>
-                      <td className="p-3 text-muted-foreground">
-                        {run.progress_total || run.requested_samples}
-                      </td>
-                      <td className="whitespace-nowrap p-3 text-muted-foreground">{run.status}</td>
-                      <td className="whitespace-nowrap p-3">
-                        {copy ? (
-                          <span className={`rounded-full px-2 py-0.5 text-xs ${copy.className}`}>
-                            {copy.label}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
+                        {userId ? null : (
+                          <td className="whitespace-nowrap p-3 text-muted-foreground">
+                            {run.user_email || run.user_id}
+                            {run.user_consented ? null : (
+                              <span className="ml-2 text-xs text-warning-text">
+                                consent withdrawn
+                              </span>
+                            )}
+                          </td>
                         )}
-                      </td>
-                      {/* Present on every row, including a withdrawn-consent
-                          one whose report cannot be opened: that is the row
-                          most worth clearing out. Withheld only while the run
-                          is in flight, since the API wants it cancelled
-                          first. */}
-                      <td className="whitespace-nowrap p-3 text-right">
-                        {ACTIVE_STATUSES.has(run.status) ? null : (
-                          <button
-                            type="button"
-                            aria-label={`Delete run against ${run.candidate_model}`}
-                            onClick={e => {
-                              // The row itself navigates to the report.
-                              e.stopPropagation();
-                              setDeleteTarget(run);
-                            }}
-                            className="rounded-[--radius-md] border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-error-bg hover:text-error-text"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        {/* Wrapping, unlike every other column. A
+                            gateway-qualified model id runs past 40 characters
+                            and two of them held on one line pushed Verdict
+                            and the delete control off the right edge of the
+                            card at 1440px, where the only way to reach them
+                            was to scroll the table sideways. */}
+                        <td className="break-all p-3 font-mono text-xs text-foreground">
+                          {run.candidate_model}
+                        </td>
+                        <td className="break-all p-3 font-mono text-xs text-muted-foreground">
+                          {run.baseline_model}
+                        </td>
+                        <td className="p-3 text-muted-foreground">
+                          {run.progress_total || run.requested_samples}
+                        </td>
+                        <td className="whitespace-nowrap p-3 text-muted-foreground">
+                          {run.status}
+                        </td>
+                        <td className="whitespace-nowrap p-3">
+                          <VerdictPill
+                            run={run}
+                            empty={<span className="text-muted-foreground">-</span>}
+                          />
+                        </td>
+                        <td className="whitespace-nowrap p-3 text-right">
+                          <DeleteRunButton run={run} onPick={setDeleteTarget} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
         {runTotal > runs.length ? (
           <div className="border-t border-border p-3">
