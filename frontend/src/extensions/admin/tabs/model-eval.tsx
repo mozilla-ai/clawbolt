@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
+  deleteEvalRun,
   getAdminUsers,
   listEvalRuns,
   startEvalRun,
@@ -8,6 +9,7 @@ import {
   type EvalRecommendation,
   type EvalRun,
 } from '../admin-api';
+import ConfirmDialog from '../ConfirmDialog';
 import { LLMProviderSelect, LLMModelSelect } from '../llm-picker';
 import { formatRelative } from '../format';
 import { adminPath } from '../nav-items';
@@ -63,6 +65,12 @@ export default function ModelEvalTab() {
 
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The run the confirm dialog is asking about, or null when it is closed.
+  // Holding the row rather than a bare id lets the dialog name what it is
+  // about to destroy, which is the only thing making the gate meaningful.
+  const [deleteTarget, setDeleteTarget] = useState<EvalRun | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Only consenting users are evaluable, so the picker never offers a user
   // whose run would 403.
@@ -133,6 +141,27 @@ export default function ModelEvalTab() {
       setError((e as Error).message);
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteEvalRun(deleteTarget.id);
+      // Drop the row locally rather than refetching: the list may be paged
+      // several clicks deep and a reload would snap it back to the first page.
+      setRuns(prev => prev.filter(r => r.id !== deleteTarget.id));
+      setRunTotal(n => Math.max(0, n - 1));
+      setDeleteTarget(null);
+    } catch (e) {
+      // Close the dialog rather than leaving it open over the banner. The
+      // likely failure is the 409 telling the operator to cancel the run
+      // first, and that is acted on out here, not in the dialog.
+      setError((e as Error).message);
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -328,6 +357,9 @@ export default function ModelEvalTab() {
                   <th className="p-3">Turns</th>
                   <th className="p-3">Status</th>
                   <th className="p-3">Verdict</th>
+                  <th className="p-3">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -390,6 +422,27 @@ export default function ModelEvalTab() {
                           <span className="text-muted-foreground">-</span>
                         )}
                       </td>
+                      {/* Present on every row, including a withdrawn-consent
+                          one whose report cannot be opened: that is the row
+                          most worth clearing out. Withheld only while the run
+                          is in flight, since the API wants it cancelled
+                          first. */}
+                      <td className="whitespace-nowrap p-3 text-right">
+                        {ACTIVE_STATUSES.has(run.status) ? null : (
+                          <button
+                            type="button"
+                            aria-label={`Delete run against ${run.candidate_model}`}
+                            onClick={e => {
+                              // The row itself navigates to the report.
+                              e.stopPropagation();
+                              setDeleteTarget(run);
+                            }}
+                            className="rounded-[--radius-md] border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-error-bg hover:text-error-text"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -410,6 +463,27 @@ export default function ModelEvalTab() {
         ) : null}
       </section>
 
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title="Delete this evaluation run?"
+        description={
+          <div className="space-y-2">
+            <p>
+              This removes the run and every turn of evidence recorded under it. It cannot be
+              undone, and the replay would have to be paid for again to get it back.
+            </p>
+            <p className="text-xs">
+              {deleteTarget?.candidate_model} against {deleteTarget?.baseline_model}, started{' '}
+              {deleteTarget ? formatRelative(deleteTarget.created_at) : ''}.
+            </p>
+          </div>
+        }
+        confirmLabel="Delete run"
+        destructive
+        busy={deleting}
+      />
     </div>
   );
 }

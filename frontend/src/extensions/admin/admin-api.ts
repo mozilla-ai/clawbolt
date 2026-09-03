@@ -1498,3 +1498,17 @@ export async function cancelEvalRun(runId: string): Promise<EvalRun> {
   if (error) throwApiError(error, 'Failed to cancel evaluation');
   return data as EvalRun;
 }
+
+/**
+ * Discard a run and its per-turn evidence. Irreversible.
+ *
+ * Rejects an in-flight run with a 409: its workers are mid-flight against a
+ * paid provider, so it has to be cancelled first. Callers should surface that
+ * message rather than swallow it, since "cancel, then delete" is the remedy.
+ */
+export async function deleteEvalRun(runId: string): Promise<void> {
+  const { error } = await client.DELETE(
+    `/api/admin/llm-eval/runs/${encodeURIComponent(runId)}` as never,
+  );
+  if (error) throwApiError(error, 'Failed to delete evaluation');
+}

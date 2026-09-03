@@ -17,6 +17,15 @@ import { report, run, summary, turn } from './model-eval-fixtures';
 vi.mock('../admin-api', () => ({
   getEvalReport: vi.fn(),
   cancelEvalRun: vi.fn(),
+  deleteEvalRun: vi.fn(),
+}));
+
+// Deleting navigates away, and there is no route table here to navigate
+// into, so the call itself is what gets asserted.
+const navigate = vi.fn();
+vi.mock('react-router-dom', async () => ({
+  ...(await vi.importActual<typeof import('react-router-dom')>('react-router-dom')),
+  useNavigate: () => navigate,
 }));
 
 function renderReport(runId = 'run-0001') {
@@ -31,6 +40,8 @@ beforeEach(async () => {
   const api = await import('../admin-api');
   vi.mocked(api.getEvalReport).mockReset().mockResolvedValue(report());
   vi.mocked(api.cancelEvalRun).mockReset();
+  vi.mocked(api.deleteEvalRun).mockReset().mockResolvedValue(undefined);
+  navigate.mockReset();
 });
 
 describe('ModelEvalReportPage', () => {
@@ -299,6 +310,63 @@ describe('ModelEvalReportPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(api.cancelEvalRun).toHaveBeenCalledWith('run-0001'));
+  });
+
+  it('will not delete the run until the confirmation is accepted', async () => {
+    const api = await import('../admin-api');
+    renderReport();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete run' }));
+    expect(api.deleteEvalRun).not.toHaveBeenCalled();
+
+    // The dialog names the evidence, and the count is what makes the warning
+    // concrete rather than boilerplate.
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('1 recorded turn of evidence');
+    expect(dialog).toHaveTextContent('candidate against incumbent');
+    await within(dialog).findByText(/cannot be undone/);
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Delete run' }));
+
+    await waitFor(() => expect(api.deleteEvalRun).toHaveBeenCalledWith('run-0001'));
+    // Staying put would leave the page polling a run that no longer exists.
+    expect(navigate).toHaveBeenCalledWith('/app/admin/model-eval');
+  });
+
+  it('pluralises the evidence count in the delete confirmation', async () => {
+    const api = await import('../admin-api');
+    vi.mocked(api.getEvalReport).mockResolvedValue(report({ total_turns: 40 }));
+    renderReport();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete run' }));
+
+    expect(await screen.findByRole('dialog')).toHaveTextContent('40 recorded turns of evidence');
+  });
+
+  it('offers no delete control while the run is still going', async () => {
+    // The API refuses it with a 409 until the run is cancelled, and Cancel is
+    // already the button on offer there.
+    const api = await import('../admin-api');
+    vi.mocked(api.getEvalReport).mockResolvedValue(
+      report({ run: run({ status: 'running', summary: null }) }),
+    );
+    renderReport();
+
+    await screen.findByRole('button', { name: 'Cancel' });
+    expect(screen.queryByRole('button', { name: 'Delete run' })).not.toBeInTheDocument();
+  });
+
+  it('surfaces a failed delete and stays on the page', async () => {
+    const api = await import('../admin-api');
+    vi.mocked(api.deleteEvalRun).mockRejectedValue(new Error('Failed to delete evaluation'));
+    renderReport();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete run' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Delete run' }));
+
+    expect(await screen.findByText('Failed to delete evaluation')).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('shows why a run stopped early, beside its partial verdict', async () => {

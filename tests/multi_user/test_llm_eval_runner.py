@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
@@ -239,6 +239,49 @@ async def test_cancelled_run_stops_and_keeps_the_turns_it_finished(
         .all()
     )
     assert len(turns) < 4
+
+
+@pytest.mark.asyncio()
+async def test_a_run_deleted_mid_flight_unwinds_quietly(
+    db_session: Session, test_user: User
+) -> None:
+    """Deleting a cancelled run while a worker is still inside a turn.
+
+    This is the documented remedy for deleting an active run (cancel, then
+    delete) and it races: cancellation is only checked at the top of a turn,
+    so a worker can be inside a provider call when the row goes away. Its
+    turn insert then hits the foreign key.
+
+    The insert has to be swallowed rather than raised. ``_guarded`` turns any
+    escaping exception into a logged stack trace plus a ``FAILED`` stamp, so
+    raising would report a deliberate deletion as a crashed run, and on a
+    monitored deployment would alert on it.
+    """
+    run_id = _make_run(db_session, test_user.id, samples=1)
+
+    async def delete_the_run(*_args: object, **_kwargs: object) -> ModelCallResult:
+        db_session.execute(delete(LLMEvalRun).where(LLMEvalRun.id == run_id))
+        db_session.commit()
+        return _result(text="ok")
+
+    patches = _patched_run(samples=_samples(1), call_side_effect=None)
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patch("backend.app.services.llm_eval.runner.call_model", delete_the_run),
+    ):
+        # No raise: the assertion is that nothing propagates.
+        await execute_run(run_id, concurrency=1)
+
+    db_session.expire_all()
+    assert db_session.get(LLMEvalRun, run_id) is None
+    assert (
+        db_session.execute(
+            select(LLMEvalTurnResult).where(LLMEvalTurnResult.run_id == run_id)
+        ).first()
+        is None
+    )
 
 
 @pytest.mark.asyncio()

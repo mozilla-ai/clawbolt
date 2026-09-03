@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   cancelEvalRun,
+  deleteEvalRun,
   getEvalReport,
   type EvalDecision,
+  type EvalRecommendation,
   type EvalReport,
   type EvalSummary,
   type EvalTurn,
 } from '../admin-api';
+import ConfirmDialog from '../ConfirmDialog';
 import { formatRelative } from '../format';
 import { adminPath } from '../nav-items';
 import { ACTIVE_STATUSES, POLL_MS, RECOMMENDATION_COPY } from './model-eval-common';
@@ -405,10 +408,13 @@ function TurnCard({ turn }: { turn: EvalTurn }) {
 // ---------------------------------------------------------------------------
 
 export default function ModelEvalReportPage({ runId }: { runId: string }) {
+  const navigate = useNavigate();
   const [report, setReport] = useState<EvalReport | null>(null);
   const [turnLimit, setTurnLimit] = useState(TURN_PAGE_SIZE);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(
     async (limit: number) => {
@@ -455,6 +461,21 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
     }
   }
 
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await deleteEvalRun(runId);
+      // Back to the list rather than staying on a page whose subject no
+      // longer exists, which would otherwise poll its way to "does not exist".
+      navigate(adminPath('model-eval'));
+    } catch (e) {
+      setError((e as Error).message);
+      setConfirmingDelete(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const backLink = (
     <Link to={adminPath('model-eval')} className="text-sm text-primary hover:underline">
       Back to model comparison
@@ -480,15 +501,30 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
   }
 
   const { run } = report;
+  const verdictCopy = RECOMMENDATION_COPY[run.recommendation as EvalRecommendation];
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         {backLink}
-        <p className="text-xs text-muted-foreground">
-          {run.candidate_model} against {run.baseline_model}, started{' '}
-          {formatRelative(run.created_at)}
-        </p>
+        <div className="flex flex-wrap items-baseline gap-3">
+          <p className="text-xs text-muted-foreground">
+            {run.candidate_model} against {run.baseline_model}, started{' '}
+            {formatRelative(run.created_at)}
+          </p>
+          {/* Offered only once the run has settled. While it is in flight the
+              button beside the progress bar is Cancel, which is the step the
+              API requires first anyway. */}
+          {isActive ? null : (
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+              className="rounded-[--radius-md] border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-panel"
+            >
+              Delete run
+            </button>
+          )}
+        </div>
       </div>
 
       {error ? (
@@ -582,6 +618,29 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
           ) : null}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        onClose={() => setConfirmingDelete(false)}
+        onConfirm={handleDelete}
+        title="Delete this evaluation run?"
+        description={
+          <div className="space-y-2">
+            <p>
+              This removes the run and all {report.total_turns} recorded turn
+              {report.total_turns === 1 ? '' : 's'} of evidence. It cannot be undone, and the
+              replay would have to be paid for again to get it back.
+            </p>
+            <p className="text-xs">
+              {run.candidate_model} against {run.baseline_model}
+              {verdictCopy ? `, verdict ${verdictCopy.label.toLowerCase()}` : ''}.
+            </p>
+          </div>
+        }
+        confirmLabel="Delete run"
+        destructive
+        busy={deleting}
+      />
     </div>
   );
 }

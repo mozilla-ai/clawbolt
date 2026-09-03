@@ -21,6 +21,7 @@ Endpoints:
 - ``GET  /admin/llm-eval/runs/{run_id}`` returns a run plus its per-turn
   evidence, worst turns first.
 - ``POST /admin/llm-eval/runs/{run_id}/cancel`` stops an in-flight run.
+- ``DELETE /admin/llm-eval/runs/{run_id}`` discards a run and its evidence.
 """
 
 from __future__ import annotations
@@ -492,3 +493,48 @@ async def cancel_run(
     await db.commit()
     await db.refresh(run)
     return _run_item(run)
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+async def delete_run(
+    run_id: str,
+    ctx: AdminAuditContext = Depends(audit_admin(AdminAction.DELETE_LLM_EVAL_RUN)),
+    db: AsyncSession = Depends(get_async_db),
+) -> None:
+    """Discard a run and every turn it recorded.
+
+    Runs accumulate: a verdict is only as good as the harness that produced
+    it, so a scoring change strands every earlier run at a number nobody
+    should act on. Leaving them listed is worse than losing them, because the
+    console sorts newest-first and an operator reading a stale
+    ``do_not_switch`` has no way to tell it was measured by since-fixed code.
+
+    Not consent-gated, unlike the report. A run belonging to a user who has
+    since withdrawn consent is exactly the run most worth removing, and a
+    gate here would pin it in the list permanently.
+
+    Refuses while the run is still going. Its workers are mid-flight against
+    a paid provider, and deleting under them throws that spend away for a
+    result nobody asked to abandon, so stopping the run is a decision the
+    operator makes explicitly: cancel first, then delete. A worker that is
+    already inside a turn when the row goes away unwinds quietly; see the
+    ``IntegrityError`` branch in ``llm_eval.runner``.
+
+    The turn results go with the run through
+    ``llm_eval_turn_results.run_id``'s ``ON DELETE CASCADE``. The audit row
+    this request writes survives, and is the only remaining evidence the run
+    was ever here.
+    """
+    run = (
+        await db.execute(select(LLMEvalRun).where(LLMEvalRun.public_id == run_id))
+    ).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    ctx.target_user_id = run.user_id
+    if run.status in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run is still {run.status}. Cancel it before deleting.",
+        )
+    await db.delete(run)
+    await db.commit()
