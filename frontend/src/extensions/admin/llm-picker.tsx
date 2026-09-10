@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   invalidateProviderModels,
+  listEndpointModels,
   listLLMEndpoints,
   listProviders,
   listProviderModels,
@@ -383,11 +384,10 @@ export function ReasoningEffortSelect({
 // ---------------------------------------------------------------------------
 // Model field that copes with an endpoint being selected.
 //
-// Model enumeration goes through the provider, and the listing endpoint
-// deliberately refuses a caller-supplied base URL for a hosted provider, so
-// there is no way to ask a gateway what it serves. Rather than show a picker
-// stuck on "pick a provider first", an endpoint gets a free-text field: the
-// operator types the model id the gateway exposes.
+// A provider knows its own models; an endpoint is asked through its own base
+// URL and credential (``listEndpointModels``). Both end in a dropdown. The
+// free-text fallback is for the cases where asking genuinely cannot work: a
+// dialect that does not enumerate, or a call that failed.
 // ---------------------------------------------------------------------------
 
 interface LLMModelFieldProps {
@@ -409,6 +409,38 @@ export function LLMModelField({
   allowEmpty,
   emptyLabel,
 }: LLMModelFieldProps) {
+  const [result, setResult] = useState<ProviderModelsResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  // Switching endpoints while a request is in flight would otherwise let the
+  // old one's answer land last and fill the dropdown with models the newly
+  // selected endpoint does not serve, silently, under the right label.
+  const ticket = useRef(0);
+
+  const load = useCallback(() => {
+    if (!endpoint) return;
+    const mine = ++ticket.current;
+    setLoading(true);
+    listEndpointModels(endpoint)
+      .then(r => {
+        if (mine === ticket.current) setResult(r);
+      })
+      .catch((e: Error) => {
+        if (mine === ticket.current) {
+          setResult({ provider: '', models: [], supports_listing: true, error: e.message });
+        }
+      })
+      .finally(() => {
+        if (mine === ticket.current) setLoading(false);
+      });
+  }, [endpoint]);
+
+  useEffect(() => {
+    setResult(null);
+    load();
+  }, [load]);
+
+  // No endpoint: the provider knows its own models, and that path already
+  // handles every failure mode.
   if (!endpoint) {
     return (
       <LLMModelSelect
@@ -421,18 +453,60 @@ export function LLMModelField({
       />
     );
   }
+
+  if (loading || !result) {
+    return (
+      <select id={id} className={selectClass} disabled value="" onChange={() => {}}>
+        <option value="">Loading models...</option>
+      </select>
+    );
+  }
+
+  // The endpoint cannot be asked, or asking failed. Typing the id is the only
+  // way forward, so say why rather than showing an empty dropdown.
+  if (!result.supports_listing || result.error || result.models.length === 0) {
+    return (
+      <div>
+        <input
+          id={id}
+          className={inputClass}
+          placeholder="model id"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        />
+        <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-2">
+          <span>
+            {result.error ||
+              (result.supports_listing
+                ? 'This endpoint returned no models.'
+                : 'This endpoint does not enumerate models.')}
+          </span>
+          <button type="button" onClick={load} className="text-primary hover:underline">
+            Retry
+          </button>
+        </p>
+      </div>
+    );
+  }
+
+  // A saved value the endpoint no longer lists is kept as an option, so the
+  // form does not silently rewrite it on the next render.
+  const showSaved = value && !result.models.includes(value);
+
   return (
-    <div>
-      <input
-        id={id}
-        className={inputClass}
-        placeholder="model id"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-      />
-      <p className="text-[11px] text-muted-foreground mt-1">
-        An endpoint cannot be asked what it serves, so type the model id it exposes.
-      </p>
-    </div>
+    <select
+      id={id}
+      className={selectClass}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+    >
+      {allowEmpty && <option value="">{emptyLabel}</option>}
+      {showSaved && <option value={value}>{value} (saved, not in list)</option>}
+      {result.models.map(m => (
+        <option key={m} value={m}>
+          {m}
+        </option>
+      ))}
+    </select>
   );
 }

@@ -672,6 +672,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/model/endpoints/{name}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Llm Endpoint Models
+         * @description Enumerate the models a configured endpoint serves.
+         *
+         *     The provider-scoped listing route deliberately refuses a caller-supplied
+         *     ``api_base``, because honoring one would make the server deliver a
+         *     provider key from its environment to whatever host the caller named. That
+         *     objection does not reach here: the caller names an endpoint, not a URL,
+         *     and the base and credential come from the stored row. Nothing about the
+         *     destination is caller-controlled.
+         *
+         *     Without this the model field falls back to free text whenever an endpoint
+         *     is selected, which is the one case where the operator is least likely to
+         *     know the exact model id by heart.
+         *
+         *     Never raises for "this endpoint cannot list models" or "the call failed".
+         *     Both are ordinary states the form has to render, and a 502 would leave it
+         *     with nothing to say.
+         */
+        get: operations["list_llm_endpoint_models_api_user_model_endpoints__name__models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/model/endpoints/{name}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Llm Endpoint
+         * @description Send one minimal request through an endpoint and report what came back.
+         *
+         *     Shaped like a real agent turn rather than a ping: same reasoning
+         *     parameter the endpoint's ``reasoning`` column produces, and a tool
+         *     attached. Both halves matter, and only together. An endpoint can answer a
+         *     bare completion perfectly and still refuse every request the agent
+         *     actually makes.
+         *
+         *     ``model`` is optional. Left empty, the endpoint is asked what it serves
+         *     and the first answer is used, which is the common case right after
+         *     creating one. Failures come back as ``ok: false`` with the provider's own
+         *     text, because "your gateway rejected this" is the answer the operator
+         *     needs to read, not a 502.
+         */
+        post: operations["test_llm_endpoint_api_user_model_endpoints__name__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/providers": {
         parameters: {
             query?: never;
@@ -4366,6 +4433,45 @@ export interface components {
             items: components["schemas"]["LLMEndpointItem"][];
         };
         /**
+         * LLMEndpointTestRequest
+         * @description Optional model to probe with. Empty asks the endpoint what it serves.
+         */
+        LLMEndpointTestRequest: {
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+        };
+        /**
+         * LLMEndpointTestResult
+         * @description Outcome of one probe call against a configured endpoint.
+         */
+        LLMEndpointTestResult: {
+            /** Ok */
+            ok: boolean;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+            /**
+             * Reasoning
+             * @default
+             */
+            reasoning: string;
+        };
+        /**
          * LLMEndpointUpsert
          * @description Create or replace one endpoint.
          *
@@ -6680,6 +6786,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_llm_endpoint_models_api_user_model_endpoints__name__models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMModelsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_llm_endpoint_api_user_model_endpoints__name__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LLMEndpointTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMEndpointTestResult"];
+                };
             };
             /** @description Validation Error */
             422: {

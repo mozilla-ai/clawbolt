@@ -6,6 +6,7 @@ never come back out of the API, and re-submitting the form must not blank it.
 
 import asyncio
 from collections.abc import Generator
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -166,6 +167,215 @@ def test_names_are_restricted_to_a_slug(client: TestClient, name: str) -> None:
 def test_an_empty_name_does_not_reach_the_handler(client: TestClient) -> None:
     """``PUT /endpoints/`` is the collection path, which takes no PUT."""
     assert client.put(f"{BASE}/", json=_body(name="")).status_code == 405
+
+
+class TestEndpointModelListing:
+    """Enumerating models through a configured endpoint.
+
+    The provider-scoped route refuses a caller-supplied ``api_base`` because
+    honoring one would send a provider key from the server's environment to
+    whatever host the caller named. That objection does not reach here: the
+    caller names an endpoint, and the base and credential come from the row.
+    """
+
+    def test_models_are_listed_through_the_endpoints_own_base_and_key(
+        self, client: TestClient
+    ) -> None:
+        client.put(f"{BASE}/otari", json=_body(api_key="sk-secret"))
+        with patch(
+            "backend.app.routers.user_profile.get_models",
+            new=AsyncMock(return_value=["gw-model-a", "gw-model-b"]),
+        ) as listed:
+            resp = client.get(f"{BASE}/otari/models")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["models"] == ["gw-model-a", "gw-model-b"]
+        assert body["supports_listing"] is True
+        # The stored row supplies both, and nothing about them came from the
+        # request. That is what makes this safe where a URL parameter is not.
+        call = listed.await_args
+        assert call is not None
+        assert call.args[0] == "anthropic"
+        assert call.kwargs["api_base"] == "https://ai.example.test"
+        assert call.kwargs["api_key"] == "sk-secret"
+
+    def test_a_dialect_that_cannot_enumerate_is_reported_not_raised(
+        self, client: TestClient
+    ) -> None:
+        """The form has to render this, so a 502 would leave it nothing to say."""
+        client.put(f"{BASE}/otari", json=_body())
+        with patch(
+            "backend.app.routers.user_profile.get_models",
+            new=AsyncMock(side_effect=NotImplementedError("no listing here")),
+        ):
+            resp = client.get(f"{BASE}/otari/models")
+
+        assert resp.status_code == 200
+        assert resp.json()["supports_listing"] is False
+        assert "no listing" in resp.json()["error"]
+
+    def test_a_failed_call_is_reported_not_raised(self, client: TestClient) -> None:
+        client.put(f"{BASE}/otari", json=_body())
+        with patch(
+            "backend.app.routers.user_profile.get_models",
+            new=AsyncMock(side_effect=RuntimeError("gateway said no")),
+        ):
+            resp = client.get(f"{BASE}/otari/models")
+
+        assert resp.status_code == 200
+        assert resp.json()["models"] == []
+        assert "gateway said no" in resp.json()["error"]
+
+    def test_listing_an_unknown_endpoint_is_404(self, client: TestClient) -> None:
+        assert client.get(f"{BASE}/nope/models").status_code == 404
+
+
+class TestEndpointProbe:
+    """The Test button.
+
+    Shaped like an agent turn rather than a ping, because the failure worth
+    catching only appears when tools and reasoning ride the same request.
+    """
+
+    def test_the_probe_carries_a_tool_and_the_endpoints_reasoning_shape(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # ``reasoning: effort`` means the scalar rides along, which is the
+        # pairing at least one gateway rejects.
+        client.put(f"{BASE}/otari", json=_body(reasoning="effort"))
+        monkeypatch.setattr(settings, "reasoning_effort", "high")
+        sent = AsyncMock(return_value=object())
+        with patch("backend.app.routers.user_profile.amessages", new=sent):
+            resp = client.post(f"{BASE}/otari/test", json={"model": "gw-model"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["model"] == "gw-model"
+        call = sent.await_args
+        assert call is not None
+        kwargs = call.kwargs
+        assert kwargs["tools"], "a probe with no tool cannot catch the tools+reasoning refusal"
+        assert kwargs["reasoning_effort"] == "high"
+        assert kwargs["api_base"] == "https://ai.example.test"
+
+    @pytest.mark.parametrize("reasoning", ["auto", "thinking"])
+    @pytest.mark.parametrize("effort", ["minimal", "medium", "high", "xhigh"])
+    def test_the_probe_leaves_room_for_the_thinking_budget_it_asks_for(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        reasoning: str,
+        effort: str,
+    ) -> None:
+        """A budget must be smaller than ``max_tokens``, or the call is invalid.
+
+        The probe used to send a fixed ``max_tokens=16`` beside whatever
+        budget the endpoint's reasoning produced. The smallest budget is
+        1024, so every effort level made the request invalid and a healthy
+        endpoint came back as failed, for a rule the probe itself broke.
+
+        ``auto`` is in the parameters because it is the default for a newly
+        created endpoint, and it resolves to the thinking shape.
+        """
+        client.put(f"{BASE}/otari", json=_body(reasoning=reasoning))
+        monkeypatch.setattr(settings, "reasoning_effort", effort)
+        sent = AsyncMock(return_value=object())
+        with patch("backend.app.routers.user_profile.amessages", new=sent):
+            resp = client.post(f"{BASE}/otari/test", json={"model": "gw-model"})
+
+        assert resp.status_code == 200
+        call = sent.await_args
+        assert call is not None
+        budget = call.kwargs["thinking"]["budget_tokens"]
+        assert call.kwargs["max_tokens"] > budget, (
+            f"max_tokens={call.kwargs['max_tokens']} must exceed budget={budget}"
+        )
+        # And the label reaching the UI is words, not a repr of a dict.
+        assert "{" not in resp.json()["reasoning"]
+
+    def test_the_probe_is_audited_without_recording_the_providers_words(
+        self, client: TestClient
+    ) -> None:
+        """It spends the operator's credential, so it leaves a trail.
+
+        The gateway's error text is not part of that trail: it goes to the
+        caller, and the log is read by more people than can set a credential.
+        """
+
+        async def _latest() -> AdminAuditLog | None:
+            async with db_session_async() as db:
+                return (
+                    (await db.execute(select(AdminAuditLog).order_by(AdminAuditLog.id.desc())))
+                    .scalars()
+                    .first()
+                )
+
+        client.put(f"{BASE}/otari", json=_body())
+        with patch(
+            "backend.app.routers.user_profile.amessages",
+            new=AsyncMock(side_effect=RuntimeError("gateway said no: secret-ish detail")),
+        ):
+            resp = client.post(f"{BASE}/otari/test", json={"model": "gw-model"})
+
+        assert resp.json()["ok"] is False
+        row = asyncio.run(_latest())
+        assert row is not None
+        assert row.action == "test_llm_endpoint"
+        assert row.resource_id == "otari"
+        assert row.detail is not None
+        assert row.detail["ok"] is False
+        assert "secret-ish" not in str(row.detail)
+
+    def test_a_rejection_comes_back_as_a_result_not_an_error(self, client: TestClient) -> None:
+        """The gateway's own words are the useful part of a failed test."""
+        client.put(f"{BASE}/otari", json=_body())
+        with patch(
+            "backend.app.routers.user_profile.amessages",
+            new=AsyncMock(side_effect=RuntimeError("reasoning_effort not supported with tools")),
+        ):
+            resp = client.post(f"{BASE}/otari/test", json={"model": "gw-model"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert "not supported with tools" in body["detail"]
+
+    def test_an_omitted_model_is_chosen_from_what_the_endpoint_serves(
+        self, client: TestClient
+    ) -> None:
+        client.put(f"{BASE}/otari", json=_body())
+        with (
+            patch(
+                "backend.app.routers.user_profile.get_models",
+                new=AsyncMock(return_value=["first-model", "second"]),
+            ),
+            patch(
+                "backend.app.routers.user_profile.amessages", new=AsyncMock(return_value=object())
+            ) as sent,
+        ):
+            resp = client.post(f"{BASE}/otari/test", json={})
+
+        assert resp.status_code == 200
+        assert resp.json()["model"] == "first-model"
+        call = sent.await_args
+        assert call is not None
+        assert call.kwargs["model"] == "first-model"
+
+    def test_an_endpoint_that_cannot_be_asked_needs_a_model(self, client: TestClient) -> None:
+        client.put(f"{BASE}/otari", json=_body())
+        with patch(
+            "backend.app.routers.user_profile.get_models",
+            new=AsyncMock(side_effect=NotImplementedError()),
+        ):
+            resp = client.post(f"{BASE}/otari/test", json={})
+
+        assert resp.status_code == 422
+        assert "needs a model id" in resp.json()["detail"]
+
+    def test_probing_an_unknown_endpoint_is_404(self, client: TestClient) -> None:
+        assert client.post(f"{BASE}/nope/test", json={}).status_code == 404
 
 
 def test_delete_removes_the_endpoint(client: TestClient) -> None:

@@ -302,6 +302,26 @@ class LLMEndpointListResponse(BaseModel):
     items: list[LLMEndpointItem]
 
 
+class LLMEndpointTestRequest(BaseModel):
+    """Optional model to probe with. Empty asks the endpoint what it serves."""
+
+    model: str = Field(default="", max_length=128)
+
+
+class LLMEndpointTestResult(BaseModel):
+    """Outcome of one probe call against a configured endpoint."""
+
+    ok: bool
+    model: str = ""
+    """The model actually probed, which may have been chosen for the caller."""
+    detail: str = ""
+    """Empty on success; the provider's own error text otherwise."""
+    latency_ms: float = 0.0
+    reasoning: str = ""
+    """How the probe asked for reasoning, in words. The probe always carries a
+    tool, so there is nothing to report about that."""
+
+
 class LLMEndpointUpsert(BaseModel):
     """Create or replace one endpoint.
 
