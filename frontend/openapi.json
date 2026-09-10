@@ -8052,11 +8052,6 @@
             "title": "Latency Ms",
             "default": 0.0
           },
-          "sent_tools": {
-            "type": "boolean",
-            "title": "Sent Tools",
-            "default": true
-          },
           "reasoning": {
             "type": "string",
             "title": "Reasoning",

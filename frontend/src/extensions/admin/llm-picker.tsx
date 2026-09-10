@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   invalidateProviderModels,
   listEndpointModels,
@@ -384,11 +384,10 @@ export function ReasoningEffortSelect({
 // ---------------------------------------------------------------------------
 // Model field that copes with an endpoint being selected.
 //
-// Model enumeration goes through the provider, and the listing endpoint
-// deliberately refuses a caller-supplied base URL for a hosted provider, so
-// there is no way to ask a gateway what it serves. Rather than show a picker
-// stuck on "pick a provider first", an endpoint gets a free-text field: the
-// operator types the model id the gateway exposes.
+// A provider knows its own models; an endpoint is asked through its own base
+// URL and credential (``listEndpointModels``). Both end in a dropdown. The
+// free-text fallback is for the cases where asking genuinely cannot work: a
+// dialect that does not enumerate, or a call that failed.
 // ---------------------------------------------------------------------------
 
 interface LLMModelFieldProps {
@@ -412,16 +411,27 @@ export function LLMModelField({
 }: LLMModelFieldProps) {
   const [result, setResult] = useState<ProviderModelsResult | null>(null);
   const [loading, setLoading] = useState(false);
+  // Switching endpoints while a request is in flight would otherwise let the
+  // old one's answer land last and fill the dropdown with models the newly
+  // selected endpoint does not serve, silently, under the right label.
+  const ticket = useRef(0);
 
   const load = useCallback(() => {
     if (!endpoint) return;
+    const mine = ++ticket.current;
     setLoading(true);
     listEndpointModels(endpoint)
-      .then(setResult)
-      .catch((e: Error) =>
-        setResult({ provider: '', models: [], supports_listing: true, error: e.message }),
-      )
-      .finally(() => setLoading(false));
+      .then(r => {
+        if (mine === ticket.current) setResult(r);
+      })
+      .catch((e: Error) => {
+        if (mine === ticket.current) {
+          setResult({ provider: '', models: [], supports_listing: true, error: e.message });
+        }
+      })
+      .finally(() => {
+        if (mine === ticket.current) setLoading(false);
+      });
   }, [endpoint]);
 
   useEffect(() => {

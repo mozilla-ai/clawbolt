@@ -44,7 +44,6 @@ _PROTECTED_PREFIXES: tuple[str, ...] = ("/api/user/model/endpoints",)
 # and integration wiring, so it sits behind the same admin gate.
 _GET_PROTECTED_PATHS: set[str] = {
     "/api/user/model/config",
-    "/api/user/model/endpoints",
     "/api/user/conversation/system-prompt",
 }
 

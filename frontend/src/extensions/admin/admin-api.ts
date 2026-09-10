@@ -534,7 +534,6 @@ export interface LLMEndpointTestResult {
   model: string;
   detail: string;
   latency_ms: number;
-  sent_tools: boolean;
   reasoning: string;
 }
 

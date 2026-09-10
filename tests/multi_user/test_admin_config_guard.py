@@ -360,6 +360,34 @@ class TestAdminConfigGuard:
         assert resp.status_code == 200
         assert resp.json() == {"items": []}
 
+    def test_admin_still_reaches_the_endpoint_sub_paths(
+        self,
+        jwt_client: TestClient,
+        test_user: User,
+        db_session: Session,
+    ) -> None:
+        """The prefix rule is now the only thing separating these two cases.
+
+        A 404 from the handler is the pass: it means the request got past the
+        guard and reached a route that has no such endpoint configured.
+        """
+        db_session.add(
+            Subscription(user_id=test_user.id, role="admin", plan="free", status="active")
+        )
+        db_session.commit()
+        headers = {"Authorization": f"Bearer {create_access_token(test_user.id)}"}
+
+        assert (
+            jwt_client.get("/api/user/model/endpoints/nope/models", headers=headers).status_code
+            == 404
+        )
+        assert (
+            jwt_client.post(
+                "/api/user/model/endpoints/nope/test", headers=headers, json={}
+            ).status_code
+            == 404
+        )
+
     def test_non_admin_blocked_from_get_system_prompt(
         self,
         jwt_client: TestClient,

@@ -317,10 +317,9 @@ class LLMEndpointTestResult(BaseModel):
     detail: str = ""
     """Empty on success; the provider's own error text otherwise."""
     latency_ms: float = 0.0
-    sent_tools: bool = True
-    """Whether the probe carried a tool schema. See the handler for why."""
     reasoning: str = ""
-    """The reasoning parameter the endpoint's setting produced, or "(none)"."""
+    """How the probe asked for reasoning, in words. The probe always carries a
+    tool, so there is nothing to report about that."""
 
 
 class LLMEndpointUpsert(BaseModel):

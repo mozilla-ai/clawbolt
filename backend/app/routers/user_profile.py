@@ -1,9 +1,10 @@
 """Endpoints for user profile management."""
 
+import asyncio
 import datetime
 import logging
 import time
-from typing import cast
+from typing import Any, cast
 
 from any_llm import amessages
 from any_llm.exceptions import MissingApiKeyError
@@ -70,6 +71,7 @@ from backend.app.services.llm_endpoints import (
     upsert_endpoint,
 )
 from backend.app.services.llm_service import (
+    LLMTarget,
     get_configured_providers,
     get_models,
     is_local_provider,
@@ -608,10 +610,13 @@ async def list_llm_endpoint_models(
         raise HTTPException(status_code=404, detail=f"Endpoint {name!r} not found")
 
     try:
-        models = await get_models(
-            row.dialect,
-            api_key=row.api_key or None,
-            api_base=row.base_url or None,
+        models = await asyncio.wait_for(
+            get_models(
+                row.dialect,
+                api_key=row.api_key or None,
+                api_base=row.base_url or None,
+            ),
+            timeout=_LIST_TIMEOUT_SECONDS,
         )
     except NotImplementedError as exc:
         return AdminLLMModelsResponse(
@@ -646,6 +651,47 @@ _PROBE_TOOL = {
     "input_schema": {"type": "object", "properties": {}},
 }
 
+# The smallest thinking budget the Anthropic API accepts.
+_PROBE_THINKING_BUDGET = 1024
+
+# A gateway that accepts the connection and never answers would otherwise hold
+# the request for the provider SDK's own default, which is ten minutes, with
+# the Test button disabled the whole time and no way to cancel it.
+_PROBE_TIMEOUT_SECONDS = 60.0
+_LIST_TIMEOUT_SECONDS = 30.0
+
+
+def _probe_call_shape(target: LLMTarget) -> tuple[dict[str, Any], int, str]:
+    """Reasoning kwargs, ``max_tokens``, and a label, for one probe request.
+
+    A thinking budget must be *smaller* than ``max_tokens``; the Anthropic SDK
+    states the rule on ``ThinkingConfigEnabledParam``. Pairing a fixed tiny
+    ``max_tokens`` with a configured budget therefore manufactures a 400 on a
+    perfectly healthy endpoint, and the probe reports the gateway broken for a
+    rule the probe itself broke. Every effort level trips it, since the
+    smallest budget is 1024.
+
+    The budget is clamped to that minimum rather than tracking
+    ``reasoning_effort``. What this probe answers is whether the endpoint
+    accepts reasoning *and tools on the same request*, which is a question
+    about the parameter's shape rather than its size, and a probe that spent a
+    32768-token budget per click would be too expensive to click freely.
+    """
+    reasoning = target.reasoning_kwargs(settings.reasoning_effort)
+    thinking = reasoning.get("thinking")
+    if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+        budget = _PROBE_THINKING_BUDGET
+        return (
+            {"thinking": {"type": "enabled", "budget_tokens": budget}},
+            budget + 64,
+            f"thinking, clamped to a {budget}-token budget",
+        )
+    if "reasoning_effort" in reasoning:
+        return reasoning, 256, f"effort={reasoning['reasoning_effort']}"
+    if thinking:
+        return reasoning, 64, "thinking disabled"
+    return {}, 64, "none"
+
 
 @router.post(
     "/user/model/endpoints/{name}/test",
@@ -654,7 +700,7 @@ _PROBE_TOOL = {
 async def test_llm_endpoint(
     name: str,
     body: LLMEndpointTestRequest,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> LLMEndpointTestResult:
     """Send one minimal request through an endpoint and report what came back.
 
@@ -674,12 +720,12 @@ async def test_llm_endpoint(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Endpoint {name!r} not found")
 
-    target = await resolve_target(endpoint=name, provider="", model=body.model)
     model = body.model
     if not model:
         try:
-            listed = await get_models(
-                row.dialect, api_key=row.api_key or None, api_base=row.base_url or None
+            listed = await asyncio.wait_for(
+                get_models(row.dialect, api_key=row.api_key or None, api_base=row.base_url or None),
+                timeout=_LIST_TIMEOUT_SECONDS,
             )
         except Exception:
             listed = []
@@ -692,31 +738,42 @@ async def test_llm_endpoint(
                 ),
             )
         model = listed[0]
-        target = await resolve_target(endpoint=name, provider="", model=model)
 
-    reasoning = target.reasoning_kwargs(settings.reasoning_effort)
+    target = await resolve_target(endpoint=name, provider="", model=model)
+    reasoning, max_tokens, label = _probe_call_shape(target)
     started = time.monotonic()
     try:
-        await amessages(
-            **target.connection_kwargs(),
-            messages=[{"role": "user", "content": "Reply with the single word: ok"}],
-            tools=[dict(_PROBE_TOOL)],
-            max_tokens=16,
-            **reasoning,
+        await asyncio.wait_for(
+            amessages(
+                **target.connection_kwargs(),
+                messages=[{"role": "user", "content": "Reply with the single word: ok"}],
+                tools=[dict(_PROBE_TOOL)],
+                max_tokens=max_tokens,
+                **reasoning,
+            ),
+            timeout=_PROBE_TIMEOUT_SECONDS,
         )
+        ok, detail = True, ""
+    except TimeoutError:
+        ok, detail = False, f"No answer within {_PROBE_TIMEOUT_SECONDS:.0f}s."
     except Exception as exc:
-        return LLMEndpointTestResult(
-            ok=False,
-            model=model,
-            detail=f"{type(exc).__name__}: {exc}",
-            latency_ms=(time.monotonic() - started) * 1000,
-            reasoning=str(reasoning) if reasoning else "(none)",
-        )
+        ok, detail = False, f"{type(exc).__name__}: {exc}"
+
+    latency_ms = (time.monotonic() - started) * 1000
+    # Spends the operator's credential on an outbound request, so it leaves a
+    # record like the writes do. The provider's error text stays out of the
+    # trail: it goes to the caller, and the log is read by more people than
+    # can set a credential.
+    await record_admin_action(
+        action=AdminAction.TEST_LLM_ENDPOINT,
+        admin_user_id=current_user.id,
+        endpoint="POST /api/user/model/endpoints/{name}/test",
+        resource_type="llm_endpoint",
+        resource_id=name,
+        detail={"model": model, "ok": ok, "reasoning": label},
+    )
     return LLMEndpointTestResult(
-        ok=True,
-        model=model,
-        latency_ms=(time.monotonic() - started) * 1000,
-        reasoning=str(reasoning) if reasoning else "(none)",
+        ok=ok, model=model, detail=detail, latency_ms=latency_ms, reasoning=label
     )
 
 

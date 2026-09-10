@@ -4466,11 +4466,6 @@ export interface components {
              */
             latency_ms: number;
             /**
-             * Sent Tools
-             * @default true
-             */
-            sent_tools: boolean;
-            /**
              * Reasoning
              * @default
              */

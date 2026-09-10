@@ -273,7 +273,9 @@ function LLMEndpointsSection({ onChanged }: { onChanged: () => void }) {
                     {results[item.name]?.ok
                       ? `Answered on ${results[item.name]?.model} in ${Math.round(
                           results[item.name]?.latency_ms ?? 0,
-                        )}ms, with a tool attached and reasoning ${results[item.name]?.reasoning}.`
+                        )}ms, with a tool attached and reasoning: ${
+                          results[item.name]?.reasoning
+                        }.`
                       : results[item.name]?.detail}
                   </p>
                 )}
