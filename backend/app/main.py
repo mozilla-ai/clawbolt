@@ -247,7 +247,14 @@ async def _verify_llm_settings() -> None:
     for label, endpoint, provider, model in roles:
         if not (endpoint or provider or model):
             continue
-        targets.append((label, await _resolve_role(endpoint, provider, model)))
+        try:
+            targets.append((label, await _resolve_role(endpoint, provider, model)))
+        except Exception as exc:
+            # Resolution fails when the role names an endpoint that is not
+            # configured. That is a warning for the same reason a failed ping
+            # is: an optional role must not be able to stop the process from
+            # booting, and at runtime the typo would only break that role.
+            logger.warning("LLM startup check failed for %s model: %s", label, exc)
 
     # Deduplicate by destination to avoid redundant API calls. Two roles that
     # differ only by endpoint are different destinations even on the same

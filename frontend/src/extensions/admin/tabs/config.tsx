@@ -250,7 +250,7 @@ function LLMEndpointsSection({ onChanged }: { onChanged: () => void }) {
                 onChange={e => set({ name: e.target.value })}
               />
               <p className="text-[11px] text-muted-foreground mt-1">
-                Lowercase letters, digits, dashes. Referenced by settings, so it does not change
+                Lowercase letters, digits, dashes, underscores. Referenced by settings, so it does not change
                 easily once in use.
               </p>
             </div>

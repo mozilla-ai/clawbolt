@@ -537,6 +537,7 @@ def _model_totals_payload(totals: metrics.ModelTotals) -> dict:
         "cache_participation_ratio": round(totals.cache_participation_ratio, 4),
         "total_cost_usd": str(totals.total_cost),
         "pricing_available": totals.pricing_available,
+        "pricing_unknown_reason": totals.pricing_unknown_reason,
         "latency_p50_ms": round(totals.percentile_latency_ms(0.50), 1),
         "latency_p95_ms": round(totals.percentile_latency_ms(0.95), 1),
     }

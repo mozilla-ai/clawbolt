@@ -1698,6 +1698,8 @@ class ClawboltAgent:
                 response,
                 purpose,
                 provider=usage_target.provider,
+                endpoint=usage_target.endpoint,
+                priced=usage_target.priced,
             )
             if response.usage and response.usage.input_tokens:
                 cache_create = response.usage.cache_creation_input_tokens or 0

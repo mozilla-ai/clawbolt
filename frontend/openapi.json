@@ -902,7 +902,7 @@
     "/api/user/model/endpoints": {
       "get": {
         "summary": "List Llm Endpoints",
-        "description": "Return every configured LLM endpoint.",
+        "description": "Return every configured LLM endpoint.\n\nThe single CRUD surface for endpoints, in both tenancy modes. In\nmulti-user mode ``middleware.admin_config_guard`` restricts it to admins,\nthe same gate the rest of the model config sits behind; in single-user\nmode the one user is the operator.",
         "operationId": "list_llm_endpoints_api_user_model_endpoints_get",
         "responses": {
           "200": {
@@ -921,7 +921,7 @@
     "/api/user/model/endpoints/{name}": {
       "put": {
         "summary": "Upsert Llm Endpoint",
-        "description": "Create or replace one endpoint.\n\nAn endpoint holds a credential and a destination, so this sits behind the\nsame admin gate as the rest of the model config (see\n``middleware.admin_config_guard``). Without that gate a tenant could\npoint the deployment's traffic at a host of their choosing.",
+        "description": "Create or replace one endpoint.\n\nAudited, because an endpoint names both a destination for the\ndeployment's traffic and a credential to send with it. \"Who pointed us\nat that host\" has to be answerable.",
         "operationId": "upsert_llm_endpoint_api_user_model_endpoints__name__put",
         "parameters": [
           {
@@ -1147,7 +1147,7 @@
     "/api/user/llm-usage": {
       "get": {
         "summary": "Get Llm Usage",
-        "description": "Aggregate LLM usage for the current user over the last N days.",
+        "description": "Aggregate LLM usage for the current user over the last N days.\n\n``total_cost`` sums a column that is zero whenever the cost could not be\ncomputed, so it is a lower bound. ``unpriced_calls`` is what says so.",
         "operationId": "get_llm_usage_api_user_llm_usage_get",
         "parameters": [
           {
@@ -2985,115 +2985,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/admin/config/llm/endpoints": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "List Admin Llm Endpoints",
-        "description": "Return every configured LLM endpoint.",
-        "operationId": "list_admin_llm_endpoints_api_admin_config_llm_endpoints_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LLMEndpointListResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/admin/config/llm/endpoints/{name}": {
-      "put": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Upsert Admin Llm Endpoint",
-        "description": "Create or replace one endpoint.\n\nAudited, unlike the settings-store path, because an endpoint names both a\ndestination for the deployment's traffic and a credential to send with\nit. \"Who pointed us at that host\" has to be answerable.",
-        "operationId": "upsert_admin_llm_endpoint_api_admin_config_llm_endpoints__name__put",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Name"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LLMEndpointUpsert"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LLMEndpointItem"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Delete Admin Llm Endpoint",
-        "description": "Remove an endpoint, unless something still selects it.",
-        "operationId": "delete_admin_llm_endpoint_api_admin_config_llm_endpoints__name__delete",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Name"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -8270,6 +8161,11 @@
             },
             "type": "array",
             "title": "By Purpose"
+          },
+          "unpriced_calls": {
+            "type": "integer",
+            "title": "Unpriced Calls",
+            "default": 0
           }
         },
         "type": "object",

@@ -462,7 +462,12 @@ export interface AdminUserLLMOverrideUpdate {
   llm_model_override?: string;
 }
 
-// --- Named LLM endpoints (admin-only, audited) ---
+// --- Named LLM endpoints (audited) ---
+//
+// These live under /api/user/model/endpoints rather than /api/admin/... so
+// there is one CRUD surface in both tenancy modes. In multi-user mode
+// AdminConfigGuardMiddleware restricts it to admins, the same gate the rest
+// of the model config sits behind.
 
 export interface LLMEndpointItem {
   name: string;
@@ -493,7 +498,7 @@ export interface LLMEndpointUpsert {
 export const SECRET_MASK = '********';
 
 export async function listLLMEndpoints(): Promise<LLMEndpointItem[]> {
-  const { data, error } = await client.GET('/api/admin/config/llm/endpoints' as never);
+  const { data, error } = await client.GET('/api/user/model/endpoints' as never);
   if (error) throwApiError(error, 'Failed to load LLM endpoints');
   return (data as { items: LLMEndpointItem[] }).items;
 }
@@ -502,7 +507,7 @@ export async function upsertLLMEndpoint(
   body: LLMEndpointUpsert,
 ): Promise<LLMEndpointItem> {
   const { data, error } = await client.PUT(
-    `/api/admin/config/llm/endpoints/${encodeURIComponent(body.name)}` as never,
+    `/api/user/model/endpoints/${encodeURIComponent(body.name)}` as never,
     { body } as never,
   );
   if (error) throwApiError(error, 'Failed to save LLM endpoint');
@@ -511,7 +516,7 @@ export async function upsertLLMEndpoint(
 
 export async function deleteLLMEndpoint(name: string): Promise<void> {
   const { error } = await client.DELETE(
-    `/api/admin/config/llm/endpoints/${encodeURIComponent(name)}` as never,
+    `/api/user/model/endpoints/${encodeURIComponent(name)}` as never,
   );
   if (error) throwApiError(error, 'Failed to delete LLM endpoint');
 }

@@ -667,12 +667,22 @@ class LLMUsageLog(Base):
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    # The endpoint that served the call, empty for a bare provider. Kept
+    # alongside ``provider`` rather than replacing it: the provider is still
+    # the dialect the request was written in, and both are needed to explain
+    # a row after the endpoint has been edited or deleted.
+    endpoint: Mapped[str] = mapped_column(String, default="")
     provider: Mapped[str] = mapped_column(String, default="")
     model: Mapped[str] = mapped_column(String, default="")
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0.000000"))
+    # False when ``cost`` is not a cost. Behind a gateway the (provider,
+    # model) pair names the dialect rather than whoever billed the tokens, so
+    # a price-list hit on it would be a coincidence. Zero is recorded, and
+    # this column is what stops a sum reading it as free.
+    pricing_available: Mapped[bool] = mapped_column(Boolean, default=True)
     purpose: Mapped[str] = mapped_column(String, default="")
     cache_creation_input_tokens: Mapped[int | None] = mapped_column(
         Integer, nullable=True, default=None

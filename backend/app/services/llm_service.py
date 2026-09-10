@@ -55,8 +55,11 @@ _CACHE_CONTROL_PROVIDERS = {"anthropic", "azureanthropic", "vertexaianthropic"}
 def provider_honors_cache_control(provider: str) -> bool:
     """Return whether cache markers are enabled and useful for *provider*.
 
-    The endpoint is not consulted because it does not reveal a gateway's downstream
-    provider. ``llm_prompt_cache='never'`` supports older gateways that reject markers.
+    Answers for a bare provider only. A named endpoint states the answer
+    outright in its ``cache_control`` column and consults this just for
+    ``auto``; see ``llm_endpoints._cache_control_for``. The base URL is never
+    consulted, since it does not reveal a gateway's downstream provider.
+    ``llm_prompt_cache='never'`` supports older gateways that reject markers.
     """
     if settings.llm_prompt_cache == "never":
         return False

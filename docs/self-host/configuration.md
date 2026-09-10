@@ -53,8 +53,12 @@ the other three confidently wrong: markers stamped for a hop that drops them,
 an Anthropic thinking budget sent to a model that wants `reasoning_effort`, and
 a cost figure priced against a vendor that never saw the request.
 
-An endpoint separates them. Create one under **Settings > Model** (or
-`PUT /api/user/model/endpoints/<name>`) with:
+An endpoint separates them. Create one with
+`PUT /api/user/model/endpoints/<name>`, which is the CRUD surface in both
+tenancy modes. A hosted deployment also has an editor for it under
+**Admin > Config**; a self-hosted single-user deployment has the API and a
+selector under **Settings > Model**, which appears once at least one endpoint
+exists. Fields:
 
 | Field | Meaning |
 |-------|---------|

@@ -21,11 +21,12 @@ from backend.app.config import (
     update_settings,
 )
 from backend.app.config_store import (
+    MASK,
     get_settings_store,
     strip_unchanged_secrets,
 )
 from backend.app.database import get_async_db
-from backend.app.models import ChannelRoute, HeartbeatLog, LLMEndpoint, LLMUsageLog, User
+from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
 from backend.app.query_helpers import get_or_404_async
 from backend.app.schemas import (
     ChannelConfigResponse,
@@ -50,11 +51,13 @@ from backend.app.schemas import (
     UserProfileResponse,
     UserProfileUpdate,
 )
+from backend.app.services.admin_audit import AdminAction, record_admin_action
 from backend.app.services.llm_endpoints import (
-    count_endpoint_pins,
     delete_endpoint,
-    endpoint_selectors,
+    endpoint_delete_blockers,
+    endpoint_item,
     list_endpoints,
+    missing_endpoints,
     upsert_endpoint,
 )
 from backend.app.services.llm_service import (
@@ -470,6 +473,23 @@ async def update_model_config(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    missing = await missing_endpoints(
+        [
+            str(updates.get(key, ""))
+            for key in (
+                "llm_endpoint",
+                "vision_endpoint",
+                "heartbeat_endpoint",
+                "compaction_endpoint",
+            )
+        ]
+    )
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"LLM endpoint(s) not configured: {', '.join(missing)}",
+        )
+
     try:
         update_settings(updates)
     except ValueError as exc:
@@ -484,41 +504,32 @@ async def update_model_config(
 # ---------------------------------------------------------------------------
 
 
-def _endpoint_item(row: LLMEndpoint) -> LLMEndpointItem:
-    """Serialize an endpoint. The stored key is reported as a boolean only."""
-    return LLMEndpointItem(
-        name=row.name,
-        dialect=row.dialect,
-        base_url=row.base_url,
-        api_key_set=bool(row.api_key),
-        cache_control=row.cache_control,
-        reasoning=row.reasoning,
-        pricing=row.pricing,
-        notes=row.notes,
-    )
-
-
 @router.get("/user/model/endpoints", response_model=LLMEndpointListResponse)
 async def list_llm_endpoints(
     _current_user: User = Depends(get_current_user),
 ) -> LLMEndpointListResponse:
-    """Return every configured LLM endpoint."""
-    return LLMEndpointListResponse(items=[_endpoint_item(r) for r in await list_endpoints()])
+    """Return every configured LLM endpoint.
+
+    The single CRUD surface for endpoints, in both tenancy modes. In
+    multi-user mode ``middleware.admin_config_guard`` restricts it to admins,
+    the same gate the rest of the model config sits behind; in single-user
+    mode the one user is the operator.
+    """
+    return LLMEndpointListResponse(items=[endpoint_item(r) for r in await list_endpoints()])
 
 
 @router.put("/user/model/endpoints/{name}", response_model=LLMEndpointItem)
 async def upsert_llm_endpoint(
     name: str,
     body: LLMEndpointUpsert,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> LLMEndpointItem:
     """Create or replace one endpoint.
 
-    An endpoint holds a credential and a destination, so this sits behind the
-    same admin gate as the rest of the model config (see
-    ``middleware.admin_config_guard``). Without that gate a tenant could
-    point the deployment's traffic at a host of their choosing.
+    Audited, because an endpoint names both a destination for the
+    deployment's traffic and a credential to send with it. "Who pointed us
+    at that host" has to be answerable.
     """
     if body.name != name:
         raise HTTPException(status_code=400, detail="Endpoint name in path and body must match")
@@ -536,30 +547,45 @@ async def upsert_llm_endpoint(
         pricing=body.pricing,
         notes=body.notes,
     )
-    return _endpoint_item(row)
+    await record_admin_action(
+        action=AdminAction.UPSERT_LLM_ENDPOINT,
+        admin_user_id=current_user.id,
+        endpoint="PUT /api/user/model/endpoints/{name}",
+        resource_type="llm_endpoint",
+        resource_id=name,
+        # Never the key itself, and never a hint at its value: the audit log
+        # is read by more people than can set one.
+        detail={
+            "dialect": body.dialect,
+            "base_url": body.base_url,
+            "cache_control": body.cache_control,
+            "reasoning": body.reasoning,
+            "pricing": body.pricing,
+            "api_key_changed": body.api_key is not None and body.api_key != MASK,
+        },
+    )
+    return endpoint_item(row)
 
 
 @router.delete("/user/model/endpoints/{name}", status_code=204)
 async def delete_llm_endpoint(
     name: str,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> None:
     """Remove an endpoint, unless something still selects it."""
-    in_use = endpoint_selectors(name)
-    if in_use:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Endpoint {name!r} is still selected by: {', '.join(in_use)}",
-        )
-    pinned = await count_endpoint_pins(db, name)
-    if pinned:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Endpoint {name!r} is still pinned on {pinned} user override(s)",
-        )
+    blockers = await endpoint_delete_blockers(db, name)
+    if blockers:
+        raise HTTPException(status_code=409, detail=f"Endpoint {name!r} is {'; '.join(blockers)}")
     if not await delete_endpoint(db, name):
         raise HTTPException(status_code=404, detail=f"Endpoint {name!r} not found")
+    await record_admin_action(
+        action=AdminAction.DELETE_LLM_ENDPOINT,
+        admin_user_id=current_user.id,
+        endpoint="DELETE /api/user/model/endpoints/{name}",
+        resource_type="llm_endpoint",
+        resource_id=name,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -693,7 +719,11 @@ async def get_llm_usage(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> LLMUsageSummary:
-    """Aggregate LLM usage for the current user over the last N days."""
+    """Aggregate LLM usage for the current user over the last N days.
+
+    ``total_cost`` sums a column that is zero whenever the cost could not be
+    computed, so it is a lower bound. ``unpriced_calls`` is what says so.
+    """
     since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
 
     rows = (
@@ -730,9 +760,20 @@ async def get_llm_usage(
         for row in rows
     ]
 
+    unpriced = (
+        await db.execute(
+            select(sa_func.count(LLMUsageLog.id)).where(
+                LLMUsageLog.user_id == current_user.id,
+                LLMUsageLog.created_at >= since,
+                LLMUsageLog.pricing_available.is_(False),
+            )
+        )
+    ).scalar_one()
+
     return LLMUsageSummary(
         total_calls=sum(p.call_count for p in by_purpose),
         total_tokens=sum(p.total_tokens for p in by_purpose),
         total_cost=sum(p.total_cost for p in by_purpose),
         by_purpose=by_purpose,
+        unpriced_calls=int(unpriced),
     )

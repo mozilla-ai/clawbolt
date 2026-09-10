@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +43,7 @@ from backend.app.config import settings
 from backend.app.config_store import MASK
 from backend.app.database import AsyncSessionLocal
 from backend.app.models import LLMEndpoint, Subscription
+from backend.app.schemas import LLMEndpointItem
 from backend.app.services.llm_service import (
     LLMTarget,
     ReasoningStyle,
@@ -74,12 +76,19 @@ _AUTO = "auto"
 # loaded"; an empty dict is a valid loaded state.
 _cache: dict[str, LLMEndpoint] | None = None
 _cache_lock = asyncio.Lock()
+# Bumped on every reset. A load that started before a reset and finished
+# after it would otherwise install pre-write rows on top of the
+# invalidation, and the stale cache would survive until the next write or a
+# restart: an endpoint would save successfully and still be missing from the
+# listing, and raise when selected.
+_cache_generation = 0
 
 
 def reset_llm_endpoint_cache() -> None:
     """Drop the cache. Called after a write, and between tests."""
-    global _cache
+    global _cache, _cache_generation
     _cache = None
+    _cache_generation += 1
 
 
 async def _load_endpoints() -> dict[str, LLMEndpoint]:
@@ -91,13 +100,17 @@ async def _load_endpoints() -> dict[str, LLMEndpoint]:
         # Another coroutine may have populated it while we waited.
         if _cache is not None:
             return _cache
+        generation = _cache_generation
         db = AsyncSessionLocal()
         try:
             rows = (await db.execute(select(LLMEndpoint))).scalars().all()
         finally:
             await db.close()
-        _cache = {row.name: row for row in rows}
-        return _cache
+        loaded = {row.name: row for row in rows}
+        # Only publish if nothing invalidated while the SELECT was in flight.
+        if generation == _cache_generation:
+            _cache = loaded
+        return loaded
 
 
 async def get_endpoint(name: str) -> LLMEndpoint | None:
@@ -154,6 +167,49 @@ async def upsert_endpoint(
     await db.refresh(row)
     reset_llm_endpoint_cache()
     return row
+
+
+def endpoint_item(row: LLMEndpoint) -> LLMEndpointItem:
+    """Serialize an endpoint. The stored key is reported as a boolean only."""
+    return LLMEndpointItem(
+        name=row.name,
+        dialect=row.dialect,
+        base_url=row.base_url,
+        api_key_set=bool(row.api_key),
+        cache_control=row.cache_control,
+        reasoning=row.reasoning,
+        pricing=row.pricing,
+        notes=row.notes,
+    )
+
+
+async def endpoint_delete_blockers(db: AsyncSession, name: str) -> list[str]:
+    """Reasons *name* cannot be deleted yet, most specific first.
+
+    Empty when it is safe to remove. Deleting under a live selection would
+    turn every call through it from working into raising, and the traceback
+    would name the endpoint rather than the deletion.
+    """
+    blockers: list[str] = []
+    selectors = endpoint_selectors(name)
+    if selectors:
+        blockers.append(f"still selected by: {', '.join(selectors)}")
+    pinned = await count_endpoint_pins(db, name)
+    if pinned:
+        blockers.append(f"still pinned on {pinned} user override(s)")
+    return blockers
+
+
+async def missing_endpoints(names: Iterable[str]) -> list[str]:
+    """Which of *names* are not configured, ignoring empty selections.
+
+    Write paths check this because delete is guarded against orphaning a
+    live selection, and without the matching check the asymmetry bites: an
+    endpoint cannot be removed out from under a setting, but a setting can
+    be pointed at one that was never created. The failure then surfaces on
+    every affected user's next message rather than on the admin typing it.
+    """
+    return sorted({name for name in names if name and await get_endpoint(name) is None})
 
 
 def endpoint_selectors(name: str) -> list[str]:
@@ -218,7 +274,12 @@ def _cache_control_for(row: LLMEndpoint) -> bool:
 
 
 def _reasoning_style_for(row: LLMEndpoint) -> ReasoningStyle:
-    """The reasoning shape for *row*, defaulting to the dialect's."""
+    """The reasoning shape for *row*.
+
+    ``auto`` resolves to ``THINKING`` for every dialect, which is what every
+    call site did before endpoints existed. There is no per-dialect table
+    here yet; when one is wanted, this is where it goes.
+    """
     if row.reasoning and row.reasoning != _AUTO:
         try:
             return ReasoningStyle(row.reasoning)
@@ -252,7 +313,8 @@ async def resolve_target(
         if row is None:
             raise UnknownLLMEndpointError(
                 f"LLM endpoint {endpoint!r} is not configured. "
-                "Create it under Settings > Model, or clear the selection."
+                "Create it (PUT /api/user/model/endpoints/"
+                f"{endpoint}), or clear the selection."
             )
         return LLMTarget(
             provider=row.dialect,

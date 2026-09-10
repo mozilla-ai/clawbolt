@@ -9,9 +9,12 @@ refuses outright.
 """
 
 from collections.abc import AsyncGenerator
+from unittest.mock import patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import backend.app.services.llm_endpoints as _module
 from backend.app.database import db_session_async
 from backend.app.models import LLMEndpoint
 from backend.app.services.llm_endpoints import (
@@ -231,3 +234,30 @@ class TestEndpointCache:
 
     async def test_empty_name_never_hits_the_database(self) -> None:
         assert await get_endpoint("") is None
+
+    async def test_a_reset_during_a_load_is_not_lost(self) -> None:
+        """A load that starts before a reset must not publish over it.
+
+        The reader awaits its SELECT. A write that commits and invalidates
+        during that await would otherwise have its invalidation overwritten
+        by the reader's pre-write rows, and the stale cache would survive
+        until the next write or a restart: the endpoint saves and is still
+        missing from the listing, and raises when selected.
+        """
+        await _add_endpoint(name="first", dialect="anthropic")
+
+        real_execute = AsyncSession.execute
+
+        async def execute_then_invalidate(
+            self: AsyncSession, *args: object, **kw: object
+        ) -> object:
+            result = await real_execute(self, *args, **kw)
+            # Stand in for a concurrent write landing mid-SELECT.
+            reset_llm_endpoint_cache()
+            return result
+
+        with patch.object(AsyncSession, "execute", execute_then_invalidate):
+            await get_endpoint("first")
+
+        # The cache must not be holding the rows read across that reset.
+        assert _module._cache is None

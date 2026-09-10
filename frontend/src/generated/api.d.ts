@@ -629,6 +629,11 @@ export interface paths {
         /**
          * List Llm Endpoints
          * @description Return every configured LLM endpoint.
+         *
+         *     The single CRUD surface for endpoints, in both tenancy modes. In
+         *     multi-user mode ``middleware.admin_config_guard`` restricts it to admins,
+         *     the same gate the rest of the model config sits behind; in single-user
+         *     mode the one user is the operator.
          */
         get: operations["list_llm_endpoints_api_user_model_endpoints_get"];
         put?: never;
@@ -651,10 +656,9 @@ export interface paths {
          * Upsert Llm Endpoint
          * @description Create or replace one endpoint.
          *
-         *     An endpoint holds a credential and a destination, so this sits behind the
-         *     same admin gate as the rest of the model config (see
-         *     ``middleware.admin_config_guard``). Without that gate a tenant could
-         *     point the deployment's traffic at a host of their choosing.
+         *     Audited, because an endpoint names both a destination for the
+         *     deployment's traffic and a credential to send with it. "Who pointed us
+         *     at that host" has to be answerable.
          */
         put: operations["upsert_llm_endpoint_api_user_model_endpoints__name__put"];
         post?: never;
@@ -754,6 +758,9 @@ export interface paths {
         /**
          * Get Llm Usage
          * @description Aggregate LLM usage for the current user over the last N days.
+         *
+         *     ``total_cost`` sums a column that is zero whenever the cost could not be
+         *     computed, so it is a lower bound. ``unpriced_calls`` is what says so.
          */
         get: operations["get_llm_usage_api_user_llm_usage_get"];
         put?: never;
@@ -1711,54 +1718,6 @@ export interface paths {
         put: operations["update_admin_llm_config_api_admin_config_llm_put"];
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/config/llm/endpoints": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Admin Llm Endpoints
-         * @description Return every configured LLM endpoint.
-         */
-        get: operations["list_admin_llm_endpoints_api_admin_config_llm_endpoints_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/config/llm/endpoints/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Upsert Admin Llm Endpoint
-         * @description Create or replace one endpoint.
-         *
-         *     Audited, unlike the settings-store path, because an endpoint names both a
-         *     destination for the deployment's traffic and a credential to send with
-         *     it. "Who pointed us at that host" has to be answerable.
-         */
-        put: operations["upsert_admin_llm_endpoint_api_admin_config_llm_endpoints__name__put"];
-        post?: never;
-        /**
-         * Delete Admin Llm Endpoint
-         * @description Remove an endpoint, unless something still selects it.
-         */
-        delete: operations["delete_admin_llm_endpoint_api_admin_config_llm_endpoints__name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4507,6 +4466,11 @@ export interface components {
             total_cost: number;
             /** By Purpose */
             by_purpose: components["schemas"]["LLMUsageByPurpose"][];
+            /**
+             * Unpriced Calls
+             * @default 0
+             */
+            unpriced_calls: number;
         };
         /** LinqLinkRequest */
         LinqLinkRequest: {
@@ -8171,90 +8135,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AdminLLMConfigResponse"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_admin_llm_endpoints_api_admin_config_llm_endpoints_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMEndpointListResponse"];
-                };
-            };
-        };
-    };
-    upsert_admin_llm_endpoint_api_admin_config_llm_endpoints__name__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LLMEndpointUpsert"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMEndpointItem"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_admin_llm_endpoint_api_admin_config_llm_endpoints__name__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

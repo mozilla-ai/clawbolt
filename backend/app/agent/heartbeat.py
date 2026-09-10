@@ -528,7 +528,15 @@ async def evaluate_heartbeat_need(
     if response is None:
         raise RuntimeError("Heartbeat LLM retry loop exited without response")
 
-    await log_llm_usage(user.id, model, response, "heartbeat_decision", provider=provider)
+    await log_llm_usage(
+        user.id,
+        model,
+        response,
+        "heartbeat_decision",
+        provider=provider,
+        endpoint=target.endpoint,
+        priced=target.priced,
+    )
     await _emit_heartbeat_response(
         response,
         user_id=user.id,

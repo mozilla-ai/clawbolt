@@ -14,7 +14,7 @@ from sqlalchemy import select
 from backend.app.config import settings
 from backend.app.config_store import MASK
 from backend.app.database import db_session_async
-from backend.app.models import LLMEndpoint, Subscription, User
+from backend.app.models import AdminAuditLog, LLMEndpoint, Subscription, User
 from backend.app.services.llm_endpoints import reset_llm_endpoint_cache
 
 BASE = "/api/user/model/endpoints"
@@ -201,6 +201,67 @@ def test_delete_is_refused_while_a_role_selects_it(
     resp = client.delete(f"{BASE}/otari")
     assert resp.status_code == 409
     assert "heartbeat_endpoint" in resp.json()["detail"]
+
+
+def test_selecting_an_endpoint_that_does_not_exist_is_rejected(client: TestClient) -> None:
+    """The mirror of the delete guard.
+
+    Delete refuses to orphan a live selection. Without this check the
+    asymmetry bites: an endpoint cannot be removed out from under a setting,
+    but a setting can be pointed at one that was never created, and the
+    failure then surfaces on the next message rather than here.
+    """
+    resp = client.put("/api/user/model/config", json={"llm_endpoint": "never-created"})
+    assert resp.status_code == 422
+    assert "never-created" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("field", ["vision_endpoint", "heartbeat_endpoint", "compaction_endpoint"])
+def test_a_secondary_role_endpoint_is_validated_too(client: TestClient, field: str) -> None:
+    resp = client.put("/api/user/model/config", json={field: "never-created"})
+    assert resp.status_code == 422
+
+
+def test_selecting_a_configured_endpoint_is_accepted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ``update_settings`` mutates the singleton, and nothing else in the
+    # suite undoes that. Set the attribute through monkeypatch first so its
+    # teardown restores it, or the selection leaks into later tests and
+    # blocks deletes with a 409.
+    monkeypatch.setattr(settings, "llm_endpoint", "")
+    client.put(f"{BASE}/otari", json=_body())
+    resp = client.put("/api/user/model/config", json={"llm_endpoint": "otari"})
+    assert resp.status_code == 200
+    assert resp.json()["llm_endpoint"] == "otari"
+
+
+def test_writes_are_audited_without_recording_the_key(client: TestClient) -> None:
+    """An endpoint names a destination for all traffic and a credential.
+
+    "Who pointed us at that host" has to be answerable, and the log is read
+    by more people than can set one, so the key must not be in it.
+    """
+
+    async def _rows() -> list[AdminAuditLog]:
+        async with db_session_async() as db:
+            return list(
+                (await db.execute(select(AdminAuditLog).order_by(AdminAuditLog.id.desc())))
+                .scalars()
+                .all()
+            )
+
+    client.put(f"{BASE}/otari", json=_body(api_key="sk-secret"))
+    latest = asyncio.run(_rows())[0]
+    assert latest.action == "upsert_llm_endpoint"
+    assert latest.resource_type == "llm_endpoint"
+    assert latest.resource_id == "otari"
+    assert latest.detail is not None
+    assert latest.detail["api_key_changed"] is True
+    assert "sk-secret" not in str(latest.detail)
+
+    assert client.delete(f"{BASE}/otari").status_code == 204
+    assert asyncio.run(_rows())[0].action == "delete_llm_endpoint"
 
 
 def test_delete_is_refused_while_a_user_is_pinned_to_it(

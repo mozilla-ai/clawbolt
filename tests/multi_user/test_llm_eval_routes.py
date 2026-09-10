@@ -202,6 +202,23 @@ def test_a_candidate_endpoint_that_does_not_exist_is_rejected_before_launching(
     _launch.assert_not_called()
 
 
+def test_a_candidate_with_neither_endpoint_nor_provider_is_rejected(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    """A candidate has to name somewhere to send the call.
+
+    Either half is enough on its own, but with both empty the resolved
+    target has no provider, any-llm refuses every turn, and the run burns
+    its baseline budget before reporting ``inconclusive``.
+    """
+    response = admin_client.post(
+        f"{BASE}/users/{consenting_user.id}/runs",
+        json=_payload(candidate_provider="", candidate_endpoint=""),
+    )
+    assert response.status_code == 422
+    _launch.assert_not_called()
+
+
 def test_the_candidate_endpoint_is_recorded_on_the_run(
     admin_client: TestClient, consenting_user: User, _launch: MagicMock
 ) -> None:

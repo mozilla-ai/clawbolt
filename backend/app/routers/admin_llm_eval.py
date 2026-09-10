@@ -361,6 +361,17 @@ async def start_run(
             detail="No baseline model is configured; set the global LLM model first.",
         )
 
+    # A candidate has to name somewhere to send the call. Neither half is
+    # required on its own (an endpoint carries its own dialect), but with
+    # both empty ``resolve_target`` yields a target with no provider and
+    # any-llm refuses every turn, which is the same wasted budget the
+    # endpoint check below exists to avoid.
+    if not (payload.candidate_endpoint or payload.candidate_provider):
+        raise HTTPException(
+            status_code=422,
+            detail="candidate: name either an endpoint or a provider.",
+        )
+
     # Resolve both sides before the run row exists. An endpoint that does not
     # exist is a 422 the operator can act on, not a run that starts, fails
     # every turn, and reports ``inconclusive`` after spending the budget.

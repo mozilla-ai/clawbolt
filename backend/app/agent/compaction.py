@@ -426,7 +426,15 @@ async def compact_session(
         started_at=started_at,
     )
 
-    await log_llm_usage(user_id, model, response, purpose="compaction", provider=provider)
+    await log_llm_usage(
+        user_id,
+        model,
+        response,
+        purpose="compaction",
+        provider=provider,
+        endpoint=target.endpoint,
+        priced=target.priced,
+    )
 
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)

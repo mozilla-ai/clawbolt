@@ -448,6 +448,35 @@ class TestPremiumUserLLMResolver:
         assert result == UserLLMOverride(provider="openai", model="gpt-5")
 
 
+def test_pointing_a_user_override_at_an_unknown_endpoint_is_rejected(
+    client: TestClient,
+    test_user: User,
+    test_subscription: Subscription,
+) -> None:
+    """Delete refuses to orphan a live selection, so create must match.
+
+    Without this a selection could be pointed at an endpoint that never
+    existed, and the failure would land on the user's next message rather
+    than on the admin typing it.
+    """
+    resp = client.put(
+        f"/api/admin/users/{test_user.id}/llm-config",
+        json={"llm_endpoint_override": "never-created"},
+    )
+    assert resp.status_code == 422
+    assert "never-created" in resp.json()["detail"]
+
+
+def test_pointing_the_global_config_at_an_unknown_endpoint_is_rejected(
+    client: TestClient,
+    test_user: User,
+    test_subscription: Subscription,
+) -> None:
+    resp = client.put("/api/admin/config/llm", json={"llm_endpoint": "never-created"})
+    assert resp.status_code == 422
+    assert "never-created" in resp.json()["detail"]
+
+
 def test_effective_values_drop_the_global_endpoint_for_a_bare_provider_pin(
     client: TestClient,
     test_user: User,
@@ -474,9 +503,14 @@ def test_effective_values_drop_the_global_endpoint_for_a_bare_provider_pin(
 
 
 class TestAdminLLMEndpoints:
-    """CRUD for named endpoints, from the admin console."""
+    """CRUD for named endpoints, reached the way the admin console reaches it.
 
-    BASE = "/api/admin/config/llm/endpoints"
+    There is one surface in both tenancy modes; the admin console calls it
+    too, and ``AdminConfigGuardMiddleware`` is what restricts it to admins
+    here. See ``test_admin_config_guard`` for that gate.
+    """
+
+    BASE = "/api/user/model/endpoints"
 
     def _body(self, **overrides: object) -> dict:
         body: dict = {

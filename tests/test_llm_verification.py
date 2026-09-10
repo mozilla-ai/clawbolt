@@ -86,6 +86,45 @@ def test_startup_fails_when_primary_model_is_invalid() -> None:
     app.dependency_overrides.clear()
 
 
+def test_an_unknown_role_endpoint_warns_rather_than_blocking_boot(
+    caplog: "pytest.LogCaptureFixture",
+) -> None:
+    """An optional role must not be able to stop the process from booting.
+
+    Resolution of a role's endpoint happens before the ping, so a name that
+    is not configured raises out of the lifespan unless it is caught. At
+    runtime the same typo would only break vision.
+    """
+    with (
+        patch("backend.app.main.amessages", new_callable=AsyncMock),
+        patch("backend.app.main.settings") as mock_settings,
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),
+    ):
+        mock_settings.llm_endpoint = ""
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_model = "gpt-4o"
+        mock_settings.llm_api_base = None
+        mock_settings.vision_model = ""
+        mock_settings.vision_provider = ""
+        mock_settings.vision_endpoint = "never-created"
+        mock_settings.compaction_model = ""
+        mock_settings.compaction_provider = ""
+        mock_settings.compaction_endpoint = ""
+        mock_settings.heartbeat_model = ""
+        mock_settings.heartbeat_provider = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.telegram_bot_token = ""
+        mock_settings.cors_origins = "*"
+
+        with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
+            pass
+
+    assert any("never-created" in msg for msg in caplog.messages)
+
+    app.dependency_overrides.clear()
+
+
 def test_startup_warns_when_optional_model_is_invalid(
     caplog: "pytest.LogCaptureFixture",
 ) -> None:

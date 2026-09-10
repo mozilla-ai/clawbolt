@@ -447,6 +447,10 @@ class LLMUsageSummary(BaseModel):
     total_tokens: int
     total_cost: float
     by_purpose: list[LLMUsageByPurpose]
+    # Calls whose cost could not be computed, so ``total_cost`` is a lower
+    # bound rather than the spend. Non-zero when traffic went through an
+    # endpoint marked unpriced, or through a model no price list knows.
+    unpriced_calls: int = 0
 
 
 # ---------------------------------------------------------------------------
