@@ -39,6 +39,7 @@ from backend.app.services.llm_eval.types import (
     JudgeVerdict,
     ModelCallResult,
     Recommendation,
+    RunTargets,
     SafetyFinding,
     SafetyIssue,
     ToolCall,
@@ -292,6 +293,9 @@ class ModelTotals:
     total_cost: Decimal = Decimal("0.000000")
     latency_ms_samples: list[float] = field(default_factory=list)
     pricing_available: bool = True
+    # Why pricing is unavailable: "model" (no price-list entry) or "endpoint"
+    # (a gateway, so the pair does not name the biller). Empty when priced.
+    pricing_unknown_reason: str = ""
 
     @property
     def billed_prompt_tokens(self) -> int:
@@ -453,8 +457,14 @@ class RunAggregate:
         )
 
 
-def aggregate(comparisons: list[TurnComparison]) -> RunAggregate:
-    """Roll per-turn comparisons up into totals and a recommendation."""
+def aggregate(comparisons: list[TurnComparison], targets: RunTargets | None = None) -> RunAggregate:
+    """Roll per-turn comparisons up into totals and a recommendation.
+
+    *targets* supplies each side's pricing honesty. A model served through a
+    gateway is billed by whoever is behind it, which the (provider, model)
+    pair no longer names, so a price-list hit on that pair is a coincidence
+    rather than a cost. Omitted only by callers that have no run to speak of.
+    """
     agg = RunAggregate(turns_total=len(comparisons))
 
     for comparison in comparisons:
@@ -488,8 +498,25 @@ def aggregate(comparisons: list[TurnComparison]) -> RunAggregate:
             agg.paired_baseline_prompt_tokens += _billed_prompt(comparison.baseline)
             agg.paired_candidate_prompt_tokens += _billed_prompt(comparison.candidate)
 
-    for totals in (agg.baseline, agg.candidate):
-        totals.pricing_available = is_known_model(totals.model, provider=totals.provider)
+    for totals, target in (
+        (agg.baseline, targets.baseline if targets else None),
+        (agg.candidate, targets.candidate if targets else None),
+    ):
+        priced_endpoint = target.priced if target else True
+        totals.pricing_available = priced_endpoint and is_known_model(
+            totals.model, provider=totals.provider
+        )
+        totals.pricing_unknown_reason = (
+            "" if totals.pricing_available else ("endpoint" if not priced_endpoint else "model")
+        )
+        if not totals.pricing_available:
+            # ``_accumulate`` priced every call as it landed, before the
+            # endpoint was known. Leaving that figure in place while the
+            # warning below promises "reported as zero" puts a real-looking
+            # number on the run row and serves it from the API, which is the
+            # fiction this whole column exists to stop. Matches
+            # ``_build_llm_usage_log``, which zeroes for the same reason.
+            totals.total_cost = Decimal("0.000000")
 
     _decide(agg)
     return agg
@@ -597,7 +624,15 @@ def _decide(agg: RunAggregate) -> None:
                 f"numbers."
             )
     for totals, label in ((agg.baseline, "incumbent"), (agg.candidate, "candidate")):
-        if not totals.pricing_available and totals.model:
+        if totals.pricing_available or not totals.model:
+            continue
+        if totals.pricing_unknown_reason == "endpoint":
+            agg.warnings.append(
+                f"The {label} runs through an endpoint marked unpriced, so who billed "
+                f"these tokens is not known from ({totals.provider}, {totals.model}); "
+                f"its cost is reported as zero and should be ignored."
+            )
+        else:
             agg.warnings.append(
                 f"No pricing data for the {label} model ({totals.model}); "
                 f"its cost is reported as zero and should be ignored."

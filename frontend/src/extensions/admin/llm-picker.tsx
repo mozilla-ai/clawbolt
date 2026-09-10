@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   invalidateProviderModels,
+  listLLMEndpoints,
   listProviders,
   listProviderModels,
+  type LLMEndpointItem,
   type ProviderInfo,
   type ProviderModelsResult,
 } from './admin-api';
@@ -254,5 +256,183 @@ export function LLMModelSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint <select>: the named destinations an operator has configured.
+//
+// Selecting one supersedes the provider beside it, because an endpoint states
+// its own dialect. Forms that offer both disable the provider control while an
+// endpoint is selected, rather than leaving a field that looks editable and is
+// ignored.
+// ---------------------------------------------------------------------------
+
+interface LLMEndpointSelectProps {
+  id?: string;
+  value: string;
+  onChange: (next: string) => void;
+  /** Label for the "no endpoint, use a provider directly" option. */
+  emptyLabel?: string;
+  disabled?: boolean;
+  /** Bump to refetch. The editor and this select are siblings, so creating
+   *  an endpoint has to tell the select to look again; without it the new
+   *  endpoint stays unselectable until a full page reload. */
+  refreshKey?: number;
+}
+
+export function LLMEndpointSelect({
+  id,
+  value,
+  onChange,
+  emptyLabel = 'Direct to provider',
+  disabled,
+  refreshKey = 0,
+}: LLMEndpointSelectProps) {
+  const [endpoints, setEndpoints] = useState<LLMEndpointItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    listLLMEndpoints()
+      .then(setEndpoints)
+      .catch(() => setEndpoints([]))
+      .finally(() => setLoading(false));
+  }, [refreshKey]);
+
+  if (loading) {
+    return (
+      <select id={id} className={selectClass} disabled value="" onChange={() => {}}>
+        <option value="">Loading endpoints...</option>
+      </select>
+    );
+  }
+
+  // A saved selection missing from the list is the case that breaks calls at
+  // runtime, so it is shown as an option rather than silently blanked.
+  const known = new Set(endpoints.map(e => e.name));
+  const showMissing = value && !known.has(value);
+
+  return (
+    <select
+      id={id}
+      className={selectClass}
+      value={value}
+      disabled={disabled}
+      onChange={e => onChange(e.target.value)}
+    >
+      <option value="">{emptyLabel}</option>
+      {showMissing && <option value={value}>{value} (not configured)</option>}
+      {endpoints.map(e => (
+        <option key={e.name} value={e.name}>
+          {e.name} ({e.dialect})
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reasoning effort <select>.
+// ---------------------------------------------------------------------------
+
+/** Ascending, matching ``schemas.ReasoningEffort``. */
+export const REASONING_EFFORTS = [
+  'auto',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+] as const;
+
+interface ReasoningEffortSelectProps {
+  id?: string;
+  value: string;
+  onChange: (next: string) => void;
+  /** When set, prepend an empty option meaning "inherit". */
+  inheritLabel?: string;
+  disabled?: boolean;
+}
+
+export function ReasoningEffortSelect({
+  id,
+  value,
+  onChange,
+  inheritLabel,
+  disabled,
+}: ReasoningEffortSelectProps) {
+  return (
+    <select
+      id={id}
+      className={selectClass}
+      value={value}
+      disabled={disabled}
+      onChange={e => onChange(e.target.value)}
+    >
+      {inheritLabel && <option value="">{inheritLabel}</option>}
+      {REASONING_EFFORTS.map(effort => (
+        <option key={effort} value={effort}>
+          {effort === 'auto' ? 'auto (provider default)' : effort}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model field that copes with an endpoint being selected.
+//
+// Model enumeration goes through the provider, and the listing endpoint
+// deliberately refuses a caller-supplied base URL for a hosted provider, so
+// there is no way to ask a gateway what it serves. Rather than show a picker
+// stuck on "pick a provider first", an endpoint gets a free-text field: the
+// operator types the model id the gateway exposes.
+// ---------------------------------------------------------------------------
+
+interface LLMModelFieldProps {
+  id?: string;
+  endpoint: string;
+  provider: string;
+  value: string;
+  onChange: (next: string) => void;
+  allowEmpty?: boolean;
+  emptyLabel?: string;
+}
+
+export function LLMModelField({
+  id,
+  endpoint,
+  provider,
+  value,
+  onChange,
+  allowEmpty,
+  emptyLabel,
+}: LLMModelFieldProps) {
+  if (!endpoint) {
+    return (
+      <LLMModelSelect
+        id={id}
+        provider={provider}
+        value={value}
+        onChange={onChange}
+        allowEmpty={allowEmpty}
+        emptyLabel={emptyLabel}
+      />
+    );
+  }
+  return (
+    <div>
+      <input
+        id={id}
+        className={inputClass}
+        placeholder="model id"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+      <p className="text-[11px] text-muted-foreground mt-1">
+        An endpoint cannot be asked what it serves, so type the model id it exposes.
+      </p>
+    </div>
   );
 }

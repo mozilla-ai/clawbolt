@@ -299,6 +299,55 @@ class TestAdminConfigGuard:
         )
         assert resp.status_code == 200
 
+    def test_non_admin_blocked_from_llm_endpoints(
+        self,
+        jwt_client: TestClient,
+        test_user: User,
+        db_session: Session,
+    ) -> None:
+        """An endpoint holds a credential and a destination for all traffic.
+
+        Guarded by prefix rather than exact path, because the endpoint name
+        is in the URL. Without the gate a tenant could point the deployment
+        at a host of their choosing and read back which gateway it uses.
+        """
+        db_session.add(
+            Subscription(user_id=test_user.id, role="user", plan="free", status="active")
+        )
+        db_session.commit()
+        token = create_access_token(test_user.id)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        assert jwt_client.get("/api/user/model/endpoints", headers=headers).status_code == 403
+        assert (
+            jwt_client.put(
+                "/api/user/model/endpoints/otari",
+                headers=headers,
+                json={"name": "otari", "dialect": "anthropic"},
+            ).status_code
+            == 403
+        )
+        assert (
+            jwt_client.delete("/api/user/model/endpoints/otari", headers=headers).status_code == 403
+        )
+
+    def test_admin_can_list_llm_endpoints(
+        self,
+        jwt_client: TestClient,
+        test_user: User,
+        db_session: Session,
+    ) -> None:
+        db_session.add(
+            Subscription(user_id=test_user.id, role="admin", plan="free", status="active")
+        )
+        db_session.commit()
+        token = create_access_token(test_user.id)
+        resp = jwt_client.get(
+            "/api/user/model/endpoints", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"items": []}
+
     def test_non_admin_blocked_from_get_system_prompt(
         self,
         jwt_client: TestClient,

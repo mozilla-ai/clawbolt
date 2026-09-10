@@ -10,8 +10,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
+from backend.app.config_store import MASK
 from backend.app.models import AdminAuditLog, Subscription, User
 from backend.app.services.llm_resolver import user_llm_override_resolver
+from backend.app.services.llm_service import UserLLMOverride
 from tests.multi_user.conftest import open_test_db_session
 
 
@@ -403,7 +405,7 @@ class TestPremiumUserLLMResolver:
 
         assert await user_llm_override_resolver(user.id) is None
 
-    async def test_returns_tuple_when_either_field_set(
+    async def test_returns_override_when_either_field_set(
         self,
         db_session: Session,
     ) -> None:
@@ -420,12 +422,12 @@ class TestPremiumUserLLMResolver:
         db_session.commit()
 
         result = await user_llm_override_resolver(user.id)
-        assert result == ("", "claude-haiku-4-5")
+        assert result == UserLLMOverride(model="claude-haiku-4-5")
 
     async def test_returns_none_when_user_missing(self) -> None:
         assert await user_llm_override_resolver(str(uuid.uuid4())) is None
 
-    async def test_resolver_returns_full_tuple(
+    async def test_resolver_returns_every_pinned_field(
         self,
         db_session: Session,
     ) -> None:
@@ -443,7 +445,158 @@ class TestPremiumUserLLMResolver:
         db_session.commit()
 
         result = await user_llm_override_resolver(user.id)
-        assert result == ("openai", "gpt-5")
+        assert result == UserLLMOverride(provider="openai", model="gpt-5")
+
+
+def test_pointing_a_user_override_at_an_unknown_endpoint_is_rejected(
+    client: TestClient,
+    test_user: User,
+    test_subscription: Subscription,
+) -> None:
+    """Delete refuses to orphan a live selection, so create must match.
+
+    Without this a selection could be pointed at an endpoint that never
+    existed, and the failure would land on the user's next message rather
+    than on the admin typing it.
+    """
+    resp = client.put(
+        f"/api/admin/users/{test_user.id}/llm-config",
+        json={"llm_endpoint_override": "never-created"},
+    )
+    assert resp.status_code == 422
+    assert "never-created" in resp.json()["detail"]
+
+
+def test_pointing_the_global_config_at_an_unknown_endpoint_is_rejected(
+    client: TestClient,
+    test_user: User,
+    test_subscription: Subscription,
+) -> None:
+    resp = client.put("/api/admin/config/llm", json={"llm_endpoint": "never-created"})
+    assert resp.status_code == 422
+    assert "never-created" in resp.json()["detail"]
+
+
+def test_effective_values_drop_the_global_endpoint_for_a_bare_provider_pin(
+    client: TestClient,
+    test_user: User,
+    test_subscription: Subscription,
+    db_session: Session,
+) -> None:
+    """The console must not promise an endpoint the agent will not use.
+
+    Endpoint and provider are inherited as a pair, so a user pinned to a
+    bare provider runs with no endpoint at all.
+    """
+    with (
+        patch.object(settings, "llm_endpoint", "otari"),
+        patch.object(settings, "llm_provider", "anthropic"),
+    ):
+        test_subscription.llm_provider_override = "openai"
+        db_session.commit()
+
+        resp = client.get(f"/api/admin/users/{test_user.id}/llm-config")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["effective_llm_provider"] == "openai"
+        assert body["effective_llm_endpoint"] == ""
+
+
+class TestAdminLLMEndpoints:
+    """CRUD for named endpoints, reached the way the admin console reaches it.
+
+    There is one surface in both tenancy modes; the admin console calls it
+    too, and ``AdminConfigGuardMiddleware`` is what restricts it to admins
+    here. See ``test_admin_config_guard`` for that gate.
+    """
+
+    BASE = "/api/user/model/endpoints"
+
+    def _body(self, **overrides: object) -> dict:
+        body: dict = {
+            "name": "otari",
+            "dialect": "anthropic",
+            "base_url": "https://ai.example.test",
+            "reasoning": "none",
+            "pricing": "unpriced",
+        }
+        body.update(overrides)
+        return body
+
+    def test_upsert_is_audited_without_recording_the_key(
+        self,
+        client: TestClient,
+        test_user: User,
+        test_subscription: Subscription,
+        db_session: Session,
+    ) -> None:
+        """The audit row must answer "who pointed us at that host".
+
+        It must not answer "what is the credential": the log is readable by
+        more people than can set one.
+        """
+        resp = client.put(f"{self.BASE}/otari", json=self._body(api_key="sk-secret"))
+        assert resp.status_code == 200
+        assert "sk-secret" not in resp.text
+
+        db_session.commit()
+        latest = db_session.query(AdminAuditLog).order_by(AdminAuditLog.id.desc()).first()
+        assert latest is not None
+        assert latest.action == "upsert_llm_endpoint"
+        assert latest.resource_type == "llm_endpoint"
+        assert latest.resource_id == "otari"
+        assert latest.detail is not None
+        assert latest.detail["api_key_changed"] is True
+        assert latest.detail["reasoning"] == "none"
+        assert "sk-secret" not in str(latest.detail)
+
+    def test_a_resubmit_records_that_the_key_did_not_change(
+        self,
+        client: TestClient,
+        test_user: User,
+        test_subscription: Subscription,
+        db_session: Session,
+    ) -> None:
+        client.put(f"{self.BASE}/otari", json=self._body(api_key="sk-secret"))
+        resp = client.put(f"{self.BASE}/otari", json=self._body(api_key=MASK))
+        assert resp.status_code == 200
+        assert resp.json()["api_key_set"] is True
+
+        db_session.commit()
+        latest = db_session.query(AdminAuditLog).order_by(AdminAuditLog.id.desc()).first()
+        assert latest is not None and latest.detail is not None
+        assert latest.detail["api_key_changed"] is False
+
+    def test_delete_is_audited(
+        self,
+        client: TestClient,
+        test_user: User,
+        test_subscription: Subscription,
+        db_session: Session,
+    ) -> None:
+        client.put(f"{self.BASE}/otari", json=self._body())
+        assert client.delete(f"{self.BASE}/otari").status_code == 204
+
+        db_session.commit()
+        latest = db_session.query(AdminAuditLog).order_by(AdminAuditLog.id.desc()).first()
+        assert latest is not None
+        assert latest.action == "delete_llm_endpoint"
+        assert latest.resource_id == "otari"
+
+    def test_delete_is_refused_while_a_user_is_pinned_to_it(
+        self,
+        client: TestClient,
+        test_user: User,
+        test_subscription: Subscription,
+        db_session: Session,
+    ) -> None:
+        client.put(f"{self.BASE}/otari", json=self._body())
+        test_subscription.llm_endpoint_override = "otari"
+        db_session.commit()
+
+        resp = client.delete(f"{self.BASE}/otari")
+        assert resp.status_code == 409
+        assert "pinned" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

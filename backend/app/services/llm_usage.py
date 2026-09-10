@@ -22,6 +22,8 @@ async def log_llm_usage(
     response: MessageResponse,
     purpose: str,
     provider: str = "",
+    endpoint: str = "",
+    priced: bool = True,
 ) -> None:
     """Extract token usage from an LLM response and save to the usage log.
 
@@ -31,6 +33,11 @@ async def log_llm_usage(
     persistence, and downstream analytics all see the same authoritative
     string. Empty string is allowed for legacy callers that haven't been
     updated yet; cost lookup will fall through to autodetect in that case.
+
+    *endpoint* and *priced* come from the resolved ``LLMTarget``. Behind a
+    gateway the provider names the dialect rather than whoever billed the
+    tokens, so ``priced=False`` records the usage with no cost rather than
+    with a price-list figure that describes a vendor who never saw the call.
     """
     prompt_tokens = response.usage.input_tokens
     completion_tokens = response.usage.output_tokens
@@ -49,16 +56,18 @@ async def log_llm_usage(
             provider=provider,
             cache_creation_input_tokens=cache_creation_input_tokens,
             cache_read_input_tokens=cache_read_input_tokens,
+            endpoint=endpoint,
+            priced=priced,
         )
     except Exception:
         logger.exception("Failed to log LLM usage for user %s", user_id)
         return
 
     logger.info(
-        "LLM usage logged: user=%s provider=%s model=%s purpose=%s "
+        "LLM usage logged: user=%s target=%s model=%s purpose=%s "
         "tokens=%d cache_create=%s cache_read=%s",
         user_id,
-        provider or "?",
+        endpoint or provider or "?",
         model,
         purpose,
         total_tokens,

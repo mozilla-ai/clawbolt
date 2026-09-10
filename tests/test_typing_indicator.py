@@ -576,6 +576,10 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
     mock_settings.llm_api_base = None
+    mock_settings.llm_endpoint = ""
+    mock_settings.vision_endpoint = ""
+    mock_settings.heartbeat_endpoint = ""
+    mock_settings.compaction_endpoint = ""
     mock_settings.heartbeat_model = ""
     mock_settings.heartbeat_provider = ""
     mock_settings.llm_max_tokens_heartbeat = 256
@@ -647,6 +651,10 @@ async def test_heartbeat_works_without_channel(
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
     mock_settings.llm_api_base = None
+    mock_settings.llm_endpoint = ""
+    mock_settings.vision_endpoint = ""
+    mock_settings.heartbeat_endpoint = ""
+    mock_settings.compaction_endpoint = ""
     mock_settings.heartbeat_model = ""
     mock_settings.heartbeat_provider = ""
     mock_settings.llm_max_tokens_heartbeat = 256

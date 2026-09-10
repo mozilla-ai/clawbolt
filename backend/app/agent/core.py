@@ -101,12 +101,14 @@ from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
 from backend.app.logging_utils import mask_pii
 from backend.app.models import User
+from backend.app.services.llm_endpoints import resolve_target
 from backend.app.services.llm_service import (
+    LLMTarget,
+    UserLLMOverride,
     apply_history_cache_breakpoint,
     apply_in_turn_cache_breakpoint,
     apply_tool_caching,
     prepare_system_with_caching,
-    reasoning_effort_to_thinking,
 )
 from backend.app.services.llm_usage import log_llm_usage
 
@@ -364,8 +366,7 @@ class ClawboltAgent:
         session_id: str = "",
         excluded_tool_names: set[str] | None = None,
         request_id: str = "",
-        llm_provider_override: str = "",
-        llm_model_override: str = "",
+        llm_override: UserLLMOverride | None = None,
     ) -> None:
         self.user = user
         self._channel = channel
@@ -380,8 +381,7 @@ class ClawboltAgent:
         self._session_id = session_id
         self._excluded_tool_names = excluded_tool_names
         self._request_id = request_id
-        self._llm_provider_override = llm_provider_override
-        self._llm_model_override = llm_model_override
+        self._llm_override = llm_override or UserLLMOverride()
         # Previous round's tool-name sequence, used to detect when a newly
         # built tool list fails to preserve the prefix (which busts the
         # Anthropic tools prompt cache). The list is append-only by design;
@@ -650,6 +650,32 @@ class ClawboltAgent:
             )
         )
 
+    async def _resolve_target(self) -> LLMTarget:
+        """Where this agent's LLM calls go, honoring any per-user override.
+
+        Resolved per call rather than cached on the agent: an operator can
+        change the endpoint or the global model while a long turn is in
+        flight, and an agent holding a stale target would keep sending to the
+        old destination for the rest of the conversation.
+        """
+        model = self._llm_override.model or settings.llm_model
+        # Endpoint and provider are inherited as a pair. A user pinned to a
+        # bare provider must not keep the global endpoint, whose dialect
+        # would supersede the very provider they were pinned to.
+        if self._llm_override.endpoint or self._llm_override.provider:
+            return await resolve_target(
+                endpoint=self._llm_override.endpoint,
+                provider=self._llm_override.provider,
+                model=model,
+                api_base=settings.llm_api_base,
+            )
+        return await resolve_target(
+            endpoint=settings.llm_endpoint,
+            provider=settings.llm_provider,
+            model=model,
+            api_base=settings.llm_api_base,
+        )
+
     async def _call_llm_with_retry(
         self,
         messages: list[AgentMessage],
@@ -669,20 +695,24 @@ class ClawboltAgent:
         await self._send_typing_indicator()
         effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
         system_str, msg_dicts = messages_to_messages_api(messages)
-        effective_model = self._llm_model_override or settings.llm_model
-        effective_provider = self._llm_provider_override or settings.llm_provider
-        msg_dicts = apply_history_cache_breakpoint(msg_dicts, effective_provider)
+        target = await self._resolve_target()
+        effective_model = target.model
+        effective_provider = target.provider
+        msg_dicts = apply_history_cache_breakpoint(msg_dicts, target)
         # Rounds N > 0 end in tool results: mark the trailing block so the
         # current turn plus prior rounds read from cache instead of being
         # re-sent as fresh input every round (issue #1430). No-op on round 0.
-        msg_dicts = apply_in_turn_cache_breakpoint(msg_dicts, effective_provider)
+        msg_dicts = apply_in_turn_cache_breakpoint(msg_dicts, target)
         system: str | list[dict[str, Any]] | None = system_str
         if system is not None:
-            system = prepare_system_with_caching(system, effective_provider)
+            system = prepare_system_with_caching(system, target)
         if tool_schemas:
-            tool_schemas = apply_tool_caching(tool_schemas, effective_provider)
+            tool_schemas = apply_tool_caching(tool_schemas, target)
         tool_count = len(tool_schemas) if tool_schemas else 0
-        thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
+        reasoning = target.reasoning_kwargs(settings.reasoning_effort)
+        # The payload observer records the Anthropic-shaped budget only;
+        # an effort-shaped endpoint has no dict to report.
+        thinking = reasoning.get("thinking")
         logger.debug(
             "Calling LLM: model=%s provider=%s messages=%d tools=%d max_tokens=%d",
             effective_model,
@@ -716,14 +746,12 @@ class ClawboltAgent:
                     response = cast(
                         MessageResponse,
                         await amessages(
-                            model=effective_model,
-                            provider=effective_provider,
-                            api_base=settings.llm_api_base,
+                            **target.connection_kwargs(),
                             system=system,
                             messages=msg_dicts,
                             tools=tool_schemas,
                             max_tokens=effective_max_tokens,
-                            thinking=thinking,
+                            **reasoning,
                         ),
                     )
                 await self._emit_response(
@@ -814,10 +842,11 @@ class ClawboltAgent:
             len(trim_result.messages),
         )
         retry_system_str, trimmed_dicts = messages_to_messages_api(trim_result.messages)
-        trimmed_dicts = apply_history_cache_breakpoint(trimmed_dicts, effective_provider)
-        trimmed_dicts = apply_in_turn_cache_breakpoint(trimmed_dicts, effective_provider)
+        target = await self._resolve_target()
+        trimmed_dicts = apply_history_cache_breakpoint(trimmed_dicts, target)
+        trimmed_dicts = apply_in_turn_cache_breakpoint(trimmed_dicts, target)
         system = (
-            prepare_system_with_caching(retry_system_str, effective_provider)
+            prepare_system_with_caching(retry_system_str, target)
             if retry_system_str is not None
             else None
         )
@@ -844,14 +873,12 @@ class ClawboltAgent:
             followup_response = cast(
                 MessageResponse,
                 await amessages(
-                    model=effective_model,
-                    provider=effective_provider,
-                    api_base=settings.llm_api_base,
+                    **target.connection_kwargs(),
                     system=system,
                     messages=trimmed_dicts,
                     tools=tool_schemas,
                     max_tokens=effective_max_tokens,
-                    thinking=thinking,
+                    **target.reasoning_kwargs(settings.reasoning_effort),
                 ),
             )
         await self._emit_response(
@@ -1664,12 +1691,15 @@ class ClawboltAgent:
                 messages, tool_schemas, max_tokens=max_tokens
             )
             purpose = "agent_main" if _round == 0 else "agent_followup"
+            usage_target = await self._resolve_target()
             await log_llm_usage(
                 self.user.id,
-                self._llm_model_override or settings.llm_model,
+                usage_target.model,
                 response,
                 purpose,
-                provider=self._llm_provider_override or settings.llm_provider,
+                provider=usage_target.provider,
+                endpoint=usage_target.endpoint,
+                priced=usage_target.priced,
             )
             if response.usage and response.usage.input_tokens:
                 cache_create = response.usage.cache_creation_input_tokens or 0

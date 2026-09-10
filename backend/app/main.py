@@ -82,9 +82,11 @@ from backend.app.services.admin_alerts import (
 )
 from backend.app.services.health_monitor import LOCAL_BASE_URL, health_monitor
 from backend.app.services.heartbeat_usage import install_heartbeat_usage_hook
+from backend.app.services.llm_endpoints import resolve_target, role_selection
 from backend.app.services.llm_eval import interrupted_run_sweeper, mark_interrupted_runs
 from backend.app.services.llm_payload_capture import install_llm_payload_capture
 from backend.app.services.llm_resolver import install_user_llm_resolver
+from backend.app.services.llm_service import LLMTarget
 from backend.app.services.oauth import oauth_refresh_scheduler
 from backend.app.services.telegram_webhook import discover_bot_username
 from backend.app.services.tool_failure_alerts import install_tool_failure_alerts
@@ -196,6 +198,19 @@ async def _enforce_single_channel() -> None:
             )
 
 
+async def _resolve_role(role_endpoint: str, role_provider: str, role_model: str) -> LLMTarget:
+    """Resolve one secondary role's startup target."""
+    endpoint, provider = role_selection(
+        role_endpoint, role_provider, settings.llm_endpoint, settings.llm_provider
+    )
+    return await resolve_target(
+        endpoint=endpoint,
+        provider=provider,
+        model=role_model or settings.llm_model,
+        api_base=settings.llm_api_base,
+    )
+
+
 async def _verify_llm_settings() -> None:
     """Verify LLM provider/model settings by making a minimal completion call.
 
@@ -203,65 +218,75 @@ async def _verify_llm_settings() -> None:
     at startup rather than at first user request.  The primary model is
     required; failures for optional model overrides are logged as warnings.
     """
-    configs: list[tuple[str, str, str]] = [
-        ("primary", settings.llm_provider, settings.llm_model),
+    targets: list[tuple[str, LLMTarget]] = [
+        (
+            "primary",
+            await resolve_target(
+                endpoint=settings.llm_endpoint,
+                provider=settings.llm_provider,
+                model=settings.llm_model,
+                api_base=settings.llm_api_base,
+            ),
+        )
     ]
-    if settings.vision_model:
-        configs.append(
-            (
-                "vision",
-                settings.vision_provider or settings.llm_provider,
-                settings.vision_model,
-            )
-        )
-    if settings.compaction_model or settings.compaction_provider:
-        configs.append(
-            (
-                "compaction",
-                settings.compaction_provider or settings.llm_provider,
-                settings.compaction_model or settings.llm_model,
-            )
-        )
-    if settings.heartbeat_model or settings.heartbeat_provider:
-        configs.append(
-            (
-                "heartbeat",
-                settings.heartbeat_provider or settings.llm_provider,
-                settings.heartbeat_model or settings.llm_model,
-            )
-        )
+    roles = (
+        ("vision", settings.vision_endpoint, settings.vision_provider, settings.vision_model),
+        (
+            "compaction",
+            settings.compaction_endpoint,
+            settings.compaction_provider,
+            settings.compaction_model,
+        ),
+        (
+            "heartbeat",
+            settings.heartbeat_endpoint,
+            settings.heartbeat_provider,
+            settings.heartbeat_model,
+        ),
+    )
+    for label, endpoint, provider, model in roles:
+        if not (endpoint or provider or model):
+            continue
+        try:
+            targets.append((label, await _resolve_role(endpoint, provider, model)))
+        except Exception as exc:
+            # Resolution fails when the role names an endpoint that is not
+            # configured. That is a warning for the same reason a failed ping
+            # is: an optional role must not be able to stop the process from
+            # booting, and at runtime the typo would only break that role.
+            logger.warning("LLM startup check failed for %s model: %s", label, exc)
 
-    # Deduplicate by (provider, model) to avoid redundant API calls.
-    seen: set[tuple[str, str]] = set()
-    unique: list[tuple[str, str, str]] = []
-    for label, provider, model in configs:
-        key = (provider, model)
+    # Deduplicate by destination to avoid redundant API calls. Two roles that
+    # differ only by endpoint are different destinations even on the same
+    # model, which is the case a bare (provider, model) key used to miss.
+    seen: set[tuple[str, str, str]] = set()
+    unique: list[tuple[str, LLMTarget]] = []
+    for label, target in targets:
+        key = (target.endpoint, target.provider, target.model)
         if key not in seen:
             seen.add(key)
-            unique.append((label, provider, model))
+            unique.append((label, target))
 
-    for label, provider, model in unique:
+    for label, target in unique:
         try:
             await amessages(
-                model=model,
-                provider=provider,
-                api_base=settings.llm_api_base,
+                **target.connection_kwargs(),
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=10,
             )
-            logger.info("LLM verified (%s): provider=%s, model=%s", label, provider, model)
+            logger.info("LLM verified (%s): %s", label, target.describe())
         except Exception as exc:
             if label == "primary":
+                # Names the settings to fix, not just the destination: this is
+                # the message an operator reads when the process will not boot,
+                # and "otari/gpt-5" does not say which knob is wrong.
                 raise RuntimeError(
                     f"LLM startup check failed for {label} model "
-                    f"(LLM_PROVIDER={provider!r}, LLM_MODEL={model!r}): {exc}"
+                    f"(LLM_ENDPOINT={target.endpoint!r}, LLM_PROVIDER={target.provider!r}, "
+                    f"LLM_MODEL={target.model!r}): {exc}"
                 ) from exc
             logger.warning(
-                "LLM startup check failed for %s model (provider=%r, model=%r): %s",
-                label,
-                provider,
-                model,
-                exc,
+                "LLM startup check failed for %s model (%s): %s", label, target.describe(), exc
             )
 
 

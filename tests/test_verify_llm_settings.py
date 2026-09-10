@@ -22,6 +22,10 @@ async def test_verify_llm_uses_sufficient_max_tokens() -> None:
         mock_settings.llm_provider = "openai"
         mock_settings.llm_model = "gpt-5.4-mini-2026-03-17"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.vision_model = None
         mock_settings.vision_provider = None
         mock_settings.compaction_model = None

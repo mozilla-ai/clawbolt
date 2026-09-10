@@ -56,10 +56,8 @@ from backend.app.database import AsyncSessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
-from backend.app.services.llm_service import (
-    prepare_system_with_caching,
-    reasoning_effort_to_thinking,
-)
+from backend.app.services.llm_endpoints import resolve_target, role_selection
+from backend.app.services.llm_service import prepare_system_with_caching
 from backend.app.services.llm_usage import log_llm_usage
 
 if TYPE_CHECKING:
@@ -450,13 +448,25 @@ async def evaluate_heartbeat_need(
     # Send typing indicator before LLM call via the bus
     await _publish_heartbeat_typing(channel, chat_id, stop=False)
 
-    model = settings.heartbeat_model or settings.llm_model
-    provider = settings.heartbeat_provider or settings.llm_provider
+    endpoint, provider_name = role_selection(
+        settings.heartbeat_endpoint,
+        settings.heartbeat_provider,
+        settings.llm_endpoint,
+        settings.llm_provider,
+    )
+    target = await resolve_target(
+        endpoint=endpoint,
+        provider=provider_name,
+        model=settings.heartbeat_model or settings.llm_model,
+        api_base=settings.llm_api_base,
+    )
+    model = target.model
+    provider = target.provider
 
     time_context = build_time_user_context(user)
     max_retries = settings.llm_max_retries
     response: MessageResponse | None = None
-    heartbeat_system = prepare_system_with_caching(prompt, provider)
+    heartbeat_system = prepare_system_with_caching(prompt, target)
     heartbeat_messages: list[dict[str, Any]] = [
         {
             "role": "user",
@@ -467,7 +477,8 @@ async def evaluate_heartbeat_need(
         },
     ]
     heartbeat_tools = [HEARTBEAT_DECISION_TOOL]
-    heartbeat_thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
+    heartbeat_reasoning = target.reasoning_kwargs(settings.reasoning_effort)
+    heartbeat_thinking = heartbeat_reasoning.get("thinking")
     started_at = datetime.datetime.now(datetime.UTC)
     await emit_llm_request(
         LLMRequestPayload(
@@ -494,14 +505,12 @@ async def evaluate_heartbeat_need(
             response = cast(
                 MessageResponse,
                 await amessages(
-                    model=model,
-                    provider=provider,
-                    api_base=settings.llm_api_base,
+                    **target.connection_kwargs(),
                     system=heartbeat_system,
                     messages=heartbeat_messages,
                     tools=heartbeat_tools,
                     max_tokens=settings.llm_max_tokens_heartbeat,
-                    thinking=heartbeat_thinking,
+                    **heartbeat_reasoning,
                 ),
             )
             break
@@ -519,7 +528,15 @@ async def evaluate_heartbeat_need(
     if response is None:
         raise RuntimeError("Heartbeat LLM retry loop exited without response")
 
-    await log_llm_usage(user.id, model, response, "heartbeat_decision", provider=provider)
+    await log_llm_usage(
+        user.id,
+        model,
+        response,
+        "heartbeat_decision",
+        provider=provider,
+        endpoint=target.endpoint,
+        priced=target.priced,
+    )
     await _emit_heartbeat_response(
         response,
         user_id=user.id,

@@ -35,10 +35,8 @@ from backend.app.agent.observer import (
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.config import settings
-from backend.app.services.llm_service import (
-    prepare_system_with_caching,
-    reasoning_effort_to_thinking,
-)
+from backend.app.services.llm_endpoints import resolve_target, role_selection
+from backend.app.services.llm_service import prepare_system_with_caching
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -361,14 +359,27 @@ async def compact_session(
         "</conversation>",
     ]
 
-    model = settings.compaction_model or settings.llm_model
-    provider = settings.compaction_provider or settings.llm_provider
+    endpoint, provider_name = role_selection(
+        settings.compaction_endpoint,
+        settings.compaction_provider,
+        settings.llm_endpoint,
+        settings.llm_provider,
+    )
+    target = await resolve_target(
+        endpoint=endpoint,
+        provider=provider_name,
+        model=settings.compaction_model or settings.llm_model,
+        api_base=settings.llm_api_base,
+    )
+    model = target.model
+    provider = target.provider
 
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "\n".join(user_prompt_parts)},
     ]
-    compaction_system = prepare_system_with_caching(COMPACTION_SYSTEM_PROMPT, provider)
-    compaction_thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
+    compaction_system = prepare_system_with_caching(COMPACTION_SYSTEM_PROMPT, target)
+    compaction_reasoning = target.reasoning_kwargs(settings.reasoning_effort)
+    compaction_thinking = compaction_reasoning.get("thinking")
 
     started_at = datetime.datetime.now(UTC)
     try:
@@ -397,13 +408,11 @@ async def compact_session(
         response = cast(
             MessageResponse,
             await amessages(
-                model=model,
-                provider=provider,
-                api_base=settings.llm_api_base,
+                **target.connection_kwargs(),
                 system=compaction_system,
                 messages=messages,
                 max_tokens=settings.compaction_max_tokens,
-                thinking=compaction_thinking,
+                **compaction_reasoning,
             ),
         )
     except Exception:
@@ -417,7 +426,15 @@ async def compact_session(
         started_at=started_at,
     )
 
-    await log_llm_usage(user_id, model, response, purpose="compaction", provider=provider)
+    await log_llm_usage(
+        user_id,
+        model,
+        response,
+        purpose="compaction",
+        provider=provider,
+        endpoint=target.endpoint,
+        priced=target.priced,
+    )
 
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)

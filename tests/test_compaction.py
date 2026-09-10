@@ -844,6 +844,10 @@ async def test_compact_session_uses_configured_model(test_user: UserData) -> Non
         mock_settings.llm_model = "test-model"
         mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         await compact_session(test_user.id, messages)
 
     mock_llm.assert_called_once()
@@ -870,6 +874,10 @@ async def test_compact_session_falls_back_to_llm_model(test_user: UserData) -> N
         mock_settings.llm_model = "test-model"
         mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         await compact_session(test_user.id, messages)
 
     call_kwargs = mock_llm.call_args
@@ -900,6 +908,10 @@ async def test_compact_session_logs_llm_usage(test_user: UserData) -> None:
         mock_settings.llm_model = "test-model"
         mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         await compact_session(test_user.id, messages)
 
     mock_log.assert_called_once()

@@ -541,6 +541,10 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
@@ -714,6 +718,10 @@ class TestEvaluateHeartbeatNeed:
             mock_build_prompt,
         )
         mock_settings.llm_api_base = "http://localhost:1234/v1"
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
 
         mock_llm.return_value = _make_decision_tool_call(action="skip", tasks="", reasoning="test")
         await evaluate_heartbeat_need(user)
@@ -3004,6 +3012,10 @@ class TestEvaluateHeartbeatNeedPassesHistory:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
@@ -3060,6 +3072,10 @@ class TestEvaluateHeartbeatNeedPassesHistory:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
@@ -3111,6 +3127,10 @@ class TestRecentMessagesIncludeTimestamps:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
@@ -3164,6 +3184,10 @@ class TestRecentMessagesIncludeTimestamps:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256

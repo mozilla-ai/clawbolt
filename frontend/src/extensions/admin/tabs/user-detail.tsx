@@ -28,7 +28,7 @@ import {
   SharedMemoryView,
   SharedProfileView,
 } from './shared';
-import { LLMModelSelect, LLMProviderSelect } from '../llm-picker';
+import { LLMEndpointSelect, LLMModelField, LLMProviderSelect } from '../llm-picker';
 import ConfirmDialog from '../ConfirmDialog';
 import ConsentBadge from '../components/ConsentBadge';
 import {
@@ -577,6 +577,7 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [providerInput, setProviderInput] = useState('');
+  const [endpointInput, setEndpointInput] = useState('');
   const [modelInput, setModelInput] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -586,6 +587,7 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
     getUserLLMOverride(userId)
       .then(o => {
         setOverride(o);
+        setEndpointInput(o.llm_endpoint_override);
         setProviderInput(o.llm_provider_override);
         setModelInput(o.llm_model_override);
       })
@@ -613,6 +615,16 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
     }
   };
 
+  // The endpoint carries its own dialect, so a provider chosen beside it
+  // would be displayed and ignored. Clearing both is also what the agent
+  // does: it inherits endpoint and provider as a pair.
+  const handleEndpointChange = (next: string) => {
+    if (next === endpointInput) return;
+    setEndpointInput(next);
+    if (next) setProviderInput('');
+    setModelInput('');
+  };
+
   if (loading) return <div className="animate-pulse h-32 bg-panel rounded-[--radius-md]" />;
   if (error || !override) {
     return (
@@ -626,6 +638,7 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
   }
 
   const hasChanges =
+    endpointInput !== override.llm_endpoint_override ||
     providerInput !== override.llm_provider_override ||
     modelInput !== override.llm_model_override;
 
@@ -635,10 +648,12 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
     setSaving(true);
     try {
       const updated = await updateUserLLMOverride(userId, {
+        llm_endpoint_override: endpointInput,
         llm_provider_override: providerInput,
         llm_model_override: modelInput,
       });
       setOverride(updated);
+      setEndpointInput(updated.llm_endpoint_override);
       setProviderInput(updated.llm_provider_override);
       setModelInput(updated.llm_model_override);
       toast.success('Per-user LLM override saved');
@@ -653,10 +668,12 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
     setSaving(true);
     try {
       const updated = await updateUserLLMOverride(userId, {
+        llm_endpoint_override: '',
         llm_provider_override: '',
         llm_model_override: '',
       });
       setOverride(updated);
+      setEndpointInput('');
       setProviderInput('');
       setModelInput('');
       toast.success('Override cleared, user falls back to global default');
@@ -668,7 +685,9 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
   };
 
   const isOverridden =
-    !!override.llm_provider_override || !!override.llm_model_override;
+    !!override.llm_endpoint_override ||
+    !!override.llm_provider_override ||
+    !!override.llm_model_override;
 
   return (
     <form
@@ -684,16 +703,34 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
         )}
       </div>
       <p className="text-xs text-muted-foreground mb-3">
-        Effective: <span className="font-mono">{override.effective_llm_provider}</span>
+        Effective:{' '}
+        <span className="font-mono">
+          {override.effective_llm_endpoint || override.effective_llm_provider}
+        </span>
         {' / '}
         <span className="font-mono">{override.effective_llm_model}</span>.
-        Pick "(use global default)" to fall back for that field.
+        Pick "(use global default)" to fall back for that field. Endpoint and provider fall back
+        together, so pinning one drops the global value of the other.
       </p>
       <p className="text-xs text-muted-foreground mb-3">
         Applies to the main agent loop (chat replies). Heartbeat,
         memory compaction, and vision still use the global default.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="sm:col-span-2">
+          <label
+            htmlFor="user-llm-endpoint"
+            className="text-xs text-muted-foreground block mb-1"
+          >
+            Endpoint override
+          </label>
+          <LLMEndpointSelect
+            id="user-llm-endpoint"
+            value={endpointInput}
+            onChange={handleEndpointChange}
+            emptyLabel="(use global default)"
+          />
+        </div>
         <div>
           <label
             htmlFor="user-llm-provider"
@@ -706,7 +743,8 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
             value={providerInput}
             onChange={handleProviderChange}
             allowEmpty
-            emptyLabel="(use global default)"
+            emptyLabel={endpointInput ? '(from endpoint)' : '(use global default)'}
+            disabled={!!endpointInput}
           />
         </div>
         <div>
@@ -716,8 +754,9 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
           >
             Model override
           </label>
-          <LLMModelSelect
+          <LLMModelField
             id="user-llm-model"
+            endpoint={endpointInput}
             provider={lookupProvider}
             value={modelInput}
             onChange={setModelInput}

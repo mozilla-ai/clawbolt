@@ -428,28 +428,99 @@ export async function updateAdminChannelConfig(
 // --- LLM Config (admin-only) ---
 
 export interface AdminLLMConfig {
+  /** Named endpoint; supersedes llm_provider and llm_api_base when set. */
+  llm_endpoint: string;
   llm_provider: string;
   llm_model: string;
   llm_api_base: string | null;
+  reasoning_effort: string;
 }
 
 export interface AdminLLMConfigUpdate {
+  llm_endpoint?: string;
   llm_provider?: string;
   llm_model?: string;
   llm_api_base?: string;
+  reasoning_effort?: string;
 }
 
 export interface AdminUserLLMOverride {
   user_id: string;
+  llm_endpoint_override: string;
   llm_provider_override: string;
   llm_model_override: string;
+  /** What the agent will actually use. Endpoint and provider resolve as a
+   *  pair, so pinning a bare provider drops the global endpoint. */
+  effective_llm_endpoint: string;
   effective_llm_provider: string;
   effective_llm_model: string;
 }
 
 export interface AdminUserLLMOverrideUpdate {
+  llm_endpoint_override?: string;
   llm_provider_override?: string;
   llm_model_override?: string;
+}
+
+// --- Named LLM endpoints (audited) ---
+//
+// These live under /api/user/model/endpoints rather than /api/admin/... so
+// there is one CRUD surface in both tenancy modes. In multi-user mode
+// AdminConfigGuardMiddleware restricts it to admins, the same gate the rest
+// of the model config sits behind.
+
+export interface LLMEndpointItem {
+  name: string;
+  /** The any-llm provider whose wire format this endpoint speaks. */
+  dialect: string;
+  base_url: string;
+  /** The key itself is never returned. */
+  api_key_set: boolean;
+  cache_control: 'auto' | 'always' | 'never';
+  reasoning: 'auto' | 'thinking' | 'effort' | 'none';
+  pricing: 'auto' | 'unpriced';
+  notes: string;
+}
+
+export interface LLMEndpointUpsert {
+  name: string;
+  dialect: string;
+  base_url?: string;
+  /** Omit, or send the mask, to leave the stored key alone. */
+  api_key?: string;
+  cache_control?: 'auto' | 'always' | 'never';
+  reasoning?: 'auto' | 'thinking' | 'effort' | 'none';
+  pricing?: 'auto' | 'unpriced';
+  notes?: string;
+}
+
+/** Sentinel the API treats as "no change" for a stored secret.
+ *  Must match ``backend.app.config_store.MASK``; there is no shared source,
+ *  so changing one means changing the other. */
+export const SECRET_MASK = '********';
+
+export async function listLLMEndpoints(): Promise<LLMEndpointItem[]> {
+  const { data, error } = await client.GET('/api/user/model/endpoints' as never);
+  if (error) throwApiError(error, 'Failed to load LLM endpoints');
+  return (data as { items: LLMEndpointItem[] }).items;
+}
+
+export async function upsertLLMEndpoint(
+  body: LLMEndpointUpsert,
+): Promise<LLMEndpointItem> {
+  const { data, error } = await client.PUT(
+    `/api/user/model/endpoints/${encodeURIComponent(body.name)}` as never,
+    { body } as never,
+  );
+  if (error) throwApiError(error, 'Failed to save LLM endpoint');
+  return data as LLMEndpointItem;
+}
+
+export async function deleteLLMEndpoint(name: string): Promise<void> {
+  const { error } = await client.DELETE(
+    `/api/user/model/endpoints/${encodeURIComponent(name)}` as never,
+  );
+  if (error) throwApiError(error, 'Failed to delete LLM endpoint');
 }
 
 export async function getAdminLLMConfig(): Promise<AdminLLMConfig> {
@@ -1363,10 +1434,16 @@ export interface EvalRun {
   user_email: string;
   /** False once the user withdraws consent: the report is no longer readable. */
   user_consented: boolean;
+  /** Named endpoint each side was sent to, or '' for a bare provider. */
+  baseline_endpoint: string;
   baseline_provider: string;
   baseline_model: string;
+  /** The effort the run was frozen at, not whatever the setting says now. */
+  baseline_reasoning_effort: string;
+  candidate_endpoint: string;
   candidate_provider: string;
   candidate_model: string;
+  candidate_reasoning_effort: string;
   judge_model: string;
   requested_samples: number;
   status: EvalRunStatus;
@@ -1481,8 +1558,12 @@ export async function listEvalRuns(
 export async function startEvalRun(
   userId: string,
   body: {
-    candidateProvider: string;
+    candidateEndpoint?: string;
+    candidateProvider?: string;
     candidateModel: string;
+    /** '' means "whatever the deployment runs at", resolved server-side. */
+    baselineReasoningEffort?: string;
+    candidateReasoningEffort?: string;
     sampleCount: number;
     judgeEnabled: boolean;
   },
@@ -1491,8 +1572,11 @@ export async function startEvalRun(
     `/api/admin/llm-eval/users/${encodeURIComponent(userId)}/runs` as never,
     {
       body: {
-        candidate_provider: body.candidateProvider,
+        candidate_endpoint: body.candidateEndpoint ?? '',
+        candidate_provider: body.candidateProvider ?? '',
         candidate_model: body.candidateModel,
+        baseline_reasoning_effort: body.baselineReasoningEffort ?? '',
+        candidate_reasoning_effort: body.candidateReasoningEffort ?? '',
         sample_count: body.sampleCount,
         judge_enabled: body.judgeEnabled,
       },

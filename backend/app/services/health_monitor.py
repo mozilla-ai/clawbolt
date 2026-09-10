@@ -75,6 +75,7 @@ from backend.app.database import AsyncSessionLocal
 from backend.app.models import Subscription, User
 from backend.app.routers.health import health_check
 from backend.app.services import email_service
+from backend.app.services.llm_endpoints import resolve_target
 
 logger = logging.getLogger(__name__)
 
@@ -334,12 +335,22 @@ async def _probe_llm() -> Observation:
     model)`` helper into OSS would let both callers share it, per the
     no-duplication rule in CLAUDE.md.
     """
-    label = f"LLM ({settings.llm_provider}/{settings.llm_model})"
+    try:
+        target = await resolve_target(
+            endpoint=settings.llm_endpoint,
+            provider=settings.llm_provider,
+            model=settings.llm_model,
+            api_base=settings.llm_api_base,
+        )
+    except Exception as exc:
+        # An endpoint named by settings but missing from the table. The probe
+        # reports it rather than raising, since that is the same class of
+        # misconfiguration the probe exists to surface.
+        return Observation(key="llm", label="LLM", ok=False, detail=f"{type(exc).__name__}: {exc}")
+    label = f"LLM ({target.describe()})"
     try:
         await amessages(
-            model=settings.llm_model,
-            provider=settings.llm_provider,
-            api_base=settings.llm_api_base,
+            **target.connection_kwargs(),
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=1,
         )

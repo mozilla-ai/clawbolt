@@ -119,6 +119,10 @@ async def test_analyze_image_falls_back_to_llm_model(
     mock_settings.llm_model = "claude-haiku-4-5-20251001"  # type: ignore[attr-defined]
     mock_settings.llm_provider = "anthropic"  # type: ignore[attr-defined]
     mock_settings.llm_api_base = None  # type: ignore[attr-defined]
+    mock_settings.llm_endpoint = ""  # type: ignore[attr-defined]
+    mock_settings.vision_endpoint = ""  # type: ignore[attr-defined]
+    mock_settings.heartbeat_endpoint = ""  # type: ignore[attr-defined]
+    mock_settings.compaction_endpoint = ""  # type: ignore[attr-defined]
     mock_settings.llm_max_tokens_vision = 1000  # type: ignore[attr-defined]
     mock_amessages.return_value = make_vision_response("Test.")  # type: ignore[union-attr]
 

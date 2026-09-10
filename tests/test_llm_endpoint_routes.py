@@ -1,0 +1,275 @@
+"""CRUD for named LLM endpoints.
+
+The endpoint's stored credential is the reason most of these exist: it must
+never come back out of the API, and re-submitting the form must not blank it.
+"""
+
+import asyncio
+from collections.abc import Generator
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from backend.app.config import settings
+from backend.app.config_store import MASK
+from backend.app.database import db_session_async
+from backend.app.models import AdminAuditLog, LLMEndpoint, Subscription, User
+from backend.app.services.llm_endpoints import reset_llm_endpoint_cache
+
+BASE = "/api/user/model/endpoints"
+
+
+@pytest.fixture(autouse=True)
+def _clear_endpoint_cache() -> Generator[None]:
+    reset_llm_endpoint_cache()
+    yield
+    reset_llm_endpoint_cache()
+
+
+def _read(name: str) -> LLMEndpoint | None:
+    """Read one endpoint row directly.
+
+    This suite runs against the single-user app, which has no sync
+    ``db_session`` fixture, and the stored key is the one thing the API
+    deliberately will not report, so the assertions that matter have to go to
+    the row.
+    """
+
+    async def _get() -> LLMEndpoint | None:
+        async with db_session_async() as db:
+            return (
+                await db.execute(select(LLMEndpoint).where(LLMEndpoint.name == name))
+            ).scalar_one_or_none()
+
+    return asyncio.run(_get())
+
+
+def _add_subscription(user_id: str, endpoint: str) -> None:
+    async def _add() -> None:
+        async with db_session_async() as db:
+            db.add(
+                Subscription(
+                    user_id=user_id,
+                    role="user",
+                    plan="free",
+                    status="active",
+                    llm_endpoint_override=endpoint,
+                )
+            )
+            await db.commit()
+
+    asyncio.run(_add())
+
+
+def _body(**overrides: object) -> dict:
+    body: dict = {
+        "name": "otari",
+        "dialect": "anthropic",
+        "base_url": "https://ai.example.test",
+        "cache_control": "never",
+        "reasoning": "none",
+        "pricing": "unpriced",
+        "notes": "house gateway",
+    }
+    body.update(overrides)
+    return body
+
+
+def test_create_returns_the_endpoint_without_the_key(client: TestClient) -> None:
+    resp = client.put(f"{BASE}/otari", json=_body(api_key="sk-secret"))
+    assert resp.status_code == 200
+    item = resp.json()
+    assert item["name"] == "otari"
+    assert item["dialect"] == "anthropic"
+    assert item["reasoning"] == "none"
+    assert item["api_key_set"] is True
+    assert "sk-secret" not in resp.text
+
+
+def test_listing_reports_the_key_as_a_boolean_only(client: TestClient) -> None:
+    client.put(f"{BASE}/keyed", json=_body(name="keyed", api_key="sk-secret"))
+    client.put(f"{BASE}/bare", json=_body(name="bare"))
+
+    resp = client.get(BASE)
+    assert resp.status_code == 200
+    by_name = {i["name"]: i for i in resp.json()["items"]}
+    assert by_name["keyed"]["api_key_set"] is True
+    assert by_name["bare"]["api_key_set"] is False
+    assert "sk-secret" not in resp.text
+
+
+def test_resubmitting_the_mask_keeps_the_stored_key(client: TestClient) -> None:
+    """The UI never shows the key, so a form round trip sends the sentinel.
+
+    Treating that as the new value would silently replace a working
+    credential with eight asterisks.
+    """
+    client.put(f"{BASE}/otari", json=_body(api_key="sk-secret"))
+    resp = client.put(f"{BASE}/otari", json=_body(api_key=MASK, notes="edited"))
+    assert resp.status_code == 200
+    assert resp.json()["api_key_set"] is True
+
+    row = _read("otari")
+    assert row is not None
+    assert row.api_key == "sk-secret"
+    assert row.notes == "edited"
+
+
+def test_omitting_the_key_also_keeps_it(client: TestClient) -> None:
+    client.put(f"{BASE}/otari", json=_body(api_key="sk-secret"))
+    body = _body()
+    body.pop("api_key", None)
+    assert client.put(f"{BASE}/otari", json=body).status_code == 200
+    row = _read("otari")
+    assert row is not None and row.api_key == "sk-secret"
+
+
+def test_an_empty_key_clears_it(client: TestClient) -> None:
+    """Distinct from omission: this is how an operator drops a credential."""
+    client.put(f"{BASE}/otari", json=_body(api_key="sk-secret"))
+    assert client.put(f"{BASE}/otari", json=_body(api_key="")).status_code == 200
+    row = _read("otari")
+    assert row is not None and row.api_key == ""
+
+
+def test_a_name_mismatch_between_path_and_body_is_rejected(client: TestClient) -> None:
+    resp = client.put(f"{BASE}/otari", json=_body(name="something-else"))
+    assert resp.status_code == 400
+
+
+def test_an_unknown_dialect_is_rejected(client: TestClient) -> None:
+    """The dialect selects the any-llm adapter, so it has to name a real one."""
+    resp = client.put(f"{BASE}/otari", json=_body(dialect="not-a-provider"))
+    assert resp.status_code == 422
+    assert "not-a-provider" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("reasoning", "sideways"), ("cache_control", "sometimes"), ("pricing", "cheap")],
+)
+def test_capability_columns_reject_values_outside_their_set(
+    client: TestClient, field: str, value: str
+) -> None:
+    resp = client.put(f"{BASE}/otari", json=_body(**{field: value}))
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("name", ["Otari", "has space", "-leading"])
+def test_names_are_restricted_to_a_slug(client: TestClient, name: str) -> None:
+    """The name goes in a URL and in settings, so it stays a plain slug."""
+    resp = client.put(f"{BASE}/{name}", json=_body(name=name))
+    assert resp.status_code == 422
+
+
+def test_an_empty_name_does_not_reach_the_handler(client: TestClient) -> None:
+    """``PUT /endpoints/`` is the collection path, which takes no PUT."""
+    assert client.put(f"{BASE}/", json=_body(name="")).status_code == 405
+
+
+def test_delete_removes_the_endpoint(client: TestClient) -> None:
+    client.put(f"{BASE}/otari", json=_body())
+    assert client.delete(f"{BASE}/otari").status_code == 204
+    assert _read("otari") is None
+
+
+def test_deleting_an_unknown_endpoint_is_404(client: TestClient) -> None:
+    assert client.delete(f"{BASE}/nope").status_code == 404
+
+
+def test_delete_is_refused_while_a_setting_selects_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting under a live selection turns every call into a raise.
+
+    The traceback would name the endpoint rather than the deletion, so the
+    refusal has to happen here.
+    """
+    client.put(f"{BASE}/otari", json=_body())
+    monkeypatch.setattr(settings, "llm_endpoint", "otari")
+    resp = client.delete(f"{BASE}/otari")
+    assert resp.status_code == 409
+    assert "llm_endpoint" in resp.json()["detail"]
+
+
+def test_delete_is_refused_while_a_role_selects_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client.put(f"{BASE}/otari", json=_body())
+    monkeypatch.setattr(settings, "heartbeat_endpoint", "otari")
+    resp = client.delete(f"{BASE}/otari")
+    assert resp.status_code == 409
+    assert "heartbeat_endpoint" in resp.json()["detail"]
+
+
+def test_selecting_an_endpoint_that_does_not_exist_is_rejected(client: TestClient) -> None:
+    """The mirror of the delete guard.
+
+    Delete refuses to orphan a live selection. Without this check the
+    asymmetry bites: an endpoint cannot be removed out from under a setting,
+    but a setting can be pointed at one that was never created, and the
+    failure then surfaces on the next message rather than here.
+    """
+    resp = client.put("/api/user/model/config", json={"llm_endpoint": "never-created"})
+    assert resp.status_code == 422
+    assert "never-created" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("field", ["vision_endpoint", "heartbeat_endpoint", "compaction_endpoint"])
+def test_a_secondary_role_endpoint_is_validated_too(client: TestClient, field: str) -> None:
+    resp = client.put("/api/user/model/config", json={field: "never-created"})
+    assert resp.status_code == 422
+
+
+def test_selecting_a_configured_endpoint_is_accepted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ``update_settings`` mutates the singleton, and nothing else in the
+    # suite undoes that. Set the attribute through monkeypatch first so its
+    # teardown restores it, or the selection leaks into later tests and
+    # blocks deletes with a 409.
+    monkeypatch.setattr(settings, "llm_endpoint", "")
+    client.put(f"{BASE}/otari", json=_body())
+    resp = client.put("/api/user/model/config", json={"llm_endpoint": "otari"})
+    assert resp.status_code == 200
+    assert resp.json()["llm_endpoint"] == "otari"
+
+
+def test_writes_are_audited_without_recording_the_key(client: TestClient) -> None:
+    """An endpoint names a destination for all traffic and a credential.
+
+    "Who pointed us at that host" has to be answerable, and the log is read
+    by more people than can set one, so the key must not be in it.
+    """
+
+    async def _rows() -> list[AdminAuditLog]:
+        async with db_session_async() as db:
+            return list(
+                (await db.execute(select(AdminAuditLog).order_by(AdminAuditLog.id.desc())))
+                .scalars()
+                .all()
+            )
+
+    client.put(f"{BASE}/otari", json=_body(api_key="sk-secret"))
+    latest = asyncio.run(_rows())[0]
+    assert latest.action == "upsert_llm_endpoint"
+    assert latest.resource_type == "llm_endpoint"
+    assert latest.resource_id == "otari"
+    assert latest.detail is not None
+    assert latest.detail["api_key_changed"] is True
+    assert "sk-secret" not in str(latest.detail)
+
+    assert client.delete(f"{BASE}/otari").status_code == 204
+    assert asyncio.run(_rows())[0].action == "delete_llm_endpoint"
+
+
+def test_delete_is_refused_while_a_user_is_pinned_to_it(
+    client: TestClient, test_user: User
+) -> None:
+    client.put(f"{BASE}/otari", json=_body())
+    _add_subscription(test_user.id, "otari")
+
+    resp = client.delete(f"{BASE}/otari")
+    assert resp.status_code == 409
+    assert "pinned" in resp.json()["detail"]

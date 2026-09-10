@@ -11,6 +11,7 @@ background evaluation against real providers.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import Generator
@@ -23,14 +24,17 @@ from sqlalchemy.orm import Session
 
 from backend.app.auth.admin_dep import get_current_admin
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.models import (
     AdminAuditLog,
+    LLMEndpoint,
     LLMEvalRun,
     LLMEvalTurnResult,
     Subscription,
     User,
 )
 from backend.app.services.admin_audit import AdminAction
+from backend.app.services.llm_endpoints import reset_llm_endpoint_cache
 from backend.app.services.llm_eval.metrics import MIN_TURNS_FOR_VERDICT
 from backend.app.services.llm_eval.types import AgreementClass, RunStatus
 
@@ -134,6 +138,106 @@ def test_baseline_comes_from_the_server_not_the_client(
     )
     assert response.status_code == 201
     assert response.json()["baseline_model"] == "incumbent-model"
+
+
+def test_reasoning_effort_defaults_to_the_deployment_setting_and_is_frozen(
+    admin_client: TestClient, consenting_user: User, db_session: Session, _launch: MagicMock
+) -> None:
+    """An unset effort resolves at creation, not at call time.
+
+    Reading the global when each turn fires would let a mid-run change to the
+    setting redefine what the finished report claims to have measured.
+    """
+    with patch.object(settings, "reasoning_effort", "medium"):
+        response = admin_client.post(f"{BASE}/users/{consenting_user.id}/runs", json=_payload())
+    assert response.status_code == 201
+    body = response.json()
+    assert body["baseline_reasoning_effort"] == "medium"
+    assert body["candidate_reasoning_effort"] == "medium"
+
+    row = db_session.execute(select(LLMEvalRun).filter_by(public_id=body["id"])).scalar_one()
+    assert row.baseline_reasoning_effort == "medium"
+
+
+def test_each_side_carries_its_own_reasoning_effort(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    """Effort is not portable across families, so the sides are independent."""
+    response = admin_client.post(
+        f"{BASE}/users/{consenting_user.id}/runs",
+        json=_payload(baseline_reasoning_effort="high", candidate_reasoning_effort="none"),
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["baseline_reasoning_effort"] == "high"
+    assert body["candidate_reasoning_effort"] == "none"
+
+
+def test_an_unknown_reasoning_effort_is_rejected(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    response = admin_client.post(
+        f"{BASE}/users/{consenting_user.id}/runs",
+        json=_payload(candidate_reasoning_effort="maximum"),
+    )
+    assert response.status_code == 422
+    _launch.assert_not_called()
+
+
+def test_a_candidate_endpoint_that_does_not_exist_is_rejected_before_launching(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    """Caught at creation rather than by the circuit breaker.
+
+    Left to the runner, every turn would fail against the missing endpoint
+    and the run would spend part of its sample budget before reporting
+    ``inconclusive``.
+    """
+    response = admin_client.post(
+        f"{BASE}/users/{consenting_user.id}/runs",
+        json=_payload(candidate_endpoint="nonexistent"),
+    )
+    assert response.status_code == 422
+    assert "nonexistent" in response.json()["detail"]
+    _launch.assert_not_called()
+
+
+def test_a_candidate_with_neither_endpoint_nor_provider_is_rejected(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    """A candidate has to name somewhere to send the call.
+
+    Either half is enough on its own, but with both empty the resolved
+    target has no provider, any-llm refuses every turn, and the run burns
+    its baseline budget before reporting ``inconclusive``.
+    """
+    response = admin_client.post(
+        f"{BASE}/users/{consenting_user.id}/runs",
+        json=_payload(candidate_provider="", candidate_endpoint=""),
+    )
+    assert response.status_code == 422
+    _launch.assert_not_called()
+
+
+def test_the_candidate_endpoint_is_recorded_on_the_run(
+    admin_client: TestClient, consenting_user: User, _launch: MagicMock
+) -> None:
+    async def _create() -> None:
+        async with db_session_async() as db:
+            db.add(LLMEndpoint(name="otari", dialect="anthropic", base_url="https://gw.test"))
+            await db.commit()
+        reset_llm_endpoint_cache()
+
+    asyncio.run(_create())
+    try:
+        response = admin_client.post(
+            f"{BASE}/users/{consenting_user.id}/runs",
+            json=_payload(candidate_endpoint="otari", candidate_provider=""),
+        )
+        assert response.status_code == 201
+        assert response.json()["candidate_endpoint"] == "otari"
+    finally:
+        reset_llm_endpoint_cache()
 
 
 def test_baseline_prefers_the_users_subscription_override(

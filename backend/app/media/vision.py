@@ -9,6 +9,7 @@ from PIL import Image
 
 from backend.app.agent.llm_parsing import get_response_text
 from backend.app.config import settings
+from backend.app.services.llm_endpoints import resolve_target, role_selection
 from backend.app.services.llm_service import prepare_system_with_caching
 
 logger = logging.getLogger(__name__)
@@ -115,22 +116,33 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     user_content = _build_vision_content(b64_image, mime_type, context)
 
-    model = settings.vision_model or settings.llm_model
-    provider = settings.vision_provider or settings.llm_provider
-    logger.info("Using vision model: %s (provider=%s)", model, provider)
+    endpoint, provider = role_selection(
+        settings.vision_endpoint,
+        settings.vision_provider,
+        settings.llm_endpoint,
+        settings.llm_provider,
+    )
+    target = await resolve_target(
+        endpoint=endpoint,
+        provider=provider,
+        model=settings.vision_model or settings.llm_model,
+        api_base=settings.llm_api_base,
+    )
+    logger.info("Using vision model: %s", target.describe())
 
     response = cast(
         MessageResponse,
         await amessages(
-            model=model,
-            provider=provider,
-            api_base=settings.llm_api_base,
-            system=prepare_system_with_caching(VISION_SYSTEM_PROMPT, provider),
+            **target.connection_kwargs(),
+            system=prepare_system_with_caching(VISION_SYSTEM_PROMPT, target),
             messages=[
                 {"role": "user", "content": user_content},
             ],
             max_tokens=settings.llm_max_tokens_vision,
-            thinking={"type": "disabled"},
+            # Vision is a description task: reasoning buys nothing and the
+            # image already dominates the prompt. "none" is a request for no
+            # reasoning, which each style spells differently.
+            **target.reasoning_kwargs("none"),
         ),
     )
     logger.debug("Vision LLM response received for mime_type=%s", mime_type)

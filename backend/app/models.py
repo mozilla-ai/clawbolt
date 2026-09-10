@@ -534,10 +534,18 @@ class LLMEvalRun(Base):
         String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Each side records the endpoint it was sent to and the reasoning effort
+    # it ran at, because neither is recoverable afterwards: the settings they
+    # defaulted from are mutable, and a run whose effort is unknown cannot be
+    # reproduced or compared against another run.
+    baseline_endpoint: Mapped[str] = mapped_column(String(64), default="")
     baseline_provider: Mapped[str] = mapped_column(String(64), default="")
     baseline_model: Mapped[str] = mapped_column(String(128), default="")
+    baseline_reasoning_effort: Mapped[str] = mapped_column(String(16), default="")
+    candidate_endpoint: Mapped[str] = mapped_column(String(64), default="")
     candidate_provider: Mapped[str] = mapped_column(String(64), default="")
     candidate_model: Mapped[str] = mapped_column(String(128), default="")
+    candidate_reasoning_effort: Mapped[str] = mapped_column(String(16), default="")
     judge_provider: Mapped[str] = mapped_column(String(64), default="")
     judge_model: Mapped[str] = mapped_column(String(128), default="")
 
@@ -659,12 +667,22 @@ class LLMUsageLog(Base):
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    # The endpoint that served the call, empty for a bare provider. Kept
+    # alongside ``provider`` rather than replacing it: the provider is still
+    # the dialect the request was written in, and both are needed to explain
+    # a row after the endpoint has been edited or deleted.
+    endpoint: Mapped[str] = mapped_column(String, default="")
     provider: Mapped[str] = mapped_column(String, default="")
     model: Mapped[str] = mapped_column(String, default="")
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0.000000"))
+    # False when ``cost`` is not a cost. Behind a gateway the (provider,
+    # model) pair names the dialect rather than whoever billed the tokens, so
+    # a price-list hit on it would be a coincidence. Zero is recorded, and
+    # this column is what stops a sum reading it as free.
+    pricing_available: Mapped[bool] = mapped_column(Boolean, default=True)
     purpose: Mapped[str] = mapped_column(String, default="")
     cache_creation_input_tokens: Mapped[int | None] = mapped_column(
         Integer, nullable=True, default=None
@@ -1119,9 +1137,16 @@ class Subscription(Base):
     plan: Mapped[str] = mapped_column(String(20), default="free")
     status: Mapped[str] = mapped_column(String(20), default="active")
     # Per-user LLM override. Empty string means "use the global default"
-    # (settings.llm_provider / settings.llm_model). Either field can be
-    # set independently: e.g. provider="" + model="claude-opus-4-5" keeps
-    # the global provider but pins this user to a specific model.
+    # (settings.llm_endpoint / settings.llm_provider / settings.llm_model).
+    # Each field can be set independently: e.g. provider="" +
+    # model="claude-opus-4-5" keeps the global provider but pins this user
+    # to a specific model.
+    #
+    # ``llm_endpoint_override`` names a row in ``llm_endpoints``. It
+    # supersedes ``llm_provider_override`` when both are set, because the
+    # endpoint carries its own dialect and a provider chosen next to it
+    # would have to agree with that dialect to mean anything.
+    llm_endpoint_override: Mapped[str] = mapped_column(String(64), default="")
     llm_provider_override: Mapped[str] = mapped_column(String(64), default="")
     llm_model_override: Mapped[str] = mapped_column(String(128), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -1358,3 +1383,60 @@ class LLMPayloadCapture(Base):
         DateTime(timezone=True), nullable=True
     )
     previous_era_response_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class LLMEndpoint(Base):
+    """An operator-named place to send LLM traffic.
+
+    Before this table, a deployment pointed at a gateway by setting
+    ``LLM_PROVIDER`` to whichever provider's wire format the gateway spoke
+    and ``LLM_API_BASE`` to its URL. That conflated four separate decisions
+    into one string. The provider name selects the any-llm adapter, and it
+    is also what the code consults to decide whether ``cache_control``
+    markers are worth stamping, how to express reasoning, and which
+    genai-prices entry describes the cost. A gateway that speaks Anthropic's
+    dialect while serving somebody else's model made three of those four
+    answers wrong, silently: markers stamped for a hop that drops them, an
+    Anthropic thinking budget sent to a model that wants
+    ``reasoning_effort``, and a cost column priced as if Anthropic had
+    served the tokens.
+
+    An endpoint separates them. ``dialect`` picks the adapter; the
+    capability columns state what the far side actually supports instead of
+    inferring it from a name that no longer describes the vendor.
+    """
+
+    __tablename__ = "llm_endpoints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # What a model selection refers to: settings.llm_endpoint, a
+    # subscription override, or an eval run's baseline/candidate side.
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # The any-llm provider whose wire format this endpoint speaks. Not
+    # necessarily the vendor that ends up serving the request.
+    dialect: Mapped[str] = mapped_column(String(64), default="")
+    base_url: Mapped[str] = mapped_column(String(512), default="")
+    # Empty leaves ``api_key`` off the call, which is what lets any-llm fall
+    # back to the dialect's own environment variable. Set it when the
+    # gateway has its own credential, so pointing at a third party does not
+    # hand over the key the dialect's vendor issued.
+    api_key: Mapped[str] = mapped_column(
+        EncryptedString(table="llm_endpoints", column="api_key"), default=""
+    )
+    # "auto" defers to the dialect (see llm_service._CACHE_CONTROL_PROVIDERS).
+    # "never" is the setting for a gateway that drops the markers or rejects
+    # them outright; "always" is for one that forwards them.
+    cache_control: Mapped[str] = mapped_column(String(16), default="auto")
+    # How to ask for reasoning: "thinking" is the Anthropic budget dict,
+    # "effort" the OpenAI-style scalar, "none" omits it. "auto" follows the
+    # dialect. See llm_service.ReasoningStyle for why "none" exists.
+    reasoning: Mapped[str] = mapped_column(String(16), default="auto")
+    # "unpriced" when (dialect, model) does not describe who actually billed
+    # the tokens, so a cost total would be fiction. Read by the evaluator.
+    pricing: Mapped[str] = mapped_column(String(16), default="auto")
+    notes: Mapped[str] = mapped_column(String(256), default="")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

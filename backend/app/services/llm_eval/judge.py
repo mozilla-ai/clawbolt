@@ -28,12 +28,12 @@ from any_llm import amessages
 from any_llm.types.messages import MessageResponse
 
 from backend.app.agent.llm_parsing import get_response_text
-from backend.app.config import settings
 from backend.app.services.llm_eval.types import (
     JudgeVerdict,
     ModelCallResult,
     ReplaySample,
 )
+from backend.app.services.llm_service import LLMTarget
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +127,15 @@ async def judge_turn(
     baseline: ModelCallResult,
     candidate: ModelCallResult,
     *,
-    provider: str,
-    model: str,
+    target: LLMTarget,
 ) -> tuple[JudgeVerdict, str]:
-    """Adjudicate one divergence. Never raises; failures return a verdict."""
+    """Adjudicate one divergence. Never raises; failures return a verdict.
+
+    The judge runs on the incumbent's endpoint and sends no reasoning
+    parameter, so it is unaffected by either side's effort setting. A judge
+    whose own reasoning budget moved with the run would score two runs
+    differently for reasons that have nothing to do with the candidates.
+    """
     candidate_is_a = candidate_in_slot_a(sample)
     first, second = (candidate, baseline) if candidate_is_a else (baseline, candidate)
 
@@ -144,9 +149,7 @@ async def judge_turn(
         response = cast(
             MessageResponse,
             await amessages(
-                model=model,
-                provider=provider,
-                api_base=settings.llm_api_base,
+                **target.connection_kwargs(),
                 system=_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_JUDGE_TOKENS,

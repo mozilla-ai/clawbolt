@@ -107,6 +107,7 @@ from backend.app.services.admin_audit import (
     audit_admin,
 )
 from backend.app.services.email_service import send_waitlist_approved
+from backend.app.services.llm_endpoints import missing_endpoints
 from backend.app.services.llm_payload_capture import purge_user_captures
 from backend.app.services.llm_service import get_configured_providers, get_models
 from backend.app.services.telegram_webhook import register_webhook, unregister_webhook
@@ -906,6 +907,7 @@ async def get_user_llm_usage_logs(
             LLMUsageLogItem(
                 id=log.id,
                 timestamp=log.created_at.isoformat() if log.created_at else "",
+                endpoint=log.endpoint,
                 provider=log.provider,
                 model=log.model,
                 purpose=log.purpose,
@@ -913,6 +915,7 @@ async def get_user_llm_usage_logs(
                 output_tokens=log.output_tokens,
                 total_tokens=log.total_tokens,
                 cost_usd=str(log.cost),
+                pricing_available=log.pricing_available,
                 cache_creation_input_tokens=log.cache_creation_input_tokens,
                 cache_read_input_tokens=log.cache_read_input_tokens,
             )
@@ -1625,14 +1628,18 @@ async def unregister_telegram_webhook_endpoint(
 # ---------------------------------------------------------------------------
 
 
-_LLM_GLOBAL_FIELDS: frozenset[str] = frozenset({"llm_provider", "llm_model", "llm_api_base"})
+_LLM_GLOBAL_FIELDS: frozenset[str] = frozenset(
+    {"llm_endpoint", "llm_provider", "llm_model", "llm_api_base", "reasoning_effort"}
+)
 
 
 def _build_llm_config_response() -> AdminLLMConfigResponse:
     return AdminLLMConfigResponse(
+        llm_endpoint=settings.llm_endpoint,
         llm_provider=settings.llm_provider,
         llm_model=settings.llm_model,
         llm_api_base=settings.llm_api_base,
+        reasoning_effort=settings.reasoning_effort,
     )
 
 
@@ -1658,6 +1665,12 @@ async def update_admin_llm_config(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    missing = await missing_endpoints([updates.get("llm_endpoint", "")])
+    if missing:
+        raise HTTPException(
+            status_code=422, detail=f"LLM endpoint {missing[0]!r} is not configured"
+        )
+
     ctx.resource_type = "llm_config"
     ctx.detail = {"keys": sorted(updates.keys())}
 
@@ -1676,11 +1689,21 @@ def _override_response(sub: Subscription) -> AdminUserLLMOverrideResponse:
     Empty override fields mean "fall back to global". The effective
     fields tell the admin exactly what the agent will use for this user.
     """
+    # Endpoint and provider are inherited as a pair (see
+    # ``ClawboltAgent._resolve_target``), so the effective values must be
+    # computed as a pair too. Reporting them field by field would tell an
+    # admin who pinned a bare provider that the global endpoint still
+    # applies, which is the opposite of what the agent will do.
+    pinned = bool(sub.llm_endpoint_override or sub.llm_provider_override)
+    effective_endpoint = sub.llm_endpoint_override if pinned else settings.llm_endpoint
+    effective_provider = sub.llm_provider_override if pinned else settings.llm_provider
     return AdminUserLLMOverrideResponse(
         user_id=sub.user_id,
+        llm_endpoint_override=sub.llm_endpoint_override or "",
         llm_provider_override=sub.llm_provider_override or "",
         llm_model_override=sub.llm_model_override or "",
-        effective_llm_provider=sub.llm_provider_override or settings.llm_provider,
+        effective_llm_endpoint=effective_endpoint,
+        effective_llm_provider=effective_provider,
         effective_llm_model=sub.llm_model_override or settings.llm_model,
     )
 
@@ -1743,6 +1766,16 @@ async def update_user_llm_config(
 
     payload = body.model_dump(exclude_unset=True)
     changed: list[str] = []
+    if "llm_endpoint_override" in payload:
+        new_value = payload["llm_endpoint_override"] or ""
+        missing = await missing_endpoints([new_value])
+        if missing:
+            raise HTTPException(
+                status_code=422, detail=f"LLM endpoint {missing[0]!r} is not configured"
+            )
+        if new_value != sub.llm_endpoint_override:
+            sub.llm_endpoint_override = new_value
+            changed.append("llm_endpoint_override")
     if "llm_provider_override" in payload:
         new_value = payload["llm_provider_override"] or ""
         if new_value != sub.llm_provider_override:

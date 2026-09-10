@@ -94,6 +94,18 @@ function pct(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+/** One side of the comparison: where it ran, and at what effort.
+ *
+ * The effort is read off the run rather than off the current setting, since
+ * the setting is mutable and the run is the record of what was measured.
+ * ``auto`` is omitted: it means the provider chose, which is the default a
+ * reader already assumes.
+ */
+function describeSide(endpoint: string, model: string, effort: string): string {
+  const where = endpoint ? `${endpoint}/${model}` : model;
+  return effort && effort !== 'auto' ? `${where} (${effort})` : where;
+}
+
 function money(totals: { total_cost_usd: string; pricing_available: boolean }): string {
   if (!totals.pricing_available) return 'unknown';
   return `$${Number(totals.total_cost_usd).toFixed(4)}`;
@@ -558,8 +570,10 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
         {backLink}
         <div className="flex flex-wrap items-baseline gap-3">
           <p className="text-xs text-muted-foreground">
-            {run.candidate_model} against {run.baseline_model}, started{' '}
-            {formatRelative(run.created_at)}
+            {describeSide(run.candidate_endpoint, run.candidate_model, run.candidate_reasoning_effort)}{' '}
+            against{' '}
+            {describeSide(run.baseline_endpoint, run.baseline_model, run.baseline_reasoning_effort)},
+            started {formatRelative(run.created_at)}
           </p>
           {/* Offered only once the run has settled. While it is in flight the
               button beside the progress bar is Cancel, which is the step the

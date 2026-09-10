@@ -275,6 +275,14 @@ const api = {
     return data as ModelConfigResponse;
   },
 
+  /** Named LLM endpoints. Creating them is an admin-console operation; this
+   *  is the read a self-hosted deployment needs to select one. */
+  listLLMEndpoints: async () => {
+    const { data, error } = await client.GET('/api/user/model/endpoints');
+    if (error) _throwApiError(error, 'Failed to list LLM endpoints');
+    return (data as { items: { name: string; dialect: string }[] }).items;
+  },
+
   // Providers & models
   listProviders: async () => {
     const { data, error } = await client.GET('/api/user/providers');

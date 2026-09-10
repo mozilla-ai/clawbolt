@@ -84,6 +84,8 @@ class AdminAction(StrEnum):
 
     VIEW_LLM_CONFIG = "view_llm_config"
     UPDATE_LLM_CONFIG = "update_llm_config"
+    UPSERT_LLM_ENDPOINT = "upsert_llm_endpoint"
+    DELETE_LLM_ENDPOINT = "delete_llm_endpoint"
     VIEW_USER_LLM_OVERRIDE = "view_user_llm_override"
     UPDATE_USER_LLM_OVERRIDE = "update_user_llm_override"
     VIEW_LLM_PROVIDERS = "view_llm_providers"
@@ -189,6 +191,36 @@ class AdminAuditContext:
     resource_id: str | None = None
     detail: dict | None = None
     auth_source: str = "session"
+
+
+async def record_admin_action(
+    *,
+    action: AdminAction,
+    admin_user_id: str,
+    endpoint: str,
+    admin_email: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    detail: dict | None = None,
+) -> bool:
+    """Write one audit row outside the dependency.
+
+    ``audit_admin`` is a FastAPI dependency and resolves ``get_current_admin``,
+    so it only fits a route that exists in multi-user mode. A route that has
+    to work in both modes, but still writes something worth attributing,
+    records through here instead.
+    """
+    return await _try_commit(
+        AdminAuditContext(
+            admin_user_id=admin_user_id,
+            action=action,
+            endpoint=endpoint,
+            admin_email=admin_email,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            detail=detail,
+        )
+    )
 
 
 def audit_admin(

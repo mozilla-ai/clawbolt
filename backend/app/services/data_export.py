@@ -99,6 +99,10 @@ async def export_user_data(db: AsyncSession, user: User) -> dict:
             "output_tokens": log.output_tokens,
             "total_tokens": log.total_tokens,
             "cost": str(log.cost),
+            # Zero cost means "not priced" as often as it means free now, so
+            # an export without these two cannot tell the difference.
+            "endpoint": log.endpoint,
+            "pricing_available": log.pricing_available,
             "purpose": log.purpose,
             "created_at": _isoformat(log.created_at),
         }

@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from backend.app.services.llm_service import LLMTarget
+
 
 class SafetyFinding(StrEnum):
     """A candidate behavior that disqualifies a switch on its own.
@@ -163,6 +165,29 @@ class Recommendation(StrEnum):
     DO_NOT_SWITCH = "do_not_switch"
     INCONCLUSIVE = "inconclusive"
     """Too few turns completed to say anything. Not a pass."""
+
+
+@dataclass(frozen=True)
+class RunTargets:
+    """Where each side of one run sends its calls, and at what effort.
+
+    Resolved once per run rather than per turn, so an endpoint edited
+    mid-run cannot move one side's traffic partway through a comparison and
+    leave the two halves of the report describing different destinations.
+
+    The two efforts are independent. Effort is not portable across model
+    families, so holding both sides to one value measures the value rather
+    than the candidate, and an endpoint that spells reasoning differently may
+    refuse the incumbent's spelling outright.
+    """
+
+    baseline: LLMTarget
+    candidate: LLMTarget
+    # The judge rides the incumbent's endpoint. Its model is empty when the
+    # run was started with judging off, in which case it is never called.
+    judge: LLMTarget
+    baseline_reasoning_effort: str = ""
+    candidate_reasoning_effort: str = ""
 
 
 @dataclass(frozen=True)

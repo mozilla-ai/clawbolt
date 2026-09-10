@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Delete, Select, delete, func, select
@@ -376,6 +377,8 @@ def _build_llm_usage_log(
     provider: str,
     cache_creation_input_tokens: int | None,
     cache_read_input_tokens: int | None,
+    endpoint: str = "",
+    priced: bool = True,
 ) -> LLMUsageLog:
     """Compute cost, emit the unpriced-model warning, and build an LLMUsageLog row.
 
@@ -384,16 +387,25 @@ def _build_llm_usage_log(
     suppression, and identical column population. Does not touch the
     database; the caller owns the session and the surrounding commit.
     """
-    cost = compute_cost(
-        model,
-        provider=provider,
-        input_tokens=prompt_tokens,
-        output_tokens=completion_tokens,
-        cache_creation_input_tokens=cache_creation_input_tokens,
-        cache_read_input_tokens=cache_read_input_tokens,
+    # An unpriced endpoint short-circuits the lookup rather than letting a
+    # coincidental price-list hit on the dialect stand in for what the
+    # gateway actually charged.
+    cost = (
+        compute_cost(
+            model,
+            provider=provider,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+        )
+        if priced
+        else Decimal("0.000000")
     )
+    pricing_available = priced and is_known_model(model, provider=provider)
     if (
-        not is_known_model(model, provider=provider)
+        priced
+        and not is_known_model(model, provider=provider)
         and (prompt_tokens or completion_tokens)
         and (provider, model) not in _warned_unpriced_models
     ):
@@ -408,8 +420,10 @@ def _build_llm_usage_log(
 
     return LLMUsageLog(
         user_id=user_id,
+        endpoint=endpoint,
         provider=provider,
         model=model,
+        pricing_available=pricing_available,
         input_tokens=prompt_tokens,
         output_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
@@ -435,6 +449,8 @@ class LLMUsageStore:
         provider: str = "",
         cache_creation_input_tokens: int | None = None,
         cache_read_input_tokens: int | None = None,
+        endpoint: str = "",
+        priced: bool = True,
     ) -> None:
         """Insert a LLMUsageLog row with computed cost.
 
@@ -457,6 +473,8 @@ class LLMUsageStore:
             provider=provider,
             cache_creation_input_tokens=cache_creation_input_tokens,
             cache_read_input_tokens=cache_read_input_tokens,
+            endpoint=endpoint,
+            priced=priced,
         )
         async with db_session_async() as db:
             db.add(entry)

@@ -31,7 +31,12 @@ def _format_cost(value: Decimal | None) -> str:
 async def get_user_cost_totals(
     db: AsyncSession, user_id: str, period_start: datetime.datetime
 ) -> dict[str, str]:
-    """Return ``{period_cost_usd, lifetime_cost_usd}`` for one user.
+    """Return this user's cost totals, and how much of it could not be priced.
+
+    ``unpriced_calls`` is not decoration. Rows whose cost could not be
+    computed store ``0``, so a bare SUM reads gateway traffic as free, which
+    is a quieter error than the wrong non-zero figure it replaced. The count
+    is what stops the card being read as spend.
 
     Two SUM queries rather than one CASE-WHEN for simpler SQL and
     clearer test assertions; both run against the
@@ -52,7 +57,16 @@ async def get_user_cost_totals(
     lifetime_cost = (
         await db.execute(select(func.sum(LLMUsageLog.cost)).where(LLMUsageLog.user_id == user_id))
     ).scalar_one_or_none()
+    unpriced = (
+        await db.execute(
+            select(func.count(LLMUsageLog.id)).where(
+                LLMUsageLog.user_id == user_id,
+                LLMUsageLog.pricing_available.is_(False),
+            )
+        )
+    ).scalar_one()
     return {
         "period_cost_usd": _format_cost(period_cost),
         "lifetime_cost_usd": _format_cost(lifetime_cost),
+        "unpriced_calls": str(int(unpriced or 0)),
     }
