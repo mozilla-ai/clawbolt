@@ -1,8 +1,12 @@
 """Endpoints for user profile management."""
 
 import datetime
+import logging
+import time
 from typing import cast
 
+from any_llm import amessages
+from any_llm.exceptions import MissingApiKeyError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy import func as sa_func
@@ -29,6 +33,7 @@ from backend.app.database import get_async_db
 from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
 from backend.app.query_helpers import get_or_404_async
 from backend.app.schemas import (
+    AdminLLMModelsResponse,
     ChannelConfigResponse,
     ChannelConfigUpdate,
     ChannelRouteListResponse,
@@ -41,6 +46,8 @@ from backend.app.schemas import (
     HeartbeatLogListResponse,
     LLMEndpointItem,
     LLMEndpointListResponse,
+    LLMEndpointTestRequest,
+    LLMEndpointTestResult,
     LLMEndpointUpsert,
     LLMUsageByPurpose,
     LLMUsageSummary,
@@ -56,8 +63,10 @@ from backend.app.services.llm_endpoints import (
     delete_endpoint,
     endpoint_delete_blockers,
     endpoint_item,
+    get_endpoint,
     list_endpoints,
     missing_endpoints,
+    resolve_target,
     upsert_endpoint,
 )
 from backend.app.services.llm_service import (
@@ -65,6 +74,8 @@ from backend.app.services.llm_service import (
     get_models,
     is_local_provider,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -565,6 +576,148 @@ async def upsert_llm_endpoint(
         },
     )
     return endpoint_item(row)
+
+
+@router.get(
+    "/user/model/endpoints/{name}/models",
+    response_model=AdminLLMModelsResponse,
+)
+async def list_llm_endpoint_models(
+    name: str,
+    _current_user: User = Depends(get_current_user),
+) -> AdminLLMModelsResponse:
+    """Enumerate the models a configured endpoint serves.
+
+    The provider-scoped listing route deliberately refuses a caller-supplied
+    ``api_base``, because honoring one would make the server deliver a
+    provider key from its environment to whatever host the caller named. That
+    objection does not reach here: the caller names an endpoint, not a URL,
+    and the base and credential come from the stored row. Nothing about the
+    destination is caller-controlled.
+
+    Without this the model field falls back to free text whenever an endpoint
+    is selected, which is the one case where the operator is least likely to
+    know the exact model id by heart.
+
+    Never raises for "this endpoint cannot list models" or "the call failed".
+    Both are ordinary states the form has to render, and a 502 would leave it
+    with nothing to say.
+    """
+    row = await get_endpoint(name)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Endpoint {name!r} not found")
+
+    try:
+        models = await get_models(
+            row.dialect,
+            api_key=row.api_key or None,
+            api_base=row.base_url or None,
+        )
+    except NotImplementedError as exc:
+        return AdminLLMModelsResponse(
+            provider=row.dialect,
+            models=[],
+            supports_listing=False,
+            error=str(exc) or "This endpoint's dialect does not support listing models.",
+        )
+    except MissingApiKeyError as exc:
+        return AdminLLMModelsResponse(
+            provider=row.dialect, models=[], supports_listing=True, error=str(exc)
+        )
+    except Exception as exc:
+        logger.warning("Listing models for endpoint %r failed: %s", name, exc)
+        return AdminLLMModelsResponse(
+            provider=row.dialect,
+            models=[],
+            supports_listing=True,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    return AdminLLMModelsResponse(provider=row.dialect, models=models, supports_listing=True)
+
+
+# A tool schema small enough to be free and real enough to be refused. The
+# failure this probe exists to catch only appears when tools and reasoning are
+# on the same request: at least one gateway-served model accepts either alone
+# and rejects the pair on ``/v1/chat/completions``, so a reachability check
+# that sent no tools would pass while every agent turn 400s.
+_PROBE_TOOL = {
+    "name": "noop",
+    "description": "Does nothing. Present only so the request carries a tool.",
+    "input_schema": {"type": "object", "properties": {}},
+}
+
+
+@router.post(
+    "/user/model/endpoints/{name}/test",
+    response_model=LLMEndpointTestResult,
+)
+async def test_llm_endpoint(
+    name: str,
+    body: LLMEndpointTestRequest,
+    _current_user: User = Depends(get_current_user),
+) -> LLMEndpointTestResult:
+    """Send one minimal request through an endpoint and report what came back.
+
+    Shaped like a real agent turn rather than a ping: same reasoning
+    parameter the endpoint's ``reasoning`` column produces, and a tool
+    attached. Both halves matter, and only together. An endpoint can answer a
+    bare completion perfectly and still refuse every request the agent
+    actually makes.
+
+    ``model`` is optional. Left empty, the endpoint is asked what it serves
+    and the first answer is used, which is the common case right after
+    creating one. Failures come back as ``ok: false`` with the provider's own
+    text, because "your gateway rejected this" is the answer the operator
+    needs to read, not a 502.
+    """
+    row = await get_endpoint(name)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Endpoint {name!r} not found")
+
+    target = await resolve_target(endpoint=name, provider="", model=body.model)
+    model = body.model
+    if not model:
+        try:
+            listed = await get_models(
+                row.dialect, api_key=row.api_key or None, api_base=row.base_url or None
+            )
+        except Exception:
+            listed = []
+        if not listed:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Endpoint {name!r} could not be asked what it serves, so the probe "
+                    "needs a model id."
+                ),
+            )
+        model = listed[0]
+        target = await resolve_target(endpoint=name, provider="", model=model)
+
+    reasoning = target.reasoning_kwargs(settings.reasoning_effort)
+    started = time.monotonic()
+    try:
+        await amessages(
+            **target.connection_kwargs(),
+            messages=[{"role": "user", "content": "Reply with the single word: ok"}],
+            tools=[dict(_PROBE_TOOL)],
+            max_tokens=16,
+            **reasoning,
+        )
+    except Exception as exc:
+        return LLMEndpointTestResult(
+            ok=False,
+            model=model,
+            detail=f"{type(exc).__name__}: {exc}",
+            latency_ms=(time.monotonic() - started) * 1000,
+            reasoning=str(reasoning) if reasoning else "(none)",
+        )
+    return LLMEndpointTestResult(
+        ok=True,
+        model=model,
+        latency_ms=(time.monotonic() - started) * 1000,
+        reasoning=str(reasoning) if reasoning else "(none)",
+    )
 
 
 @router.delete("/user/model/endpoints/{name}", status_code=204)

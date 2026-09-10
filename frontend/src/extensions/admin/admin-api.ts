@@ -516,6 +516,46 @@ export async function upsertLLMEndpoint(
   return data as LLMEndpointItem;
 }
 
+/** What a configured endpoint says it serves.
+ *
+ * Same shape as ``listProviderModels`` so the model field can render the
+ * "cannot list" and "call failed" states identically whichever way it asked.
+ */
+export async function listEndpointModels(name: string): Promise<ProviderModelsResult> {
+  const { data, error } = await client.GET(
+    `/api/user/model/endpoints/${encodeURIComponent(name)}/models` as never,
+  );
+  if (error) throwApiError(error, 'Failed to list endpoint models');
+  return data as ProviderModelsResult;
+}
+
+export interface LLMEndpointTestResult {
+  ok: boolean;
+  model: string;
+  detail: string;
+  latency_ms: number;
+  sent_tools: boolean;
+  reasoning: string;
+}
+
+/** Send one agent-shaped request through an endpoint and report the result.
+ *
+ *  Carries a tool and the endpoint's reasoning setting, because that pairing
+ *  is what a gateway is most likely to reject. A bare reachability check can
+ *  pass while every real turn fails.
+ */
+export async function testLLMEndpoint(
+  name: string,
+  model = '',
+): Promise<LLMEndpointTestResult> {
+  const { data, error } = await client.POST(
+    `/api/user/model/endpoints/${encodeURIComponent(name)}/test` as never,
+    { body: { model } } as never,
+  );
+  if (error) throwApiError(error, 'Failed to test endpoint');
+  return data as LLMEndpointTestResult;
+}
+
 export async function deleteLLMEndpoint(name: string): Promise<void> {
   const { error } = await client.DELETE(
     `/api/user/model/endpoints/${encodeURIComponent(name)}` as never,

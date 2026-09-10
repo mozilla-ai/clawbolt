@@ -7,11 +7,13 @@ import {
   updateAdminLLMConfig,
   listLLMEndpoints,
   upsertLLMEndpoint,
+  testLLMEndpoint,
   deleteLLMEndpoint,
   SECRET_MASK,
   type AdminChannelConfig,
   type AdminLLMConfig,
   type LLMEndpointItem,
+  type LLMEndpointTestResult,
   type LLMEndpointUpsert,
 } from '../admin-api';
 import {
@@ -133,6 +135,10 @@ function LLMEndpointsSection({ onChanged }: { onChanged: () => void }) {
   // API reads as "leave the stored key alone".
   const [draft, setDraft] = useState<LLMEndpointUpsert | null>(null);
   const [saving, setSaving] = useState(false);
+  // Name of the endpoint currently being probed, so only its own button
+  // shows the pending state.
+  const [testing, setTesting] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, LLMEndpointTestResult>>({});
 
   const load = useCallback(() => {
     setLoading(true);
@@ -174,6 +180,25 @@ function LLMEndpointsSection({ onChanged }: { onChanged: () => void }) {
       toast.error((e as Error).message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const test = async (name: string) => {
+    setTesting(name);
+    try {
+      const result = await testLLMEndpoint(name);
+      setResults(prev => ({ ...prev, [name]: result }));
+      if (result.ok) {
+        toast.success(`${name} answered on ${result.model}`);
+      } else {
+        // The provider's own text is the useful part, so it goes on the row
+        // where it can be read rather than only into a toast that vanishes.
+        toast.error(`${name} failed: ${result.detail}`);
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setTesting(null);
     }
   };
 
@@ -219,6 +244,14 @@ function LLMEndpointsSection({ onChanged }: { onChanged: () => void }) {
                 </span>
                 <button
                   type="button"
+                  className="px-2 py-1 text-xs rounded-[--radius-sm] border border-border hover:bg-panel disabled:opacity-50"
+                  onClick={() => void test(item.name)}
+                  disabled={testing === item.name}
+                >
+                  {testing === item.name ? 'Testing...' : 'Test'}
+                </button>
+                <button
+                  type="button"
                   className="px-2 py-1 text-xs rounded-[--radius-sm] border border-border hover:bg-panel"
                   onClick={() => edit(item)}
                 >
@@ -231,6 +264,19 @@ function LLMEndpointsSection({ onChanged }: { onChanged: () => void }) {
                 >
                   Delete
                 </button>
+                {results[item.name] && (
+                  <p
+                    className={`basis-full text-[11px] ${
+                      results[item.name]?.ok ? 'text-muted-foreground' : 'text-danger'
+                    }`}
+                  >
+                    {results[item.name]?.ok
+                      ? `Answered on ${results[item.name]?.model} in ${Math.round(
+                          results[item.name]?.latency_ms ?? 0,
+                        )}ms, with a tool attached and reasoning ${results[item.name]?.reasoning}.`
+                      : results[item.name]?.detail}
+                  </p>
+                )}
               </li>
             ))}
           </ul>

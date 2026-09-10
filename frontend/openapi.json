@@ -999,6 +999,96 @@
         }
       }
     },
+    "/api/user/model/endpoints/{name}/models": {
+      "get": {
+        "summary": "List Llm Endpoint Models",
+        "description": "Enumerate the models a configured endpoint serves.\n\nThe provider-scoped listing route deliberately refuses a caller-supplied\n``api_base``, because honoring one would make the server deliver a\nprovider key from its environment to whatever host the caller named. That\nobjection does not reach here: the caller names an endpoint, not a URL,\nand the base and credential come from the stored row. Nothing about the\ndestination is caller-controlled.\n\nWithout this the model field falls back to free text whenever an endpoint\nis selected, which is the one case where the operator is least likely to\nknow the exact model id by heart.\n\nNever raises for \"this endpoint cannot list models\" or \"the call failed\".\nBoth are ordinary states the form has to render, and a 502 would leave it\nwith nothing to say.",
+        "operationId": "list_llm_endpoint_models_api_user_model_endpoints__name__models_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLLMModelsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/model/endpoints/{name}/test": {
+      "post": {
+        "summary": "Test Llm Endpoint",
+        "description": "Send one minimal request through an endpoint and report what came back.\n\nShaped like a real agent turn rather than a ping: same reasoning\nparameter the endpoint's ``reasoning`` column produces, and a tool\nattached. Both halves matter, and only together. An endpoint can answer a\nbare completion perfectly and still refuse every request the agent\nactually makes.\n\n``model`` is optional. Left empty, the endpoint is asked what it serves\nand the first answer is used, which is the common case right after\ncreating one. Failures come back as ``ok: false`` with the provider's own\ntext, because \"your gateway rejected this\" is the answer the operator\nneeds to read, not a 502.",
+        "operationId": "test_llm_endpoint_api_user_model_endpoints__name__test_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMEndpointTestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMEndpointTestResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/providers": {
       "get": {
         "summary": "List Providers",
@@ -7927,6 +8017,58 @@
           "items"
         ],
         "title": "LLMEndpointListResponse"
+      },
+      "LLMEndpointTestRequest": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "maxLength": 128,
+            "title": "Model",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "LLMEndpointTestRequest",
+        "description": "Optional model to probe with. Empty asks the endpoint what it serves."
+      },
+      "LLMEndpointTestResult": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          },
+          "latency_ms": {
+            "type": "number",
+            "title": "Latency Ms",
+            "default": 0.0
+          },
+          "sent_tools": {
+            "type": "boolean",
+            "title": "Sent Tools",
+            "default": true
+          },
+          "reasoning": {
+            "type": "string",
+            "title": "Reasoning",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "LLMEndpointTestResult",
+        "description": "Outcome of one probe call against a configured endpoint."
       },
       "LLMEndpointUpsert": {
         "properties": {

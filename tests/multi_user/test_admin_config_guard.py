@@ -319,6 +319,18 @@ class TestAdminConfigGuard:
         headers = {"Authorization": f"Bearer {token}"}
 
         assert jwt_client.get("/api/user/model/endpoints", headers=headers).status_code == 403
+        # Sub-path reads too: enumerating models goes *through* the endpoint,
+        # spending the operator's credential on the caller's request.
+        assert (
+            jwt_client.get("/api/user/model/endpoints/otari/models", headers=headers).status_code
+            == 403
+        )
+        assert (
+            jwt_client.post(
+                "/api/user/model/endpoints/otari/test", headers=headers, json={}
+            ).status_code
+            == 403
+        )
         assert (
             jwt_client.put(
                 "/api/user/model/endpoints/otari",
