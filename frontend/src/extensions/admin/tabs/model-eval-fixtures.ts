@@ -147,6 +147,7 @@ export function runList(runs: EvalRun[] = [], overrides: Partial<EvalRunList> = 
     total: runs.length,
     max_samples: 200,
     min_turns_for_verdict: 20,
+    max_page_size: 100,
     ...overrides,
   };
 }

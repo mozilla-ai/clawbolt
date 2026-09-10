@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -20,7 +21,11 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, User
-from backend.app.services.llm_eval.runner import MAX_CONSECUTIVE_CALL_FAILURES, execute_run
+from backend.app.services.llm_eval.runner import (
+    MAX_CONSECUTIVE_CALL_FAILURES,
+    execute_run,
+    mark_interrupted_runs,
+)
 from backend.app.services.llm_eval.sampling import ReplayFixture
 from backend.app.services.llm_eval.types import (
     JudgeSkipReason,
@@ -367,6 +372,106 @@ async def test_run_never_executes_a_tool(db_session: Session, test_user: User) -
 
 
 @pytest.mark.asyncio()
+async def test_each_completed_turn_touches_the_heartbeat(
+    db_session: Session, test_user: User
+) -> None:
+    """The sweep's whole liveness signal.
+
+    Without this write every run goes stale on a timer and the periodic
+    sweep marks live runs interrupted, which is the bug the heartbeat was
+    added to fix.
+    """
+    run_id = _make_run(db_session, test_user.id, samples=2)
+    db_session.expire_all()
+    assert db_session.get(LLMEvalRun, run_id).heartbeat_at is None  # type: ignore[union-attr]
+
+    a, b, c, d = _patched_run(samples=_samples(2), call_side_effect=lambda *x, **k: _result("ok"))
+    with a, b, c, d:
+        await execute_run(run_id, concurrency=1)
+
+    db_session.expire_all()
+    finished = db_session.get(LLMEvalRun, run_id)
+    assert finished is not None
+    assert finished.heartbeat_at is not None
+
+
+@pytest.mark.asyncio()
+async def test_a_live_run_survives_another_process_booting(
+    db_session: Session, test_user: User
+) -> None:
+    """A rolling deploy boots the new instance while the old one drains.
+
+    An unconditional sweep marks the draining instance's run interrupted. It
+    keeps calling the provider and later overwrites the row, and meanwhile
+    both concurrency guards in ``start_run`` key off the active statuses, so
+    a duplicate run can start for the same user.
+    """
+    run_id = _make_run(db_session, test_user.id)
+    db_session.execute(
+        update(LLMEvalRun)
+        .where(LLMEvalRun.id == run_id)
+        .values(status=str(RunStatus.RUNNING), heartbeat_at=datetime.now(UTC))
+    )
+    db_session.commit()
+
+    await mark_interrupted_runs()
+
+    db_session.expire_all()
+    swept = db_session.get(LLMEvalRun, run_id)
+    assert swept is not None
+    assert swept.status == str(RunStatus.RUNNING)
+
+
+@pytest.mark.asyncio()
+async def test_a_run_whose_process_died_is_still_swept(
+    db_session: Session, test_user: User
+) -> None:
+    """The guard is a staleness check, not an amnesty."""
+    run_id = _make_run(db_session, test_user.id)
+    db_session.execute(
+        update(LLMEvalRun)
+        .where(LLMEvalRun.id == run_id)
+        .values(
+            status=str(RunStatus.RUNNING),
+            heartbeat_at=datetime.now(UTC) - timedelta(hours=2),
+        )
+    )
+    db_session.commit()
+
+    await mark_interrupted_runs()
+
+    db_session.expire_all()
+    swept = db_session.get(LLMEvalRun, run_id)
+    assert swept is not None
+    assert swept.status == str(RunStatus.INTERRUPTED)
+
+
+@pytest.mark.asyncio()
+async def test_a_run_that_never_started_a_turn_falls_back_to_created_at(
+    db_session: Session, test_user: User
+) -> None:
+    """Covers a process that died between the insert and the first turn."""
+    run_id = _make_run(db_session, test_user.id)
+    db_session.execute(
+        update(LLMEvalRun)
+        .where(LLMEvalRun.id == run_id)
+        .values(
+            status=str(RunStatus.PENDING),
+            heartbeat_at=None,
+            created_at=datetime.now(UTC) - timedelta(hours=2),
+        )
+    )
+    db_session.commit()
+
+    await mark_interrupted_runs()
+
+    db_session.expire_all()
+    swept = db_session.get(LLMEvalRun, run_id)
+    assert swept is not None
+    assert swept.status == str(RunStatus.INTERRUPTED)
+
+
+@pytest.mark.asyncio()
 async def test_user_with_no_turns_completes_as_inconclusive(
     db_session: Session, test_user: User
 ) -> None:
@@ -380,7 +485,11 @@ async def test_user_with_no_turns_completes_as_inconclusive(
     assert run is not None
     assert run.status == RunStatus.COMPLETED
     assert run.recommendation == Recommendation.INCONCLUSIVE
-    assert "no replayable turns" in run.error
+    # A status, not a failure. ``error`` renders in a red banner on the
+    # report, and this run did not fail: it had nothing to replay.
+    assert run.error == ""
+    assert run.summary_json is not None
+    assert any("no replayable turns" in r for r in run.summary_json["reasons"])
 
 
 @pytest.mark.asyncio()

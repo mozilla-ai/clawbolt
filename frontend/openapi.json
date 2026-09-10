@@ -4047,6 +4047,49 @@
         }
       }
     },
+    "/api/admin/llm-eval/runs/{run_id}/progress": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Run Progress",
+        "description": "Report how far a run has got.\n\nDeliberately not audited, and deliberately not consent-gated: it returns\ncounters and a status, never a turn, a model output, or an email. The\nconsole polls this every couple of seconds while a run is in flight and\nfetches the audited report only when there is something new to read. The\naudited endpoints were being polled at the same cadence, which buried a\nsingle human read under hundreds of ``view_llm_eval_report`` rows.",
+        "operationId": "get_run_progress_api_admin_llm_eval_runs__run_id__progress_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLLMEvalRunProgress"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/llm-eval/runs/{run_id}/cancel": {
       "post": {
         "tags": [
@@ -5806,6 +5849,10 @@
           "min_turns_for_verdict": {
             "type": "integer",
             "title": "Min Turns For Verdict"
+          },
+          "max_page_size": {
+            "type": "integer",
+            "title": "Max Page Size"
           }
         },
         "type": "object",
@@ -5813,10 +5860,45 @@
           "runs",
           "total",
           "max_samples",
-          "min_turns_for_verdict"
+          "min_turns_for_verdict",
+          "max_page_size"
         ],
         "title": "AdminLLMEvalRunListResponse",
         "description": "This user's runs, plus the bounds the run form has to respect.\n\n``max_samples`` is ``LLM_EVAL_MAX_SAMPLES``, which ``start_run`` enforces.\nWithout it on the wire the sample control can only guess, and a deployment\nthat lowers the setting gets a form offering values the API rejects.\n``min_turns_for_verdict`` is the floor below which a run reports\n``inconclusive`` rather than a pass, which is worth showing before someone\nspends a run finding out."
+      },
+      "AdminLLMEvalRunProgress": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress_completed": {
+            "type": "integer",
+            "title": "Progress Completed"
+          },
+          "progress_total": {
+            "type": "integer",
+            "title": "Progress Total"
+          },
+          "recommendation": {
+            "type": "string",
+            "title": "Recommendation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "progress_completed",
+          "progress_total",
+          "recommendation"
+        ],
+        "title": "AdminLLMEvalRunProgress",
+        "description": "Just enough to answer \"is it done yet\".\n\nCarries no conversation content and no per-turn evidence, which is what\nlets the console poll it without writing an audit row every two seconds\nfor a single human read."
       },
       "AdminLLMEvalSafetyIssue": {
         "properties": {

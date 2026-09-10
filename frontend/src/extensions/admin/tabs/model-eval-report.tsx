@@ -4,6 +4,7 @@ import {
   cancelEvalRun,
   deleteEvalRun,
   getEvalReport,
+  getEvalRunProgress,
   type EvalDecision,
   type EvalRecommendation,
   type EvalReport,
@@ -441,26 +442,64 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
     [runId],
   );
 
+  // Only a different run warrants blanking the page. Resetting on every
+  // ``turnLimit`` change made "Show more turns" replace the whole report with
+  // the loading skeleton, discarding which cards the reader had expanded and
+  // where they were scrolled to.
   useEffect(() => {
     setReport(null);
     setNotFound(false);
     setError(null);
+  }, [runId]);
+
+  useEffect(() => {
     void load(turnLimit);
   }, [load, turnLimit]);
 
-  // Poll only while the run is unfinished, and stop as soon as it settles: a
-  // report is immutable once the run completes, so polling it forever writes
-  // an audit row every two seconds for nothing.
+  // Poll only while the run is unfinished, and poll the counters rather than
+  // the report: a report is immutable once the run completes, and the report
+  // endpoint is audited and decrypts every turn to order them, so polling it
+  // buried one human read under an audit row and a full decrypt every two
+  // seconds. The full read happens once, when the run settles.
   const isActive = report ? ACTIVE_STATUSES.has(report.run.status) : false;
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     if (!isActive) return;
-    pollRef.current = setInterval(() => void load(turnLimit), POLL_MS);
+    pollRef.current = setInterval(() => {
+      void (async () => {
+        try {
+          const progress = await getEvalRunProgress(runId);
+          const settled = !ACTIVE_STATUSES.has(progress.status);
+          if (settled) {
+            // Fetch the evidence and let it carry the status change. Flipping
+            // the status here first would render "this run has no summary"
+            // until the report landed, which on a long run is over a second.
+            await load(turnLimit);
+            return;
+          }
+          setReport(prev =>
+            prev
+              ? {
+                  ...prev,
+                  run: {
+                    ...prev.run,
+                    progress_completed: progress.progress_completed,
+                    progress_total: progress.progress_total,
+                  },
+                }
+              : prev,
+          );
+        } catch {
+          // A failed progress tick is not worth surfacing; the next one
+          // either recovers or the operator reloads.
+        }
+      })();
+    }, POLL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [isActive, load, turnLimit]);
+  }, [isActive, load, runId, turnLimit]);
 
   async function handleCancel() {
     try {

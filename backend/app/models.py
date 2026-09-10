@@ -554,6 +554,12 @@ class LLMEvalRun(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Touched by the worker as each turn lands. The startup sweep uses it to
+    # tell a run abandoned by a dead process from one still advancing in
+    # another: during a rolling deploy the new instance boots while the old
+    # one is still draining, and a sweep with no liveness signal marks a
+    # running evaluation interrupted underneath itself.
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     turns: Mapped[list["LLMEvalTurnResult"]] = relationship(
         "LLMEvalTurnResult",

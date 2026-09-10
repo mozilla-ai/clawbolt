@@ -2290,6 +2290,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/llm-eval/runs/{run_id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run Progress
+         * @description Report how far a run has got.
+         *
+         *     Deliberately not audited, and deliberately not consent-gated: it returns
+         *     counters and a status, never a turn, a model output, or an email. The
+         *     console polls this every couple of seconds while a run is in flight and
+         *     fetches the audited report only when there is something new to read. The
+         *     audited endpoints were being polled at the same cadence, which buried a
+         *     single human read under hundreds of ``view_llm_eval_report`` rows.
+         */
+        get: operations["get_run_progress_api_admin_llm_eval_runs__run_id__progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/llm-eval/runs/{run_id}/cancel": {
         parameters: {
             query?: never;
@@ -3296,6 +3323,28 @@ export interface components {
             max_samples: number;
             /** Min Turns For Verdict */
             min_turns_for_verdict: number;
+            /** Max Page Size */
+            max_page_size: number;
+        };
+        /**
+         * AdminLLMEvalRunProgress
+         * @description Just enough to answer "is it done yet".
+         *
+         *     Carries no conversation content and no per-turn evidence, which is what
+         *     lets the console poll it without writing an audit row every two seconds
+         *     for a single human read.
+         */
+        AdminLLMEvalRunProgress: {
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Progress Completed */
+            progress_completed: number;
+            /** Progress Total */
+            progress_total: number;
+            /** Recommendation */
+            recommendation: string;
         };
         /** AdminLLMEvalSafetyIssue */
         AdminLLMEvalSafetyIssue: {
@@ -8462,6 +8511,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_progress_api_admin_llm_eval_runs__run_id__progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLLMEvalRunProgress"];
+                };
             };
             /** @description Validation Error */
             422: {

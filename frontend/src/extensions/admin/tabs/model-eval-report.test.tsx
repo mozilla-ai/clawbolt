@@ -16,6 +16,7 @@ import { report, run, summary, turn } from './model-eval-fixtures';
 
 vi.mock('../admin-api', () => ({
   getEvalReport: vi.fn(),
+  getEvalRunProgress: vi.fn(),
   cancelEvalRun: vi.fn(),
   deleteEvalRun: vi.fn(),
 }));
@@ -39,12 +40,56 @@ function renderReport(runId = 'run-0001') {
 beforeEach(async () => {
   const api = await import('../admin-api');
   vi.mocked(api.getEvalReport).mockReset().mockResolvedValue(report());
+  vi.mocked(api.getEvalRunProgress).mockReset();
   vi.mocked(api.cancelEvalRun).mockReset();
   vi.mocked(api.deleteEvalRun).mockReset().mockResolvedValue(undefined);
   navigate.mockReset();
 });
 
 describe('ModelEvalReportPage', () => {
+  it('polls the counters, not the audited report, while a run is in flight', async () => {
+    // The report endpoint is audited and loads every turn to order them, so
+    // polling it buried one human read under an audit row and a full decrypt
+    // every two seconds.
+    const api = await import('../admin-api');
+    vi.mocked(api.getEvalReport).mockResolvedValue(
+      report({ run: run({ status: 'running', progress_completed: 3, progress_total: 40 }) }),
+    );
+    vi.mocked(api.getEvalRunProgress).mockResolvedValue({
+      id: 'run-0001',
+      status: 'running',
+      progress_completed: 9,
+      progress_total: 40,
+      recommendation: '',
+    });
+    renderReport();
+
+    await waitFor(() => expect(api.getEvalReport).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.getEvalRunProgress).toHaveBeenCalled(), { timeout: 4000 });
+    // The counters advance from the cheap read.
+    await waitFor(() => expect(screen.getByText(/9 of 40/)).toBeInTheDocument());
+    // And the audited read has not been repeated.
+    expect(api.getEvalReport).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches the evidence once, when the run settles', async () => {
+    const api = await import('../admin-api');
+    vi.mocked(api.getEvalReport).mockResolvedValue(
+      report({ run: run({ status: 'running', progress_completed: 39, progress_total: 40 }) }),
+    );
+    vi.mocked(api.getEvalRunProgress).mockResolvedValue({
+      id: 'run-0001',
+      status: 'completed',
+      progress_completed: 40,
+      progress_total: 40,
+      recommendation: 'safe_to_switch',
+    });
+    renderReport();
+
+    await waitFor(() => expect(api.getEvalReport).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.getEvalReport).toHaveBeenCalledTimes(2), { timeout: 5000 });
+  });
+
   it('fetches the run named in the URL', async () => {
     const api = await import('../admin-api');
     renderReport('run-abc');

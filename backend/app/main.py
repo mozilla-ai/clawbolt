@@ -82,7 +82,7 @@ from backend.app.services.admin_alerts import (
 )
 from backend.app.services.health_monitor import LOCAL_BASE_URL, health_monitor
 from backend.app.services.heartbeat_usage import install_heartbeat_usage_hook
-from backend.app.services.llm_eval import mark_interrupted_runs
+from backend.app.services.llm_eval import interrupted_run_sweeper, mark_interrupted_runs
 from backend.app.services.llm_payload_capture import install_llm_payload_capture
 from backend.app.services.llm_resolver import install_user_llm_resolver
 from backend.app.services.oauth import oauth_refresh_scheduler
@@ -419,11 +419,16 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         _log_channel_config_warnings()
 
     if multi_user:
-        # A model-swap evaluation only advances while its background task is
-        # alive, so any run still marked running belongs to a process that no
-        # longer exists. Close them out before the admin console can show one
-        # as in-flight forever.
+        # Close out evaluation runs whose process is gone. Not every row still
+        # marked running qualifies: another instance may be draining one, so
+        # the sweep keys off ``heartbeat_at`` rather than status alone. See
+        # ``mark_interrupted_runs``.
+        #
+        # Once at boot for the rows already stale by then, and periodically
+        # after, because a run that died minutes before this boot is not stale
+        # yet and nothing else would ever come back for it.
         await mark_interrupted_runs()
+        interrupted_run_sweeper.start()
 
     # Start all channels and the message bus consumer / outbound
     # dispatcher before the heartbeat scheduler, so heartbeat messages
@@ -562,6 +567,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         stop_alert_flusher()
     await manager.stop_all()
     heartbeat_scheduler.stop()
+    interrupted_run_sweeper.stop()
     oauth_refresh_scheduler.stop()
 
 

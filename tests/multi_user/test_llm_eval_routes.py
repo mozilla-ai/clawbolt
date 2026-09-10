@@ -283,6 +283,56 @@ def test_list_runs_filters_to_one_user(
     assert body["runs"][0]["user_id"] == consenting_user.id
 
 
+def test_the_list_reports_the_page_ceiling_it_enforces(
+    admin_client: TestClient, consenting_user: User
+) -> None:
+    """On the wire for the same reason ``max_samples`` is.
+
+    The console grows its page size as the operator asks for more rows. With
+    no ceiling to clamp to it walks past the server's and gets a 422, and
+    since the poll closes over that size, every later tick fails too.
+    """
+    response = admin_client.get(f"{BASE}/runs")
+    assert response.status_code == 200
+    ceiling = response.json()["max_page_size"]
+    assert ceiling >= 25
+
+    assert admin_client.get(f"{BASE}/runs?limit={ceiling}").status_code == 200
+    assert admin_client.get(f"{BASE}/runs?limit={ceiling + 1}").status_code == 422
+
+
+def test_progress_reports_counters_without_writing_an_audit_row(
+    admin_client: TestClient, consenting_user: User, db_session: Session, _launch: MagicMock
+) -> None:
+    """The console polls this every couple of seconds while a run is in flight.
+
+    Auditing it would bury one human read under hundreds of rows, so it is
+    exempt, which is only defensible because it returns no conversation
+    content and no email.
+    """
+    created = admin_client.post(f"{BASE}/users/{consenting_user.id}/runs", json=_payload()).json()
+
+    before = db_session.query(AdminAuditLog).count()
+    response = admin_client.get(f"{BASE}/runs/{created['id']}/progress")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == created["id"]
+    assert set(body) == {
+        "id",
+        "status",
+        "progress_completed",
+        "progress_total",
+        "recommendation",
+    }
+
+    db_session.commit()
+    assert db_session.query(AdminAuditLog).count() == before
+
+
+def test_progress_for_an_unknown_run_is_404(admin_client: TestClient) -> None:
+    assert admin_client.get(f"{BASE}/runs/{uuid.uuid4()}/progress").status_code == 404
+
+
 def test_list_runs_404s_an_unknown_user_filter(admin_client: TestClient) -> None:
     """An empty page would read as "never evaluated" rather than "no such user"."""
     assert admin_client.get(f"{BASE}/runs?user_id={uuid.uuid4()}").status_code == 404

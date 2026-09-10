@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   deleteEvalRun,
   getAdminUsers,
+  getEvalRunProgress,
   listEvalRuns,
   startEvalRun,
   type AdminUser,
@@ -100,6 +101,10 @@ export default function ModelEvalTab() {
   const [model, setModel] = useState('');
   const [sampleCount, setSampleCount] = useState(SAMPLE_DEFAULT);
   const [sampleMax, setSampleMax] = useState(SAMPLE_MAX_FALLBACK);
+  // The API's own ceiling on ``limit``. Growing past it 422s, and because the
+  // poll closes over ``runsShown`` every later tick fails too, so the table
+  // stops updating rather than merely stopping growing.
+  const [pageMax, setPageMax] = useState(RUN_PAGE_SIZE);
   const [minTurnsForVerdict, setMinTurnsForVerdict] = useState(0);
   const [judgeEnabled, setJudgeEnabled] = useState(true);
 
@@ -136,6 +141,7 @@ export default function ModelEvalTab() {
       setRunTotal(list.total);
       setSampleMax(list.max_samples);
       setMinTurnsForVerdict(list.min_turns_for_verdict);
+      setPageMax(list.max_page_size);
       // A cap below the current selection would leave the thumb pinned past
       // the end of its own track and start a run the API rejects.
       setSampleCount(prev => Math.min(prev, list.max_samples));
@@ -150,20 +156,53 @@ export default function ModelEvalTab() {
 
   // Scoped to the selected user on purpose. ``start_run`` allows one active
   // run per user, so another tenant's run in the unfiltered list must not
-  // disable this form.
-  const activeRun = runs.find(
-    r => ACTIVE_STATUSES.has(r.status) && (!userId || r.user_id === userId),
-  );
+  // disable this form. With no user picked there is no run to speak for:
+  // ``!userId`` here used to match any active row, which is the opposite of
+  // what this comment promises, and put another tenant's progress bar under
+  // the words "already running for this user".
+  const activeRun = userId
+    ? runs.find(r => ACTIVE_STATUSES.has(r.status) && r.user_id === userId)
+    : undefined;
 
   // One interval, restarted whenever what we are watching changes. While a run
-  // is active we re-read the list so progress advances; once it settles the
-  // interval clears itself rather than polling a finished run forever.
+  // is active we track its counters; once it settles we re-read the list once
+  // and the interval clears itself rather than polling a finished run forever.
+  //
+  // The counters come from the unaudited progress endpoint. Re-reading the
+  // whole list every two seconds wrote a ``view_llm_eval_runs`` audit row per
+  // tick, so a long run left open in a tab buried a single human read under
+  // hundreds of them.
   const activeRunId = activeRun?.id ?? null;
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     if (activeRunId == null || !userId) return;
-    pollRef.current = setInterval(() => void refreshRuns(userId, runsShown), POLL_MS);
+    pollRef.current = setInterval(() => {
+      void (async () => {
+        try {
+          const progress = await getEvalRunProgress(activeRunId);
+          setRuns(prev =>
+            prev.map(r =>
+              r.id === activeRunId
+                ? {
+                    ...r,
+                    status: progress.status,
+                    progress_completed: progress.progress_completed,
+                    progress_total: progress.progress_total,
+                    recommendation: progress.recommendation,
+                  }
+                : r,
+            ),
+          );
+          if (!ACTIVE_STATUSES.has(progress.status)) {
+            // Settled: the row now has a summary and a verdict worth reading.
+            await refreshRuns(userId, runsShown);
+          }
+        } catch {
+          // A failed progress tick is not worth surfacing.
+        }
+      })();
+    }, POLL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
@@ -579,15 +618,19 @@ export default function ModelEvalTab() {
             </div>
           </>
         )}
-        {runTotal > runs.length ? (
+        {runTotal > runs.length && runsShown < pageMax ? (
           <div className="border-t border-border p-3">
             <button
               type="button"
-              onClick={() => setRunsShown(n => n + RUN_PAGE_SIZE)}
+              onClick={() => setRunsShown(n => Math.min(n + RUN_PAGE_SIZE, pageMax))}
               className="rounded-[--radius-md] border border-border px-3 py-1 text-sm text-muted-foreground"
             >
               Show more runs
             </button>
+          </div>
+        ) : runTotal > runs.length ? (
+          <div className="border-t border-border p-3 text-sm text-muted-foreground">
+            Showing the {pageMax} most recent of {runTotal}. Pick a user to narrow the list.
           </div>
         ) : null}
       </section>
