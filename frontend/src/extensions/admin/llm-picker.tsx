@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   invalidateProviderModels,
+  listLLMEndpoints,
   listProviders,
   listProviderModels,
+  type LLMEndpointItem,
   type ProviderInfo,
   type ProviderModelsResult,
 } from './admin-api';
@@ -251,6 +253,122 @@ export function LLMModelSelect({
       {result.models.map(m => (
         <option key={m} value={m}>
           {m}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint <select>: the named destinations an operator has configured.
+//
+// Selecting one supersedes the provider beside it, because an endpoint states
+// its own dialect. Forms that offer both disable the provider control while an
+// endpoint is selected, rather than leaving a field that looks editable and is
+// ignored.
+// ---------------------------------------------------------------------------
+
+interface LLMEndpointSelectProps {
+  id?: string;
+  value: string;
+  onChange: (next: string) => void;
+  /** Label for the "no endpoint, use a provider directly" option. */
+  emptyLabel?: string;
+  disabled?: boolean;
+}
+
+export function LLMEndpointSelect({
+  id,
+  value,
+  onChange,
+  emptyLabel = 'Direct to provider',
+  disabled,
+}: LLMEndpointSelectProps) {
+  const [endpoints, setEndpoints] = useState<LLMEndpointItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    listLLMEndpoints()
+      .then(setEndpoints)
+      .catch(() => setEndpoints([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <select id={id} className={selectClass} disabled value="" onChange={() => {}}>
+        <option value="">Loading endpoints...</option>
+      </select>
+    );
+  }
+
+  // A saved selection missing from the list is the case that breaks calls at
+  // runtime, so it is shown as an option rather than silently blanked.
+  const known = new Set(endpoints.map(e => e.name));
+  const showMissing = value && !known.has(value);
+
+  return (
+    <select
+      id={id}
+      className={selectClass}
+      value={value}
+      disabled={disabled}
+      onChange={e => onChange(e.target.value)}
+    >
+      <option value="">{emptyLabel}</option>
+      {showMissing && <option value={value}>{value} (not configured)</option>}
+      {endpoints.map(e => (
+        <option key={e.name} value={e.name}>
+          {e.name} ({e.dialect})
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reasoning effort <select>.
+// ---------------------------------------------------------------------------
+
+/** Ascending, matching ``schemas.ReasoningEffort``. */
+export const REASONING_EFFORTS = [
+  'auto',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+] as const;
+
+interface ReasoningEffortSelectProps {
+  id?: string;
+  value: string;
+  onChange: (next: string) => void;
+  /** When set, prepend an empty option meaning "inherit". */
+  inheritLabel?: string;
+  disabled?: boolean;
+}
+
+export function ReasoningEffortSelect({
+  id,
+  value,
+  onChange,
+  inheritLabel,
+  disabled,
+}: ReasoningEffortSelectProps) {
+  return (
+    <select
+      id={id}
+      className={selectClass}
+      value={value}
+      disabled={disabled}
+      onChange={e => onChange(e.target.value)}
+    >
+      {inheritLabel && <option value="">{inheritLabel}</option>}
+      {REASONING_EFFORTS.map(effort => (
+        <option key={effort} value={effort}>
+          {effort === 'auto' ? 'auto (provider default)' : effort}
         </option>
       ))}
     </select>

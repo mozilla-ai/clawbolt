@@ -90,6 +90,15 @@ export default function SettingsPage() {
 
 // --- Model Tab ---
 
+/** Hook to fetch the configured endpoints once. */
+function useLLMEndpoints() {
+  const [endpoints, setEndpoints] = useState<{ name: string; dialect: string }[]>([]);
+  useEffect(() => {
+    api.listLLMEndpoints().then(setEndpoints).catch(() => {});
+  }, []);
+  return endpoints;
+}
+
 /** Hook to fetch the list of providers once and cache it. */
 function useProviders() {
   const [providers, setProviders] = useState<{ name: string; local: boolean }[]>([]);
@@ -138,6 +147,7 @@ function ProviderModelPicker({
   onApiBaseChange,
   showApiBase,
   placeholderModel,
+  disabled,
 }: {
   providers: { name: string; local: boolean }[];
   providerValue: string;
@@ -148,6 +158,8 @@ function ProviderModelPicker({
   onApiBaseChange?: (v: string) => void;
   showApiBase?: boolean;
   placeholderModel?: string;
+  /** True when an endpoint supersedes this picker's provider and base URL. */
+  disabled?: boolean;
 }) {
   const isLocal = providers.find((p) => p.name === providerValue)?.local ?? false;
   const { models, loading, error, fetchModels } = useProviderModels(providerValue, isLocal);
@@ -157,6 +169,7 @@ function ProviderModelPicker({
       <Field label="Provider">
         <Select
           value={providerValue}
+          disabled={disabled}
           onChange={(e) => {
             onProviderChange(e.target.value);
             onModelChange('');
@@ -169,7 +182,7 @@ function ProviderModelPicker({
         </Select>
       </Field>
 
-      {providerValue && isLocal && showApiBase && (
+      {providerValue && isLocal && showApiBase && !disabled && (
         <Field label="API Base URL">
           <div className="flex gap-2">
             <Input
@@ -232,8 +245,10 @@ function ModelTab() {
   const { data: config, isLoading } = useModelConfig();
   const updateConfig = useUpdateModelConfig();
   const providers = useProviders();
+  const endpoints = useLLMEndpoints();
 
   const [form, setForm] = useState({
+    llm_endpoint: '',
     llm_provider: '',
     llm_model: '',
     llm_api_base: '',
@@ -249,6 +264,7 @@ function ModelTab() {
   useEffect(() => {
     if (config) {
       setForm({
+        llm_endpoint: config.llm_endpoint,
         llm_provider: config.llm_provider,
         llm_model: config.llm_model,
         llm_api_base: config.llm_api_base ?? '',
@@ -268,6 +284,7 @@ function ModelTab() {
   const handleSave = () => {
     updateConfig.mutate(
       {
+        llm_endpoint: form.llm_endpoint,
         llm_provider: form.llm_provider,
         llm_model: form.llm_model,
         llm_api_base: form.llm_api_base || undefined,
@@ -293,6 +310,34 @@ function ModelTab() {
     <div className="grid gap-6">
       <Card>
         <h3 className="text-sm font-medium mb-3">Primary Model</h3>
+        {endpoints.length > 0 && (
+          <Field label="Endpoint">
+            <Select
+              value={form.llm_endpoint}
+              onChange={(e) => {
+                const next = e.target.value;
+                // An endpoint carries its own dialect and base URL, so a
+                // provider chosen beside it would be shown and ignored.
+                setForm((prev) => ({
+                  ...prev,
+                  llm_endpoint: next,
+                  llm_provider: next ? '' : prev.llm_provider,
+                  llm_api_base: next ? '' : prev.llm_api_base,
+                  llm_model: '',
+                }));
+              }}
+            >
+              <option value="">Direct to provider</option>
+              {endpoints.map((ep) => (
+                <option key={ep.name} value={ep.name}>{ep.name} ({ep.dialect})</option>
+              ))}
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              A named destination with its own dialect, credential, and capabilities. Supersedes the
+              provider and base URL below.
+            </p>
+          </Field>
+        )}
         <ProviderModelPicker
           providers={providers}
           providerValue={form.llm_provider}
@@ -302,6 +347,7 @@ function ModelTab() {
           onModelChange={(v) => set('llm_model', v)}
           onApiBaseChange={(v) => set('llm_api_base', v)}
           showApiBase
+          disabled={!!form.llm_endpoint}
         />
         <Field label="Reasoning Effort">
           <Select

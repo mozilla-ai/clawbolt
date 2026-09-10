@@ -214,15 +214,23 @@ vi.mock('./admin-api', () => ({
   getAdminChannelConfig: vi.fn().mockResolvedValue(mocks.MOCK_CHANNEL_CONFIG),
   updateAdminChannelConfig: vi.fn().mockResolvedValue(mocks.MOCK_CHANNEL_CONFIG),
   getAdminLLMConfig: vi.fn().mockResolvedValue({
+    llm_endpoint: '',
     llm_provider: 'openai',
     llm_model: 'gpt-4',
     llm_api_base: null,
+    reasoning_effort: 'auto',
   }),
   updateAdminLLMConfig: vi.fn().mockResolvedValue({
+    llm_endpoint: '',
     llm_provider: 'openai',
     llm_model: 'gpt-4',
     llm_api_base: null,
+    reasoning_effort: 'auto',
   }),
+  listLLMEndpoints: vi.fn().mockResolvedValue([]),
+  upsertLLMEndpoint: vi.fn(),
+  deleteLLMEndpoint: vi.fn(),
+  SECRET_MASK: '********',
   listProviders: vi.fn().mockResolvedValue([{ name: 'openai', local: false }]),
   listProviderModels: vi.fn().mockResolvedValue({
     provider: 'openai',

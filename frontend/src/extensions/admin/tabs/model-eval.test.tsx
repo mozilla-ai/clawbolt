@@ -22,6 +22,7 @@ vi.mock('../admin-api', () => ({
   getEvalRunProgress: vi.fn(),
   cancelEvalRun: vi.fn(),
   deleteEvalRun: vi.fn(),
+  listLLMEndpoints: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../llm-picker', () => ({
@@ -30,6 +31,24 @@ vi.mock('../llm-picker', () => ({
   ),
   LLMModelSelect: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <input aria-label="model" value={value} onChange={e => onChange(e.target.value)} />
+  ),
+  LLMEndpointSelect: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <input aria-label="endpoint" value={value} onChange={e => onChange(e.target.value)} />
+  ),
+  ReasoningEffortSelect: ({
+    value,
+    onChange,
+    inheritLabel,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    inheritLabel?: string;
+  }) => (
+    <input
+      aria-label={inheritLabel ?? 'effort'}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+    />
   ),
 }));
 
@@ -97,11 +116,69 @@ describe('ModelEvalTab', () => {
 
     await waitFor(() =>
       expect(api.startEvalRun).toHaveBeenCalledWith('user-1', {
+        candidateEndpoint: '',
         candidateProvider: 'anthropic',
         candidateModel: 'candidate',
+        // Empty means "the deployment's setting", which the API resolves and
+        // freezes onto the run rather than reading per call.
+        baselineReasoningEffort: '',
+        candidateReasoningEffort: '',
         sampleCount: 65,
         judgeEnabled: true,
       }),
+    );
+  });
+
+  it('sends each side its own reasoning effort', async () => {
+    // Effort is not portable across model families, so a comparison that
+    // forced both sides to one value would be measuring the value.
+    const api = await import('../admin-api');
+    vi.mocked(api.startEvalRun).mockResolvedValue(run({ status: 'pending' }));
+    renderTab();
+
+    await screen.findByRole('option', { name: 'consenting@example.com' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
+    await userEvent.type(screen.getByLabelText('provider'), 'anthropic');
+    await userEvent.type(screen.getByLabelText('model'), 'candidate');
+
+    const [incumbentEffort, candidateEffort] = screen.getAllByLabelText('Deployment default');
+    if (!incumbentEffort || !candidateEffort) throw new Error('effort controls missing');
+    await userEvent.type(incumbentEffort, 'high');
+    await userEvent.type(candidateEffort, 'none');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Run analysis' }));
+
+    await waitFor(() =>
+      expect(api.startEvalRun).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({
+          baselineReasoningEffort: 'high',
+          candidateReasoningEffort: 'none',
+        }),
+      ),
+    );
+  });
+
+  it('starts a run against an endpoint with no provider', async () => {
+    // An endpoint carries its own dialect, so it is a complete destination.
+    // Requiring a provider beside it would be asking for a value that the
+    // endpoint then supersedes.
+    const api = await import('../admin-api');
+    vi.mocked(api.startEvalRun).mockResolvedValue(run({ status: 'pending' }));
+    renderTab();
+
+    await screen.findByRole('option', { name: 'consenting@example.com' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
+    await userEvent.type(screen.getByLabelText('endpoint'), 'otari');
+    await userEvent.type(screen.getByLabelText('model'), 'candidate');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Run analysis' }));
+
+    await waitFor(() =>
+      expect(api.startEvalRun).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ candidateEndpoint: 'otari', candidateProvider: '' }),
+      ),
     );
   });
 

@@ -11,7 +11,12 @@ import {
   type EvalRun,
 } from '../admin-api';
 import ConfirmDialog from '../ConfirmDialog';
-import { LLMProviderSelect, LLMModelSelect } from '../llm-picker';
+import {
+  LLMEndpointSelect,
+  LLMModelSelect,
+  LLMProviderSelect,
+  ReasoningEffortSelect,
+} from '../llm-picker';
 import { formatRelative } from '../format';
 import { adminPath } from '../nav-items';
 import { ACTIVE_STATUSES, POLL_MS, RECOMMENDATION_COPY } from './model-eval-common';
@@ -97,8 +102,15 @@ export default function ModelEvalTab() {
   const [usersLoading, setUsersLoading] = useState(true);
   const [userId, setUserId] = useState('');
 
+  const [endpoint, setEndpoint] = useState('');
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
+  // Empty means "whatever the deployment runs at", which the API resolves and
+  // freezes onto the run. The two sides are separate because effort does not
+  // mean the same thing to two model families, and an endpoint that spells
+  // reasoning differently can reject the other side's spelling outright.
+  const [baselineEffort, setBaselineEffort] = useState('');
+  const [candidateEffort, setCandidateEffort] = useState('');
   const [sampleCount, setSampleCount] = useState(SAMPLE_DEFAULT);
   const [sampleMax, setSampleMax] = useState(SAMPLE_MAX_FALLBACK);
   // The API's own ceiling on ``limit``. Growing past it 422s, and because the
@@ -213,8 +225,11 @@ export default function ModelEvalTab() {
     setStarting(true);
     try {
       const run = await startEvalRun(userId, {
+        candidateEndpoint: endpoint,
         candidateProvider: provider,
         candidateModel: model,
+        baselineReasoningEffort: baselineEffort,
+        candidateReasoningEffort: candidateEffort,
         sampleCount,
         judgeEnabled,
       });
@@ -248,7 +263,10 @@ export default function ModelEvalTab() {
     }
   }
 
-  const canStart = Boolean(userId && provider && model) && !starting && !activeRun;
+  // An endpoint carries its own dialect, so it is a complete destination on
+  // its own; without one a provider is still required to have any.
+  const canStart =
+    Boolean(userId && (endpoint || provider) && model) && !starting && !activeRun;
 
   return (
     <div className="space-y-6">
@@ -286,6 +304,21 @@ export default function ModelEvalTab() {
               in, the model list stays on "pick a provider first", and the Run
               button is disabled for no reason the operator can see. */}
           <label className="block">
+            <span className="mb-1 block text-sm text-muted-foreground">Candidate endpoint</span>
+            <LLMEndpointSelect
+              value={endpoint}
+              onChange={next => {
+                setEndpoint(next);
+                // The endpoint's dialect supersedes any provider chosen
+                // beside it, so clear both rather than leaving a provider
+                // that is displayed and ignored.
+                setProvider('');
+                setModel('');
+              }}
+            />
+          </label>
+
+          <label className="block">
             <span className="mb-1 block text-sm text-muted-foreground">Candidate provider</span>
             <LLMProviderSelect
               value={provider}
@@ -295,7 +328,8 @@ export default function ModelEvalTab() {
                 setModel('');
               }}
               allowEmpty
-              emptyLabel="Select a provider"
+              emptyLabel={endpoint ? 'From endpoint' : 'Select a provider'}
+              disabled={Boolean(endpoint)}
             />
           </label>
 
@@ -347,6 +381,33 @@ export default function ModelEvalTab() {
             </span>
           </label>
         </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-sm text-muted-foreground">
+              Incumbent reasoning effort
+            </span>
+            <ReasoningEffortSelect
+              value={baselineEffort}
+              onChange={setBaselineEffort}
+              inheritLabel="Deployment default"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm text-muted-foreground">
+              Candidate reasoning effort
+            </span>
+            <ReasoningEffortSelect
+              value={candidateEffort}
+              onChange={setCandidateEffort}
+              inheritLabel="Deployment default"
+            />
+          </label>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Set these separately when the two models disagree about what effort means. Whatever a run
+          used is recorded on it, so two reports stay comparable.
+        </p>
 
         <div className="mt-4 flex flex-wrap items-center gap-4">
           <label className="flex items-center gap-2 text-sm text-muted-foreground">
