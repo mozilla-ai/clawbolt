@@ -14,8 +14,8 @@ Backfilling those correctly would mean re-running the price lookup per row;
 the counter is a completeness hint rather than an audit, so it is not worth
 it.
 
-Revision ID: 045
-Revises: 044
+Revision ID: 046
+Revises: 045
 Create Date: 2026-09-10
 """
 
@@ -25,8 +25,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "045"
-down_revision: str | None = "044"
+revision: str = "046"
+down_revision: str | None = "045"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
