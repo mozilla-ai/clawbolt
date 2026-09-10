@@ -7,6 +7,9 @@ Entry points:
 
 - :func:`~backend.app.services.llm_eval.runner.launch_run` starts a run on a
   background task; the admin route creates the row first and polls it.
+- :data:`~backend.app.services.llm_eval.runner.interrupted_run_sweeper` runs
+  that sweep periodically, since staleness takes time to establish and a
+  boot-only sweep misses an ordinary crash-and-restart.
 - :func:`~backend.app.services.llm_eval.runner.mark_interrupted_runs` is
   called at startup to close out runs orphaned by a restart.
 
@@ -15,7 +18,11 @@ mounted there, and the thing it exists to decide (moving one tenant to a
 different model) has no meaning in a single-user deployment.
 """
 
-from backend.app.services.llm_eval.runner import launch_run, mark_interrupted_runs
+from backend.app.services.llm_eval.runner import (
+    interrupted_run_sweeper,
+    launch_run,
+    mark_interrupted_runs,
+)
 from backend.app.services.llm_eval.types import (
     AgreementClass,
     JudgeVerdict,
@@ -30,6 +37,7 @@ __all__ = [
     "Recommendation",
     "RunStatus",
     "SafetyFinding",
+    "interrupted_run_sweeper",
     "launch_run",
     "mark_interrupted_runs",
 ]

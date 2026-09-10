@@ -470,22 +470,26 @@ export default function ModelEvalReportPage({ runId }: { runId: string }) {
       void (async () => {
         try {
           const progress = await getEvalRunProgress(runId);
+          const settled = !ACTIVE_STATUSES.has(progress.status);
+          if (settled) {
+            // Fetch the evidence and let it carry the status change. Flipping
+            // the status here first would render "this run has no summary"
+            // until the report landed, which on a long run is over a second.
+            await load(turnLimit);
+            return;
+          }
           setReport(prev =>
             prev
               ? {
                   ...prev,
                   run: {
                     ...prev.run,
-                    status: progress.status,
                     progress_completed: progress.progress_completed,
                     progress_total: progress.progress_total,
-                    recommendation: progress.recommendation,
                   },
                 }
               : prev,
           );
-          // Settled: fetch the evidence once, now that there is some.
-          if (!ACTIVE_STATUSES.has(progress.status)) void load(turnLimit);
         } catch {
           // A failed progress tick is not worth surfacing; the next one
           // either recovers or the operator reloads.

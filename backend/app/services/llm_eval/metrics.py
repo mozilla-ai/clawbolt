@@ -79,9 +79,9 @@ MIN_JUDGED_FOR_BLOCKING_RATE = 10
 # returns a firm ``do_not_switch`` off a single turn, because ``_decide``
 # checks blockers before the ``MIN_TURNS_FOR_VERDICT`` floor can downgrade it.
 #
-# Below this the rate is not reported separately: a run that short is already
-# ``inconclusive`` on turn count alone, and that is the more useful thing to
-# tell the operator than a percentage computed over three turns.
+# Only the *blocking* decision is gated. The rate itself is still computed and
+# still shown on the report, which is right: a reader looking at a five-turn
+# run should see 20% and the "too few turns for a verdict" line together.
 MIN_TURNS_FOR_BLOCKING_RATE = 10
 
 # Above this share of diverging turns, the candidate is doing a different

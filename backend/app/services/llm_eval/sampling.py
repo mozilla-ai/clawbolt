@@ -114,23 +114,32 @@ async def build_fixture(user: User, *, sample_limit: int | None = None) -> Repla
     if sample_limit is not None and sample_limit > 0:
         budget = _row_budget(sample_limit)
         rows = await store.get_recent_messages_async(budget)
-        inbound = sum(1 for r in rows if r.direction == MessageDirection.INBOUND)
-        # ``<=`` because filling the budget exactly is already the failure:
-        # the samples consumed the whole window, so the oldest one has fewer
-        # than ``conversation_history_limit`` rows in front of it and replays
-        # against a shorter prompt than production builds.
-        if len(rows) == budget and inbound <= sample_limit:
-            # The window filled up before it held the turns asked for, which
-            # means this user's turns are unusually long. Fall back rather than
-            # quietly running a smaller evaluation than the operator chose.
-            logger.info(
-                "Replay window of %d rows held only %d inbound turn(s) for user %s; "
-                "loading the full transcript",
-                budget,
-                inbound,
-                user.id,
-            )
-            rows = []
+        inbound_at = [i for i, r in enumerate(rows) if r.direction == MessageDirection.INBOUND]
+        # A full window means older rows exist that were not read, so the
+        # question is whether what was read is actually enough. Two ways it is
+        # not: fewer turns than asked for, or enough turns but not enough rows
+        # in front of the oldest one to rebuild the history the agent saw.
+        #
+        # Counting turns alone missed the second, and it is the commoner
+        # failure: the samples consume the budget, the oldest replays against
+        # a shorter prompt than production builds, and the run scores that
+        # difference as if it were the candidate's doing.
+        if len(rows) == budget:
+            short_of_turns = len(inbound_at) < sample_limit
+            history_rows = inbound_at[-sample_limit] if not short_of_turns else 0
+            if short_of_turns or history_rows < settings.conversation_history_limit:
+                # This user's turns are unusually long. Fall back rather than
+                # quietly running a smaller or shallower evaluation than the
+                # operator chose.
+                logger.info(
+                    "Replay window of %d rows held %d inbound turn(s) and %d row(s) of "
+                    "history for user %s; loading the full transcript",
+                    budget,
+                    len(inbound_at),
+                    history_rows,
+                    user.id,
+                )
+                rows = []
     if not rows:
         sessions = await store.list_sessions_async()
         for session in sessions:

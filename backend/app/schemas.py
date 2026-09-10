@@ -1883,7 +1883,7 @@ class AdminLLMEvalRunListResponse(BaseModel):
     max_samples: int
     min_turns_for_verdict: int
 
-    max_page_size: int = 25
+    max_page_size: int
     """The largest ``limit`` this endpoint accepts.
 
     On the wire for the same reason ``max_samples`` is: a console that grows

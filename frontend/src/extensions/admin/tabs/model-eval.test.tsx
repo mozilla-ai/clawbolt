@@ -19,6 +19,7 @@ vi.mock('../admin-api', () => ({
   listEvalRuns: vi.fn(),
   startEvalRun: vi.fn(),
   getEvalReport: vi.fn(),
+  getEvalRunProgress: vi.fn(),
   cancelEvalRun: vi.fn(),
   deleteEvalRun: vi.fn(),
 }));
@@ -132,6 +133,34 @@ describe('ModelEvalTab', () => {
     // Better said before the run than after spending one to read
     // "inconclusive" at the end.
     expect(await screen.findByText(/reports inconclusive/)).toBeInTheDocument();
+  });
+
+  it('tracks an in-flight run through the counters, not the audited list', async () => {
+    // Re-reading the whole list every two seconds wrote an audit row per
+    // tick, so a long run left open buried one human read under hundreds.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(
+      runList([run({ status: 'running', progress_completed: 2, progress_total: 40 })]),
+    );
+    vi.mocked(api.getEvalRunProgress).mockResolvedValue({
+      id: 'run-0001',
+      status: 'running',
+      progress_completed: 11,
+      progress_total: 40,
+      recommendation: '',
+    });
+    renderTab();
+
+    await screen.findByRole('option', { name: 'consenting@example.com' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'User' }), 'user-1');
+    const listCallsAfterSelect = vi.mocked(api.listEvalRuns).mock.calls.length;
+
+    await waitFor(() => expect(api.getEvalRunProgress).toHaveBeenCalledWith('run-0001'), {
+      timeout: 4000,
+    });
+    await waitFor(() => expect(listed('Replaying 11 of 40 turns against candidate')).toBe(1));
+    // The audited listing was not re-read to get that.
+    expect(vi.mocked(api.listEvalRuns).mock.calls.length).toBe(listCallsAfterSelect);
   });
 
   it('does not claim another tenant\'s run belongs to this form', async () => {

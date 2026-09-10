@@ -20,6 +20,8 @@ Endpoints:
   or one of them (``?user_id=``).
 - ``GET  /admin/llm-eval/runs/{run_id}`` returns a run plus its per-turn
   evidence, worst turns first.
+- ``GET  /admin/llm-eval/runs/{run_id}/progress`` returns counters only, for
+  the console's poll. Unaudited; see the handler.
 - ``POST /admin/llm-eval/runs/{run_id}/cancel`` stops an in-flight run.
 - ``DELETE /admin/llm-eval/runs/{run_id}`` discards a run and its evidence.
 """
@@ -268,11 +270,19 @@ def _turn_sort_key(turn: LLMEvalTurnResult) -> tuple[int, int, int, int]:
     against the candidate, and ranking it first fills the readable part of the
     report with badges the summary goes on to disown.
     """
-    # ``safety_issues`` is envelope-encrypted, so each read of it decrypts.
-    # Read it once and answer both questions from the result rather than
-    # paying twice per turn for every turn in the run on every page view.
+    # Parsed once and used for both questions. The ``isinstance`` guard is the
+    # one ``_blocking_findings`` carries: a row whose ``safety_issues`` is not
+    # a list of objects must not 500 the whole report.
     issues = _load_json(turn.safety_issues, [])
-    has_blocking = 0 if any(entry.get("finding") in BLOCKING_FINDINGS for entry in issues) else 1
+    if not isinstance(issues, list):
+        issues = []
+    has_blocking = (
+        0
+        if any(
+            entry.get("finding") in BLOCKING_FINDINGS for entry in issues if isinstance(entry, dict)
+        )
+        else 1
+    )
     judged_bad = (
         0
         if turn.judge_verdict

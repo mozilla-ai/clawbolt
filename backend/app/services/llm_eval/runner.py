@@ -549,20 +549,27 @@ def _summary_payload(aggregate: metrics.RunAggregate) -> dict:
 
 
 async def mark_interrupted_runs() -> None:
-    """Flag runs left mid-flight by a process that is gone.
+    """Flag runs whose worker has gone quiet.
 
-    Called from the lifespan startup hook. "Still ``running`` at boot" is not
-    on its own evidence of an abandoned run: a rolling deploy boots the new
-    instance while the old one drains, and more than one process can serve
-    the app, so an unconditional sweep marks a live run interrupted. The run
-    keeps calling the provider and later overwrites the row, and in the
-    meantime both concurrency guards in ``start_run`` key off
-    ``ACTIVE_STATUSES`` and would let a duplicate run start for the user.
+    "Still ``running``" is not on its own evidence of an abandoned run: a
+    rolling deploy boots the new instance while the old one drains, and more
+    than one process can serve the app, so an unconditional sweep marks a
+    live run interrupted. The run keeps calling the provider and later
+    overwrites the row, and in the meantime both concurrency guards in
+    ``start_run`` key off ``ACTIVE_STATUSES`` and would let a duplicate run
+    start for the user.
 
-    A run touches ``heartbeat_at`` as each turn lands, so only rows that have
-    gone quiet for longer than ``_HEARTBEAT_STALE_AFTER`` are swept. A row
-    that never got a heartbeat falls back to ``created_at``, which covers a
-    process that died between the insert and the first turn.
+    A run touches ``heartbeat_at`` as each turn lands, so only rows quiet for
+    longer than ``_HEARTBEAT_STALE_AFTER`` are swept. A row that never got a
+    heartbeat falls back to ``created_at``, which covers a process that died
+    between the insert and the first turn.
+
+    Run periodically, not only at boot: staleness takes time to establish, so
+    a boot-only sweep misses every run whose process died less than
+    ``_HEARTBEAT_STALE_AFTER`` before that boot, which is the ordinary
+    crash-and-restart. Nothing would then clear the row until the next boot,
+    days later, while it 409s that user's runs and holds a slot against
+    ``llm_eval_max_concurrent_runs``. See :class:`InterruptedRunSweeper`.
     """
     cutoff = datetime.now(UTC) - _HEARTBEAT_STALE_AFTER
     async with db_session_async() as db:
@@ -582,3 +589,45 @@ async def mark_interrupted_runs() -> None:
     count = cast("CursorResult[object]", result).rowcount or 0
     if count:
         logger.warning("Marked %d in-flight LLM eval run(s) as interrupted", count)
+
+
+class InterruptedRunSweeper:
+    """Periodically closes out runs whose worker stopped touching them.
+
+    Modelled on ``HeartbeatScheduler``: one task, started and stopped by the
+    lifespan. The interval only bounds how long a dead run stays visible as
+    in-flight, so it is well under ``_HEARTBEAT_STALE_AFTER`` and far above
+    anything that would matter for load.
+    """
+
+    def __init__(self, interval_seconds: float = 300.0) -> None:
+        self._interval = interval_seconds
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        """Start the sweep loop. Idempotent."""
+        if self._task is not None and not self._task.done():
+            return
+        self._task = asyncio.get_running_loop().create_task(self._run())
+
+    def stop(self) -> None:
+        """Cancel the sweep loop."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(self._interval)
+                await mark_interrupted_runs()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A failed sweep must not kill the loop: the next tick is a
+                # cheap retry, and the alternative is silently never sweeping
+                # again for the life of the process.
+                logger.exception("Interrupted-run sweep failed; continuing")
+
+
+interrupted_run_sweeper = InterruptedRunSweeper()

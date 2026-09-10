@@ -320,6 +320,41 @@ async def test_a_window_that_fills_exactly_still_falls_back(
         ]
 
 
+@pytest.mark.asyncio()
+async def test_a_window_holding_enough_turns_but_no_history_falls_back(
+    db_session: Session, test_user: User, _reset_stores: None
+) -> None:
+    """Counting turns is the wrong question on its own.
+
+    Here the window holds *more* inbound turns than the run asked for, so a
+    turn-count guard passes it. The oldest sampled turn still has almost
+    nothing in front of it, which is the shortened prompt the fallback
+    exists to prevent.
+    """
+    # budget = 5 * 6 + 20 = 50 rows. Pack the tail so it holds 6 inbound
+    # turns and leaves the 5th-from-last with far fewer than 20 rows ahead.
+    turns: list[tuple[str, str, list[dict] | None]] = []
+    for i in range(1, 21):
+        turns.append(("inbound", f"old {i}", None))
+        turns.append(("outbound", f"old answer {i}", None))
+    for i in range(1, 7):
+        turns.append(("inbound", f"ask {i}", None))
+        for j in range(7):
+            turns.append(("outbound", f"step {i}.{j}", None))
+    _seed(db_session, test_user, turns)
+
+    with patch.object(settings, "conversation_history_limit", 20):
+        bounded = await build_fixture(test_user, sample_limit=5)
+        full = await build_fixture(test_user)
+
+        oldest_bounded = select_samples(bounded, limit=5)[0]
+        oldest_full = select_samples(full, limit=5)[0]
+        assert oldest_bounded.seq == oldest_full.seq
+        assert [m.content for m in _history_for(bounded, oldest_bounded)] == [
+            m.content for m in _history_for(full, oldest_full)
+        ]
+
+
 # ---------------------------------------------------------------------------
 # Rapid-fire messages
 # ---------------------------------------------------------------------------
