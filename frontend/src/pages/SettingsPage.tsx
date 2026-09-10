@@ -241,6 +241,9 @@ const REASONING_EFFORT_OPTIONS = [
   { value: 'xhigh', label: 'Extra High' },
 ] as const;
 
+/** Mirrors ``schemas.ReasoningEffort``; the API rejects anything else. */
+type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number]['value'];
+
 function ModelTab() {
   const { data: config, isLoading } = useModelConfig();
   const updateConfig = useUpdateModelConfig();
@@ -253,12 +256,15 @@ function ModelTab() {
     llm_model: '',
     llm_api_base: '',
     vision_model: '',
+    vision_endpoint: '',
     vision_provider: '',
     heartbeat_model: '',
+    heartbeat_endpoint: '',
     heartbeat_provider: '',
     compaction_model: '',
+    compaction_endpoint: '',
     compaction_provider: '',
-    reasoning_effort: 'auto',
+    reasoning_effort: 'auto' as ReasoningEffort,
   });
 
   useEffect(() => {
@@ -269,12 +275,15 @@ function ModelTab() {
         llm_model: config.llm_model,
         llm_api_base: config.llm_api_base ?? '',
         vision_model: config.vision_model,
+        vision_endpoint: config.vision_endpoint,
         vision_provider: config.vision_provider,
         heartbeat_model: config.heartbeat_model,
+        heartbeat_endpoint: config.heartbeat_endpoint,
         heartbeat_provider: config.heartbeat_provider,
         compaction_model: config.compaction_model,
+        compaction_endpoint: config.compaction_endpoint,
         compaction_provider: config.compaction_provider,
-        reasoning_effort: config.reasoning_effort,
+        reasoning_effort: config.reasoning_effort as ReasoningEffort,
       });
     }
   }, [config]);
@@ -289,10 +298,13 @@ function ModelTab() {
         llm_model: form.llm_model,
         llm_api_base: form.llm_api_base || undefined,
         vision_model: form.vision_model,
+        vision_endpoint: form.vision_endpoint,
         vision_provider: form.vision_provider,
         heartbeat_model: form.heartbeat_model,
+        heartbeat_endpoint: form.heartbeat_endpoint,
         heartbeat_provider: form.heartbeat_provider,
         compaction_model: form.compaction_model,
+        compaction_endpoint: form.compaction_endpoint,
         compaction_provider: form.compaction_provider,
         reasoning_effort: form.reasoning_effort,
       },
@@ -352,7 +364,7 @@ function ModelTab() {
         <Field label="Reasoning Effort">
           <Select
             value={form.reasoning_effort}
-            onChange={(e) => set('reasoning_effort', e.target.value)}
+            onChange={(e) => set('reasoning_effort', e.target.value as ReasoningEffort)}
           >
             {REASONING_EFFORT_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
@@ -372,6 +384,30 @@ function ModelTab() {
         <div className="grid gap-4">
           <div>
             <p className="text-xs font-medium mb-3">Vision</p>
+            {endpoints.length > 0 && (
+              <Field label="Endpoint">
+                <Select
+                  value={form.vision_endpoint}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    // Endpoint and provider are inherited as a pair, so
+                    // naming either one opts this role out of the primary
+                    // selection entirely.
+                    setForm((prev) => ({
+                      ...prev,
+                      vision_endpoint: next,
+                      vision_provider: next ? '' : prev.vision_provider,
+                      vision_model: '',
+                    }));
+                  }}
+                >
+                  <option value="">Same as primary</option>
+                  {endpoints.map((ep) => (
+                    <option key={ep.name} value={ep.name}>{ep.name} ({ep.dialect})</option>
+                  ))}
+                </Select>
+              </Field>
+            )}
             <ProviderModelPicker
               providers={providers}
               providerValue={form.vision_provider}
@@ -379,10 +415,35 @@ function ModelTab() {
               onProviderChange={(v) => set('vision_provider', v)}
               onModelChange={(v) => set('vision_model', v)}
               placeholderModel="Same as primary"
+              disabled={!!form.vision_endpoint}
             />
           </div>
           <div className="border-t pt-4">
             <p className="text-xs font-medium mb-3">Heartbeat</p>
+            {endpoints.length > 0 && (
+              <Field label="Endpoint">
+                <Select
+                  value={form.heartbeat_endpoint}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    // Endpoint and provider are inherited as a pair, so
+                    // naming either one opts this role out of the primary
+                    // selection entirely.
+                    setForm((prev) => ({
+                      ...prev,
+                      heartbeat_endpoint: next,
+                      heartbeat_provider: next ? '' : prev.heartbeat_provider,
+                      heartbeat_model: '',
+                    }));
+                  }}
+                >
+                  <option value="">Same as primary</option>
+                  {endpoints.map((ep) => (
+                    <option key={ep.name} value={ep.name}>{ep.name} ({ep.dialect})</option>
+                  ))}
+                </Select>
+              </Field>
+            )}
             <ProviderModelPicker
               providers={providers}
               providerValue={form.heartbeat_provider}
@@ -390,10 +451,35 @@ function ModelTab() {
               onProviderChange={(v) => set('heartbeat_provider', v)}
               onModelChange={(v) => set('heartbeat_model', v)}
               placeholderModel="Same as primary"
+              disabled={!!form.heartbeat_endpoint}
             />
           </div>
           <div className="border-t pt-4">
             <p className="text-xs font-medium mb-3">Compaction</p>
+            {endpoints.length > 0 && (
+              <Field label="Endpoint">
+                <Select
+                  value={form.compaction_endpoint}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    // Endpoint and provider are inherited as a pair, so
+                    // naming either one opts this role out of the primary
+                    // selection entirely.
+                    setForm((prev) => ({
+                      ...prev,
+                      compaction_endpoint: next,
+                      compaction_provider: next ? '' : prev.compaction_provider,
+                      compaction_model: '',
+                    }));
+                  }}
+                >
+                  <option value="">Same as primary</option>
+                  {endpoints.map((ep) => (
+                    <option key={ep.name} value={ep.name}>{ep.name} ({ep.dialect})</option>
+                  ))}
+                </Select>
+              </Field>
+            )}
             <ProviderModelPicker
               providers={providers}
               providerValue={form.compaction_provider}
@@ -401,6 +487,7 @@ function ModelTab() {
               onProviderChange={(v) => set('compaction_provider', v)}
               onModelChange={(v) => set('compaction_model', v)}
               placeholderModel="Same as primary"
+              disabled={!!form.compaction_endpoint}
             />
           </div>
         </div>

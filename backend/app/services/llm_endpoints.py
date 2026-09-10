@@ -36,13 +36,13 @@ import asyncio
 import logging
 from collections.abc import Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import settings
 from backend.app.config_store import MASK
 from backend.app.database import AsyncSessionLocal
-from backend.app.models import LLMEndpoint, Subscription
+from backend.app.models import LLMEndpoint, LLMEvalRun, Subscription
 from backend.app.schemas import LLMEndpointItem
 from backend.app.services.llm_service import (
     LLMTarget,
@@ -197,6 +197,21 @@ async def endpoint_delete_blockers(db: AsyncSession, name: str) -> list[str]:
     pinned = await count_endpoint_pins(db, name)
     if pinned:
         blockers.append(f"still pinned on {pinned} user override(s)")
+    queued = await db.scalar(
+        select(func.count())
+        .select_from(LLMEvalRun)
+        .where(
+            LLMEvalRun.status.in_(("pending", "running")),
+            or_(
+                LLMEvalRun.baseline_endpoint == name,
+                LLMEvalRun.candidate_endpoint == name,
+            ),
+        )
+    )
+    if queued:
+        # An in-flight run resolved its targets once at start and is safe,
+        # but a pending one would fail on its first call.
+        blockers.append(f"named by {queued} evaluation run(s) not yet finished")
     return blockers
 
 

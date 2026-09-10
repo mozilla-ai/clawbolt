@@ -509,6 +509,14 @@ def aggregate(comparisons: list[TurnComparison], targets: RunTargets | None = No
         totals.pricing_unknown_reason = (
             "" if totals.pricing_available else ("endpoint" if not priced_endpoint else "model")
         )
+        if not totals.pricing_available:
+            # ``_accumulate`` priced every call as it landed, before the
+            # endpoint was known. Leaving that figure in place while the
+            # warning below promises "reported as zero" puts a real-looking
+            # number on the run row and serves it from the API, which is the
+            # fiction this whole column exists to stop. Matches
+            # ``_build_llm_usage_log``, which zeroes for the same reason.
+            totals.total_cost = Decimal("0.000000")
 
     _decide(agg)
     return agg

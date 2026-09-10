@@ -115,12 +115,15 @@ async def test_prompt_caching_system_format_accepted() -> None:
     from any_llm import amessages
     from any_llm.types.messages import MessageResponse
 
-    from backend.app.services.llm_service import prepare_system_with_caching
+    from backend.app.services.llm_service import LLMTarget, prepare_system_with_caching
 
     # Pad the system prompt to exceed the caching minimum token threshold.
     padding = " ".join(f"word{i}" for i in range(1200))
     system_text = f"You are a helpful assistant. Reply briefly. Context: {padding}"
-    system = prepare_system_with_caching(system_text, "anthropic")
+    # The helper takes a resolved target now; this one honors the markers,
+    # which is the format the API acceptance is being checked against.
+    target = LLMTarget(provider="anthropic", model=_ANTHROPIC_MODEL, honors_cache_control=True)
+    system = prepare_system_with_caching(system_text, target)
 
     # Call should succeed with the cache-marked system format
     resp = await amessages(

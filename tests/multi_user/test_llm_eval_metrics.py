@@ -8,6 +8,8 @@ reported: a valid call flagged as invalid, or a short run reading as a pass.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from pydantic import BaseModel
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
@@ -386,6 +388,51 @@ def test_a_long_run_still_blocks_on_the_same_rate() -> None:
 def test_unknown_model_pricing_is_warned_not_reported_as_free() -> None:
     result = metrics.aggregate([_comparison(i) for i in range(25)])
     assert any("No pricing data" in w for w in result.warnings)
+
+
+def test_an_unpriced_endpoint_reports_zero_rather_than_the_price_list_figure() -> None:
+    """The flag is not enough on its own; the number has to go too.
+
+    ``_accumulate`` prices each call as it lands, before the endpoint is
+    known. Leaving that figure in place put a real-looking cost on the run
+    row and served it from the API while the run's own warning promised it
+    was zero. Uses a model genai-prices knows, so a regression here shows up
+    as a real number rather than a coincidental zero.
+    """
+    priced_model = "claude-sonnet-4-20250514"
+
+    def call() -> ModelCallResult:
+        return ModelCallResult(
+            provider="anthropic",
+            model=priced_model,
+            text="hi",
+            stop_reason="end_turn",
+            input_tokens=1000,
+            output_tokens=100,
+        )
+
+    comparisons = [
+        TurnComparison(
+            sample=_sample(i),
+            baseline=call(),
+            candidate=call(),
+            agreement=AgreementClass.IDENTICAL,
+        )
+        for i in range(25)
+    ]
+    targets = RunTargets(
+        baseline=LLMTarget(provider="anthropic", model=priced_model),
+        candidate=LLMTarget(provider="anthropic", model=priced_model, endpoint="gw", priced=False),
+        judge=LLMTarget(provider="anthropic", model=priced_model),
+    )
+    result = metrics.aggregate(comparisons, targets)
+
+    # The incumbent went to the vendor named, so its cost is real.
+    assert result.baseline.total_cost > Decimal("0")
+    assert result.baseline.pricing_available is True
+    # The candidate went through a gateway, so there is no cost to report.
+    assert result.candidate.total_cost == Decimal("0.000000")
+    assert result.candidate.pricing_available is False
 
 
 def test_an_unpriced_endpoint_suppresses_cost_even_for_a_known_model() -> None:

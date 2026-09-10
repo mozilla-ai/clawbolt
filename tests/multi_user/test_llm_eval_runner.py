@@ -37,6 +37,7 @@ from backend.app.services.llm_eval.types import (
     SafetyFinding,
     ToolCall,
 )
+from backend.app.services.llm_service import LLMTarget
 
 
 def _make_run(
@@ -197,9 +198,10 @@ async def test_each_side_is_called_with_its_own_reasoning_effort(
     )
     seen: list[tuple[str, str]] = []
 
-    async def record(*_args: object, **kwargs: object) -> ModelCallResult:
-        target = kwargs["target"]
-        seen.append((target.model, kwargs["reasoning_effort"]))
+    async def record(*_args: object, **kwargs: Any) -> ModelCallResult:
+        target: LLMTarget = kwargs["target"]
+        effort: str = kwargs["reasoning_effort"]
+        seen.append((target.model, effort))
         return _result(text="ok")
 
     a, b, c, d = _patched_run(samples=_samples(1), call_side_effect=record)

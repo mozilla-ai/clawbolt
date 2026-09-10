@@ -8053,6 +8053,11 @@
             "type": "string",
             "title": "Timestamp"
           },
+          "endpoint": {
+            "type": "string",
+            "title": "Endpoint",
+            "default": ""
+          },
           "provider": {
             "type": "string",
             "title": "Provider"
@@ -8080,6 +8085,11 @@
           "cost_usd": {
             "type": "string",
             "title": "Cost Usd"
+          },
+          "pricing_available": {
+            "type": "boolean",
+            "title": "Pricing Available",
+            "default": true
           },
           "cache_creation_input_tokens": {
             "anyOf": [
@@ -8479,7 +8489,16 @@
           "reasoning_effort": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "auto"
+                ]
               },
               {
                 "type": "null"

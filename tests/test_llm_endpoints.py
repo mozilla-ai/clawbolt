@@ -9,6 +9,7 @@ refuses outright.
 """
 
 from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -248,9 +249,7 @@ class TestEndpointCache:
 
         real_execute = AsyncSession.execute
 
-        async def execute_then_invalidate(
-            self: AsyncSession, *args: object, **kw: object
-        ) -> object:
+        async def execute_then_invalidate(self: AsyncSession, *args: Any, **kw: Any) -> Any:
             result = await real_execute(self, *args, **kw)
             # Stand in for a concurrent write landing mid-SELECT.
             reset_llm_endpoint_cache()

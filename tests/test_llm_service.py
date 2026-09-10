@@ -359,7 +359,7 @@ async def test_resolve_user_llm_override_calls_registered_resolver() -> None:
 async def test_resolve_user_llm_override_passes_through_none() -> None:
     """Resolver may return None to indicate "no override for this user"."""
 
-    async def fake_resolver(_: str) -> tuple[str, str] | None:
+    async def fake_resolver(_: str) -> UserLLMOverride | None:
         return None
 
     set_user_llm_resolver(fake_resolver)

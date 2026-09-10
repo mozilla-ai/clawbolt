@@ -4430,6 +4430,11 @@ export interface components {
             id: number;
             /** Timestamp */
             timestamp: string;
+            /**
+             * Endpoint
+             * @default
+             */
+            endpoint: string;
             /** Provider */
             provider: string;
             /** Model */
@@ -4444,6 +4449,11 @@ export interface components {
             total_tokens: number;
             /** Cost Usd */
             cost_usd: string;
+            /**
+             * Pricing Available
+             * @default true
+             */
+            pricing_available: boolean;
             /** Cache Creation Input Tokens */
             cache_creation_input_tokens: number | null;
             /** Cache Read Input Tokens */
@@ -4559,7 +4569,7 @@ export interface components {
             /** Compaction Provider */
             compaction_provider?: string | null;
             /** Reasoning Effort */
-            reasoning_effort?: string | null;
+            reasoning_effort?: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "auto") | null;
         };
         /** OAuthAuthorizeResponse */
         OAuthAuthorizeResponse: {

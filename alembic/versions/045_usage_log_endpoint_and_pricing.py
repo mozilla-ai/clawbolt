@@ -6,9 +6,13 @@ whoever billed the tokens, so a price-list hit on that pair is a coincidence.
 ``pricing_available`` marks those rows, so a SUM over ``cost`` can say it is a
 lower bound instead of reading zero as free.
 
-Existing rows default to ``pricing_available = true``, which is accurate for
-them: every row written before this migration went to a bare provider, since
-endpoints did not exist.
+Existing rows default to ``pricing_available = true``. That is accurate about
+endpoints, since none existed before this migration, but the column also
+means "genai-prices knew this model", and historic rows for models it did not
+know are backfilled ``true`` and will under-count in ``unpriced_calls``.
+Backfilling those correctly would mean re-running the price lookup per row;
+the counter is a completeness hint rather than an audit, so it is not worth
+it.
 
 Revision ID: 045
 Revises: 044

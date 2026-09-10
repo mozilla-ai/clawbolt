@@ -51,7 +51,8 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `memory_documents` | Structured memory and compaction history |
 | `heartbeat_logs` | Heartbeat send log |
 | `idempotency_keys` | Webhook deduplication |
-| `llm_usage_logs` | Token usage tracking |
+| `llm_usage_logs` | Token usage tracking, with the endpoint that served each call |
+| `llm_endpoints` | Named LLM destinations: dialect, base URL, own credential, capabilities |
 | `tool_configs` | Per-user tool configuration |
 | `calendar_configs` | Per-user calendar integration settings |
 | `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, Google Drive, QuickBooks, etc.) |

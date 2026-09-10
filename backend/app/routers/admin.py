@@ -907,6 +907,7 @@ async def get_user_llm_usage_logs(
             LLMUsageLogItem(
                 id=log.id,
                 timestamp=log.created_at.isoformat() if log.created_at else "",
+                endpoint=log.endpoint,
                 provider=log.provider,
                 model=log.model,
                 purpose=log.purpose,
@@ -914,6 +915,7 @@ async def get_user_llm_usage_logs(
                 output_tokens=log.output_tokens,
                 total_tokens=log.total_tokens,
                 cost_usd=str(log.cost),
+                pricing_available=log.pricing_available,
                 cache_creation_input_tokens=log.cache_creation_input_tokens,
                 cache_read_input_tokens=log.cache_read_input_tokens,
             )

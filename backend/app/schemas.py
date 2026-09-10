@@ -3,8 +3,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, SecretStr
 
 # The reasoning effort levels the product understands, in ascending order.
-# ``services.llm_service.REASONING_EFFORT_VALUES`` derives its tuple from this
-# so the two cannot drift.
+# ``services.llm_service.REASONING_EFFORT_VALUES`` derives its tuple from this,
+# so those two cannot drift from each other. It is deliberately a subset of
+# any-llm's own ``ReasoningEffort``, which also accepts ``"max"``: adding a
+# level here means deciding what budget it maps to in ``_EFFORT_TO_BUDGET``.
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "auto"]
 
 
@@ -280,7 +282,7 @@ class ModelConfigUpdate(BaseModel):
     compaction_model: str | None = None
     compaction_endpoint: str | None = None
     compaction_provider: str | None = None
-    reasoning_effort: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class LLMEndpointItem(BaseModel):
@@ -1142,6 +1144,8 @@ class AdminHeartbeatLogListResponse(BaseModel):
 class LLMUsageLogItem(BaseModel):
     id: int
     timestamp: str
+    """Named endpoint that served the call, empty for a bare provider."""
+    endpoint: str = ""
     provider: str
     model: str
     purpose: str
@@ -1149,6 +1153,8 @@ class LLMUsageLogItem(BaseModel):
     output_tokens: int
     total_tokens: int
     cost_usd: str
+    """Zero and meaningless when ``pricing_available`` is false."""
+    pricing_available: bool = True
     cache_creation_input_tokens: int | None
     cache_read_input_tokens: int | None
 

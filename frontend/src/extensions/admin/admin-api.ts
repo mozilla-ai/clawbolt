@@ -494,7 +494,9 @@ export interface LLMEndpointUpsert {
   notes?: string;
 }
 
-/** Sentinel the API treats as "no change" for a stored secret. */
+/** Sentinel the API treats as "no change" for a stored secret.
+ *  Must match ``backend.app.config_store.MASK``; there is no shared source,
+ *  so changing one means changing the other. */
 export const SECRET_MASK = '********';
 
 export async function listLLMEndpoints(): Promise<LLMEndpointItem[]> {
