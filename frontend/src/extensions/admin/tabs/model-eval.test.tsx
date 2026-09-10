@@ -29,7 +29,7 @@ vi.mock('../llm-picker', () => ({
   LLMProviderSelect: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <input aria-label="provider" value={value} onChange={e => onChange(e.target.value)} />
   ),
-  LLMModelSelect: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+  LLMModelField: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <input aria-label="model" value={value} onChange={e => onChange(e.target.value)} />
   ),
   LLMEndpointSelect: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (

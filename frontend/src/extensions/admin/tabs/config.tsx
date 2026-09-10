@@ -16,7 +16,7 @@ import {
 } from '../admin-api';
 import {
   LLMEndpointSelect,
-  LLMModelSelect,
+  LLMModelField,
   LLMProviderSelect,
   ReasoningEffortSelect,
 } from '../llm-picker';
@@ -82,10 +82,14 @@ function StatusPill({ ok, children }: { ok: boolean; children: ReactNode }) {
 // ---------------------------------------------------------------------------
 
 export default function ConfigTab() {
+  // Bumped whenever the editor writes, so the endpoint <select> in the
+  // section below refetches. They are siblings, and a new endpoint that
+  // cannot be selected until a page reload reads as a failed save.
+  const [endpointsVersion, setEndpointsVersion] = useState(0);
   return (
     <div className="space-y-8">
-      <LLMEndpointsSection />
-      <LLMSection />
+      <LLMEndpointsSection onChanged={() => setEndpointsVersion(v => v + 1)} />
+      <LLMSection endpointsVersion={endpointsVersion} />
       <ChannelsSection />
     </div>
   );
@@ -120,7 +124,7 @@ const BLANK_ENDPOINT: LLMEndpointUpsert = {
   notes: '',
 };
 
-function LLMEndpointsSection() {
+function LLMEndpointsSection({ onChanged }: { onChanged: () => void }) {
   const [items, setItems] = useState<LLMEndpointItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -165,6 +169,7 @@ function LLMEndpointsSection() {
       toast.success(`Endpoint ${draft.name} saved`);
       setDraft(null);
       load();
+      onChanged();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -177,6 +182,7 @@ function LLMEndpointsSection() {
       await deleteLLMEndpoint(name);
       toast.success(`Endpoint ${name} deleted`);
       load();
+      onChanged();
     } catch (e) {
       // The likely failure is the 409 saying something still selects it,
       // which is acted on by changing that selection first.
@@ -353,7 +359,7 @@ function LLMEndpointsSection() {
 // Global LLM default. Per-user overrides live on the user detail page.
 // ---------------------------------------------------------------------------
 
-function LLMSection() {
+function LLMSection({ endpointsVersion }: { endpointsVersion: number }) {
   const [config, setConfig] = useState<AdminLLMConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -371,7 +377,9 @@ function LLMSection() {
 
   return (
     <SectionShell title="LLM (global default)" loading={loading} error={error} onRetry={load}>
-      {config && <LLMForm config={config} onUpdated={setConfig} />}
+      {config && (
+        <LLMForm config={config} onUpdated={setConfig} endpointsVersion={endpointsVersion} />
+      )}
     </SectionShell>
   );
 }
@@ -379,9 +387,11 @@ function LLMSection() {
 function LLMForm({
   config,
   onUpdated,
+  endpointsVersion,
 }: {
   config: AdminLLMConfig;
   onUpdated: (next: AdminLLMConfig) => void;
+  endpointsVersion: number;
 }) {
   const [endpoint, setEndpoint] = useState(config.llm_endpoint);
   const [provider, setProvider] = useState(config.llm_provider);
@@ -463,7 +473,12 @@ function LLMForm({
           <label htmlFor="llm-endpoint" className="text-xs text-muted-foreground block mb-1">
             Endpoint
           </label>
-          <LLMEndpointSelect id="llm-endpoint" value={endpoint} onChange={handleEndpointChange} />
+          <LLMEndpointSelect
+            id="llm-endpoint"
+            value={endpoint}
+            onChange={handleEndpointChange}
+            refreshKey={endpointsVersion}
+          />
           <p className="text-[11px] text-muted-foreground mt-1">
             A named destination carries its own dialect, credential, and capabilities. Selecting one
             supersedes the provider and base URL below.
@@ -486,8 +501,9 @@ function LLMForm({
           <label htmlFor="llm-model" className="text-xs text-muted-foreground block mb-1">
             Model
           </label>
-          <LLMModelSelect
+          <LLMModelField
             id="llm-model"
+            endpoint={endpoint}
             provider={provider}
             value={model}
             onChange={setModel}

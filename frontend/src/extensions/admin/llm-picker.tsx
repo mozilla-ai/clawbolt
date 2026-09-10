@@ -275,6 +275,10 @@ interface LLMEndpointSelectProps {
   /** Label for the "no endpoint, use a provider directly" option. */
   emptyLabel?: string;
   disabled?: boolean;
+  /** Bump to refetch. The editor and this select are siblings, so creating
+   *  an endpoint has to tell the select to look again; without it the new
+   *  endpoint stays unselectable until a full page reload. */
+  refreshKey?: number;
 }
 
 export function LLMEndpointSelect({
@@ -283,6 +287,7 @@ export function LLMEndpointSelect({
   onChange,
   emptyLabel = 'Direct to provider',
   disabled,
+  refreshKey = 0,
 }: LLMEndpointSelectProps) {
   const [endpoints, setEndpoints] = useState<LLMEndpointItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -292,7 +297,7 @@ export function LLMEndpointSelect({
       .then(setEndpoints)
       .catch(() => setEndpoints([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [refreshKey]);
 
   if (loading) {
     return (
@@ -372,5 +377,62 @@ export function ReasoningEffortSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model field that copes with an endpoint being selected.
+//
+// Model enumeration goes through the provider, and the listing endpoint
+// deliberately refuses a caller-supplied base URL for a hosted provider, so
+// there is no way to ask a gateway what it serves. Rather than show a picker
+// stuck on "pick a provider first", an endpoint gets a free-text field: the
+// operator types the model id the gateway exposes.
+// ---------------------------------------------------------------------------
+
+interface LLMModelFieldProps {
+  id?: string;
+  endpoint: string;
+  provider: string;
+  value: string;
+  onChange: (next: string) => void;
+  allowEmpty?: boolean;
+  emptyLabel?: string;
+}
+
+export function LLMModelField({
+  id,
+  endpoint,
+  provider,
+  value,
+  onChange,
+  allowEmpty,
+  emptyLabel,
+}: LLMModelFieldProps) {
+  if (!endpoint) {
+    return (
+      <LLMModelSelect
+        id={id}
+        provider={provider}
+        value={value}
+        onChange={onChange}
+        allowEmpty={allowEmpty}
+        emptyLabel={emptyLabel}
+      />
+    );
+  }
+  return (
+    <div>
+      <input
+        id={id}
+        className={inputClass}
+        placeholder="model id"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+      <p className="text-[11px] text-muted-foreground mt-1">
+        An endpoint cannot be asked what it serves, so type the model id it exposes.
+      </p>
+    </div>
   );
 }

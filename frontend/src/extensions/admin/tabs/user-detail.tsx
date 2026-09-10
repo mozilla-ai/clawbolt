@@ -28,7 +28,7 @@ import {
   SharedMemoryView,
   SharedProfileView,
 } from './shared';
-import { LLMEndpointSelect, LLMModelSelect, LLMProviderSelect } from '../llm-picker';
+import { LLMEndpointSelect, LLMModelField, LLMProviderSelect } from '../llm-picker';
 import ConfirmDialog from '../ConfirmDialog';
 import ConsentBadge from '../components/ConsentBadge';
 import {
@@ -754,8 +754,9 @@ function UserLLMOverrideSection({ userId }: { userId: string }) {
           >
             Model override
           </label>
-          <LLMModelSelect
+          <LLMModelField
             id="user-llm-model"
+            endpoint={endpointInput}
             provider={lookupProvider}
             value={modelInput}
             onChange={setModelInput}

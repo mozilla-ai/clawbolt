@@ -13,7 +13,7 @@ import {
 import ConfirmDialog from '../ConfirmDialog';
 import {
   LLMEndpointSelect,
-  LLMModelSelect,
+  LLMModelField,
   LLMProviderSelect,
   ReasoningEffortSelect,
 } from '../llm-picker';
@@ -335,7 +335,8 @@ export default function ModelEvalTab() {
 
           <label className="block">
             <span className="mb-1 block text-sm text-muted-foreground">Candidate model</span>
-            <LLMModelSelect
+            <LLMModelField
+              endpoint={endpoint}
               provider={provider}
               value={model}
               onChange={setModel}
