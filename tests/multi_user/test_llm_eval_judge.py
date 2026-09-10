@@ -26,6 +26,7 @@ from backend.app.services.llm_eval.types import (
     ReplaySample,
     ToolCall,
 )
+from backend.app.services.llm_service import LLMTarget
 
 
 class _Response:
@@ -83,8 +84,7 @@ async def _judge(seq: int, mock: AsyncMock) -> tuple[JudgeVerdict, str]:
             ReplaySample(seq=seq, timestamp="", message_context=TURN_TEXT),
             BASELINE,
             CANDIDATE,
-            provider="anthropic",
-            model="incumbent",
+            target=LLMTarget(provider="anthropic", model="incumbent"),
         )
 
 

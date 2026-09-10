@@ -28,7 +28,7 @@ from backend.app.billing.quota import (
 )
 from backend.app.channels import is_bluebubbles_configured, reset_channel_clients
 from backend.app.config import settings, update_settings
-from backend.app.config_store import get_settings_store, strip_unchanged_secrets
+from backend.app.config_store import MASK, get_settings_store, strip_unchanged_secrets
 from backend.app.database import get_async_db
 from backend.app.models import (
     AdminApiKey,
@@ -36,6 +36,7 @@ from backend.app.models import (
     ChatSession,
     HeartbeatLog,
     IdempotencyKey,
+    LLMEndpoint,
     LLMPayloadCapture,
     LLMUsageLog,
     Message,
@@ -78,6 +79,9 @@ from backend.app.schemas import (
     CompactUserContextResponse,
     DeleteResponse,
     HygieneCompactMemoryResponse,
+    LLMEndpointItem,
+    LLMEndpointListResponse,
+    LLMEndpointUpsert,
     LLMUsageLogItem,
     LLMUsageLogListResponse,
     StagedMediaItem,
@@ -107,6 +111,13 @@ from backend.app.services.admin_audit import (
     audit_admin,
 )
 from backend.app.services.email_service import send_waitlist_approved
+from backend.app.services.llm_endpoints import (
+    count_endpoint_pins,
+    delete_endpoint,
+    endpoint_selectors,
+    list_endpoints,
+    upsert_endpoint,
+)
 from backend.app.services.llm_payload_capture import purge_user_captures
 from backend.app.services.llm_service import get_configured_providers, get_models
 from backend.app.services.telegram_webhook import register_webhook, unregister_webhook
@@ -1625,14 +1636,18 @@ async def unregister_telegram_webhook_endpoint(
 # ---------------------------------------------------------------------------
 
 
-_LLM_GLOBAL_FIELDS: frozenset[str] = frozenset({"llm_provider", "llm_model", "llm_api_base"})
+_LLM_GLOBAL_FIELDS: frozenset[str] = frozenset(
+    {"llm_endpoint", "llm_provider", "llm_model", "llm_api_base", "reasoning_effort"}
+)
 
 
 def _build_llm_config_response() -> AdminLLMConfigResponse:
     return AdminLLMConfigResponse(
+        llm_endpoint=settings.llm_endpoint,
         llm_provider=settings.llm_provider,
         llm_model=settings.llm_model,
         llm_api_base=settings.llm_api_base,
+        reasoning_effort=settings.reasoning_effort,
     )
 
 
@@ -1670,17 +1685,120 @@ async def update_admin_llm_config(
     return _build_llm_config_response()
 
 
+def _endpoint_item(row: LLMEndpoint) -> LLMEndpointItem:
+    """Serialize an endpoint. The stored key is reported as a boolean only."""
+    return LLMEndpointItem(
+        name=row.name,
+        dialect=row.dialect,
+        base_url=row.base_url,
+        api_key_set=bool(row.api_key),
+        cache_control=row.cache_control,
+        reasoning=row.reasoning,
+        pricing=row.pricing,
+        notes=row.notes,
+    )
+
+
+@router.get("/config/llm/endpoints", response_model=LLMEndpointListResponse)
+async def list_admin_llm_endpoints(
+    _ctx: AdminAuditContext = Depends(audit_admin(AdminAction.VIEW_LLM_ENDPOINTS)),
+) -> LLMEndpointListResponse:
+    """Return every configured LLM endpoint."""
+    return LLMEndpointListResponse(items=[_endpoint_item(r) for r in await list_endpoints()])
+
+
+@router.put("/config/llm/endpoints/{name}", response_model=LLMEndpointItem)
+async def upsert_admin_llm_endpoint(
+    name: str,
+    body: LLMEndpointUpsert,
+    ctx: AdminAuditContext = Depends(audit_admin(AdminAction.UPSERT_LLM_ENDPOINT)),
+    db: AsyncSession = Depends(get_async_db),
+) -> LLMEndpointItem:
+    """Create or replace one endpoint.
+
+    Audited, unlike the settings-store path, because an endpoint names both a
+    destination for the deployment's traffic and a credential to send with
+    it. "Who pointed us at that host" has to be answerable.
+    """
+    if body.name != name:
+        raise HTTPException(status_code=400, detail="Endpoint name in path and body must match")
+    if body.dialect not in {p.name for p in get_configured_providers()}:
+        raise HTTPException(status_code=422, detail=f"Unknown dialect {body.dialect!r}")
+
+    ctx.resource_type = "llm_endpoint"
+    ctx.resource_id = name
+    # Never the key itself, and never a hint at its value: the audit log is
+    # read by more people than can set one.
+    ctx.detail = {
+        "dialect": body.dialect,
+        "base_url": body.base_url,
+        "cache_control": body.cache_control,
+        "reasoning": body.reasoning,
+        "pricing": body.pricing,
+        "api_key_changed": body.api_key is not None and body.api_key != MASK,
+    }
+
+    row = await upsert_endpoint(
+        db,
+        name=name,
+        dialect=body.dialect,
+        base_url=body.base_url,
+        api_key=body.api_key,
+        cache_control=body.cache_control,
+        reasoning=body.reasoning,
+        pricing=body.pricing,
+        notes=body.notes,
+    )
+    return _endpoint_item(row)
+
+
+@router.delete("/config/llm/endpoints/{name}", status_code=204)
+async def delete_admin_llm_endpoint(
+    name: str,
+    ctx: AdminAuditContext = Depends(audit_admin(AdminAction.DELETE_LLM_ENDPOINT)),
+    db: AsyncSession = Depends(get_async_db),
+) -> None:
+    """Remove an endpoint, unless something still selects it."""
+    ctx.resource_type = "llm_endpoint"
+    ctx.resource_id = name
+
+    in_use = endpoint_selectors(name)
+    if in_use:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Endpoint {name!r} is still selected by: {', '.join(in_use)}",
+        )
+    pinned = await count_endpoint_pins(db, name)
+    if pinned:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Endpoint {name!r} is still pinned on {pinned} user override(s)",
+        )
+    if not await delete_endpoint(db, name):
+        raise HTTPException(status_code=404, detail=f"Endpoint {name!r} not found")
+
+
 def _override_response(sub: Subscription) -> AdminUserLLMOverrideResponse:
     """Build a response showing both the override and the effective values.
 
     Empty override fields mean "fall back to global". The effective
     fields tell the admin exactly what the agent will use for this user.
     """
+    # Endpoint and provider are inherited as a pair (see
+    # ``ClawboltAgent._resolve_target``), so the effective values must be
+    # computed as a pair too. Reporting them field by field would tell an
+    # admin who pinned a bare provider that the global endpoint still
+    # applies, which is the opposite of what the agent will do.
+    pinned = bool(sub.llm_endpoint_override or sub.llm_provider_override)
+    effective_endpoint = sub.llm_endpoint_override if pinned else settings.llm_endpoint
+    effective_provider = sub.llm_provider_override if pinned else settings.llm_provider
     return AdminUserLLMOverrideResponse(
         user_id=sub.user_id,
+        llm_endpoint_override=sub.llm_endpoint_override or "",
         llm_provider_override=sub.llm_provider_override or "",
         llm_model_override=sub.llm_model_override or "",
-        effective_llm_provider=sub.llm_provider_override or settings.llm_provider,
+        effective_llm_endpoint=effective_endpoint,
+        effective_llm_provider=effective_provider,
         effective_llm_model=sub.llm_model_override or settings.llm_model,
     )
 
@@ -1743,6 +1861,11 @@ async def update_user_llm_config(
 
     payload = body.model_dump(exclude_unset=True)
     changed: list[str] = []
+    if "llm_endpoint_override" in payload:
+        new_value = payload["llm_endpoint_override"] or ""
+        if new_value != sub.llm_endpoint_override:
+            sub.llm_endpoint_override = new_value
+            changed.append("llm_endpoint_override")
     if "llm_provider_override" in payload:
         new_value = payload["llm_provider_override"] or ""
         if new_value != sub.llm_provider_override:

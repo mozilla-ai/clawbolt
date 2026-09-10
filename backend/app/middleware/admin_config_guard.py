@@ -29,6 +29,11 @@ _PUT_PROTECTED_PATHS: set[str] = {
     "/api/user/channels/config",
 }
 
+# Prefixes whose every write is admin-only. An LLM endpoint is a credential
+# and a destination for the whole deployment's traffic, so it is guarded like
+# the model config it feeds, and by prefix because the name is in the path.
+_PROTECTED_PREFIXES: tuple[str, ...] = ("/api/user/model/endpoints",)
+
 # Paths that only admins may read. The model config exposes the LLM
 # provider/model the platform is using; in a multi-tenant deployment we treat
 # that as an admin-only operational detail, not a per-tenant setting. The
@@ -36,6 +41,7 @@ _PUT_PROTECTED_PATHS: set[str] = {
 # and integration wiring, so it sits behind the same admin gate.
 _GET_PROTECTED_PATHS: set[str] = {
     "/api/user/model/config",
+    "/api/user/model/endpoints",
     "/api/user/conversation/system-prompt",
 }
 
@@ -58,8 +64,10 @@ class AdminConfigGuardMiddleware:
         method = scope.get("method", "")
         path = scope.get("path", "")
 
-        is_protected = (method == "PUT" and path in _PUT_PROTECTED_PATHS) or (
-            method == "GET" and path in _GET_PROTECTED_PATHS
+        is_protected = (
+            (method == "PUT" and path in _PUT_PROTECTED_PATHS)
+            or (method == "GET" and path in _GET_PROTECTED_PATHS)
+            or (method in ("PUT", "POST", "DELETE") and path.startswith(_PROTECTED_PREFIXES))
         )
         if not is_protected:
             await self.app(scope, receive, send)

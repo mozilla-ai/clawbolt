@@ -24,7 +24,12 @@ from backend.app.agent.system_prompt import (
     to_local_time,
 )
 from backend.app.models import User
-from backend.app.services.llm_service import prepare_system_with_caching
+from backend.app.services.llm_service import LLMTarget, prepare_system_with_caching
+
+
+def _anthropic_target() -> LLMTarget:
+    """A target that honors cache markers, which is what this test is about."""
+    return LLMTarget(provider="anthropic", model="test-model", honors_cache_control=True)
 
 
 class TestSystemPromptBuilder:
@@ -129,7 +134,7 @@ class TestBuildParts:
 
     def test_prepare_system_single_cached_block(self) -> None:
         """prepare_system_with_caching wraps the whole string in one cached block."""
-        blocks = prepare_system_with_caching("Just a plain prompt", "anthropic")
+        blocks = prepare_system_with_caching("Just a plain prompt", _anthropic_target())
         assert isinstance(blocks, list)
         assert len(blocks) == 1
         assert "cache_control" in blocks[0]

@@ -899,6 +899,106 @@
         }
       }
     },
+    "/api/user/model/endpoints": {
+      "get": {
+        "summary": "List Llm Endpoints",
+        "description": "Return every configured LLM endpoint.",
+        "operationId": "list_llm_endpoints_api_user_model_endpoints_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMEndpointListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/model/endpoints/{name}": {
+      "put": {
+        "summary": "Upsert Llm Endpoint",
+        "description": "Create or replace one endpoint.\n\nAn endpoint holds a credential and a destination, so this sits behind the\nsame admin gate as the rest of the model config (see\n``middleware.admin_config_guard``). Without that gate a tenant could\npoint the deployment's traffic at a host of their choosing.",
+        "operationId": "upsert_llm_endpoint_api_user_model_endpoints__name__put",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMEndpointUpsert"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMEndpointItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Llm Endpoint",
+        "description": "Remove an endpoint, unless something still selects it.",
+        "operationId": "delete_llm_endpoint_api_user_model_endpoints__name__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/providers": {
       "get": {
         "summary": "List Providers",
@@ -2885,6 +2985,115 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/config/llm/endpoints": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Admin Llm Endpoints",
+        "description": "Return every configured LLM endpoint.",
+        "operationId": "list_admin_llm_endpoints_api_admin_config_llm_endpoints_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMEndpointListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/config/llm/endpoints/{name}": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Upsert Admin Llm Endpoint",
+        "description": "Create or replace one endpoint.\n\nAudited, unlike the settings-store path, because an endpoint names both a\ndestination for the deployment's traffic and a credential to send with\nit. \"Who pointed us at that host\" has to be answerable.",
+        "operationId": "upsert_admin_llm_endpoint_api_admin_config_llm_endpoints__name__put",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMEndpointUpsert"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMEndpointItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Admin Llm Endpoint",
+        "description": "Remove an endpoint, unless something still selects it.",
+        "operationId": "delete_admin_llm_endpoint_api_admin_config_llm_endpoints__name__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -5459,6 +5668,11 @@
       },
       "AdminLLMConfigResponse": {
         "properties": {
+          "llm_endpoint": {
+            "type": "string",
+            "title": "Llm Endpoint",
+            "default": ""
+          },
           "llm_provider": {
             "type": "string",
             "title": "Llm Provider"
@@ -5477,6 +5691,11 @@
               }
             ],
             "title": "Llm Api Base"
+          },
+          "reasoning_effort": {
+            "type": "string",
+            "title": "Reasoning Effort",
+            "default": "auto"
           }
         },
         "type": "object",
@@ -5489,6 +5708,17 @@
       },
       "AdminLLMConfigUpdate": {
         "properties": {
+          "llm_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Endpoint"
+          },
           "llm_provider": {
             "anyOf": [
               {
@@ -5521,6 +5751,26 @@
               }
             ],
             "title": "Llm Api Base"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "auto"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
           }
         },
         "type": "object",
@@ -5633,6 +5883,11 @@
             "title": "Pricing Available",
             "default": true
           },
+          "pricing_unknown_reason": {
+            "type": "string",
+            "title": "Pricing Unknown Reason",
+            "default": ""
+          },
           "latency_p50_ms": {
             "type": "number",
             "title": "Latency P50 Ms",
@@ -5676,17 +5931,67 @@
       },
       "AdminLLMEvalRunCreate": {
         "properties": {
+          "candidate_endpoint": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Candidate Endpoint",
+            "default": ""
+          },
           "candidate_provider": {
             "type": "string",
             "maxLength": 64,
-            "minLength": 1,
-            "title": "Candidate Provider"
+            "title": "Candidate Provider",
+            "default": ""
           },
           "candidate_model": {
             "type": "string",
             "maxLength": 128,
             "minLength": 1,
             "title": "Candidate Model"
+          },
+          "baseline_reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "auto"
+                ]
+              },
+              {
+                "type": "string",
+                "const": ""
+              }
+            ],
+            "title": "Baseline Reasoning Effort",
+            "default": ""
+          },
+          "candidate_reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "auto"
+                ]
+              },
+              {
+                "type": "string",
+                "const": ""
+              }
+            ],
+            "title": "Candidate Reasoning Effort",
+            "default": ""
           },
           "sample_count": {
             "type": "integer",
@@ -5702,7 +6007,6 @@
         },
         "type": "object",
         "required": [
-          "candidate_provider",
           "candidate_model"
         ],
         "title": "AdminLLMEvalRunCreate",
@@ -5728,6 +6032,11 @@
             "title": "User Consented",
             "default": true
           },
+          "baseline_endpoint": {
+            "type": "string",
+            "title": "Baseline Endpoint",
+            "default": ""
+          },
           "baseline_provider": {
             "type": "string",
             "title": "Baseline Provider"
@@ -5736,6 +6045,16 @@
             "type": "string",
             "title": "Baseline Model"
           },
+          "baseline_reasoning_effort": {
+            "type": "string",
+            "title": "Baseline Reasoning Effort",
+            "default": ""
+          },
+          "candidate_endpoint": {
+            "type": "string",
+            "title": "Candidate Endpoint",
+            "default": ""
+          },
           "candidate_provider": {
             "type": "string",
             "title": "Candidate Provider"
@@ -5743,6 +6062,11 @@
           "candidate_model": {
             "type": "string",
             "title": "Candidate Model"
+          },
+          "candidate_reasoning_effort": {
+            "type": "string",
+            "title": "Candidate Reasoning Effort",
+            "default": ""
           },
           "judge_model": {
             "type": "string",
@@ -6393,6 +6717,11 @@
             "type": "string",
             "title": "User Id"
           },
+          "llm_endpoint_override": {
+            "type": "string",
+            "title": "Llm Endpoint Override",
+            "default": ""
+          },
           "llm_provider_override": {
             "type": "string",
             "title": "Llm Provider Override"
@@ -6400,6 +6729,11 @@
           "llm_model_override": {
             "type": "string",
             "title": "Llm Model Override"
+          },
+          "effective_llm_endpoint": {
+            "type": "string",
+            "title": "Effective Llm Endpoint",
+            "default": ""
           },
           "effective_llm_provider": {
             "type": "string",
@@ -6423,6 +6757,17 @@
       },
       "AdminUserLLMOverrideUpdate": {
         "properties": {
+          "llm_endpoint_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Endpoint Override"
+          },
           "llm_provider_override": {
             "anyOf": [
               {
@@ -7627,6 +7972,148 @@
         "title": "IntegrationConnectionResponse",
         "description": "Result of a connect/disconnect on a web-form integration."
       },
+      "LLMEndpointItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "dialect": {
+            "type": "string",
+            "title": "Dialect"
+          },
+          "base_url": {
+            "type": "string",
+            "title": "Base Url"
+          },
+          "api_key_set": {
+            "type": "boolean",
+            "title": "Api Key Set",
+            "default": false
+          },
+          "cache_control": {
+            "type": "string",
+            "title": "Cache Control",
+            "default": "auto"
+          },
+          "reasoning": {
+            "type": "string",
+            "title": "Reasoning",
+            "default": "auto"
+          },
+          "pricing": {
+            "type": "string",
+            "title": "Pricing",
+            "default": "auto"
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "dialect",
+          "base_url"
+        ],
+        "title": "LLMEndpointItem",
+        "description": "One configured endpoint. ``api_key`` is never returned in cleartext."
+      },
+      "LLMEndpointListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LLMEndpointItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "LLMEndpointListResponse"
+      },
+      "LLMEndpointUpsert": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "title": "Name"
+          },
+          "dialect": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Dialect"
+          },
+          "base_url": {
+            "type": "string",
+            "maxLength": 512,
+            "title": "Base Url",
+            "default": ""
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "cache_control": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "title": "Cache Control",
+            "default": "auto"
+          },
+          "reasoning": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "thinking",
+              "effort",
+              "none"
+            ],
+            "title": "Reasoning",
+            "default": "auto"
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "unpriced"
+            ],
+            "title": "Pricing",
+            "default": "auto"
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Notes",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "dialect"
+        ],
+        "title": "LLMEndpointUpsert",
+        "description": "Create or replace one endpoint.\n\n``api_key`` accepts the ``MASK`` sentinel to mean \"leave the stored key\nalone\", so the form can be re-submitted without the operator retyping a\nsecret the UI never showed them."
+      },
       "LLMUsageByPurpose": {
         "properties": {
           "purpose": {
@@ -7865,6 +8352,10 @@
       },
       "ModelConfigResponse": {
         "properties": {
+          "llm_endpoint": {
+            "type": "string",
+            "title": "Llm Endpoint"
+          },
           "llm_provider": {
             "type": "string",
             "title": "Llm Provider"
@@ -7888,6 +8379,10 @@
             "type": "string",
             "title": "Vision Model"
           },
+          "vision_endpoint": {
+            "type": "string",
+            "title": "Vision Endpoint"
+          },
           "vision_provider": {
             "type": "string",
             "title": "Vision Provider"
@@ -7896,6 +8391,10 @@
             "type": "string",
             "title": "Heartbeat Model"
           },
+          "heartbeat_endpoint": {
+            "type": "string",
+            "title": "Heartbeat Endpoint"
+          },
           "heartbeat_provider": {
             "type": "string",
             "title": "Heartbeat Provider"
@@ -7903,6 +8402,10 @@
           "compaction_model": {
             "type": "string",
             "title": "Compaction Model"
+          },
+          "compaction_endpoint": {
+            "type": "string",
+            "title": "Compaction Endpoint"
           },
           "compaction_provider": {
             "type": "string",
@@ -7915,14 +8418,18 @@
         },
         "type": "object",
         "required": [
+          "llm_endpoint",
           "llm_provider",
           "llm_model",
           "llm_api_base",
           "vision_model",
+          "vision_endpoint",
           "vision_provider",
           "heartbeat_model",
+          "heartbeat_endpoint",
           "heartbeat_provider",
           "compaction_model",
+          "compaction_endpoint",
           "compaction_provider",
           "reasoning_effort"
         ],
@@ -7930,6 +8437,17 @@
       },
       "ModelConfigUpdate": {
         "properties": {
+          "llm_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Endpoint"
+          },
           "llm_provider": {
             "anyOf": [
               {
@@ -7974,6 +8492,17 @@
             ],
             "title": "Vision Model"
           },
+          "vision_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vision Endpoint"
+          },
           "vision_provider": {
             "anyOf": [
               {
@@ -7996,6 +8525,17 @@
             ],
             "title": "Heartbeat Model"
           },
+          "heartbeat_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Endpoint"
+          },
           "heartbeat_provider": {
             "anyOf": [
               {
@@ -8017,6 +8557,17 @@
               }
             ],
             "title": "Compaction Model"
+          },
+          "compaction_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compaction Endpoint"
           },
           "compaction_provider": {
             "anyOf": [

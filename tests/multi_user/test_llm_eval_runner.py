@@ -39,9 +39,19 @@ from backend.app.services.llm_eval.types import (
 )
 
 
-def _make_run(db: Session, user_id: str, *, samples: int = 3, judge: bool = False) -> int:
+def _make_run(
+    db: Session,
+    user_id: str,
+    *,
+    samples: int = 3,
+    judge: bool = False,
+    baseline_effort: str = "",
+    candidate_effort: str = "",
+) -> int:
     run = LLMEvalRun(
         user_id=user_id,
+        baseline_reasoning_effort=baseline_effort,
+        candidate_reasoning_effort=candidate_effort,
         baseline_provider="anthropic",
         baseline_model="incumbent",
         candidate_provider="anthropic",
@@ -170,6 +180,33 @@ async def test_run_writes_a_turn_row_per_sample_and_completes(
     assert {t.message_seq for t in turns} == {1, 2, 3}
     stored = json.loads(turns[0].baseline_tool_calls)
     assert stored[0]["name"] == "lookup"
+
+
+@pytest.mark.asyncio()
+async def test_each_side_is_called_with_its_own_reasoning_effort(
+    db_session: Session, test_user: User
+) -> None:
+    """The run's two recorded efforts must reach the two calls separately.
+
+    Holding both sides to one value measures the value rather than the
+    candidate, and an endpoint that spells reasoning differently can refuse
+    the incumbent's spelling outright.
+    """
+    run_id = _make_run(
+        db_session, test_user.id, samples=1, baseline_effort="high", candidate_effort="none"
+    )
+    seen: list[tuple[str, str]] = []
+
+    async def record(*_args: object, **kwargs: object) -> ModelCallResult:
+        target = kwargs["target"]
+        seen.append((target.model, kwargs["reasoning_effort"]))
+        return _result(text="ok")
+
+    a, b, c, d = _patched_run(samples=_samples(1), call_side_effect=record)
+    with a, b, c, d:
+        await execute_run(run_id, concurrency=1)
+
+    assert sorted(seen) == [("candidate", "none"), ("incumbent", "high")]
 
 
 @pytest.mark.asyncio()

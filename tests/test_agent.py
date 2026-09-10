@@ -29,6 +29,7 @@ from backend.app.agent.messages import (
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.trimming import trim_messages
 from backend.app.models import User
+from backend.app.services.llm_service import UserLLMOverride
 from tests.mocks.llm import (
     extract_system_text,
     make_empty_response,
@@ -3065,8 +3066,7 @@ async def test_agent_uses_provider_and_model_override(
 
     agent = ClawboltAgent(
         user=test_user,
-        llm_provider_override="anthropic",
-        llm_model_override="claude-haiku-4-5",
+        llm_override=UserLLMOverride(provider="anthropic", model="claude-haiku-4-5"),
     )
     await agent.process_message("hi")
 
@@ -3097,8 +3097,7 @@ async def test_agent_override_falls_back_to_settings_when_field_empty(
     try:
         agent = ClawboltAgent(
             user=test_user,
-            llm_provider_override="",
-            llm_model_override="claude-haiku-4-5",
+            llm_override=UserLLMOverride(model="claude-haiku-4-5"),
         )
         await agent.process_message("hi")
         call_args = mock_amessages.call_args  # type: ignore[union-attr]

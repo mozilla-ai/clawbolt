@@ -84,6 +84,9 @@ class AdminAction(StrEnum):
 
     VIEW_LLM_CONFIG = "view_llm_config"
     UPDATE_LLM_CONFIG = "update_llm_config"
+    VIEW_LLM_ENDPOINTS = "view_llm_endpoints"
+    UPSERT_LLM_ENDPOINT = "upsert_llm_endpoint"
+    DELETE_LLM_ENDPOINT = "delete_llm_endpoint"
     VIEW_USER_LLM_OVERRIDE = "view_user_llm_override"
     UPDATE_USER_LLM_OVERRIDE = "update_user_llm_override"
     VIEW_LLM_PROVIDERS = "view_llm_providers"

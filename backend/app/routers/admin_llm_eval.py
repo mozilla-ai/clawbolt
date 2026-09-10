@@ -55,6 +55,7 @@ from backend.app.schemas import (
     AdminLLMEvalTurn,
 )
 from backend.app.services.admin_audit import AdminAction, AdminAuditContext, audit_admin
+from backend.app.services.llm_endpoints import UnknownLLMEndpointError, resolve_target
 from backend.app.services.llm_eval import launch_run
 from backend.app.services.llm_eval.metrics import BLOCKING_FINDINGS, MIN_TURNS_FOR_VERDICT
 from backend.app.services.llm_eval.types import (
@@ -88,19 +89,23 @@ async def _consenting_user(user_id: str, db: AsyncSession) -> User:
     return user
 
 
-async def _effective_models(user_id: str, db: AsyncSession) -> tuple[str, str]:
-    """Resolve the (provider, model) this user's agent loop runs on today.
+async def _effective_models(user_id: str, db: AsyncSession) -> tuple[str, str, str]:
+    """Resolve the (endpoint, provider, model) this user's loop runs on today.
 
-    Mirrors ``services.llm_resolver.user_llm_override_resolver`` plus the
-    agent's own fallback: either field of the override may be empty and
-    falls through to the global default independently.
+    Mirrors ``ClawboltAgent._resolve_target``, including its pairing rule:
+    the model falls through to the global default on its own, but endpoint
+    and provider are inherited together, so a user pinned to a bare provider
+    does not keep the global endpoint.
     """
     sub = (
         await db.execute(select(Subscription).where(Subscription.user_id == user_id))
     ).scalar_one_or_none()
-    provider = (sub.llm_provider_override if sub else "") or settings.llm_provider
     model = (sub.llm_model_override if sub else "") or settings.llm_model
-    return provider, model
+    endpoint = sub.llm_endpoint_override if sub else ""
+    provider = sub.llm_provider_override if sub else ""
+    if endpoint or provider:
+        return endpoint, provider, model
+    return settings.llm_endpoint, settings.llm_provider, model
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -121,10 +126,14 @@ def _run_item(
         user_email=user_email,
         user_consented=user_consented,
         user_id=run.user_id,
+        baseline_endpoint=run.baseline_endpoint,
         baseline_provider=run.baseline_provider,
         baseline_model=run.baseline_model,
+        baseline_reasoning_effort=run.baseline_reasoning_effort,
+        candidate_endpoint=run.candidate_endpoint,
         candidate_provider=run.candidate_provider,
         candidate_model=run.candidate_model,
+        candidate_reasoning_effort=run.candidate_reasoning_effort,
         judge_model=run.judge_model,
         requested_samples=run.requested_samples,
         status=run.status,
@@ -345,20 +354,47 @@ async def start_run(
             ),
         )
 
-    baseline_provider, baseline_model = await _effective_models(user_id, db)
+    baseline_endpoint, baseline_provider, baseline_model = await _effective_models(user_id, db)
     if not baseline_model:
         raise HTTPException(
             status_code=422,
             detail="No baseline model is configured; set the global LLM model first.",
         )
 
+    # Resolve both sides before the run row exists. An endpoint that does not
+    # exist is a 422 the operator can act on, not a run that starts, fails
+    # every turn, and reports ``inconclusive`` after spending the budget.
+    for label, endpoint, provider in (
+        ("baseline", baseline_endpoint, baseline_provider),
+        ("candidate", payload.candidate_endpoint, payload.candidate_provider),
+    ):
+        try:
+            await resolve_target(
+                endpoint=endpoint,
+                provider=provider,
+                model="probe",
+                api_base=settings.llm_api_base,
+            )
+        except UnknownLLMEndpointError as exc:
+            raise HTTPException(status_code=422, detail=f"{label}: {exc}") from exc
+
+    # An unset effort means "whatever the deployment runs at". Frozen onto
+    # the row at creation rather than read at call time, so a mid-run change
+    # to the global setting cannot silently redefine what was measured.
+    baseline_effort = payload.baseline_reasoning_effort or settings.reasoning_effort
+    candidate_effort = payload.candidate_reasoning_effort or settings.reasoning_effort
+
     run = LLMEvalRun(
         user_id=user_id,
         created_by_admin_id=ctx.admin_user_id,
+        baseline_endpoint=baseline_endpoint,
         baseline_provider=baseline_provider,
         baseline_model=baseline_model,
+        baseline_reasoning_effort=baseline_effort,
+        candidate_endpoint=payload.candidate_endpoint,
         candidate_provider=payload.candidate_provider,
         candidate_model=payload.candidate_model,
+        candidate_reasoning_effort=candidate_effort,
         # The incumbent judges, since it is the behavior being defended.
         # ``judge_turn`` blinds and shuffles the two responses so it cannot
         # simply vote for itself.
@@ -373,13 +409,15 @@ async def start_run(
 
     launch_run(run.id, concurrency=settings.llm_eval_concurrency)
     logger.info(
-        "Started LLM eval run %d for user %s: %s/%s vs %s/%s over %d turns",
+        "Started LLM eval run %d for user %s: %s/%s (%s) vs %s/%s (%s) over %d turns",
         run.id,
         user_id,
-        baseline_provider,
+        baseline_endpoint or baseline_provider,
         baseline_model,
-        payload.candidate_provider,
+        baseline_effort,
+        payload.candidate_endpoint or payload.candidate_provider,
         payload.candidate_model,
+        candidate_effort,
         payload.sample_count,
     )
     return _run_item(run)

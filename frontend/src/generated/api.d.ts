@@ -619,6 +619,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/model/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Llm Endpoints
+         * @description Return every configured LLM endpoint.
+         */
+        get: operations["list_llm_endpoints_api_user_model_endpoints_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/model/endpoints/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upsert Llm Endpoint
+         * @description Create or replace one endpoint.
+         *
+         *     An endpoint holds a credential and a destination, so this sits behind the
+         *     same admin gate as the rest of the model config (see
+         *     ``middleware.admin_config_guard``). Without that gate a tenant could
+         *     point the deployment's traffic at a host of their choosing.
+         */
+        put: operations["upsert_llm_endpoint_api_user_model_endpoints__name__put"];
+        post?: never;
+        /**
+         * Delete Llm Endpoint
+         * @description Remove an endpoint, unless something still selects it.
+         */
+        delete: operations["delete_llm_endpoint_api_user_model_endpoints__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/providers": {
         parameters: {
             query?: never;
@@ -1662,6 +1711,54 @@ export interface paths {
         put: operations["update_admin_llm_config_api_admin_config_llm_put"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/config/llm/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Admin Llm Endpoints
+         * @description Return every configured LLM endpoint.
+         */
+        get: operations["list_admin_llm_endpoints_api_admin_config_llm_endpoints_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/config/llm/endpoints/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upsert Admin Llm Endpoint
+         * @description Create or replace one endpoint.
+         *
+         *     Audited, unlike the settings-store path, because an endpoint names both a
+         *     destination for the deployment's traffic and a credential to send with
+         *     it. "Who pointed us at that host" has to be answerable.
+         */
+        put: operations["upsert_admin_llm_endpoint_api_admin_config_llm_endpoints__name__put"];
+        post?: never;
+        /**
+         * Delete Admin Llm Endpoint
+         * @description Remove an endpoint, unless something still selects it.
+         */
+        delete: operations["delete_admin_llm_endpoint_api_admin_config_llm_endpoints__name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3082,24 +3179,38 @@ export interface components {
          * @description Global default LLM (used when a user has no per-user override).
          */
         AdminLLMConfigResponse: {
+            /**
+             * Llm Endpoint
+             * @default
+             */
+            llm_endpoint: string;
             /** Llm Provider */
             llm_provider: string;
             /** Llm Model */
             llm_model: string;
             /** Llm Api Base */
             llm_api_base?: string | null;
+            /**
+             * Reasoning Effort
+             * @default auto
+             */
+            reasoning_effort: string;
         };
         /**
          * AdminLLMConfigUpdate
          * @description All fields optional. Pass only what you want to change.
          */
         AdminLLMConfigUpdate: {
+            /** Llm Endpoint */
+            llm_endpoint?: string | null;
             /** Llm Provider */
             llm_provider?: string | null;
             /** Llm Model */
             llm_model?: string | null;
             /** Llm Api Base */
             llm_api_base?: string | null;
+            /** Reasoning Effort */
+            reasoning_effort?: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "auto") | null;
         };
         /**
          * AdminLLMEvalDecision
@@ -3205,6 +3316,11 @@ export interface components {
              */
             pricing_available: boolean;
             /**
+             * Pricing Unknown Reason
+             * @default
+             */
+            pricing_unknown_reason: string;
+            /**
              * Latency P50 Ms
              * @default 0
              */
@@ -3239,10 +3355,28 @@ export interface components {
          *     user was not actually on.
          */
         AdminLLMEvalRunCreate: {
-            /** Candidate Provider */
+            /**
+             * Candidate Endpoint
+             * @default
+             */
+            candidate_endpoint: string;
+            /**
+             * Candidate Provider
+             * @default
+             */
             candidate_provider: string;
             /** Candidate Model */
             candidate_model: string;
+            /**
+             * Baseline Reasoning Effort
+             * @default
+             */
+            baseline_reasoning_effort: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "auto") | "";
+            /**
+             * Candidate Reasoning Effort
+             * @default
+             */
+            candidate_reasoning_effort: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "auto") | "";
             /**
              * Sample Count
              * @default 100
@@ -3273,14 +3407,34 @@ export interface components {
              * @default true
              */
             user_consented: boolean;
+            /**
+             * Baseline Endpoint
+             * @default
+             */
+            baseline_endpoint: string;
             /** Baseline Provider */
             baseline_provider: string;
             /** Baseline Model */
             baseline_model: string;
+            /**
+             * Baseline Reasoning Effort
+             * @default
+             */
+            baseline_reasoning_effort: string;
+            /**
+             * Candidate Endpoint
+             * @default
+             */
+            candidate_endpoint: string;
             /** Candidate Provider */
             candidate_provider: string;
             /** Candidate Model */
             candidate_model: string;
+            /**
+             * Candidate Reasoning Effort
+             * @default
+             */
+            candidate_reasoning_effort: string;
             /** Judge Model */
             judge_model: string;
             /** Requested Samples */
@@ -3634,10 +3788,20 @@ export interface components {
         AdminUserLLMOverrideResponse: {
             /** User Id */
             user_id: string;
+            /**
+             * Llm Endpoint Override
+             * @default
+             */
+            llm_endpoint_override: string;
             /** Llm Provider Override */
             llm_provider_override: string;
             /** Llm Model Override */
             llm_model_override: string;
+            /**
+             * Effective Llm Endpoint
+             * @default
+             */
+            effective_llm_endpoint: string;
             /** Effective Llm Provider */
             effective_llm_provider: string;
             /** Effective Llm Model */
@@ -3648,6 +3812,8 @@ export interface components {
          * @description Pass empty strings to clear an override and fall back to the global default.
          */
         AdminUserLLMOverrideUpdate: {
+            /** Llm Endpoint Override */
+            llm_endpoint_override?: string | null;
             /** Llm Provider Override */
             llm_provider_override?: string | null;
             /** Llm Model Override */
@@ -4198,6 +4364,92 @@ export interface components {
             /** Connected */
             connected: boolean;
         };
+        /**
+         * LLMEndpointItem
+         * @description One configured endpoint. ``api_key`` is never returned in cleartext.
+         */
+        LLMEndpointItem: {
+            /** Name */
+            name: string;
+            /** Dialect */
+            dialect: string;
+            /** Base Url */
+            base_url: string;
+            /**
+             * Api Key Set
+             * @default false
+             */
+            api_key_set: boolean;
+            /**
+             * Cache Control
+             * @default auto
+             */
+            cache_control: string;
+            /**
+             * Reasoning
+             * @default auto
+             */
+            reasoning: string;
+            /**
+             * Pricing
+             * @default auto
+             */
+            pricing: string;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+        };
+        /** LLMEndpointListResponse */
+        LLMEndpointListResponse: {
+            /** Items */
+            items: components["schemas"]["LLMEndpointItem"][];
+        };
+        /**
+         * LLMEndpointUpsert
+         * @description Create or replace one endpoint.
+         *
+         *     ``api_key`` accepts the ``MASK`` sentinel to mean "leave the stored key
+         *     alone", so the form can be re-submitted without the operator retyping a
+         *     secret the UI never showed them.
+         */
+        LLMEndpointUpsert: {
+            /** Name */
+            name: string;
+            /** Dialect */
+            dialect: string;
+            /**
+             * Base Url
+             * @default
+             */
+            base_url: string;
+            /** Api Key */
+            api_key?: string | null;
+            /**
+             * Cache Control
+             * @default auto
+             * @enum {string}
+             */
+            cache_control: "auto" | "always" | "never";
+            /**
+             * Reasoning
+             * @default auto
+             * @enum {string}
+             */
+            reasoning: "auto" | "thinking" | "effort" | "none";
+            /**
+             * Pricing
+             * @default auto
+             * @enum {string}
+             */
+            pricing: "auto" | "unpriced";
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+        };
         /** LLMUsageByPurpose */
         LLMUsageByPurpose: {
             /** Purpose */
@@ -4285,6 +4537,8 @@ export interface components {
         };
         /** ModelConfigResponse */
         ModelConfigResponse: {
+            /** Llm Endpoint */
+            llm_endpoint: string;
             /** Llm Provider */
             llm_provider: string;
             /** Llm Model */
@@ -4293,14 +4547,20 @@ export interface components {
             llm_api_base: string | null;
             /** Vision Model */
             vision_model: string;
+            /** Vision Endpoint */
+            vision_endpoint: string;
             /** Vision Provider */
             vision_provider: string;
             /** Heartbeat Model */
             heartbeat_model: string;
+            /** Heartbeat Endpoint */
+            heartbeat_endpoint: string;
             /** Heartbeat Provider */
             heartbeat_provider: string;
             /** Compaction Model */
             compaction_model: string;
+            /** Compaction Endpoint */
+            compaction_endpoint: string;
             /** Compaction Provider */
             compaction_provider: string;
             /** Reasoning Effort */
@@ -4308,6 +4568,8 @@ export interface components {
         };
         /** ModelConfigUpdate */
         ModelConfigUpdate: {
+            /** Llm Endpoint */
+            llm_endpoint?: string | null;
             /** Llm Provider */
             llm_provider?: string | null;
             /** Llm Model */
@@ -4316,14 +4578,20 @@ export interface components {
             llm_api_base?: string | null;
             /** Vision Model */
             vision_model?: string | null;
+            /** Vision Endpoint */
+            vision_endpoint?: string | null;
             /** Vision Provider */
             vision_provider?: string | null;
             /** Heartbeat Model */
             heartbeat_model?: string | null;
+            /** Heartbeat Endpoint */
+            heartbeat_endpoint?: string | null;
             /** Heartbeat Provider */
             heartbeat_provider?: string | null;
             /** Compaction Model */
             compaction_model?: string | null;
+            /** Compaction Endpoint */
+            compaction_endpoint?: string | null;
             /** Compaction Provider */
             compaction_provider?: string | null;
             /** Reasoning Effort */
@@ -6366,6 +6634,90 @@ export interface operations {
             };
         };
     };
+    list_llm_endpoints_api_user_model_endpoints_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMEndpointListResponse"];
+                };
+            };
+        };
+    };
+    upsert_llm_endpoint_api_user_model_endpoints__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LLMEndpointUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMEndpointItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_llm_endpoint_api_user_model_endpoints__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_providers_api_user_providers_get: {
         parameters: {
             query?: never;
@@ -7819,6 +8171,90 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AdminLLMConfigResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_admin_llm_endpoints_api_admin_config_llm_endpoints_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMEndpointListResponse"];
+                };
+            };
+        };
+    };
+    upsert_admin_llm_endpoint_api_admin_config_llm_endpoints__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LLMEndpointUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMEndpointItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_admin_llm_endpoint_api_admin_config_llm_endpoints__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -18,6 +18,7 @@ from backend.app.agent.events import (
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import User
+from backend.app.services.llm_service import UserLLMOverride
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -212,7 +213,7 @@ class TestDynamicContentCachePlacement:
         stamped for a provider that serves the Messages API natively, and the
         default test settings leave ``llm_provider`` empty.
         """
-        return ClawboltAgent(user=test_user, llm_provider_override="anthropic")
+        return ClawboltAgent(user=test_user, llm_override=UserLLMOverride(provider="anthropic"))
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.core.amessages")

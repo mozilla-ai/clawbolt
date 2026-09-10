@@ -13,6 +13,8 @@ from pydantic import ValidationError
 
 from backend.app.config import Settings
 from backend.app.services.llm_service import (
+    LLMTarget,
+    UserLLMOverride,
     _cache_control,
     apply_history_cache_breakpoint,
     apply_in_turn_cache_breakpoint,
@@ -24,8 +26,21 @@ from backend.app.services.llm_service import (
     set_user_llm_resolver,
 )
 
+
 # Any provider that serves the Messages API natively, so the markers are stamped.
-_CACHING_PROVIDER = "anthropic"
+def _target(provider: str = "anthropic") -> LLMTarget:
+    """A target for *provider*, carrying the marker decision it implies.
+
+    The four stamping helpers take a target rather than a provider name now,
+    because a gateway's dialect no longer decides the answer on its own. The
+    decision is still derived here so these tests keep asserting the
+    provider-driven default rather than a hand-set boolean.
+    """
+    return LLMTarget(
+        provider=provider,
+        model="test-model",
+        honors_cache_control=provider_honors_cache_control(provider),
+    )
 
 
 @contextmanager
@@ -51,7 +66,7 @@ def _patched_settings(
 
 def test_prepare_system_with_caching_returns_content_block() -> None:
     """prepare_system_with_caching wraps a string in a cache-marked content block."""
-    result = prepare_system_with_caching("You are a helpful assistant.", _CACHING_PROVIDER)
+    result = prepare_system_with_caching("You are a helpful assistant.", _target())
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0]["type"] == "text"
@@ -63,7 +78,7 @@ def test_prepare_system_with_caching_returns_content_block() -> None:
 def test_prepare_system_with_caching_preserves_content() -> None:
     """The original system prompt text is preserved exactly."""
     long_prompt = "A" * 5000
-    result = prepare_system_with_caching(long_prompt, _CACHING_PROVIDER)
+    result = prepare_system_with_caching(long_prompt, _target())
     assert isinstance(result, list)
     assert result[0]["text"] == long_prompt
 
@@ -75,7 +90,7 @@ def test_apply_tool_caching_marks_last_tool() -> None:
         {"name": "tool_b", "description": "Second tool", "input_schema": {}},
         {"name": "tool_c", "description": "Third tool", "input_schema": {}},
     ]
-    result = apply_tool_caching(tools, _CACHING_PROVIDER)
+    result = apply_tool_caching(tools, _target())
     assert len(result) == 3
     assert "cache_control" not in result[0]
     assert "cache_control" not in result[1]
@@ -85,14 +100,14 @@ def test_apply_tool_caching_marks_last_tool() -> None:
 def test_apply_tool_caching_single_tool() -> None:
     """apply_tool_caching works with a single tool."""
     tools = [{"name": "only_tool", "description": "Solo", "input_schema": {}}]
-    result = apply_tool_caching(tools, _CACHING_PROVIDER)
+    result = apply_tool_caching(tools, _target())
     assert result[0]["cache_control"]["type"] == "ephemeral"
     assert result[0]["name"] == "only_tool"
 
 
 def test_apply_tool_caching_empty_list() -> None:
     """apply_tool_caching returns empty list unchanged."""
-    result = apply_tool_caching([], _CACHING_PROVIDER)
+    result = apply_tool_caching([], _target())
     assert result == []
 
 
@@ -100,7 +115,7 @@ def test_apply_tool_caching_does_not_mutate_original() -> None:
     """apply_tool_caching should not modify the original tool dicts."""
     original = {"name": "tool_a", "description": "A tool", "input_schema": {}}
     tools = [original]
-    result = apply_tool_caching(tools, _CACHING_PROVIDER)
+    result = apply_tool_caching(tools, _target())
     # The result's last element should have cache_control
     assert "cache_control" in result[0]
     # But the original dict should be unmodified
@@ -121,7 +136,7 @@ def test_prepare_system_uses_1h_ttl_by_default() -> None:
     expired. Switching to 1h TTL covers typical re-engage windows.
     """
     with _patched_settings(extended_ttl=True):
-        result = prepare_system_with_caching("hello", _CACHING_PROVIDER)
+        result = prepare_system_with_caching("hello", _target())
     assert isinstance(result, list)
     assert result[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
@@ -131,7 +146,7 @@ def test_prepare_system_falls_back_to_5min_when_disabled() -> None:
     default Anthropic 5-minute TTL. Provided as an escape hatch in case
     a non-Anthropic provider rejects the ttl field."""
     with _patched_settings(extended_ttl=False):
-        result = prepare_system_with_caching("hello", _CACHING_PROVIDER)
+        result = prepare_system_with_caching("hello", _target())
     assert isinstance(result, list)
     assert result[0]["cache_control"] == {"type": "ephemeral"}
 
@@ -141,7 +156,7 @@ def test_apply_tool_caching_uses_1h_ttl_by_default() -> None:
     with _patched_settings(extended_ttl=True):
         result = apply_tool_caching(
             [{"name": "t", "description": "", "input_schema": {}}],
-            _CACHING_PROVIDER,
+            _target(),
         )
     assert result[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
@@ -150,7 +165,7 @@ def test_apply_tool_caching_falls_back_to_5min_when_disabled() -> None:
     with _patched_settings(extended_ttl=False):
         result = apply_tool_caching(
             [{"name": "t", "description": "", "input_schema": {}}],
-            _CACHING_PROVIDER,
+            _target(),
         )
     assert result[0]["cache_control"] == {"type": "ephemeral"}
 
@@ -160,7 +175,7 @@ def test_prepare_system_wraps_whole_string_in_one_cached_block() -> None:
     user turn, #1420), so it is a single cache-marked block."""
     text = "stable prefix\n\ndynamic suffix"
     with _patched_settings(extended_ttl=True):
-        result = prepare_system_with_caching(text, _CACHING_PROVIDER)
+        result = prepare_system_with_caching(text, _target())
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0]["text"] == text
@@ -179,7 +194,7 @@ class TestApplyHistoryCacheBreakpoint:
             {"role": "assistant", "content": [{"type": "text", "text": "older answer"}]},
             {"role": "user", "content": "current turn with time + dynamic"},
         ]
-        result = apply_history_cache_breakpoint(messages, _CACHING_PROVIDER)
+        result = apply_history_cache_breakpoint(messages, _target())
         # Breakpoint stamped on the assistant message (index 1), not the
         # volatile current turn (index 2).
         assert result[1]["content"][-1]["cache_control"] == self._control()
@@ -191,7 +206,7 @@ class TestApplyHistoryCacheBreakpoint:
             {"role": "user", "content": "older question"},
             {"role": "user", "content": "current turn"},
         ]
-        result = apply_history_cache_breakpoint(messages, _CACHING_PROVIDER)
+        result = apply_history_cache_breakpoint(messages, _target())
         anchor = result[0]
         assert isinstance(anchor["content"], list)
         assert anchor["content"][0]["text"] == "older question"
@@ -209,14 +224,14 @@ class TestApplyHistoryCacheBreakpoint:
             },
             {"role": "user", "content": "current turn"},
         ]
-        result = apply_history_cache_breakpoint(messages, _CACHING_PROVIDER)
+        result = apply_history_cache_breakpoint(messages, _target())
         tool_results = result[1]["content"]
         assert "cache_control" not in tool_results[0]
         assert tool_results[1]["cache_control"] == self._control()
 
     def test_no_breakpoint_without_prior_history(self) -> None:
         messages = [{"role": "user", "content": "only the current turn"}]
-        result = apply_history_cache_breakpoint(messages, _CACHING_PROVIDER)
+        result = apply_history_cache_breakpoint(messages, _target())
         assert result == messages
         assert "cache_control" not in result[0]
 
@@ -230,7 +245,7 @@ class TestApplyHistoryCacheBreakpoint:
                 "content": [{"type": "tool_result", "tool_use_id": "a", "content": "x"}],
             },
         ]
-        result = apply_history_cache_breakpoint(messages, _CACHING_PROVIDER)
+        result = apply_history_cache_breakpoint(messages, _target())
         assert all("cache_control" not in block for block in result[0]["content"])
         assert all("cache_control" not in block for block in result[1]["content"])
 
@@ -253,7 +268,7 @@ class TestApplyInTurnCacheBreakpoint:
                 ],
             },
         ]
-        result = apply_in_turn_cache_breakpoint(messages, _CACHING_PROVIDER)
+        result = apply_in_turn_cache_breakpoint(messages, _target())
         tool_results = result[-1]["content"]
         assert "cache_control" not in tool_results[0]
         assert tool_results[1]["cache_control"] == self._control()
@@ -265,7 +280,7 @@ class TestApplyInTurnCacheBreakpoint:
             {"role": "assistant", "content": [{"type": "text", "text": "older answer"}]},
             {"role": "user", "content": "current turn"},
         ]
-        result = apply_in_turn_cache_breakpoint(messages, _CACHING_PROVIDER)
+        result = apply_in_turn_cache_breakpoint(messages, _target())
         assert isinstance(result[-1]["content"], str)
         assert "cache_control" not in result[-1]
 
@@ -274,11 +289,11 @@ class TestApplyInTurnCacheBreakpoint:
             {"role": "user", "content": "current turn"},
             {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
         ]
-        result = apply_in_turn_cache_breakpoint(messages, _CACHING_PROVIDER)
+        result = apply_in_turn_cache_breakpoint(messages, _target())
         assert all("cache_control" not in block for block in result[-1]["content"])
 
     def test_noop_on_empty_list(self) -> None:
-        assert apply_in_turn_cache_breakpoint([], _CACHING_PROVIDER) == []
+        assert apply_in_turn_cache_breakpoint([], _target()) == []
 
     def test_at_most_four_breakpoints_with_history_anchor(self) -> None:
         """Combined with the history anchor, the message side carries at
@@ -295,8 +310,8 @@ class TestApplyInTurnCacheBreakpoint:
                 "content": [{"type": "tool_result", "tool_use_id": "a", "content": "x"}],
             },
         ]
-        result = apply_history_cache_breakpoint(messages, _CACHING_PROVIDER)
-        result = apply_in_turn_cache_breakpoint(result, _CACHING_PROVIDER)
+        result = apply_history_cache_breakpoint(messages, _target())
+        result = apply_in_turn_cache_breakpoint(result, _target())
 
         marker_count = 0
         for msg in result:
@@ -331,13 +346,13 @@ async def test_resolve_user_llm_override_calls_registered_resolver() -> None:
     """Installed resolver is invoked with the user_id and its result is returned."""
     received: list[str] = []
 
-    async def fake_resolver(user_id: str) -> tuple[str, str] | None:
+    async def fake_resolver(user_id: str) -> UserLLMOverride | None:
         received.append(user_id)
-        return ("anthropic", "claude-haiku-4-5")
+        return UserLLMOverride(provider="anthropic", model="claude-haiku-4-5")
 
     set_user_llm_resolver(fake_resolver)
     result = await resolve_user_llm_override("user-abc")
-    assert result == ("anthropic", "claude-haiku-4-5")
+    assert result == UserLLMOverride(provider="anthropic", model="claude-haiku-4-5")
     assert received == ["user-abc"]
 
 
@@ -450,7 +465,7 @@ class TestCacheControlProviderGate:
         the assertion now guards against pointless work rather than a broken
         request.
         """
-        result = prepare_system_with_caching("You are a helpful assistant.", "fireworks")
+        result = prepare_system_with_caching("You are a helpful assistant.", _target("fireworks"))
         assert result == "You are a helpful assistant."
         assert isinstance(result, str)
 
@@ -464,7 +479,7 @@ class TestCacheControlProviderGate:
             {"role": "user", "content": "older question"},
             {"role": "user", "content": "current turn"},
         ]
-        result = apply_history_cache_breakpoint(messages, "fireworks")
+        result = apply_history_cache_breakpoint(messages, _target("fireworks"))
         assert result[0]["content"] == "older question"
         assert isinstance(result[0]["content"], str)
 
@@ -477,12 +492,12 @@ class TestCacheControlProviderGate:
                 "content": [{"type": "tool_result", "tool_use_id": "a", "content": "one"}],
             },
         ]
-        result = apply_in_turn_cache_breakpoint(messages, "fireworks")
+        result = apply_in_turn_cache_breakpoint(messages, _target("fireworks"))
         assert all("cache_control" not in block for block in result[-1]["content"])
 
     def test_tool_caching_is_skipped_for_bridge_provider(self) -> None:
         tools = [{"name": "tool_a", "description": "A tool", "input_schema": {}}]
-        result = apply_tool_caching(tools, "fireworks")
+        result = apply_tool_caching(tools, _target("fireworks"))
         assert "cache_control" not in result[0]
 
     def test_no_marker_survives_anywhere_for_a_bridge_provider(self) -> None:
@@ -497,12 +512,12 @@ class TestCacheControlProviderGate:
                 "content": [{"type": "tool_result", "tool_use_id": "a", "content": "x"}],
             },
         ]
-        result = apply_history_cache_breakpoint(messages, "fireworks")
-        result = apply_in_turn_cache_breakpoint(result, "fireworks")
+        result = apply_history_cache_breakpoint(messages, _target("fireworks"))
+        result = apply_in_turn_cache_breakpoint(result, _target("fireworks"))
         tools = apply_tool_caching(
-            [{"name": "t", "description": "", "input_schema": {}}], "fireworks"
+            [{"name": "t", "description": "", "input_schema": {}}], _target("fireworks")
         )
-        system = prepare_system_with_caching("system prompt", "fireworks")
+        system = prepare_system_with_caching("system prompt", _target("fireworks"))
 
         assert isinstance(system, str)
         assert all("cache_control" not in tool for tool in tools)
@@ -583,7 +598,7 @@ class TestCacheControlIgnoresEndpoint:
     def test_system_is_marked_behind_a_gateway(self) -> None:
         """Inverted by #1484: the gateway case is what regained the marker."""
         with _patched_settings(api_base=_GATEWAY_BASE):
-            result = prepare_system_with_caching("You are an assistant.", "anthropic")
+            result = prepare_system_with_caching("You are an assistant.", _target("anthropic"))
         assert isinstance(result, list)
         assert result[0]["text"] == "You are an assistant."
         assert result[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
@@ -606,12 +621,12 @@ class TestCacheControlIgnoresEndpoint:
             },
         ]
         with _patched_settings(api_base=_GATEWAY_BASE):
-            result = apply_history_cache_breakpoint(messages, "anthropic")
-            result = apply_in_turn_cache_breakpoint(result, "anthropic")
+            result = apply_history_cache_breakpoint(messages, _target("anthropic"))
+            result = apply_in_turn_cache_breakpoint(result, _target("anthropic"))
             tools = apply_tool_caching(
-                [{"name": "t", "description": "", "input_schema": {}}], "anthropic"
+                [{"name": "t", "description": "", "input_schema": {}}], _target("anthropic")
             )
-            system = prepare_system_with_caching("system prompt", "anthropic")
+            system = prepare_system_with_caching("system prompt", _target("anthropic"))
 
         assert isinstance(system, list)
         assert "cache_control" in system[0]

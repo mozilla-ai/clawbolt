@@ -26,11 +26,11 @@ from backend.app.agent.messages import messages_to_messages_api
 from backend.app.config import settings
 from backend.app.services.llm_eval.types import ModelCallResult, ToolCall
 from backend.app.services.llm_service import (
+    LLMTarget,
     apply_history_cache_breakpoint,
     apply_in_turn_cache_breakpoint,
     apply_tool_caching,
     prepare_system_with_caching,
-    reasoning_effort_to_thinking,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,8 +51,8 @@ async def call_model(
     assembled: AssembledPrompt,
     tool_schemas: list[dict[str, Any]] | None,
     *,
-    provider: str,
-    model: str,
+    target: LLMTarget,
+    reasoning_effort: str,
     max_tokens: int | None = None,
 ) -> ModelCallResult:
     """Send one assembled prompt to one model and return its first decision.
@@ -60,6 +60,12 @@ async def call_model(
     Provider errors are captured onto the result rather than raised: one
     model failing on one turn is a data point about that model, not a
     reason to abandon a run that may be 90 turns deep.
+
+    *reasoning_effort* is per side and recorded on the run. The two models in
+    a comparison need not share one: effort is not portable across families,
+    so forcing the candidate to the incumbent's setting measures the setting
+    rather than the candidate, and can be rejected outright by a model whose
+    endpoint spells reasoning differently.
     """
     effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
     system_str, msg_dicts = messages_to_messages_api(assembled.messages)
@@ -72,43 +78,41 @@ async def call_model(
     msg_dicts = copy.deepcopy(msg_dicts)
     schemas = copy.deepcopy(tool_schemas) if tool_schemas else None
 
-    msg_dicts = apply_history_cache_breakpoint(msg_dicts, provider)
-    msg_dicts = apply_in_turn_cache_breakpoint(msg_dicts, provider)
+    msg_dicts = apply_history_cache_breakpoint(msg_dicts, target)
+    msg_dicts = apply_in_turn_cache_breakpoint(msg_dicts, target)
     system: str | list[dict[str, Any]] | None = system_str
     if system is not None:
-        system = prepare_system_with_caching(system, provider)
+        system = prepare_system_with_caching(system, target)
     if schemas:
-        schemas = apply_tool_caching(schemas, provider)
-    thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
+        schemas = apply_tool_caching(schemas, target)
+    reasoning = target.reasoning_kwargs(reasoning_effort)
 
     started = time.monotonic()
     try:
         response = cast(
             MessageResponse,
             await amessages(
-                model=model,
-                provider=provider,
-                api_base=settings.llm_api_base,
+                **target.connection_kwargs(),
                 system=system,
                 messages=msg_dicts,
                 tools=schemas,
                 max_tokens=effective_max_tokens,
-                thinking=thinking,
+                **reasoning,
             ),
         )
     except AnyLLMError as exc:
-        logger.warning("Eval call failed for %s/%s: %s", provider, model, exc)
+        logger.warning("Eval call failed for %s: %s", target.describe(), exc)
         return ModelCallResult(
-            provider=provider,
-            model=model,
+            provider=target.provider,
+            model=target.model,
             latency_ms=(time.monotonic() - started) * 1000,
             error=f"{type(exc).__name__}: {exc}",
         )
     except Exception as exc:
-        logger.exception("Unexpected eval call failure for %s/%s", provider, model)
+        logger.exception("Unexpected eval call failure for %s", target.describe())
         return ModelCallResult(
-            provider=provider,
-            model=model,
+            provider=target.provider,
+            model=target.model,
             latency_ms=(time.monotonic() - started) * 1000,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -122,8 +126,8 @@ async def call_model(
         ToolCall(name=c.name, arguments=c.arguments or {}) for c in parse_tool_calls(response)
     ]
     return ModelCallResult(
-        provider=provider,
-        model=model,
+        provider=target.provider,
+        model=target.model,
         text=get_response_text(response),
         tool_calls=tool_calls,
         content_blocks=_serialize_blocks(response),

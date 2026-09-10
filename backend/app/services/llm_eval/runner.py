@@ -27,8 +27,10 @@ from typing import cast
 from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from backend.app.config import settings
 from backend.app.database import db_session_async
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, User
+from backend.app.services.llm_endpoints import resolve_target
 from backend.app.services.llm_eval import metrics
 from backend.app.services.llm_eval.execution import call_model
 from backend.app.services.llm_eval.judge import judge_turn
@@ -46,6 +48,7 @@ from backend.app.services.llm_eval.types import (
     Recommendation,
     ReplaySample,
     RunStatus,
+    RunTargets,
     SafetyFinding,
     SafetyIssue,
     ToolCall,
@@ -217,6 +220,7 @@ async def _compare_turn(
     run: LLMEvalRun,
     fixture: ReplayFixture,
     sample: ReplaySample,
+    targets: RunTargets,
 ) -> TurnComparison:
     """Replay one turn through both models and score the result."""
     assembled = await assemble_for_sample(fixture, sample)
@@ -225,14 +229,14 @@ async def _compare_turn(
         call_model(
             assembled,
             fixture.tool_schemas,
-            provider=run.baseline_provider,
-            model=run.baseline_model,
+            target=targets.baseline,
+            reasoning_effort=targets.baseline_reasoning_effort,
         ),
         call_model(
             assembled,
             fixture.tool_schemas,
-            provider=run.candidate_provider,
-            model=run.candidate_model,
+            target=targets.candidate,
+            reasoning_effort=targets.candidate_reasoning_effort,
         ),
     )
 
@@ -290,13 +294,7 @@ async def _compare_turn(
     )
     comparison.judge_skip_reason = skip_reason
     if skip_reason is None:
-        verdict, rationale = await judge_turn(
-            sample,
-            baseline,
-            candidate,
-            provider=run.judge_provider,
-            model=run.judge_model,
-        )
+        verdict, rationale = await judge_turn(sample, baseline, candidate, target=targets.judge)
         comparison.judge_verdict = verdict
         comparison.judge_rationale = rationale
 
@@ -367,6 +365,29 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
         )
         await db.commit()
 
+    targets = RunTargets(
+        baseline=await resolve_target(
+            endpoint=run.baseline_endpoint,
+            provider=run.baseline_provider,
+            model=run.baseline_model,
+            api_base=settings.llm_api_base,
+        ),
+        candidate=await resolve_target(
+            endpoint=run.candidate_endpoint,
+            provider=run.candidate_provider,
+            model=run.candidate_model,
+            api_base=settings.llm_api_base,
+        ),
+        judge=await resolve_target(
+            endpoint=run.baseline_endpoint,
+            provider=run.judge_provider,
+            model=run.judge_model,
+            api_base=settings.llm_api_base,
+        ),
+        baseline_reasoning_effort=run.baseline_reasoning_effort,
+        candidate_reasoning_effort=run.candidate_reasoning_effort,
+    )
+
     cancellation = _CancellationWatcher(run_id)
     semaphore = asyncio.Semaphore(max(1, concurrency))
     comparisons: list[TurnComparison] = []
@@ -386,7 +407,7 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
                 # and ``gather`` must not discard the bookkeeping for them.
                 return
             try:
-                comparison = await _compare_turn(run, fixture, sample)
+                comparison = await _compare_turn(run, fixture, sample, targets)
             except Exception as exc:
                 logger.exception("Eval turn seq=%d failed in run %d", sample.seq, run_id)
                 # A turn that could not even be assembled still belongs in
@@ -469,7 +490,7 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
         raise
 
     comparisons.sort(key=lambda c: c.sample.seq)
-    aggregate = metrics.aggregate(comparisons)
+    aggregate = metrics.aggregate(comparisons, targets)
     if breaker_error:
         # The evidence gathered before the provider went down is kept and
         # still readable, but it cannot endorse a switch: the run stopped

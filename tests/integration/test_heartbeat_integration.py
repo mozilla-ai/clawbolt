@@ -28,6 +28,10 @@ async def test_heartbeat_evaluate_returns_valid_action(
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.heartbeat_provider = None
         mock_settings.heartbeat_model = None
         mock_settings.llm_max_tokens_heartbeat = 300
@@ -65,6 +69,10 @@ async def test_heartbeat_evaluate_with_context(
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.heartbeat_provider = None
         mock_settings.heartbeat_model = None
         mock_settings.llm_max_tokens_heartbeat = 300

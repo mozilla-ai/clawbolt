@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Any, get_args
 
 from any_llm import AnyLLMError, LLMProvider, alist_models
 
 from backend.app.config import settings
-from backend.app.schemas import ProviderInfo
+from backend.app.schemas import ProviderInfo, ReasoningEffort
 
 # Valid reasoning effort levels (matches any_llm.types.completion.ReasoningEffort).
-REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "auto")
+REASONING_EFFORT_VALUES: tuple[str, ...] = get_args(ReasoningEffort)
 
 # Maps reasoning effort level to thinking budget tokens for the Messages API.
 _EFFORT_TO_BUDGET: dict[str, int] = {
@@ -72,6 +74,87 @@ def is_local_provider(provider: str) -> bool:
     return provider.lower() in _LOCAL_PROVIDERS
 
 
+class ReasoningStyle(StrEnum):
+    """How a target wants to be asked for reasoning."""
+
+    THINKING = "thinking"
+    """Anthropic's ``thinking`` budget dict. The default for every dialect."""
+
+    EFFORT = "effort"
+    """OpenAI's scalar ``reasoning_effort``, forwarded through kwargs."""
+
+    NONE = "none"
+    """Send no reasoning parameter at all.
+
+    Not the same as asking for zero reasoning. Some endpoints reject the
+    parameter's *presence* in combination with something else in the request
+    rather than rejecting its value, so no value works and the only way
+    through is to omit the key. The case this was written for refuses
+    ``reasoning_effort`` together with function tools on
+    ``/v1/chat/completions`` while accepting either one alone.
+    """
+
+
+@dataclass(frozen=True)
+class LLMTarget:
+    """Everything one ``amessages`` call needs, with nothing left to infer.
+
+    Built by ``services.llm_endpoints.resolve_target``, which is also where
+    the reasoning for the type is written down. The short version: a provider
+    name stops describing the vendor as soon as a gateway is in the path, so
+    a target states the capabilities outright instead of deriving them from
+    the name at each call site.
+    """
+
+    provider: str
+    model: str
+    api_base: str | None = None
+    api_key: str | None = None
+    # Empty when the selection names no endpoint, i.e. a bare provider.
+    endpoint: str = ""
+    honors_cache_control: bool = False
+    reasoning_style: ReasoningStyle = ReasoningStyle.THINKING
+    # False when (provider, model) does not identify who billed the tokens,
+    # so a cost figure would be fiction. The evaluator reports it rather than
+    # quietly showing a zero.
+    priced: bool = True
+
+    def connection_kwargs(self) -> dict[str, Any]:
+        """The where-and-what half of the call.
+
+        ``api_key`` is omitted when the target carries none, which is what
+        lets any-llm resolve the dialect's own environment variable.
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "provider": self.provider,
+            "api_base": self.api_base,
+        }
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        return kwargs
+
+    def reasoning_kwargs(self, effort: str) -> dict[str, Any]:
+        """The reasoning half, in whichever shape this target accepts.
+
+        ``"auto"`` (or empty) sends nothing and leaves the provider on its
+        own default, which is what the ``thinking``-shaped path has always
+        done for that value.
+        """
+        if not effort or effort == "auto":
+            return {}
+        if self.reasoning_style is ReasoningStyle.NONE:
+            return {}
+        if self.reasoning_style is ReasoningStyle.EFFORT:
+            return {"reasoning_effort": effort}
+        thinking = reasoning_effort_to_thinking(effort)
+        return {"thinking": thinking} if thinking is not None else {}
+
+    def describe(self) -> str:
+        """Human-readable target for logs and health labels."""
+        return f"{self.endpoint or self.provider}/{self.model}"
+
+
 def get_configured_providers() -> list[ProviderInfo]:
     """Return all known providers. Actual validation happens when listing models."""
     return [
@@ -108,18 +191,34 @@ async def get_models(
 # Per-user LLM override resolver
 # ---------------------------------------------------------------------------
 
+
+@dataclass(frozen=True)
+class UserLLMOverride:
+    """A per-user pin to a specific endpoint, provider, and/or model.
+
+    Any field may be empty, meaning "use the global default for this one".
+    ``endpoint`` supersedes ``provider`` when both are set, for the reason
+    given in ``llm_endpoints.resolve_target``.
+    """
+
+    endpoint: str = ""
+    provider: str = ""
+    model: str = ""
+
+    def __bool__(self) -> bool:
+        """False when the override pins nothing."""
+        return bool(self.endpoint or self.provider or self.model)
+
+
 # Premium (or another plugin) registers a resolver that returns a per-user
-# (provider, model) override, or ``None`` when the user has no override
-# configured. Either field of the returned tuple may be empty, in which case
-# the agent falls back to the global ``settings.llm_provider`` /
-# ``settings.llm_model`` value for that field.
-UserLLMResolver = Callable[[str], Awaitable[tuple[str, str] | None]]
+# override, or ``None`` when the user has none configured.
+UserLLMResolver = Callable[[str], Awaitable[UserLLMOverride | None]]
 
 _user_llm_resolver: UserLLMResolver | None = None
 
 
 def set_user_llm_resolver(fn: UserLLMResolver | None) -> None:
-    """Register an async resolver that returns a per-user (provider, model) override.
+    """Register an async resolver that returns a per-user LLM override.
 
     Premium calls this at startup with a function that queries its
     subscription DB. OSS leaves it unset, in which case all users use the
@@ -129,7 +228,7 @@ def set_user_llm_resolver(fn: UserLLMResolver | None) -> None:
     _user_llm_resolver = fn
 
 
-async def resolve_user_llm_override(user_id: str) -> tuple[str, str] | None:
+async def resolve_user_llm_override(user_id: str) -> UserLLMOverride | None:
     """Look up a per-user LLM override via the registered resolver, if any.
 
     Returns ``None`` when no resolver is registered or the resolver
@@ -161,7 +260,7 @@ def _cache_control() -> dict[str, Any]:
     return {"type": "ephemeral"}
 
 
-def prepare_system_with_caching(system: str, provider: str) -> str | list[dict[str, Any]]:
+def prepare_system_with_caching(system: str, target: LLMTarget) -> str | list[dict[str, Any]]:
     """Wrap a system prompt string as a single cache-marked content block.
 
     The whole system string is stable across turns: the agent loop now
@@ -169,19 +268,19 @@ def prepare_system_with_caching(system: str, provider: str) -> str | list[dict[s
     message history rather than in the ``system`` param, so there is no
     dynamic suffix to exclude from the cache (#1420).
 
-    Returns *system* unchanged when *provider* cannot honor the marker, which
+    Returns *system* unchanged when *target* cannot honor the marker, which
     keeps a plain string plain rather than wrapping it in a block list that
     any-llm's bridge would only flatten back again. See
     :func:`provider_honors_cache_control`.
     """
-    if not provider_honors_cache_control(provider):
+    if not target.honors_cache_control:
         return system
     return [{"type": "text", "text": system, "cache_control": _cache_control()}]
 
 
 def apply_history_cache_breakpoint(
     messages: list[dict[str, Any]],
-    provider: str,
+    target: LLMTarget,
 ) -> list[dict[str, Any]]:
     """Stamp a ``cache_control`` breakpoint on the prior-history tail.
 
@@ -202,12 +301,12 @@ def apply_history_cache_breakpoint(
     content is a plain string; tool-result turns carry list content and
     assistant turns carry block content, so this reliably distinguishes
     it. Returns the list unchanged when there is no prior history to
-    cache, or when *provider* cannot honor the marker.
+    cache, or when *target* cannot honor the marker.
 
     Withholding the marker also avoids rewriting a plain-string user message
-    into a block list for a provider that would only flatten it back again.
+    into a block list for a target that would only flatten it back again.
     """
-    if not provider_honors_cache_control(provider):
+    if not target.honors_cache_control:
         return messages
 
     current_turn_idx: int | None = None
@@ -239,7 +338,7 @@ def apply_history_cache_breakpoint(
 
 def apply_in_turn_cache_breakpoint(
     messages: list[dict[str, Any]],
-    provider: str,
+    target: LLMTarget,
 ) -> list[dict[str, Any]]:
     """Stamp a ``cache_control`` breakpoint on a trailing tool-result block.
 
@@ -264,9 +363,9 @@ def apply_in_turn_cache_breakpoint(
     Round 0 ends in the current user turn (plain string content), not
     tool results, so this is a no-op there and the request keeps three
     breakpoints. Returns the list unchanged when there is nothing safe
-    to mark, or when *provider* cannot honor the marker.
+    to mark, or when *target* cannot honor the marker.
     """
-    if not provider_honors_cache_control(provider):
+    if not target.honors_cache_control:
         return messages
     if not messages:
         return messages
@@ -285,14 +384,14 @@ def apply_in_turn_cache_breakpoint(
     return messages
 
 
-def apply_tool_caching(tools: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
+def apply_tool_caching(tools: list[dict[str, Any]], target: LLMTarget) -> list[dict[str, Any]]:
     """Add a cache_control marker to the last tool definition.
 
     Anthropic caches everything up to and including the marked block, so
     marking the last tool covers the entire tool list. Returns the list
-    unchanged when empty, or when *provider* cannot honor the marker.
+    unchanged when empty, or when *target* cannot honor the marker.
     """
-    if not provider_honors_cache_control(provider):
+    if not target.honors_cache_control:
         return tools
     if not tools:
         return tools

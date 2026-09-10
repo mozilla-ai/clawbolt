@@ -63,11 +63,21 @@ class Settings(BaseSettings):
     telegram_allowed_chat_id: str = ""  # Single numeric chat ID, or "*" for all; empty = deny all
 
     # LLM
+    #
+    # ``llm_endpoint`` names a row in ``llm_endpoints`` and supersedes
+    # ``llm_provider`` when set: the endpoint carries its own dialect. Leave
+    # it empty to select a provider directly, in which case ``llm_api_base``
+    # applies as it always has. See ``services/llm_endpoints.py``.
+    llm_endpoint: str = ""
     llm_provider: str = ""
     llm_model: str = ""
     llm_api_base: str | None = None
     vision_model: str = ""  # empty = fall back to llm_model
-    vision_provider: str = ""  # empty = fall back to llm_provider
+    # A secondary role's endpoint and provider resolve as a pair: setting
+    # either one opts the role out of the primary selection entirely. See
+    # ``llm_endpoints.role_selection``.
+    vision_endpoint: str = ""
+    vision_provider: str = ""
     reasoning_effort: str = "auto"  # none, minimal, low, medium, high, xhigh, auto
     # Allows reasoning plus nested tool payloads without truncating a tool call.
     # ``core.py`` applies a separate recovery ceiling to runaway generations.
@@ -135,7 +145,8 @@ class Settings(BaseSettings):
     memory_recall_limit: int = Field(default=20, ge=1)
     compaction_enabled: bool = True
     compaction_model: str = ""  # empty = fall back to llm_model
-    compaction_provider: str = ""  # empty = fall back to llm_provider
+    compaction_endpoint: str = ""
+    compaction_provider: str = ""
     compaction_max_tokens: int = Field(default=16_000, ge=1)
 
     # Rate limiting
@@ -305,7 +316,8 @@ class Settings(BaseSettings):
     heartbeat_interval_minutes: int = Field(default=30, ge=1)
     heartbeat_max_daily_messages: int = Field(default=5, ge=1)
     heartbeat_model: str = ""  # empty = fall back to llm_model
-    heartbeat_provider: str = ""  # empty = fall back to llm_provider
+    heartbeat_endpoint: str = ""
+    heartbeat_provider: str = ""
     heartbeat_concurrency: int = Field(default=5, ge=1)
     heartbeat_recent_messages_count: int = Field(default=5, ge=1)
     # Skip heartbeat evaluation during an active conversation. Zero disables.
@@ -505,6 +517,7 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "twilio_messaging_service_sid",
         "twilio_allowed_numbers",
         "twilio_validate_signatures",
+        "llm_endpoint",
         "llm_provider",
         "llm_model",
         "llm_api_base",
@@ -512,10 +525,13 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "llm_max_tokens_heartbeat",
         "llm_max_tokens_vision",
         "vision_model",
+        "vision_endpoint",
         "vision_provider",
         "heartbeat_model",
+        "heartbeat_endpoint",
         "heartbeat_provider",
         "compaction_model",
+        "compaction_endpoint",
         "compaction_provider",
         "compaction_max_tokens",
         "reasoning_effort",

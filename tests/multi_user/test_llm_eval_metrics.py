@@ -19,11 +19,13 @@ from backend.app.services.llm_eval.types import (
     ModelCallResult,
     Recommendation,
     ReplaySample,
+    RunTargets,
     SafetyFinding,
     SafetyIssue,
     ToolCall,
     TurnComparison,
 )
+from backend.app.services.llm_service import LLMTarget
 
 
 class _SendParams(BaseModel):
@@ -384,6 +386,27 @@ def test_a_long_run_still_blocks_on_the_same_rate() -> None:
 def test_unknown_model_pricing_is_warned_not_reported_as_free() -> None:
     result = metrics.aggregate([_comparison(i) for i in range(25)])
     assert any("No pricing data" in w for w in result.warnings)
+
+
+def test_an_unpriced_endpoint_suppresses_cost_even_for_a_known_model() -> None:
+    """A gateway means the (provider, model) pair does not name the biller.
+
+    A price-list hit on that pair is then a coincidence, so reporting its
+    cost to six decimal places invents the one number an operator would use
+    to justify the swap.
+    """
+    targets = RunTargets(
+        baseline=LLMTarget(provider="anthropic", model="m"),
+        candidate=LLMTarget(provider="anthropic", model="m", endpoint="gw", priced=False),
+        judge=LLMTarget(provider="anthropic", model="m"),
+    )
+    result = metrics.aggregate([_comparison(i) for i in range(25)], targets)
+
+    assert result.candidate.pricing_available is False
+    assert result.candidate.pricing_unknown_reason == "endpoint"
+    assert any("marked unpriced" in w for w in result.warnings)
+    # The model-side warning must not also fire; one cause, one message.
+    assert not any("No pricing data for the candidate" in w for w in result.warnings)
 
 
 # ---------------------------------------------------------------------------

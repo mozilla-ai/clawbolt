@@ -25,7 +25,7 @@ from backend.app.config_store import (
     strip_unchanged_secrets,
 )
 from backend.app.database import get_async_db
-from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
+from backend.app.models import ChannelRoute, HeartbeatLog, LLMEndpoint, LLMUsageLog, User
 from backend.app.query_helpers import get_or_404_async
 from backend.app.schemas import (
     ChannelConfigResponse,
@@ -38,6 +38,9 @@ from backend.app.schemas import (
     DeleteHeartbeatLogsResponse,
     HeartbeatLogItemResponse,
     HeartbeatLogListResponse,
+    LLMEndpointItem,
+    LLMEndpointListResponse,
+    LLMEndpointUpsert,
     LLMUsageByPurpose,
     LLMUsageSummary,
     ModelConfigResponse,
@@ -46,6 +49,13 @@ from backend.app.schemas import (
     TelegramBotInfoResponse,
     UserProfileResponse,
     UserProfileUpdate,
+)
+from backend.app.services.llm_endpoints import (
+    count_endpoint_pins,
+    delete_endpoint,
+    endpoint_selectors,
+    list_endpoints,
+    upsert_endpoint,
 )
 from backend.app.services.llm_service import (
     get_configured_providers,
@@ -419,14 +429,18 @@ async def get_telegram_bot_info(
 
 def _build_model_config_response() -> ModelConfigResponse:
     return ModelConfigResponse(
+        llm_endpoint=settings.llm_endpoint,
         llm_provider=settings.llm_provider,
         llm_model=settings.llm_model,
         llm_api_base=settings.llm_api_base,
         vision_model=settings.vision_model,
+        vision_endpoint=settings.vision_endpoint,
         vision_provider=settings.vision_provider,
         heartbeat_model=settings.heartbeat_model,
+        heartbeat_endpoint=settings.heartbeat_endpoint,
         heartbeat_provider=settings.heartbeat_provider,
         compaction_model=settings.compaction_model,
+        compaction_endpoint=settings.compaction_endpoint,
         compaction_provider=settings.compaction_provider,
         reasoning_effort=settings.reasoning_effort,
     )
@@ -463,6 +477,89 @@ async def update_model_config(
 
     await get_settings_store().save(updates, actor_user_id=current_user.id)
     return _build_model_config_response()
+
+
+# ---------------------------------------------------------------------------
+# LLM endpoints
+# ---------------------------------------------------------------------------
+
+
+def _endpoint_item(row: LLMEndpoint) -> LLMEndpointItem:
+    """Serialize an endpoint. The stored key is reported as a boolean only."""
+    return LLMEndpointItem(
+        name=row.name,
+        dialect=row.dialect,
+        base_url=row.base_url,
+        api_key_set=bool(row.api_key),
+        cache_control=row.cache_control,
+        reasoning=row.reasoning,
+        pricing=row.pricing,
+        notes=row.notes,
+    )
+
+
+@router.get("/user/model/endpoints", response_model=LLMEndpointListResponse)
+async def list_llm_endpoints(
+    _current_user: User = Depends(get_current_user),
+) -> LLMEndpointListResponse:
+    """Return every configured LLM endpoint."""
+    return LLMEndpointListResponse(items=[_endpoint_item(r) for r in await list_endpoints()])
+
+
+@router.put("/user/model/endpoints/{name}", response_model=LLMEndpointItem)
+async def upsert_llm_endpoint(
+    name: str,
+    body: LLMEndpointUpsert,
+    _current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> LLMEndpointItem:
+    """Create or replace one endpoint.
+
+    An endpoint holds a credential and a destination, so this sits behind the
+    same admin gate as the rest of the model config (see
+    ``middleware.admin_config_guard``). Without that gate a tenant could
+    point the deployment's traffic at a host of their choosing.
+    """
+    if body.name != name:
+        raise HTTPException(status_code=400, detail="Endpoint name in path and body must match")
+    if body.dialect not in {p.name for p in get_configured_providers()}:
+        raise HTTPException(status_code=422, detail=f"Unknown dialect {body.dialect!r}")
+
+    row = await upsert_endpoint(
+        db,
+        name=name,
+        dialect=body.dialect,
+        base_url=body.base_url,
+        api_key=body.api_key,
+        cache_control=body.cache_control,
+        reasoning=body.reasoning,
+        pricing=body.pricing,
+        notes=body.notes,
+    )
+    return _endpoint_item(row)
+
+
+@router.delete("/user/model/endpoints/{name}", status_code=204)
+async def delete_llm_endpoint(
+    name: str,
+    _current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> None:
+    """Remove an endpoint, unless something still selects it."""
+    in_use = endpoint_selectors(name)
+    if in_use:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Endpoint {name!r} is still selected by: {', '.join(in_use)}",
+        )
+    pinned = await count_endpoint_pins(db, name)
+    if pinned:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Endpoint {name!r} is still pinned on {pinned} user override(s)",
+        )
+    if not await delete_endpoint(db, name):
+        raise HTTPException(status_code=404, detail=f"Endpoint {name!r} not found")
 
 
 # ---------------------------------------------------------------------------

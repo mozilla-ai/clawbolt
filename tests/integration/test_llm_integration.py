@@ -28,6 +28,10 @@ async def test_agent_returns_nonempty_reply(
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.llm_max_tokens_agent = 500
         mock_settings.context_trim_target_tokens = 120_000
         mock_settings.context_trim_trigger_tokens = 150_000
@@ -52,6 +56,10 @@ async def test_agent_message_format_accepted(
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
+        mock_settings.llm_endpoint = ""
+        mock_settings.vision_endpoint = ""
+        mock_settings.heartbeat_endpoint = ""
+        mock_settings.compaction_endpoint = ""
         mock_settings.llm_max_tokens_agent = 500
         mock_settings.context_trim_target_tokens = 120_000
         mock_settings.context_trim_trigger_tokens = 150_000

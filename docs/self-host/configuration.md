@@ -34,12 +34,48 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | `LLM_PROVIDER` | (required) | LLM provider name (any provider supported by [any-llm](https://github.com/mozilla-ai/any-llm)) |
 | `LLM_MODEL` | (required) | Model to use for the agent loop |
 | `LLM_API_BASE` | (none) | Custom API base URL (e.g. `http://localhost:1234/v1` for LM Studio) |
+| `LLM_ENDPOINT` | (none) | Name of a configured endpoint (see below). Supersedes `LLM_PROVIDER` and `LLM_API_BASE` |
 | `REASONING_EFFORT` | `auto` | Reasoning effort level: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `auto` |
 | `VISION_MODEL` | (same as `LLM_MODEL`) | Model to use for image/document analysis. Falls back to `LLM_MODEL` if not set |
 | `VISION_PROVIDER` | (same as `LLM_PROVIDER`) | Provider for the vision model. Falls back to `LLM_PROVIDER` if not set |
+| `VISION_ENDPOINT` | (same as `LLM_ENDPOINT`) | Endpoint for the vision model |
 | `ANY_LLM_KEY` | | [any-llm.ai](https://any-llm.ai) managed platform key (replaces individual provider keys) |
 
 Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use the any-llm.ai managed platform as a key vault for all providers.
+
+### Named endpoints
+
+A provider name answers four questions at once: which wire format to speak,
+whether prompt-cache markers are worth stamping, how to ask for reasoning, and
+which price list applies. Put a gateway in front and only the first answer is
+still right, so `LLM_PROVIDER=anthropic` plus `LLM_API_BASE=<gateway>` leaves
+the other three confidently wrong: markers stamped for a hop that drops them,
+an Anthropic thinking budget sent to a model that wants `reasoning_effort`, and
+a cost figure priced against a vendor that never saw the request.
+
+An endpoint separates them. Create one under **Settings > Model** (or
+`PUT /api/user/model/endpoints/<name>`) with:
+
+| Field | Meaning |
+|-------|---------|
+| `dialect` | The any-llm provider whose wire format the endpoint speaks |
+| `base_url` | Where to send the request |
+| `api_key` | The endpoint's own credential. Leave empty to let any-llm resolve the dialect's usual environment variable |
+| `cache_control` | `auto` follows the dialect; `never` for a gateway that drops or rejects markers; `always` for one that forwards them |
+| `reasoning` | `auto` follows the dialect (an Anthropic-style `thinking` budget); `effort` sends the OpenAI-style scalar; `none` sends no reasoning parameter at all |
+| `pricing` | `unpriced` when the dialect and model do not identify who billed the tokens, so cost totals are suppressed rather than invented |
+
+Then set `LLM_ENDPOINT` to its name. `reasoning: none` exists for endpoints
+that reject the parameter's *presence* rather than its value: at least one
+refuses `reasoning_effort` together with function tools on
+`/v1/chat/completions` while accepting either alone, so no value works and the
+key has to be omitted.
+
+A secondary role inherits endpoint and provider as a pair. Setting either
+`VISION_ENDPOINT` or `VISION_PROVIDER` opts vision out of `LLM_ENDPOINT`
+entirely, so a role pinned to a bare provider cannot keep an endpoint whose
+dialect would then supersede that provider. The same holds for the compaction
+and heartbeat roles.
 
 ## Telegram settings
 
@@ -168,6 +204,7 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 | `COMPACTION_ENABLED` | `true` | Enable automatic conversation compaction |
 | `COMPACTION_MODEL` | (same as `LLM_MODEL`) | Model used for compaction |
 | `COMPACTION_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for compaction |
+| `COMPACTION_ENDPOINT` | (same as `LLM_ENDPOINT`) | Endpoint used for compaction |
 | `COMPACTION_MAX_TOKENS` | `16000` | Max tokens per compaction response |
 
 ## Rate limiting
@@ -190,6 +227,7 @@ Photos and files the user sends over a messaging channel are cached on disk whil
 | `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per user per day |
 | `HEARTBEAT_MODEL` | (same as `LLM_MODEL`) | Model used for heartbeat messages |
 | `HEARTBEAT_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for heartbeat messages |
+| `HEARTBEAT_ENDPOINT` | (same as `LLM_ENDPOINT`) | Endpoint used for heartbeat messages |
 | `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent user evaluations per tick |
 | `HEARTBEAT_RECENT_MESSAGES_COUNT` | `5` | Number of recent messages included in heartbeat context |
 | `HEARTBEAT_USER_QUIET_PERIOD_MINUTES` | `5` | Minutes since the user's last message during which the heartbeat LLM call is skipped, to avoid burning tokens on "skip" decisions during an active conversation. Set to `0` to disable. |

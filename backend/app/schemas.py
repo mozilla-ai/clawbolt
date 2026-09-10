@@ -1,6 +1,11 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr
+
+# The reasoning effort levels the product understands, in ascending order.
+# ``services.llm_service.REASONING_EFFORT_VALUES`` derives its tuple from this
+# so the two cannot drift.
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "auto"]
 
 
 class HealthResponse(BaseModel):
@@ -245,29 +250,72 @@ class ProviderInfo(BaseModel):
 
 
 class ModelConfigResponse(BaseModel):
+    llm_endpoint: str
     llm_provider: str
     llm_model: str
     llm_api_base: str | None
     vision_model: str
+    vision_endpoint: str
     vision_provider: str
     heartbeat_model: str
+    heartbeat_endpoint: str
     heartbeat_provider: str
     compaction_model: str
+    compaction_endpoint: str
     compaction_provider: str
     reasoning_effort: str
 
 
 class ModelConfigUpdate(BaseModel):
+    llm_endpoint: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
     llm_api_base: str | None = None
     vision_model: str | None = None
+    vision_endpoint: str | None = None
     vision_provider: str | None = None
     heartbeat_model: str | None = None
+    heartbeat_endpoint: str | None = None
     heartbeat_provider: str | None = None
     compaction_model: str | None = None
+    compaction_endpoint: str | None = None
     compaction_provider: str | None = None
     reasoning_effort: str | None = None
+
+
+class LLMEndpointItem(BaseModel):
+    """One configured endpoint. ``api_key`` is never returned in cleartext."""
+
+    name: str
+    dialect: str
+    base_url: str
+    api_key_set: bool = False
+    cache_control: str = "auto"
+    reasoning: str = "auto"
+    pricing: str = "auto"
+    notes: str = ""
+
+
+class LLMEndpointListResponse(BaseModel):
+    items: list[LLMEndpointItem]
+
+
+class LLMEndpointUpsert(BaseModel):
+    """Create or replace one endpoint.
+
+    ``api_key`` accepts the ``MASK`` sentinel to mean "leave the stored key
+    alone", so the form can be re-submitted without the operator retyping a
+    secret the UI never showed them.
+    """
+
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    dialect: str = Field(min_length=1, max_length=64)
+    base_url: str = Field(default="", max_length=512)
+    api_key: str | None = None
+    cache_control: Literal["auto", "always", "never"] = "auto"
+    reasoning: Literal["auto", "thinking", "effort", "none"] = "auto"
+    pricing: Literal["auto", "unpriced"] = "auto"
+    notes: str = Field(default="", max_length=256)
 
 
 # ---------------------------------------------------------------------------
@@ -972,17 +1020,21 @@ class TelegramWebhookResponse(BaseModel):
 class AdminLLMConfigResponse(BaseModel):
     """Global default LLM (used when a user has no per-user override)."""
 
+    llm_endpoint: str = ""
     llm_provider: str
     llm_model: str
     llm_api_base: str | None = None
+    reasoning_effort: str = "auto"
 
 
 class AdminLLMConfigUpdate(BaseModel):
     """All fields optional. Pass only what you want to change."""
 
+    llm_endpoint: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
     llm_api_base: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class AdminUserLLMOverrideResponse(BaseModel):
@@ -994,8 +1046,10 @@ class AdminUserLLMOverrideResponse(BaseModel):
     """
 
     user_id: str
+    llm_endpoint_override: str = ""
     llm_provider_override: str
     llm_model_override: str
+    effective_llm_endpoint: str = ""
     effective_llm_provider: str
     effective_llm_model: str
 
@@ -1003,6 +1057,7 @@ class AdminUserLLMOverrideResponse(BaseModel):
 class AdminUserLLMOverrideUpdate(BaseModel):
     """Pass empty strings to clear an override and fall back to the global default."""
 
+    llm_endpoint_override: str | None = None
     llm_provider_override: str | None = None
     llm_model_override: str | None = None
 
@@ -1766,8 +1821,14 @@ class AdminLLMEvalRunCreate(BaseModel):
     user was not actually on.
     """
 
-    candidate_provider: str = Field(min_length=1, max_length=64)
+    candidate_endpoint: str = Field(default="", max_length=64)
+    candidate_provider: str = Field(default="", max_length=64)
     candidate_model: str = Field(min_length=1, max_length=128)
+    # Empty means "the deployment's current setting", resolved and frozen
+    # onto the run at creation. The two sides are independent because effort
+    # does not mean the same thing to two model families.
+    baseline_reasoning_effort: ReasoningEffort | Literal[""] = ""
+    candidate_reasoning_effort: ReasoningEffort | Literal[""] = ""
     sample_count: int = Field(default=100, ge=1)
     judge_enabled: bool = True
 
@@ -1787,9 +1848,12 @@ class AdminLLMEvalModelTotals(BaseModel):
     # entries behind, so it is the one to compare across models.
     cache_participation_ratio: float = 0.0
     total_cost_usd: str = "0.000000"
-    # False when genai-prices has no entry for this (provider, model). The
-    # cost above is then zero and must not be read as "free".
+    # False when the cost above is not a cost: either genai-prices has no
+    # entry for this (provider, model), or the endpoint is marked unpriced
+    # because a gateway means the pair does not name who billed the tokens.
+    # Zero, in both cases, must not be read as "free".
     pricing_available: bool = True
+    pricing_unknown_reason: str = ""
     latency_p50_ms: float = 0.0
     latency_p95_ms: float = 0.0
 
@@ -1848,10 +1912,14 @@ class AdminLLMEvalRunItem(BaseModel):
     endpoint refuses it from then on. The listing says so rather than offering
     a link that 403s.
     """
+    baseline_endpoint: str = ""
     baseline_provider: str
     baseline_model: str
+    baseline_reasoning_effort: str = ""
+    candidate_endpoint: str = ""
     candidate_provider: str
     candidate_model: str
+    candidate_reasoning_effort: str = ""
     judge_model: str
     requested_samples: int
     status: str
