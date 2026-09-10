@@ -115,7 +115,11 @@ async def build_fixture(user: User, *, sample_limit: int | None = None) -> Repla
         budget = _row_budget(sample_limit)
         rows = await store.get_recent_messages_async(budget)
         inbound = sum(1 for r in rows if r.direction == MessageDirection.INBOUND)
-        if len(rows) == budget and inbound < sample_limit:
+        # ``<=`` because filling the budget exactly is already the failure:
+        # the samples consumed the whole window, so the oldest one has fewer
+        # than ``conversation_history_limit`` rows in front of it and replays
+        # against a shorter prompt than production builds.
+        if len(rows) == budget and inbound <= sample_limit:
             # The window filled up before it held the turns asked for, which
             # means this user's turns are unusually long. Fall back rather than
             # quietly running a smaller evaluation than the operator chose.

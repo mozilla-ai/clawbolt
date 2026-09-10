@@ -21,10 +21,10 @@ import asyncio
 import json
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from backend.app.database import db_session_async
@@ -96,6 +96,12 @@ async def _load_run(run_id: int) -> LLMEvalRun | None:
 # lag on a job measured in minutes is not worth that.
 _CANCEL_POLL_SECONDS = 1.0
 
+
+# How long a run may go without touching ``heartbeat_at`` before the startup
+# sweep treats it as abandoned. Generously above the slowest plausible single
+# turn: the cost of waiting is a stale row for a few minutes, and the cost of
+# being wrong is marking a live run interrupted.
+_HEARTBEAT_STALE_AFTER = timedelta(minutes=15)
 
 # Consecutive turns whose provider calls failed before the run gives up. A
 # dead provider, a bad key, or an exhausted quota fails every remaining turn
@@ -343,12 +349,15 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
     fixture = await build_fixture(user, sample_limit=run.requested_samples)
     samples = select_samples(fixture, run.requested_samples)
     if not samples:
+        # Not an ``error``: the report renders that in a red banner, and a
+        # run that completed normally against an empty history did not fail.
+        empty = metrics.aggregate([])
+        empty.reasons = ["this user has no replayable turns"]
         await _finish(
             run_id,
             RunStatus.COMPLETED,
             recommendation=str(Recommendation.INCONCLUSIVE),
-            summary=_summary_payload(metrics.aggregate([])),
-            error="user has no replayable turns",
+            summary=_summary_payload(empty),
         )
         return
 
@@ -428,7 +437,10 @@ async def execute_run(run_id: int, *, concurrency: int) -> None:
                 await db.execute(
                     update(LLMEvalRun)
                     .where(LLMEvalRun.id == run_id)
-                    .values(progress_completed=LLMEvalRun.progress_completed + 1)
+                    .values(
+                        progress_completed=LLMEvalRun.progress_completed + 1,
+                        heartbeat_at=datetime.now(UTC),
+                    )
                 )
                 await db.commit()
         except IntegrityError:
@@ -537,16 +549,29 @@ def _summary_payload(aggregate: metrics.RunAggregate) -> dict:
 
 
 async def mark_interrupted_runs() -> None:
-    """Flag runs left mid-flight by a process restart.
+    """Flag runs left mid-flight by a process that is gone.
 
-    Called from the lifespan startup hook. A run only advances on a live
-    background task, so any row still ``running`` or ``pending`` at boot
-    belongs to a process that is gone.
+    Called from the lifespan startup hook. "Still ``running`` at boot" is not
+    on its own evidence of an abandoned run: a rolling deploy boots the new
+    instance while the old one drains, and more than one process can serve
+    the app, so an unconditional sweep marks a live run interrupted. The run
+    keeps calling the provider and later overwrites the row, and in the
+    meantime both concurrency guards in ``start_run`` key off
+    ``ACTIVE_STATUSES`` and would let a duplicate run start for the user.
+
+    A run touches ``heartbeat_at`` as each turn lands, so only rows that have
+    gone quiet for longer than ``_HEARTBEAT_STALE_AFTER`` are swept. A row
+    that never got a heartbeat falls back to ``created_at``, which covers a
+    process that died between the insert and the first turn.
     """
+    cutoff = datetime.now(UTC) - _HEARTBEAT_STALE_AFTER
     async with db_session_async() as db:
         result = await db.execute(
             update(LLMEvalRun)
-            .where(LLMEvalRun.status.in_([str(RunStatus.RUNNING), str(RunStatus.PENDING)]))
+            .where(
+                LLMEvalRun.status.in_([str(RunStatus.RUNNING), str(RunStatus.PENDING)]),
+                func.coalesce(LLMEvalRun.heartbeat_at, LLMEvalRun.created_at) < cutoff,
+            )
             .values(
                 status=str(RunStatus.INTERRUPTED),
                 completed_at=datetime.now(UTC),

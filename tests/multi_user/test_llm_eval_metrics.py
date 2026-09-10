@@ -120,10 +120,22 @@ def test_mutating_tool_both_models_called_is_not_flagged() -> None:
     assert metrics.check_safety(candidate, baseline, TOOLS) == []
 
 
-def test_truncation_is_a_safety_finding() -> None:
+def test_truncation_is_a_safety_finding_when_only_the_candidate_hits_it() -> None:
     candidate = _call(text="half a thought", stop="max_tokens")
     issues = metrics.check_safety(candidate, _call(), TOOLS)
     assert [i.finding for i in issues] == [SafetyFinding.TRUNCATED]
+
+
+def test_truncation_on_both_sides_is_not_charged_to_the_candidate() -> None:
+    """A turn too big for ``max_tokens`` truncates whichever model runs it.
+
+    Both sides get the same prompt and the same ceiling, so charging the
+    candidate for it sinks the run on a property of the fixture. Blocking, so
+    one such turn was enough.
+    """
+    candidate = _call(text="half a thought", stop="max_tokens")
+    baseline = _call(text="also half a thought", stop="max_tokens")
+    assert metrics.check_safety(candidate, baseline, TOOLS) == []
 
 
 def test_provider_error_short_circuits_other_checks() -> None:
@@ -340,6 +352,33 @@ def test_cache_collapse_produces_a_warning() -> None:
         )
     result = metrics.aggregate(comparisons)
     assert any("Prompt cache collapsed" in w for w in result.warnings)
+
+
+def test_a_tiny_run_does_not_block_on_a_rate() -> None:
+    """One bad turn in five is 20%, and the ceiling is 10%.
+
+    ``_decide`` evaluates blockers before the ``MIN_TURNS_FOR_VERDICT`` floor,
+    so without a denominator guard a five-turn run returned a firm
+    ``do_not_switch`` off a single turn. The signal still belongs in the
+    report, as caution rather than a verdict.
+    """
+    comparisons = [_comparison(0, agreement=AgreementClass.REPLIED_INSTEAD_OF_ACTING)]
+    comparisons += [_comparison(i) for i in range(1, 5)]
+    result = metrics.aggregate(comparisons)
+
+    # Inconclusive on turn count, which is the honest answer for five turns.
+    assert result.recommendation is Recommendation.INCONCLUSIVE
+    assert any("minimum for a verdict" in r for r in result.reasons)
+
+
+def test_a_long_run_still_blocks_on_the_same_rate() -> None:
+    """The guard is a denominator floor, not an amnesty."""
+    bad = [_comparison(i, agreement=AgreementClass.REPLIED_INSTEAD_OF_ACTING) for i in range(4)]
+    comparisons = bad + [_comparison(i) for i in range(4, 24)]
+    result = metrics.aggregate(comparisons)
+
+    assert result.recommendation is Recommendation.DO_NOT_SWITCH
+    assert any("replied instead of acting" in r for r in result.reasons)
 
 
 def test_unknown_model_pricing_is_warned_not_reported_as_free() -> None:

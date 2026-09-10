@@ -1442,6 +1442,25 @@ export interface EvalRunList {
   max_samples: number;
   /** Below this many compared turns a run reports inconclusive, not a pass. */
   min_turns_for_verdict: number;
+  /** The largest ``limit`` the endpoint accepts. Growing past it is a 422. */
+  max_page_size: number;
+}
+
+/** Counters only: no conversation content, and no audit row per poll. */
+export interface EvalRunProgress {
+  id: string;
+  status: EvalRunStatus;
+  progress_completed: number;
+  progress_total: number;
+  recommendation: string;
+}
+
+export async function getEvalRunProgress(runId: string): Promise<EvalRunProgress> {
+  const { data, error } = await client.GET(
+    `/api/admin/llm-eval/runs/${encodeURIComponent(runId)}/progress` as never,
+  );
+  if (error) throwApiError(error, 'Failed to load evaluation progress');
+  return data as EvalRunProgress;
 }
 
 /** Runs across every user, or one user's when ``userId`` is given. */

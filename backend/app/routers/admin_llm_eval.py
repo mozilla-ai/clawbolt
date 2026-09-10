@@ -36,6 +36,7 @@ from sqlalchemy import desc, select
 from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.auth.admin_dep import get_current_admin
 from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, Subscription, User
@@ -45,6 +46,7 @@ from backend.app.schemas import (
     AdminLLMEvalRunCreate,
     AdminLLMEvalRunItem,
     AdminLLMEvalRunListResponse,
+    AdminLLMEvalRunProgress,
     AdminLLMEvalSafetyIssue,
     AdminLLMEvalSummary,
     AdminLLMEvalToolCall,
@@ -66,6 +68,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/llm-eval", tags=["admin"])
 
 ACTIVE_STATUSES = (str(RunStatus.PENDING), str(RunStatus.RUNNING))
+
+# Largest page ``list_runs`` will serve. Reported on the response so the
+# console can clamp to it instead of growing past it into a 422.
+MAX_RUN_PAGE_SIZE = 100
 
 
 async def _consenting_user(user_id: str, db: AsyncSession) -> User:
@@ -262,14 +268,18 @@ def _turn_sort_key(turn: LLMEvalTurnResult) -> tuple[int, int, int, int]:
     against the candidate, and ranking it first fills the readable part of the
     report with badges the summary goes on to disown.
     """
-    has_blocking = 0 if _blocking_findings(turn) else 1
+    # ``safety_issues`` is envelope-encrypted, so each read of it decrypts.
+    # Read it once and answer both questions from the result rather than
+    # paying twice per turn for every turn in the run on every page view.
+    issues = _load_json(turn.safety_issues, [])
+    has_blocking = 0 if any(entry.get("finding") in BLOCKING_FINDINGS for entry in issues) else 1
     judged_bad = (
         0
         if turn.judge_verdict
         in (str(JudgeVerdict.CANDIDATE_UNSAFE), str(JudgeVerdict.CANDIDATE_WORSE))
         else 1
     )
-    has_advisory = 0 if _load_json(turn.safety_issues, []) else 1
+    has_advisory = 0 if issues else 1
     return (has_blocking, judged_bad, has_advisory, _TURN_PRIORITY.get(turn.agreement, 7))
 
 
@@ -368,7 +378,7 @@ async def start_run(
 @router.get("/runs", response_model=AdminLLMEvalRunListResponse)
 async def list_runs(
     user_id: str | None = Query(default=None),
-    limit: int = Query(default=25, ge=1, le=100),
+    limit: int = Query(default=25, ge=1, le=MAX_RUN_PAGE_SIZE),
     offset: int = Query(default=0, ge=0),
     ctx: AdminAuditContext = Depends(audit_admin(AdminAction.VIEW_LLM_EVAL_RUNS)),
     db: AsyncSession = Depends(get_async_db),
@@ -428,6 +438,7 @@ async def list_runs(
         total=total,
         max_samples=settings.llm_eval_max_samples,
         min_turns_for_verdict=MIN_TURNS_FOR_VERDICT,
+        max_page_size=MAX_RUN_PAGE_SIZE,
     )
 
 
@@ -466,6 +477,35 @@ async def get_report(
         run=_run_item(run),
         turns=[_turn_item(t, run_has_judge=bool(run.judge_model)) for t in page],
         total_turns=len(ordered),
+    )
+
+
+@router.get("/runs/{run_id}/progress", response_model=AdminLLMEvalRunProgress)
+async def get_run_progress(
+    run_id: str,
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_async_db),
+) -> AdminLLMEvalRunProgress:
+    """Report how far a run has got.
+
+    Deliberately not audited, and deliberately not consent-gated: it returns
+    counters and a status, never a turn, a model output, or an email. The
+    console polls this every couple of seconds while a run is in flight and
+    fetches the audited report only when there is something new to read. The
+    audited endpoints were being polled at the same cadence, which buried a
+    single human read under hundreds of ``view_llm_eval_report`` rows.
+    """
+    run = (
+        await db.execute(select(LLMEvalRun).where(LLMEvalRun.public_id == run_id))
+    ).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return AdminLLMEvalRunProgress(
+        id=run.public_id,
+        status=run.status,
+        progress_completed=run.progress_completed,
+        progress_total=run.progress_total,
+        recommendation=run.recommendation,
     )
 
 

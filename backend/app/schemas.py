@@ -1883,6 +1883,29 @@ class AdminLLMEvalRunListResponse(BaseModel):
     max_samples: int
     min_turns_for_verdict: int
 
+    max_page_size: int = 25
+    """The largest ``limit`` this endpoint accepts.
+
+    On the wire for the same reason ``max_samples`` is: a console that grows
+    its own page size past the server's ceiling gets a 422 and a table that
+    stops loading, including on every subsequent poll.
+    """
+
+
+class AdminLLMEvalRunProgress(BaseModel):
+    """Just enough to answer "is it done yet".
+
+    Carries no conversation content and no per-turn evidence, which is what
+    lets the console poll it without writing an audit row every two seconds
+    for a single human read.
+    """
+
+    id: str
+    status: str
+    progress_completed: int
+    progress_total: int
+    recommendation: str
+
 
 class AdminLLMEvalSafetyIssue(BaseModel):
     finding: str

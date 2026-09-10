@@ -134,6 +134,46 @@ describe('ModelEvalTab', () => {
     expect(await screen.findByText(/reports inconclusive/)).toBeInTheDocument();
   });
 
+  it('does not claim another tenant\'s run belongs to this form', async () => {
+    // The unfiltered table is the default view. Matching any active row there
+    // put a stranger's progress bar under the words "already running for this
+    // user", which is the opposite of what the guard is for.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(
+      runList([run({ id: 'run-0002', user_id: 'user-2', status: 'running' })]),
+    );
+    renderTab();
+
+    expect(await screen.findByText('Recent evaluations')).toBeInTheDocument();
+    expect(
+      screen.queryByText('An evaluation is already running for this user.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('stops growing the page at the ceiling the API reports', async () => {
+    // Growing past it 422s, and the poll closes over the size, so every later
+    // tick fails too and the table stops updating rather than just growing.
+    const api = await import('../admin-api');
+    vi.mocked(api.listEvalRuns).mockResolvedValue(
+      runList([run()], { total: 500, max_page_size: 50 }),
+    );
+    renderTab();
+
+    const more = await screen.findByRole('button', { name: 'Show more runs' });
+    await userEvent.click(more);
+    await waitFor(() => expect(api.listEvalRuns).toHaveBeenCalledWith({ limit: 50 }));
+
+    // At the ceiling the control goes away and says why, rather than
+    // offering a click that fails.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Show more runs' })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText(/Showing the 50 most recent of 500/)).toBeInTheDocument();
+    expect(
+      vi.mocked(api.listEvalRuns).mock.calls.every(([opts]) => (opts?.limit ?? 0) <= 50),
+    ).toBe(true);
+  });
+
   it('lists runs across every user before one is picked', async () => {
     // The table is how a run is found again weeks later, when nobody
     // remembers whose it was.
