@@ -5852,8 +5852,7 @@
           },
           "max_page_size": {
             "type": "integer",
-            "title": "Max Page Size",
-            "default": 25
+            "title": "Max Page Size"
           }
         },
         "type": "object",
@@ -5861,7 +5860,8 @@
           "runs",
           "total",
           "max_samples",
-          "min_turns_for_verdict"
+          "min_turns_for_verdict",
+          "max_page_size"
         ],
         "title": "AdminLLMEvalRunListResponse",
         "description": "This user's runs, plus the bounds the run form has to respect.\n\n``max_samples`` is ``LLM_EVAL_MAX_SAMPLES``, which ``start_run`` enforces.\nWithout it on the wire the sample control can only guess, and a deployment\nthat lowers the setting gets a form offering values the API rejects.\n``min_turns_for_verdict`` is the floor below which a run reports\n``inconclusive`` rather than a pass, which is worth showing before someone\nspends a run finding out."

@@ -3323,10 +3323,7 @@ export interface components {
             max_samples: number;
             /** Min Turns For Verdict */
             min_turns_for_verdict: number;
-            /**
-             * Max Page Size
-             * @default 25
-             */
+            /** Max Page Size */
             max_page_size: number;
         };
         /**
