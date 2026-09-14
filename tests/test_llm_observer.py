@@ -247,7 +247,7 @@ async def test_observer_fires_again_after_context_length_trim_retry(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.compaction.amessages")
+@patch("backend.app.agent.compaction.amessages_streamed")
 async def test_observer_fires_from_compaction(
     mock_amessages: MagicMock,
     test_user: User,
@@ -508,7 +508,7 @@ async def test_response_observer_exception_does_not_crash_agent_loop(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.compaction.amessages")
+@patch("backend.app.agent.compaction.amessages_streamed")
 async def test_response_observer_fires_from_compaction(
     mock_amessages: MagicMock,
     test_user: User,

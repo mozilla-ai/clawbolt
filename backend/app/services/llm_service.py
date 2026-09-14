@@ -2,15 +2,37 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+import json
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, get_args
+from typing import Any, cast, get_args
 
-from any_llm import AnyLLMError, LLMProvider, alist_models
+from anthropic.types import InputJSONDelta, SignatureDelta, TextDelta, ThinkingDelta
+from any_llm import AnyLLMError, LLMProvider, alist_models, amessages
+from any_llm.exceptions import ProviderError
+from any_llm.types.messages import (
+    ContentBlockDeltaEvent,
+    ContentBlockStartEvent,
+    MessageContentBlock,
+    MessageDelta,
+    MessageDeltaEvent,
+    MessageDeltaUsage,
+    MessageResponse,
+    MessageStartEvent,
+    MessageStopEvent,
+    MessageStreamEvent,
+    MessageUsage,
+    TextBlock,
+    ThinkingBlock,
+    ToolUseBlock,
+)
 
 from backend.app.config import settings
 from backend.app.schemas import ProviderInfo, ReasoningEffort
+
+logger = logging.getLogger(__name__)
 
 # Valid reasoning effort levels (matches any_llm.types.completion.ReasoningEffort).
 REASONING_EFFORT_VALUES: tuple[str, ...] = get_args(ReasoningEffort)
@@ -400,3 +422,144 @@ def apply_tool_caching(tools: list[dict[str, Any]], target: LLMTarget) -> list[d
         return tools
     tools[-1] = {**tools[-1], "cache_control": _cache_control()}
     return tools
+
+
+@dataclass
+class _BlockState:
+    """Deltas accumulated for one content block index."""
+
+    start: MessageContentBlock
+    text: list[str] = field(default_factory=list)
+    thinking: list[str] = field(default_factory=list)
+    json_input: list[str] = field(default_factory=list)
+    signature: str = ""
+
+    def build(self) -> MessageContentBlock:
+        """Fold the accumulated deltas back into the block they belong to."""
+        if isinstance(self.start, TextBlock):
+            return self.start.model_copy(update={"text": self.start.text + "".join(self.text)})
+        if isinstance(self.start, ThinkingBlock):
+            return self.start.model_copy(
+                update={
+                    "thinking": self.start.thinking + "".join(self.thinking),
+                    "signature": self.signature or self.start.signature,
+                }
+            )
+        if isinstance(self.start, ToolUseBlock):
+            # ``input`` streams as JSON text fragments that are only valid
+            # once concatenated. An empty join is the no-delta case, where
+            # the block already carries its input.
+            raw = "".join(self.json_input)
+            if not raw:
+                return self.start
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("Tool input JSON did not parse after streaming; keeping it raw")
+                return self.start
+            return self.start.model_copy(update={"input": parsed})
+        return self.start
+
+
+class _MessageAccumulator:
+    """Rebuilds a ``MessageResponse`` from a Messages API event stream.
+
+    Providers with a native Anthropic Messages API attach the finished
+    message to ``message_stop``, which is the whole job done for them.
+    any-llm's OpenAI-dialect bridge does not, so for those the message is
+    reassembled from the individual block and usage events instead.
+    """
+
+    def __init__(self) -> None:
+        self._final: MessageResponse | None = None
+        self._start: MessageResponse | None = None
+        self._blocks: dict[int, _BlockState] = {}
+        self._delta: MessageDelta | None = None
+        self._usage: MessageDeltaUsage | None = None
+
+    def add(self, event: MessageStreamEvent) -> None:
+        """Fold one stream event into the accumulated state."""
+        if isinstance(event, MessageStartEvent):
+            self._start = event.message
+        elif isinstance(event, ContentBlockStartEvent):
+            self._blocks[event.index] = _BlockState(start=event.content_block)
+        elif isinstance(event, ContentBlockDeltaEvent):
+            self._add_delta(event)
+        elif isinstance(event, MessageDeltaEvent):
+            self._delta = event.delta
+            self._usage = event.usage
+        elif isinstance(event, MessageStopEvent):
+            self._final = event.message
+
+    def _add_delta(self, event: ContentBlockDeltaEvent) -> None:
+        block = self._blocks.get(event.index)
+        if block is None:
+            # A delta for an index that never opened means the provider
+            # skipped content_block_start. Nothing to attach it to.
+            logger.warning("Dropping stream delta for unopened block index %d", event.index)
+            return
+        delta = event.delta
+        if isinstance(delta, TextDelta):
+            block.text.append(delta.text)
+        elif isinstance(delta, ThinkingDelta):
+            block.thinking.append(delta.thinking)
+        elif isinstance(delta, SignatureDelta):
+            block.signature = delta.signature
+        elif isinstance(delta, InputJSONDelta):
+            block.json_input.append(delta.partial_json)
+
+    def build(self) -> MessageResponse:
+        """Return the accumulated response.
+
+        Raises ``ProviderError`` when the stream carried neither a final
+        message nor a ``message_start`` to rebuild from, which is the shape
+        a connection cut mid-stream leaves behind.
+        """
+        if self._final is not None:
+            return self._final
+        if self._start is None:
+            msg = "LLM stream ended without a message to accumulate"
+            raise ProviderError(msg)
+        content = [self._blocks[i].build() for i in sorted(self._blocks)]
+        usage = self._merged_usage(self._start.usage)
+        update: dict[str, Any] = {"content": content, "usage": usage}
+        if self._delta is not None:
+            update["stop_reason"] = self._delta.stop_reason
+            update["stop_sequence"] = self._delta.stop_sequence
+        return self._start.model_copy(update=update)
+
+    def _merged_usage(self, start: MessageUsage) -> MessageUsage:
+        """Overlay the final usage counts onto the ones ``message_start`` gave.
+
+        ``message_start`` reports input tokens before generation begins and
+        ``message_delta`` reports the output count at the end, so neither one
+        alone is the whole bill.
+        """
+        if self._usage is None:
+            return start
+        counts = self._usage.model_dump(exclude_none=True)
+        return start.model_copy(update=counts)
+
+
+async def amessages_streamed(**kwargs: Any) -> MessageResponse:
+    """Run a Messages call over SSE and return the accumulated response.
+
+    The result matches what ``amessages`` returns unstreamed. The difference
+    is on the wire: bytes arrive throughout the generation instead of only
+    once it has finished.
+
+    That is what lets a long generation survive a reverse proxy. Cloudflare
+    measures its proxy read timeout against silence on the connection, so an
+    unstreamed call that outruns the timeout is cut off with a 524 even
+    though the origin is healthy and answers moments later. The origin bills
+    for the response regardless, so the unstreamed shape costs money and
+    returns nothing.
+    """
+    stream = cast(
+        "AsyncIterator[MessageStreamEvent]",
+        await amessages(stream=True, **kwargs),
+    )
+    accumulator = _MessageAccumulator()
+    async for event in stream:
+        accumulator.add(event)
+    return accumulator.build()

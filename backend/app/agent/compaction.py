@@ -16,9 +16,8 @@ import re
 import time
 from collections import Counter
 from datetime import UTC
-from typing import Any, cast
+from typing import Any
 
-from any_llm import amessages
 from any_llm.types.messages import MessageResponse
 
 from backend.app.agent.llm_parsing import get_response_text
@@ -36,7 +35,7 @@ from backend.app.agent.prompts import load_prompt
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.config import settings
 from backend.app.services.llm_endpoints import resolve_target, role_selection
-from backend.app.services.llm_service import prepare_system_with_caching
+from backend.app.services.llm_service import amessages_streamed, prepare_system_with_caching
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -405,15 +404,16 @@ async def compact_session(
                 started_at=started_at,
             )
         )
-        response = cast(
-            MessageResponse,
-            await amessages(
-                **target.connection_kwargs(),
-                system=compaction_system,
-                messages=messages,
-                max_tokens=settings.compaction_max_tokens,
-                **compaction_reasoning,
-            ),
+        # Streamed, not because anything consumes the chunks, but because a
+        # compaction is the longest generation the app makes and an
+        # unstreamed one outruns the proxy read timeout in front of the
+        # provider. See ``amessages_streamed``.
+        response = await amessages_streamed(
+            **target.connection_kwargs(),
+            system=compaction_system,
+            messages=messages,
+            max_tokens=settings.compaction_max_tokens,
+            **compaction_reasoning,
         )
     except Exception:
         logger.exception("Compaction LLM call failed for user %s", user_id)

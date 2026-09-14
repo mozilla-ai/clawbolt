@@ -103,7 +103,7 @@ async def test_recovers_stale_pending_event(test_user: UserData) -> None:
     mock_response = make_text_response(
         json.dumps({"memory_update": "## Facts\n- fact: recovered", "summary": ""})
     )
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         completed = await recover_pending_compactions()
 
     assert completed == 1
@@ -121,7 +121,7 @@ async def test_skips_fresh_pending_event(test_user: UserData) -> None:
     await _seed_session_with_messages(test_user, message_count=6)
     event_id = await _insert_pending_event(test_user.id, min_seq=1, max_seq=4, age_minutes=0)
 
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
         completed = await recover_pending_compactions()
 
     assert completed == 0
@@ -140,7 +140,7 @@ async def test_skips_event_beyond_lookback(test_user: UserData) -> None:
         test_user.id, min_seq=1, max_seq=4, age_minutes=lookback + 60
     )
 
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
         completed = await recover_pending_compactions()
 
     assert completed == 0
@@ -156,7 +156,7 @@ async def test_skips_exhausted_event(test_user: UserData) -> None:
         test_user.id, min_seq=1, max_seq=4, retry_count=_MAX_ATTEMPTS
     )
 
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
         completed = await recover_pending_compactions()
 
     assert completed == 0
@@ -174,7 +174,9 @@ async def test_failed_retry_keeps_pending_and_counts_attempt(
     await _seed_session_with_messages(test_user, message_count=6)
     event_id = await _insert_pending_event(test_user.id, min_seq=1, max_seq=4)
 
-    with patch("backend.app.agent.compaction.amessages", side_effect=RuntimeError("provider down")):
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", side_effect=RuntimeError("provider down")
+    ):
         completed = await recover_pending_compactions()
 
     assert completed == 0
@@ -189,7 +191,7 @@ async def test_empty_range_exhausts_event(test_user: UserData) -> None:
     await _seed_session_with_messages(test_user, message_count=6)
     event_id = await _insert_pending_event(test_user.id, min_seq=50, max_seq=60)
 
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
         completed = await recover_pending_compactions()
 
     assert completed == 0
@@ -206,7 +208,7 @@ async def test_sweep_disabled_by_zero_lookback(test_user: UserData) -> None:
 
     with (
         patch.object(settings, "compaction_retry_lookback_minutes", 0),
-        patch("backend.app.agent.compaction.amessages") as mock_llm,
+        patch("backend.app.agent.compaction.amessages_streamed") as mock_llm,
     ):
         completed = await recover_pending_compactions()
 

@@ -253,7 +253,9 @@ async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
         UserMessage(content="Oh and Mr. Smith's number is 555-0123"),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         memory_update, max_seq = await compact_session(test_user.id, messages)
 
     assert "Deck: $45/sqft" in memory_update
@@ -307,7 +309,9 @@ async def test_compact_session_skips_memory_write_on_concurrent_change(
         UserMessage(content="some old conversation", seq=1),
         AssistantMessage(content="noted", seq=2),
     ]
-    with patch("backend.app.agent.compaction.amessages", side_effect=_llm_with_concurrent_write):
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", side_effect=_llm_with_concurrent_write
+    ):
         memory_update, _ = await compact_session(test_user.id, messages, max_message_seq=2)
 
     # CAS miss: compaction reports no memory change and the concurrent
@@ -341,7 +345,9 @@ async def test_compact_session_includes_current_memory_and_user(
 
     messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         await compact_session(test_user.id, messages)
 
     # Verify the LLM received current memory and user profile in XML-tagged sections
@@ -378,7 +384,9 @@ async def test_compact_session_user_profile_in_separate_xml_section(
 
     messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         await compact_session(test_user.id, messages)
 
     call_kwargs = mock_llm.call_args
@@ -428,7 +436,9 @@ async def test_compact_session_includes_soul_and_heartbeat(
 
     messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         await compact_session(test_user.id, messages)
 
     call_kwargs = mock_llm.call_args
@@ -459,7 +469,9 @@ async def test_compact_session_soul_in_separate_xml_section(
 
     messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         await compact_session(test_user.id, messages)
 
     call_kwargs = mock_llm.call_args
@@ -496,7 +508,9 @@ async def test_compact_session_heartbeat_in_separate_xml_section(
 
     messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         await compact_session(test_user.id, messages)
 
     call_kwargs = mock_llm.call_args
@@ -525,7 +539,9 @@ async def test_compact_session_empty_soul_and_heartbeat(
 
     messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         await compact_session(test_user.id, messages)
 
     call_kwargs = mock_llm.call_args
@@ -554,7 +570,7 @@ async def test_compact_session_returns_max_message_seq(test_user: UserData) -> N
 
     messages: list[AgentMessage] = [UserMessage(content="test")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, max_seq = await compact_session(test_user.id, messages, max_message_seq=42)
 
     assert memory_update != ""
@@ -582,7 +598,7 @@ async def test_compact_session_writes_user_profile(test_user: UserData) -> None:
         AssistantMessage(content="Got it, updated the estimate."),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, messages)
 
     updated_profile = await store.read_user_async()
@@ -612,7 +628,7 @@ async def test_compact_session_writes_soul(test_user: UserData) -> None:
         AssistantMessage(content="Done. I'll keep it direct from now on."),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, messages)
 
     updated_soul = await store.read_soul_async()
@@ -642,7 +658,7 @@ async def test_compact_session_skips_empty_profile_and_soul(test_user: UserData)
         AssistantMessage(content="Saved Bob's number."),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, messages)
 
     # Profile and soul should be unchanged
@@ -655,7 +671,7 @@ async def test_compact_session_skips_empty_profile_and_soul(test_user: UserData)
 @pytest.mark.asyncio()
 async def test_compact_session_empty_messages(test_user: UserData) -> None:
     """compact_session with no messages should return empty without LLM call."""
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
         memory_update, max_seq = await compact_session(test_user.id, [])
 
     assert memory_update == ""
@@ -670,7 +686,7 @@ async def test_compact_session_disabled(test_user: UserData) -> None:
 
     with (
         patch("backend.app.agent.compaction.settings") as mock_settings,
-        patch("backend.app.agent.compaction.amessages") as mock_llm,
+        patch("backend.app.agent.compaction.amessages_streamed") as mock_llm,
     ):
         mock_settings.compaction_enabled = False
         memory_update, max_seq = await compact_session(test_user.id, messages)
@@ -686,7 +702,7 @@ async def test_compact_session_llm_failure_returns_empty(test_user: UserData) ->
     messages: list[AgentMessage] = [UserMessage(content="Some content")]
 
     with patch(
-        "backend.app.agent.compaction.amessages",
+        "backend.app.agent.compaction.amessages_streamed",
         side_effect=Exception("LLM unavailable"),
     ):
         memory_update, max_seq = await compact_session(test_user.id, messages)
@@ -702,7 +718,7 @@ async def test_compact_session_invalid_llm_response(test_user: UserData) -> None
 
     messages: list[AgentMessage] = [UserMessage(content="Some content")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, max_seq = await compact_session(test_user.id, messages)
 
     assert memory_update == ""
@@ -719,7 +735,7 @@ async def test_compact_session_no_new_info(test_user: UserData) -> None:
         AssistantMessage(content="Hello! How can I help?"),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, max_seq = await compact_session(test_user.id, messages)
 
     assert memory_update == ""
@@ -761,7 +777,7 @@ async def test_compact_session_emits_structured_summary_log(
 
     with (
         caplog.at_level(logging.INFO, logger="backend.app.agent.compaction"),
-        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response),
     ):
         await compact_session(test_user.id, messages)
 
@@ -812,7 +828,7 @@ async def test_compact_session_summary_log_marks_all_updates_false_when_llm_retu
 
     with (
         caplog.at_level(logging.INFO, logger="backend.app.agent.compaction"),
-        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response),
     ):
         await compact_session(test_user.id, messages)
 
@@ -833,7 +849,9 @@ async def test_compact_session_uses_configured_model(test_user: UserData) -> Non
     messages: list[AgentMessage] = [UserMessage(content="test")]
 
     with (
-        patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm,
+        patch(
+            "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+        ) as mock_llm,
         patch("backend.app.agent.compaction.settings") as mock_settings,
     ):
         mock_settings.compaction_enabled = True
@@ -863,7 +881,9 @@ async def test_compact_session_falls_back_to_llm_model(test_user: UserData) -> N
     messages: list[AgentMessage] = [UserMessage(content="test")]
 
     with (
-        patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm,
+        patch(
+            "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+        ) as mock_llm,
         patch("backend.app.agent.compaction.settings") as mock_settings,
     ):
         mock_settings.compaction_enabled = True
@@ -896,7 +916,7 @@ async def test_compact_session_logs_llm_usage(test_user: UserData) -> None:
     messages: list[AgentMessage] = [UserMessage(content="hello")]
 
     with (
-        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response),
         patch("backend.app.agent.compaction.log_llm_usage") as mock_log,
         patch("backend.app.agent.compaction.settings") as mock_settings,
     ):
@@ -929,7 +949,7 @@ async def test_compact_session_does_not_log_when_llm_fails(test_user: UserData) 
 
     with (
         patch(
-            "backend.app.agent.compaction.amessages",
+            "backend.app.agent.compaction.amessages_streamed",
             side_effect=Exception("LLM unavailable"),
         ),
         patch("backend.app.agent.compaction.log_llm_usage") as mock_log,
@@ -946,7 +966,7 @@ async def test_compact_session_does_not_log_when_disabled(test_user: UserData) -
 
     with (
         patch("backend.app.agent.compaction.settings") as mock_settings,
-        patch("backend.app.agent.compaction.amessages") as mock_llm,
+        patch("backend.app.agent.compaction.amessages_streamed") as mock_llm,
         patch("backend.app.agent.compaction.log_llm_usage") as mock_log,
     ):
         mock_settings.compaction_enabled = False
@@ -960,7 +980,7 @@ async def test_compact_session_does_not_log_when_disabled(test_user: UserData) -
 async def test_compact_session_does_not_log_when_no_messages(test_user: UserData) -> None:
     """An empty message list should short-circuit before any usage log is written."""
     with (
-        patch("backend.app.agent.compaction.amessages") as mock_llm,
+        patch("backend.app.agent.compaction.amessages_streamed") as mock_llm,
         patch("backend.app.agent.compaction.log_llm_usage") as mock_log,
     ):
         await compact_session(test_user.id, [])
@@ -987,7 +1007,7 @@ async def test_load_history_returns_all_messages_under_limit(
     _add_messages(session, 8)
 
     # Under the limit there is no overflow, so no compaction fires.
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
         history = await load_conversation_history(session, limit=500)
 
     mock_llm.assert_not_called()
@@ -1103,7 +1123,7 @@ async def test_load_history_overflow_advances_watermark_and_compacts(
     mock_response = make_text_response(
         json.dumps({"memory_update": "## Facts\n- fact: from_overflow", "summary": ""})
     )
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         history = await load_conversation_history(session, limit=10)
         if _context_module._background_tasks:
             await asyncio.gather(*list(_context_module._background_tasks), return_exceptions=True)
@@ -1183,7 +1203,7 @@ async def test_trigger_compaction_for_dropped_fires_background_task(
         json.dumps({"memory_update": "## Facts\n- fact: from_trim", "summary": ""})
     )
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await trigger_compaction_for_dropped(test_user.id, dropped)
         # Wait deterministically for the background task to finish rather
         # than sleeping a fixed window. ``-n auto`` workers contend for CPU
@@ -1204,7 +1224,7 @@ async def test_trigger_compaction_for_dropped_skips_empty(
     """trigger_compaction_for_dropped should do nothing with empty dropped list."""
     from backend.app.agent.context import trigger_compaction_for_dropped
 
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
         await trigger_compaction_for_dropped(test_user.id, [])
         await asyncio.sleep(0.1)
 
@@ -1222,7 +1242,7 @@ async def test_trigger_compaction_for_dropped_skips_when_disabled(
 
     with (
         patch("backend.app.agent.context.settings") as mock_settings,
-        patch("backend.app.agent.compaction.amessages") as mock_llm,
+        patch("backend.app.agent.compaction.amessages_streamed") as mock_llm,
     ):
         mock_settings.compaction_enabled = False
         await trigger_compaction_for_dropped(test_user.id, dropped)
@@ -1250,7 +1270,7 @@ async def test_compact_session_appends_history(test_user: UserData) -> None:
         AssistantMessage(content="Got it, saved your rate."),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, _ = await compact_session(test_user.id, messages, max_message_seq=2)
 
     assert "Rate: $100/hr" in memory_update
@@ -1293,7 +1313,7 @@ async def test_compact_session_preserves_event_timestamps_in_summary(
         AssistantMessage(content="Done, added Carter June 3-5."),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, messages, max_message_seq=2)
 
     memory_store = get_memory_store(test_user.id)
@@ -1319,7 +1339,7 @@ async def test_compact_session_no_summary_skips_history(test_user: UserData) -> 
         AssistantMessage(content="Hi there!"),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, messages, max_message_seq=2)
 
     memory_store = get_memory_store(test_user.id)
@@ -1409,7 +1429,7 @@ async def test_compact_session_writes_event_row(test_user: UserData) -> None:
         )
         before = len(before_rows)
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, messages, max_message_seq=2)
 
     async with db_session_async() as db:
@@ -1454,7 +1474,7 @@ async def test_compact_session_db_failure_does_not_fail_compaction(
     messages: list[AgentMessage] = [UserMessage(content="hi")]
 
     with (
-        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response),
         patch(
             "backend.app.agent.compaction._persist_compaction_event",
             side_effect=RuntimeError("db down"),
@@ -1584,7 +1604,7 @@ async def test_compact_session_does_not_write_when_memory_unchanged(
         AssistantMessage(content="No updates needed."),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, _ = await compact_session(test_user.id, messages)
 
     # Return value reflects "no real diff": empty string, not the verbatim
@@ -1619,7 +1639,7 @@ async def test_compact_session_summary_log_marks_memory_unchanged_when_llm_echoe
 
     with (
         caplog.at_level(logging.INFO, logger="backend.app.agent.compaction"),
-        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response),
     ):
         await compact_session(test_user.id, messages)
 
@@ -1660,7 +1680,7 @@ async def test_compaction_history_snapshot_matches_db_after_append(
     )
     messages: list[AgentMessage] = [UserMessage(content="something happened")]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, messages)
 
     live_history = await store.read_history_async()
@@ -1957,7 +1977,7 @@ async def test_compact_session_with_event_id_updates_existing_row(
         AssistantMessage(content="hello back", seq=5),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, dropped, max_message_seq=5, event_id=event_id)
 
     async with db_session_async() as db:
@@ -2009,7 +2029,7 @@ async def test_compact_session_captures_llm_prompt_raw_and_parsed(
         AssistantMessage(content="sure, here is the plan", seq=2),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         await compact_session(test_user.id, dropped, max_message_seq=2)
 
     async with db_session_async() as db:
@@ -2062,7 +2082,7 @@ async def test_compact_session_truncates_oversized_prompt(
     ]
 
     with (
-        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response),
         patch.object(
             settings,
             "compaction_event_snapshot_max_bytes_per_file",
@@ -2336,7 +2356,9 @@ async def test_compact_session_admin_note_prepended_to_conversation(
     mock_response = make_text_response(json.dumps({"memory_update": "## empty\n", "summary": ""}))
     messages: list[AgentMessage] = [UserMessage(content="Hello", seq=1)]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         await compact_session(
             test_user.id,
             messages,
@@ -2360,7 +2382,9 @@ async def test_compact_session_no_admin_note_no_prefix(test_user: User) -> None:
     mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
     messages: list[AgentMessage] = [UserMessage(content="Hello", seq=1)]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+    with patch(
+        "backend.app.agent.compaction.amessages_streamed", return_value=mock_response
+    ) as mock_llm:
         await compact_session(test_user.id, messages)
 
     user_content = mock_llm.call_args.kwargs["messages"][0]["content"]
@@ -2393,7 +2417,7 @@ async def test_compact_session_skips_memory_update_when_llm_rewrite_exceeds_budg
     messages: list[AgentMessage] = [UserMessage(content="anything", seq=1)]
 
     caplog.set_level("WARNING", logger="backend.app.agent.compaction")
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, _ = await compact_session(test_user.id, messages)
 
     # Return value reflects "no MEMORY.md update happened".
@@ -2470,7 +2494,7 @@ async def test_compact_session_compliance_audit_removes_excluded_content(
         AssistantMessage(content="Morning! How can I help today?"),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, _ = await compact_session(test_user.id, messages)
 
     # The compliance audit ran and removed excluded content.
@@ -2537,7 +2561,7 @@ async def test_compact_session_compliance_audit_removes_excluded_that_is_still_r
         AssistantMessage(content="All quiet."),
     ]
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, _ = await compact_session(test_user.id, messages)
 
     # Excluded contact details removed despite being "relevant".
@@ -2581,7 +2605,7 @@ async def test_hygiene_only_compaction_cleans_memory_without_conversation(
     )
     mock_response = make_text_response(llm_response_text)
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages_streamed", return_value=mock_response):
         memory_update, _ = await compact_session(
             test_user.id,
             trimmed_messages=[],  # no conversation messages
@@ -2611,7 +2635,7 @@ async def test_hygiene_only_compaction_skips_empty_memory(
     # Ensure memory is empty
     await store.write_memory_async("")
 
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
         memory_update, _ = await compact_session(
             test_user.id,
             trimmed_messages=[],
