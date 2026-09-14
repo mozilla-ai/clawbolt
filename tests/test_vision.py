@@ -21,7 +21,7 @@ def _make_noisy_jpeg(width: int = 100, height: int = 100, quality: int = 95) -> 
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.media.vision.amessages")
+@patch("backend.app.media.vision.amessages_streamed")
 async def test_analyze_image_returns_description(mock_amessages: object) -> None:
     """analyze_image should return LLM description text."""
     mock_amessages.return_value = make_vision_response("A wooden deck with composite boards.")  # type: ignore[union-attr]
@@ -31,7 +31,7 @@ async def test_analyze_image_returns_description(mock_amessages: object) -> None
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.media.vision.amessages")
+@patch("backend.app.media.vision.amessages_streamed")
 async def test_analyze_image_disables_thinking(mock_amessages: object) -> None:
     """Vision output should never compete with reasoning for the token budget."""
     mock_amessages.return_value = make_vision_response("A damaged roof.")  # type: ignore[union-attr]
@@ -43,7 +43,7 @@ async def test_analyze_image_disables_thinking(mock_amessages: object) -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.media.vision.amessages")
+@patch("backend.app.media.vision.amessages_streamed")
 async def test_analyze_image_includes_context(mock_amessages: object) -> None:
     """analyze_image should include context in the request."""
     mock_amessages.return_value = make_vision_response("Deck damage visible.")  # type: ignore[union-attr]
@@ -59,7 +59,7 @@ async def test_analyze_image_includes_context(mock_amessages: object) -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.media.vision.amessages")
+@patch("backend.app.media.vision.amessages_streamed")
 async def test_analyze_image_encodes_base64(mock_amessages: object) -> None:
     """analyze_image should base64 encode the image bytes."""
     mock_amessages.return_value = make_vision_response("Test.")  # type: ignore[union-attr]
@@ -76,7 +76,7 @@ async def test_analyze_image_encodes_base64(mock_amessages: object) -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.media.vision.amessages")
+@patch("backend.app.media.vision.amessages_streamed")
 async def test_analyze_image_returns_empty_string_on_none_content(
     mock_amessages: object,
 ) -> None:
@@ -98,7 +98,7 @@ async def test_analyze_image_returns_empty_string_on_none_content(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.media.vision.amessages")
+@patch("backend.app.media.vision.amessages_streamed")
 async def test_analyze_image_does_not_pass_api_key(mock_amessages: object) -> None:
     """amessages should be called without api_key so the SDK resolves keys from env."""
     mock_amessages.return_value = make_vision_response("Test.")  # type: ignore[union-attr]
@@ -109,7 +109,7 @@ async def test_analyze_image_does_not_pass_api_key(mock_amessages: object) -> No
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.media.vision.amessages")
+@patch("backend.app.media.vision.amessages_streamed")
 @patch("backend.app.media.vision.settings")
 async def test_analyze_image_falls_back_to_llm_model(
     mock_settings: object, mock_amessages: object
@@ -206,7 +206,7 @@ def test_compress_png_rgba_converts_to_jpeg() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.media.vision.amessages")
+@patch("backend.app.media.vision.amessages_streamed")
 async def test_analyze_image_compresses_oversized_image(mock_amessages: object) -> None:
     """analyze_image should compress oversized images before sending to the API."""
     mock_amessages.return_value = make_vision_response("Noisy image.")  # type: ignore[union-attr]

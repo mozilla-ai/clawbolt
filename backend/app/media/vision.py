@@ -1,16 +1,14 @@
 import base64
 import io
 import logging
-from typing import Any, cast
+from typing import Any
 
-from any_llm import amessages
-from any_llm.types.messages import MessageResponse
 from PIL import Image
 
 from backend.app.agent.llm_parsing import get_response_text
 from backend.app.config import settings
 from backend.app.services.llm_endpoints import resolve_target, role_selection
-from backend.app.services.llm_service import prepare_system_with_caching
+from backend.app.services.llm_service import amessages_streamed, prepare_system_with_caching
 
 logger = logging.getLogger(__name__)
 
@@ -130,20 +128,19 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
     )
     logger.info("Using vision model: %s", target.describe())
 
-    response = cast(
-        MessageResponse,
-        await amessages(
-            **target.connection_kwargs(),
-            system=prepare_system_with_caching(VISION_SYSTEM_PROMPT, target),
-            messages=[
-                {"role": "user", "content": user_content},
-            ],
-            max_tokens=settings.llm_max_tokens_vision,
-            # Vision is a description task: reasoning buys nothing and the
-            # image already dominates the prompt. "none" is a request for no
-            # reasoning, which each style spells differently.
-            **target.reasoning_kwargs("none"),
-        ),
+    # Streamed so a long description cannot outrun the proxy read timeout
+    # in front of the provider. See ``amessages_streamed``.
+    response = await amessages_streamed(
+        **target.connection_kwargs(),
+        system=prepare_system_with_caching(VISION_SYSTEM_PROMPT, target),
+        messages=[
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=settings.llm_max_tokens_vision,
+        # Vision is a description task: reasoning buys nothing and the
+        # image already dominates the prompt. "none" is a request for no
+        # reasoning, which each style spells differently.
+        **target.reasoning_kwargs("none"),
     )
     logger.debug("Vision LLM response received for mime_type=%s", mime_type)
     return get_response_text(response)

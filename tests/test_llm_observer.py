@@ -551,7 +551,7 @@ async def test_response_observer_fires_from_compaction(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.heartbeat.amessages")
+@patch("backend.app.agent.heartbeat.amessages_streamed")
 async def test_response_observer_fires_from_heartbeat_decision(
     mock_amessages: MagicMock,
     test_user: User,

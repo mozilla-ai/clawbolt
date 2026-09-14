@@ -567,7 +567,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_llm_says_skip(
         self,
         mock_llm: AsyncMock,
@@ -598,7 +598,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_populates_tokens_from_response(
         self,
         mock_llm: AsyncMock,
@@ -632,7 +632,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_llm_says_run(
         self,
         mock_llm: AsyncMock,
@@ -665,7 +665,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_uses_heartbeat_model_when_set(
         self,
         mock_llm: AsyncMock,
@@ -698,7 +698,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_passes_api_base_not_api_key(
         self,
         mock_llm: AsyncMock,
@@ -736,7 +736,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_text_response_falls_back_to_skip(
         self,
         mock_llm: AsyncMock,
@@ -765,7 +765,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_passes_decision_tool_to_acompletion(
         self,
         mock_llm: AsyncMock,
@@ -797,7 +797,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_rate_limit_error_is_retried(
         self,
         mock_llm: AsyncMock,
@@ -2997,7 +2997,7 @@ class TestEvaluateHeartbeatNeedPassesHistory:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_heartbeat_history_passed_to_prompt_builder(
         self,
         mock_llm: AsyncMock,
@@ -3057,7 +3057,7 @@ class TestEvaluateHeartbeatNeedPassesHistory:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_empty_history_when_no_logs(
         self,
         mock_llm: AsyncMock,
@@ -3110,7 +3110,7 @@ class TestRecentMessagesIncludeTimestamps:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_recent_messages_contain_timestamps(
         self,
         mock_llm: AsyncMock,
@@ -3167,7 +3167,7 @@ class TestRecentMessagesIncludeTimestamps:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
+    @patch("backend.app.agent.heartbeat.amessages_streamed")
     async def test_message_without_timestamp_falls_back(
         self,
         mock_llm: AsyncMock,

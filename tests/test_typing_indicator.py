@@ -560,7 +560,7 @@ async def test_activity_forwarder_agent_end() -> None:
 @patch("backend.app.agent.heartbeat.HeartbeatStore")
 @patch("backend.app.agent.heartbeat.get_session_store")
 @patch("backend.app.agent.heartbeat.settings")
-@patch("backend.app.agent.heartbeat.amessages")
+@patch("backend.app.agent.heartbeat.amessages_streamed")
 @patch("backend.app.agent.heartbeat.message_bus")
 async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_bus: MagicMock,
@@ -637,7 +637,7 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
 @patch("backend.app.agent.heartbeat.HeartbeatStore")
 @patch("backend.app.agent.heartbeat.get_session_store")
 @patch("backend.app.agent.heartbeat.settings")
-@patch("backend.app.agent.heartbeat.amessages")
+@patch("backend.app.agent.heartbeat.amessages_streamed")
 async def test_heartbeat_works_without_channel(
     mock_llm: AsyncMock,
     mock_settings: MagicMock,

@@ -21,9 +21,9 @@ import random
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
-from any_llm import RateLimitError, amessages
+from any_llm import RateLimitError
 from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import Select, select
@@ -57,7 +57,7 @@ from backend.app.enums import MessageDirection
 from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
 from backend.app.services.llm_endpoints import resolve_target, role_selection
-from backend.app.services.llm_service import prepare_system_with_caching
+from backend.app.services.llm_service import amessages_streamed, prepare_system_with_caching
 from backend.app.services.llm_usage import log_llm_usage
 
 if TYPE_CHECKING:
@@ -502,16 +502,15 @@ async def evaluate_heartbeat_need(
     )
     for attempt in range(max_retries):
         try:
-            response = cast(
-                MessageResponse,
-                await amessages(
-                    **target.connection_kwargs(),
-                    system=heartbeat_system,
-                    messages=heartbeat_messages,
-                    tools=heartbeat_tools,
-                    max_tokens=settings.llm_max_tokens_heartbeat,
-                    **heartbeat_reasoning,
-                ),
+            # Streamed so a long decision cannot outrun the proxy read
+            # timeout in front of the provider. See ``amessages_streamed``.
+            response = await amessages_streamed(
+                **target.connection_kwargs(),
+                system=heartbeat_system,
+                messages=heartbeat_messages,
+                tools=heartbeat_tools,
+                max_tokens=settings.llm_max_tokens_heartbeat,
+                **heartbeat_reasoning,
             )
             break
         except RateLimitError:
