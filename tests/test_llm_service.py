@@ -869,6 +869,29 @@ class TestStreamedMessages:
         )
         assert get_response_text(result) == "first second"
 
+    async def test_stream_cut_after_start_raises_instead_of_looking_clean(self) -> None:
+        """A stream that just stops has no ``stop_reason`` and still carries
+        the pre-generation usage, so returning it would report a truncated
+        compaction as a successful one that found nothing worth saving."""
+        with pytest.raises(ProviderError, match="signalled completion"):
+            await self._run(
+                [
+                    MessageStartEvent(
+                        type="message_start", message=self._shell(input_tokens=18961)
+                    ),
+                    ContentBlockStartEvent(
+                        type="content_block_start",
+                        index=0,
+                        content_block=TextBlock(type="text", text=""),
+                    ),
+                    ContentBlockDeltaEvent(
+                        type="content_block_delta",
+                        index=0,
+                        delta=TextDelta(type="text_delta", text='{"memory_upda'),
+                    ),
+                ]
+            )
+
     async def test_stream_that_ends_with_nothing_raises(self) -> None:
         """A connection cut before ``message_start`` leaves nothing to return,
         and returning an empty message would look like a successful compaction

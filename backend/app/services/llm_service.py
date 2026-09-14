@@ -476,6 +476,7 @@ class _MessageAccumulator:
         self._blocks: dict[int, _BlockState] = {}
         self._delta: MessageDelta | None = None
         self._usage: MessageDeltaUsage | None = None
+        self._stopped = False
 
     def add(self, event: MessageStreamEvent) -> None:
         """Fold one stream event into the accumulated state."""
@@ -490,6 +491,7 @@ class _MessageAccumulator:
             self._usage = event.usage
         elif isinstance(event, MessageStopEvent):
             self._final = event.message
+            self._stopped = True
 
     def _add_delta(self, event: ContentBlockDeltaEvent) -> None:
         block = self._blocks.get(event.index)
@@ -511,14 +513,22 @@ class _MessageAccumulator:
     def build(self) -> MessageResponse:
         """Return the accumulated response.
 
-        Raises ``ProviderError`` when the stream carried neither a final
-        message nor a ``message_start`` to rebuild from, which is the shape
-        a connection cut mid-stream leaves behind.
+        Raises ``ProviderError`` unless the provider signalled completion.
+        A stream that stops early usually surfaces as a transport exception,
+        but one that simply ends leaves behind blocks that look finished:
+        ``stop_reason`` is ``None`` and the usage is still the pre-generation
+        count from ``message_start``. Returning that would report a truncated
+        compaction as a successful one that found nothing to save, which is
+        the silent failure this whole change exists to remove. Raising sends
+        it down the retry path instead.
         """
         if self._final is not None:
             return self._final
         if self._start is None:
             msg = "LLM stream ended without a message to accumulate"
+            raise ProviderError(msg)
+        if not self._stopped:
+            msg = "LLM stream ended before the provider signalled completion"
             raise ProviderError(msg)
         content = [self._blocks[i].build() for i in sorted(self._blocks)]
         usage = self._merged_usage(self._start.usage)
