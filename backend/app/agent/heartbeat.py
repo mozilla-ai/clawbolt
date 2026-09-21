@@ -54,6 +54,7 @@ from backend.app.agent.system_prompt import (
     build_time_user_context,
     to_local_time,
 )
+from backend.app.agent.tool_assembly import assemble_turn_tools
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.bus import OutboundMessage, message_bus
@@ -519,7 +520,6 @@ async def execute_heartbeat_tasks(
     from backend.app.agent.stores import ToolConfigStore
     from backend.app.agent.tools.registry import (
         ToolContext,
-        create_list_capabilities_tool,
         default_registry,
         ensure_tool_modules_imported,
     )
@@ -556,8 +556,6 @@ async def execute_heartbeat_tasks(
     disabled_groups = await tool_config_store.get_disabled_tool_names()
     disabled_sub_tools = await get_approval_store().get_never_tool_names(user.id)
 
-    excluded = disabled_groups or set()
-
     agent = ClawboltAgent(
         user=user,
         channel=channel,
@@ -568,49 +566,21 @@ async def execute_heartbeat_tasks(
         excluded_tool_names=disabled_sub_tools or None,
     )
 
-    # Follow the same pattern as run_agent() in router.py:
-    # 1. Core tools (always available, respects disabled groups/sub-tools)
-    # 2. Specialist tools the user is already authenticated for
-    # 3. list_capabilities meta-tool for discovering unconnected integrations
-    tools = await default_registry.create_core_tools(
+    tools, specialist_summaries = await assemble_turn_tools(
         tool_context,
-        excluded_factories=excluded,
-        excluded_tool_names=disabled_sub_tools or None,
+        disabled_factories=disabled_groups,
+        disabled_sub_tools=disabled_sub_tools,
     )
-    ready_specialist_tools = await default_registry.create_ready_specialist_tools(
-        tool_context,
-        excluded_factories=excluded,
-        excluded_tool_names=disabled_sub_tools or None,
-    )
-    tools.extend(ready_specialist_tools)
 
     # Auto-approve the media-delivery tool in heartbeat context (#932).
     # Phase 1 already decided to send this message; asking the user for
     # permission to deliver it sends a confusing approval prompt as the
     # heartbeat message itself. Plain text replies go through reply_text
     # directly and don't need approval at all.
-    _HEARTBEAT_AUTO_APPROVE = {ToolName.SEND_MEDIA_REPLY}
     for tool in tools:
-        if tool.name in _HEARTBEAT_AUTO_APPROVE:
+        if tool.name == ToolName.SEND_MEDIA_REPLY:
             tool.approval_policy = None
 
-    specialist_summaries = await default_registry.get_available_specialist_summaries(
-        tool_context, excluded_factories=excluded
-    )
-    unauthenticated = await default_registry.get_unauthenticated_specialists(
-        tool_context, excluded_factories=excluded
-    )
-    disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(
-        disabled_sub_tools or set()
-    )
-    if specialist_summaries or unauthenticated:
-        tools.append(
-            create_list_capabilities_tool(
-                specialist_summaries,
-                unauthenticated=unauthenticated,
-                disabled_sub_tools=disabled_specialist_subs or None,
-            )
-        )
     agent.register_tools(tools)
 
     logger.debug(

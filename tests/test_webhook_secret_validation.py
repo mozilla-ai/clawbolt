@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import reset_stores
+from backend.app.agent.stores import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import (
     Settings,

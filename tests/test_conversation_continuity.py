@@ -7,7 +7,7 @@ from backend.app.agent.context import (
     get_or_create_conversation,
     load_conversation_history,
 )
-from backend.app.agent.file_store import SessionState, StoredMessage
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.messages import (
     AssistantMessage,
     ToolResultMessage,

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.agent.file_store import UserData
+from backend.app.agent.dto import UserData
 from backend.app.agent.user_db import provision_user
 from backend.app.billing.quota import get_current_quota
 from backend.app.config import settings

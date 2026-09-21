@@ -5,10 +5,8 @@ import asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from backend.app.agent.file_store import (
-    get_memory_store,
-    get_session_store,
-)
+from backend.app.agent.memory_db import get_memory_store
+from backend.app.agent.session_db import get_session_store
 from backend.app.models import Subscription, UsageQuota, User
 
 

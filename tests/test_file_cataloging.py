@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock, patch
 
-from backend.app.agent.file_store import slugify as _slugify
+from backend.app.agent.dto import slugify as _slugify
 from backend.app.agent.tools.file_tools import (
     DEFAULT_INBOX_FOLDER,
     _build_filename,

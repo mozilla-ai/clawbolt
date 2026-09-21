@@ -25,7 +25,12 @@ from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
 from backend.app.channels.base import BaseChannel
 from backend.app.config import settings
-from backend.app.media.download import DEFAULT_MIME_TYPE, DownloadedMedia, generate_filename
+from backend.app.media.download import (
+    DEFAULT_MIME_TYPE,
+    DownloadedMedia,
+    check_media_size,
+    generate_filename,
+)
 from backend.app.models import User
 
 
@@ -64,14 +69,10 @@ class WebChatChannel(BaseChannel):
             downloaded_media: list[DownloadedMedia] = []
             for upload in files:
                 content = await upload.read()
-                if len(content) > settings.max_media_size_bytes:
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            f"File too large: {len(content)} bytes "
-                            f"(limit {settings.max_media_size_bytes} bytes)"
-                        ),
-                    )
+                try:
+                    check_media_size(content)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
                 mime = upload.content_type or DEFAULT_MIME_TYPE
                 filename = upload.filename or generate_filename(mime)
                 downloaded_media.append(

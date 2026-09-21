@@ -1,14 +1,13 @@
-"""Preview-only tool-list builder for system-prompt reconstruction.
+"""The one place the agent's tool list is assembled.
 
-The agent's runtime path in :mod:`backend.app.agent.router` builds its
-tool list inline because it needs a fully-populated :class:`ToolContext`
-(storage backend, outbound-publish hook, downloaded media). This module
-mirrors that shape with stubbed context fields so preview consumers (the
-system-prompt endpoint, debugging surfaces) can render the same tool
-guidelines the LLM sees on a fresh turn without the runtime plumbing.
+Three callers need the same list: the runtime turn in
+:mod:`backend.app.agent.router`, the heartbeat's Phase 2 agent, and the
+system-prompt preview. They used to build it inline, three times, which
+meant the preview could drift from what the agent was actually handed.
 
-Kept separate so preview callers do not have to construct fake
-storage/publish hooks just to read tool schemas.
+:func:`assemble_turn_tools` is that shared build.
+:func:`build_initial_turn_tools` wraps it for preview callers, which have
+no storage backend or outbound hook to supply.
 """
 
 from __future__ import annotations
@@ -23,6 +22,53 @@ from backend.app.agent.tools.registry import (
     ensure_tool_modules_imported,
 )
 from backend.app.models import User
+
+
+async def assemble_turn_tools(
+    tool_context: ToolContext,
+    *,
+    disabled_factories: set[str] | None = None,
+    disabled_sub_tools: set[str] | None = None,
+) -> tuple[list[Tool], dict[str, str]]:
+    """Build the tool list the LLM sees for one turn.
+
+    Core tools first, then specialist tools for every integration the user
+    has connected (loaded from turn 1 so the model can call them without a
+    discovery round trip), then ``list_capabilities`` when there is still
+    something to discover.
+
+    Returns the tools and the specialist summaries, which callers log.
+    """
+    tools = await default_registry.create_core_tools(
+        tool_context,
+        excluded_factories=disabled_factories or None,
+        excluded_tool_names=disabled_sub_tools or None,
+    )
+    tools.extend(
+        await default_registry.create_ready_specialist_tools(
+            tool_context,
+            excluded_factories=disabled_factories or None,
+            excluded_tool_names=disabled_sub_tools or None,
+        )
+    )
+    summaries = await default_registry.get_available_specialist_summaries(
+        tool_context, excluded_factories=disabled_factories or None
+    )
+    unauthenticated = await default_registry.get_unauthenticated_specialists(
+        tool_context, excluded_factories=disabled_factories or None
+    )
+    if summaries or unauthenticated:
+        disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(
+            disabled_sub_tools or set()
+        )
+        tools.append(
+            create_list_capabilities_tool(
+                summaries,
+                unauthenticated=unauthenticated,
+                disabled_sub_tools=disabled_specialist_subs or None,
+            )
+        )
+    return tools, summaries
 
 
 async def build_initial_turn_tools(
@@ -60,40 +106,14 @@ async def build_initial_turn_tools(
 
     tool_config_store = ToolConfigStore(user.id)
     disabled_groups = await tool_config_store.get_disabled_tool_names()
-    # Sub-tools the user marked ``"never"`` in PERMISSIONS.json are
-    # filtered out of the LLM schema, mirroring the runtime router /
-    # heartbeat flow so previews reflect the real tool list.
+    # Sub-tools the user marked ``"never"`` in PERMISSIONS.json are filtered
+    # out of the LLM schema, mirroring the runtime router / heartbeat flow so
+    # previews reflect the real tool list.
     disabled_sub_tools = await get_approval_store().get_never_tool_names(user.id)
 
-    tools = await default_registry.create_core_tools(
+    tools, _summaries = await assemble_turn_tools(
         tool_context,
-        excluded_factories=disabled_groups or None,
-        excluded_tool_names=disabled_sub_tools or None,
+        disabled_factories=disabled_groups,
+        disabled_sub_tools=disabled_sub_tools,
     )
-    # Mirror router.py: specialist tools for connected integrations are
-    # loaded at agent boot, so the preview's tool list reflects what the
-    # LLM actually sees on a fresh turn.
-    ready_specialist_tools = await default_registry.create_ready_specialist_tools(
-        tool_context,
-        excluded_factories=disabled_groups or None,
-        excluded_tool_names=disabled_sub_tools or None,
-    )
-    tools.extend(ready_specialist_tools)
-    specialist_summaries = await default_registry.get_available_specialist_summaries(
-        tool_context, excluded_factories=disabled_groups or None
-    )
-    unauthenticated = await default_registry.get_unauthenticated_specialists(
-        tool_context, excluded_factories=disabled_groups or None
-    )
-    disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(
-        disabled_sub_tools or set()
-    )
-    if specialist_summaries or unauthenticated:
-        tools.append(
-            create_list_capabilities_tool(
-                specialist_summaries,
-                unauthenticated=unauthenticated,
-                disabled_sub_tools=disabled_specialist_subs or None,
-            )
-        )
     return tools

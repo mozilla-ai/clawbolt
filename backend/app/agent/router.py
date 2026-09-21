@@ -36,11 +36,11 @@ from backend.app.agent.onboarding import (
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.skills.loader import load_all_skills
 from backend.app.agent.stores import ToolConfigStore
+from backend.app.agent.tool_assembly import assemble_turn_tools
 from backend.app.agent.tool_summary import append_receipts
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.registry import (
     ToolContext,
-    create_list_capabilities_tool,
     default_registry,
     ensure_tool_modules_imported,
 )
@@ -316,39 +316,11 @@ async def run_agent(
         llm_override=llm_override,
     )
 
-    # Core tools (always-on). Exclude user-disabled groups and sub-tools.
-    tools = await default_registry.create_core_tools(
+    tools, specialist_summaries = await assemble_turn_tools(
         tool_context,
-        excluded_factories=disabled_groups or None,
-        excluded_tool_names=disabled_sub_tools or None,
+        disabled_factories=disabled_groups,
+        disabled_sub_tools=disabled_sub_tools,
     )
-    # Specialist tools for integrations the user is authenticated for are
-    # loaded from turn 1 so the LLM can call them without a discovery
-    # round trip; list_capabilities still surfaces unconnected
-    # integrations for discovery.
-    ready_specialist_tools = await default_registry.create_ready_specialist_tools(
-        tool_context,
-        excluded_factories=disabled_groups or None,
-        excluded_tool_names=disabled_sub_tools or None,
-    )
-    tools.extend(ready_specialist_tools)
-    specialist_summaries = await default_registry.get_available_specialist_summaries(
-        tool_context, excluded_factories=disabled_groups or None
-    )
-    unauthenticated = await default_registry.get_unauthenticated_specialists(
-        tool_context, excluded_factories=disabled_groups or None
-    )
-    disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(
-        disabled_sub_tools or set()
-    )
-    if specialist_summaries or unauthenticated:
-        tools.append(
-            create_list_capabilities_tool(
-                specialist_summaries,
-                unauthenticated=unauthenticated,
-                disabled_sub_tools=disabled_specialist_subs or None,
-            )
-        )
     agent.register_tools(tools)
 
     # Build onboarding prompt now that tools are available, so that tool

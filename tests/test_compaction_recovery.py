@@ -20,7 +20,7 @@ from backend.app.agent.compaction_recovery import (
     _MAX_ATTEMPTS,
     recover_pending_compactions,
 )
-from backend.app.agent.file_store import UserData
+from backend.app.agent.dto import UserData
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.config import settings
 from backend.app.database import db_session_async

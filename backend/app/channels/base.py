@@ -40,11 +40,6 @@ def set_is_allowed_override(fn: IsAllowedOverride) -> None:
     _is_allowed_override = fn
 
 
-def get_is_allowed_override() -> IsAllowedOverride | None:
-    """Return the current allowlist override, or None if not set."""
-    return _is_allowed_override
-
-
 async def channel_route_allowlist(channel_name: str, sender_id: str) -> bool:
     """Return True if a ``ChannelRoute`` exists for this sender on this channel.
 

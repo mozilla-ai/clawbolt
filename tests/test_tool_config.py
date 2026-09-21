@@ -2,11 +2,8 @@
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import (
-    ToolConfigEntry,
-    ToolConfigStore,
-    UserData,
-)
+from backend.app.agent.dto import ToolConfigEntry, UserData
+from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.registry import (
     ToolContext,
     default_registry,

@@ -13,7 +13,7 @@ from backend.app.agent.context import (
     _stored_messages_to_agent_messages,
     _time_marker,
 )
-from backend.app.agent.file_store import StoredMessage
+from backend.app.agent.dto import StoredMessage
 from backend.app.agent.messages import AssistantMessage, UserMessage
 
 # A fixed Monday afternoon anchor so weekday/AM-PM rendering is deterministic.

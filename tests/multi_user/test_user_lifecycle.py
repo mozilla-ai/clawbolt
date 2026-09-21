@@ -23,7 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from backend.app.agent.file_store import get_user_store
+from backend.app.agent.user_db import get_user_store
 from backend.app.middleware.rate_limit import _auth_rate_limiter
 from backend.app.models import Subscription, UsageQuota
 from backend.app.routers.google_oauth import _create_state_token

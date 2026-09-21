@@ -6,11 +6,9 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.agent.file_store import (
-    HeartbeatStore,
-    get_memory_store,
-    get_session_store,
-)
+from backend.app.agent.memory_db import get_memory_store
+from backend.app.agent.session_db import get_session_store
+from backend.app.agent.stores import HeartbeatStore
 from backend.app.models import LLMUsageLog, Subscription, UsageQuota, User
 from backend.app.query_helpers import fetch_all
 

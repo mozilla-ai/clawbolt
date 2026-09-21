@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from backend.app.agent.file_store import get_user_store
 from backend.app.agent.heartbeat import HeartbeatScheduler
+from backend.app.agent.user_db import get_user_store
 from backend.app.models import ChannelRoute, Subscription
 
 

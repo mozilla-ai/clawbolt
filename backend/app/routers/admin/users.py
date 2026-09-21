@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app.agent.approval import get_approval_store
-from backend.app.agent.file_store import get_user_store
+from backend.app.agent.user_db import get_user_store
 from backend.app.auth.admin_dep import get_current_admin
 from backend.app.billing.quota import (
     get_usage_summary,

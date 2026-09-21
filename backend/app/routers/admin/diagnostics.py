@@ -10,8 +10,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.agent.file_store import get_user_store
 from backend.app.agent.media_staging import STAGING_MAX_PER_USER
+from backend.app.agent.user_db import get_user_store
 from backend.app.database import get_async_db
 from backend.app.models import (
     ChatSession,

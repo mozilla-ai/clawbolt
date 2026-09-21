@@ -1842,12 +1842,12 @@ class TestExecuteHeartbeatTasks:
 
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
-            patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
+            patch("backend.app.agent.tool_assembly.default_registry") as mock_registry,
             patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
-            patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+            patch("backend.app.agent.tool_assembly.create_list_capabilities_tool"),
         ):
             mock_tc = MagicMock()
             mock_tc.get_disabled_tool_names = AsyncMock(return_value=set())
@@ -1873,12 +1873,12 @@ class TestExecuteHeartbeatTasks:
         """Phase 2 should return empty string if agent raises."""
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
-            patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
+            patch("backend.app.agent.tool_assembly.default_registry") as mock_registry,
             patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
-            patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+            patch("backend.app.agent.tool_assembly.create_list_capabilities_tool"),
         ):
             mock_tc = MagicMock()
             mock_tc.get_disabled_tool_names = AsyncMock(return_value=set())
@@ -1906,12 +1906,12 @@ class TestExecuteHeartbeatTasks:
 
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
-            patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
+            patch("backend.app.agent.tool_assembly.default_registry") as mock_registry,
             patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
-            patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+            patch("backend.app.agent.tool_assembly.create_list_capabilities_tool"),
         ):
             mock_tc = MagicMock()
             mock_tc.get_disabled_tool_names = AsyncMock(return_value=set())
@@ -1939,14 +1939,12 @@ class TestExecuteHeartbeatTasks:
 
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
-            patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
+            patch("backend.app.agent.tool_assembly.default_registry") as mock_registry,
             patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
-            patch(
-                "backend.app.agent.tools.registry.create_list_capabilities_tool"
-            ) as mock_list_cap,
+            patch("backend.app.agent.tool_assembly.create_list_capabilities_tool") as mock_list_cap,
         ):
             mock_tc = MagicMock()
             mock_tc.get_disabled_tool_names = AsyncMock(return_value=set())
@@ -3604,7 +3602,7 @@ async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: Use
     with (
         patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
         patch(
-            "backend.app.agent.tools.registry.default_registry",
+            "backend.app.agent.tool_assembly.default_registry",
             mock_registry,
         ),
         patch(
@@ -3612,7 +3610,7 @@ async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: Use
             return_value=mock_tool_config,
         ),
         patch(
-            "backend.app.agent.tools.registry.create_list_capabilities_tool",
+            "backend.app.agent.tool_assembly.create_list_capabilities_tool",
             return_value=MagicMock(name="list_capabilities"),
         ) as mock_list_cap,
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
@@ -3665,7 +3663,7 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
 
     with (
         patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
-        patch("backend.app.agent.tools.registry.default_registry", mock_registry),
+        patch("backend.app.agent.tool_assembly.default_registry", mock_registry),
         patch(
             "backend.app.agent.stores.ToolConfigStore",
             return_value=mock_tool_config,
@@ -3674,7 +3672,7 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
             "backend.app.agent.approval.get_approval_store",
             return_value=mock_approval_store,
         ),
-        patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+        patch("backend.app.agent.tool_assembly.create_list_capabilities_tool"),
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
         patch("backend.app.agent.heartbeat.message_bus"),
     ):
@@ -3726,12 +3724,12 @@ async def test_execute_heartbeat_task_context_includes_cleanup_instruction(
 
     with (
         patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
-        patch("backend.app.agent.tools.registry.default_registry", mock_registry),
+        patch("backend.app.agent.tool_assembly.default_registry", mock_registry),
         patch(
             "backend.app.agent.stores.ToolConfigStore",
             return_value=mock_tool_config,
         ),
-        patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+        patch("backend.app.agent.tool_assembly.create_list_capabilities_tool"),
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
         patch("backend.app.agent.heartbeat.message_bus"),
     ):
@@ -3965,9 +3963,9 @@ async def test_heartbeat_auto_approves_send_media_reply(user: User) -> None:
 
     with (
         patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
-        patch("backend.app.agent.tools.registry.default_registry", mock_registry),
+        patch("backend.app.agent.tool_assembly.default_registry", mock_registry),
         patch("backend.app.agent.stores.ToolConfigStore", return_value=mock_tool_config),
-        patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+        patch("backend.app.agent.tool_assembly.create_list_capabilities_tool"),
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
         patch("backend.app.agent.heartbeat.message_bus"),
     ):

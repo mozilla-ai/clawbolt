@@ -103,7 +103,7 @@ class TestDeactivatedAccount:
         self,
         async_db: async_sessionmaker,
     ) -> None:
-        from backend.app.agent.file_store import get_user_store
+        from backend.app.agent.user_db import get_user_store
         from backend.app.auth.oauth_flow import AccountDeactivated, get_or_create_user
 
         store = get_user_store()
@@ -128,7 +128,7 @@ class TestDeactivatedAccount:
     def test_callback_redirects_with_deactivated_message(
         self, client: TestClient, db_session: Session
     ) -> None:
-        from backend.app.agent.file_store import get_user_store
+        from backend.app.agent.user_db import get_user_store
         from backend.app.models import User as OssUser
         from backend.app.routers.google_oauth import _DEACTIVATED_LOGIN_MESSAGE
 
@@ -170,7 +170,7 @@ class TestEmailBackfill:
         async_db: async_sessionmaker,
     ) -> None:
         """When a user logs in and their subscription email is empty, backfill it."""
-        from backend.app.agent.file_store import get_user_store
+        from backend.app.agent.user_db import get_user_store
         from backend.app.auth.oauth_flow import get_or_create_user
 
         store = get_user_store()
@@ -197,7 +197,7 @@ class TestEmailBackfill:
         async_db: async_sessionmaker,
     ) -> None:
         """When subscription already has an email, do not overwrite it."""
-        from backend.app.agent.file_store import get_user_store
+        from backend.app.agent.user_db import get_user_store
         from backend.app.auth.oauth_flow import get_or_create_user
 
         store = get_user_store()
@@ -332,7 +332,7 @@ class TestReloginReprovisioning:
         """
         from pathlib import Path
 
-        from backend.app.agent.file_store import get_user_store
+        from backend.app.agent.user_db import get_user_store
         from backend.app.config import settings as oss_settings
         from backend.app.models import User as OssUser
 

@@ -7,10 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 
-from backend.app.agent.file_store import (
-    StoredMessage,
-    UserData,
-)
+from backend.app.agent.dto import StoredMessage, UserData
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.session_db import get_session_store
 from backend.app.bus import message_bus

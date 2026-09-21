@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from backend.app.agent.file_store import UserData, get_user_store
+from backend.app.agent.dto import UserData
+from backend.app.agent.user_db import get_user_store
 from backend.app.database import db_session_async
 from backend.app.models import Subscription, User
 from backend.app.services.inactive_cleanup import (

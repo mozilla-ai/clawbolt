@@ -10,9 +10,9 @@ from pathlib import Path
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.agent.file_store import get_user_store
 from backend.app.agent.memory_db import reset_memory_stores
 from backend.app.agent.session_db import reset_session_stores
+from backend.app.agent.user_db import get_user_store
 from backend.app.config import settings
 from backend.app.models import (
     DeletedUserUsage,

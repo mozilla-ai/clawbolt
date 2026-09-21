@@ -6,10 +6,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from backend.app.agent.file_store import (
-    SessionState,
-    StoredMessage,
-)
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.onboarding import (
     _has_custom_soul,
     _has_real_user_profile,

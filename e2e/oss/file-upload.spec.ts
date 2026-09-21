@@ -83,7 +83,7 @@ test.describe('File Upload - API Tests', () => {
     });
     expect(res.status()).toBe(422);
     const body = await res.json();
-    expect(body.detail).toContain('File too large');
+    expect(body.detail).toContain('Media file too large');
   });
 
   test('POST /api/user/chat with message only (no files) returns 200', async ({

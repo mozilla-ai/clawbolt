@@ -1,6 +1,6 @@
 """Tests for heartbeat management tools."""
 
-from backend.app.agent.file_store import HeartbeatStore
+from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.heartbeat_tools import create_heartbeat_tools
 from backend.app.database import db_session_async
 from backend.app.models import User

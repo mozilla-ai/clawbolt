@@ -8,8 +8,8 @@ import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.events import AgentEndEvent, ToolExecutionStartEvent, TurnStartEvent
-from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.router import _create_activity_forwarder

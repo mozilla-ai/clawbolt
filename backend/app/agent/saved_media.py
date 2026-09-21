@@ -47,12 +47,6 @@ async def find_saved_file(storage: StorageBackend, file_ref: str) -> SavedFile |
     return None
 
 
-async def latest_saved_file(storage: StorageBackend) -> SavedFile | None:
-    """Return the most recently saved file, or None if storage is empty."""
-    matches = await storage.search_files(query="", limit=1)
-    return matches[0] if matches else None
-
-
 async def read_saved_file_bytes(storage: StorageBackend, saved: SavedFile) -> bytes:
     """Load durable bytes for a saved file from the configured backend."""
     if not saved.path:

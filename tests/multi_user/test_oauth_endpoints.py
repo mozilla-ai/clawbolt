@@ -92,7 +92,7 @@ class TestGoogleOAuth:
         user_id = data["user_id"]
 
         # Verify user was persisted to the database
-        from backend.app.agent.file_store import get_user_store
+        from backend.app.agent.user_db import get_user_store
 
         store = get_user_store()
         import asyncio

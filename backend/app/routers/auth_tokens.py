@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from backend.app.agent.file_store import get_user_store
+from backend.app.agent.user_db import get_user_store
 from backend.app.auth.jwt_auth import (
     create_access_token,
     create_refresh_token,

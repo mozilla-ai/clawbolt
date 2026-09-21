@@ -21,7 +21,7 @@ from backend.app.agent.context import (
     load_conversation_history,
     trigger_compaction_for_dropped,
 )
-from backend.app.agent.file_store import SessionState, StoredMessage, UserData
+from backend.app.agent.dto import SessionState, StoredMessage, UserData
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.session_db import get_session_store

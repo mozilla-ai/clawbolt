@@ -95,16 +95,6 @@ def _user_dir(user_id: str) -> Path:
     return d
 
 
-def _disk_path_for(user_id: str, handle: str) -> Path:
-    """Absolute filesystem path for ``(user, handle)``'s bytes.
-
-    Used by callers that need to write or unlink the file. The DB stores
-    the relative suffix (see :func:`_store_disk_path`) so the staging
-    window survives an operator changing ``MEDIA_STAGING_BASE_DIR``.
-    """
-    return _user_dir(user_id) / f"{handle}.bin"
-
-
 def _store_disk_path(user_id: str, handle: str) -> str:
     """Suffix stored in ``staged_media.disk_path``, relative to the staging root.
 

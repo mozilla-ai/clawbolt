@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 
-from backend.app.agent.file_store import SessionState, StoredMessage
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.router import handle_inbound_message
 from backend.app.bus import message_bus
 from backend.app.models import User

@@ -20,9 +20,10 @@ from sqlalchemy.pool import NullPool
 
 import backend.app.database as _db_module
 from backend.app.agent.approval import reset_approval_gate
-from backend.app.agent.file_store import SessionState, StoredMessage, reset_stores
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.memory_db import reset_memory_stores
 from backend.app.agent.session_db import reset_session_stores
+from backend.app.agent.stores import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
 from backend.app.channels import unknown_sender as unknown_sender_module

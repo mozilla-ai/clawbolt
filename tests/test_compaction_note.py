@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime
 
 from backend.app.agent.compaction_note import build_pending_compaction_note
-from backend.app.agent.file_store import UserData
+from backend.app.agent.dto import UserData
 from backend.app.database import db_session_async
 from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, CompactionEvent, Message

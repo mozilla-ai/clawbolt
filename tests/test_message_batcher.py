@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.agent.file_store import SessionState, StoredMessage
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.ingestion import InboundMessage, MessageBatcher, process_inbound_from_bus
 from backend.app.bus import message_bus
 from backend.app.models import User

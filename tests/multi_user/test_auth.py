@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from backend.app.agent.file_store import get_user_store
+from backend.app.agent.user_db import get_user_store
 from backend.app.auth.jwt_auth import (
     create_access_token,
     create_refresh_token,

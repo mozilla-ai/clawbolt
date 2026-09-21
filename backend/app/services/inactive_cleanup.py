@@ -15,7 +15,7 @@ import logging
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.agent.file_store import get_session_store
+from backend.app.agent.session_db import get_session_store
 from backend.app.config import settings
 from backend.app.database import db_session_async
 from backend.app.models import Subscription, User

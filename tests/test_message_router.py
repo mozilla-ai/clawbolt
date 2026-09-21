@@ -6,7 +6,7 @@ import pytest_asyncio
 from any_llm import AuthenticationError, ContentFilterError
 
 from backend.app.agent.approval import PermissionLevel, get_approval_store
-from backend.app.agent.file_store import SessionState, StoredMessage
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.router import (
     AUTH_ERROR_FALLBACK,
     CONTENT_FILTER_FALLBACK,
@@ -956,7 +956,7 @@ async def test_dispatch_reply_step_suppresses_when_sends_reply_tool_succeeds() -
     succeeded. The tool already published to the bus; reply_text would duplicate."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.core import AgentResponse
-    from backend.app.agent.file_store import SessionState, StoredMessage
+    from backend.app.agent.dto import SessionState, StoredMessage
     from backend.app.agent.router import PipelineContext, dispatch_reply_step
     from backend.app.agent.tools.base import ToolTags
 
@@ -988,7 +988,7 @@ async def test_dispatch_reply_step_sends_when_sends_reply_tool_fails() -> None:
     """Auto-reply should be dispatched via bus when the SENDS_REPLY tool failed."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.core import AgentResponse
-    from backend.app.agent.file_store import SessionState, StoredMessage
+    from backend.app.agent.dto import SessionState, StoredMessage
     from backend.app.agent.router import PipelineContext, dispatch_reply_step
     from backend.app.agent.tools.base import ToolTags
 
@@ -1025,7 +1025,7 @@ async def test_dispatch_reply_step_sends_when_sends_reply_tool_fails() -> None:
 async def test_dispatch_reply_step_resolves_sse_on_empty_reply() -> None:
     """When reply is empty and request_id is set (webchat), resolve SSE with empty content."""
     from backend.app.agent.core import AgentResponse
-    from backend.app.agent.file_store import SessionState, StoredMessage
+    from backend.app.agent.dto import SessionState, StoredMessage
     from backend.app.agent.router import PipelineContext, dispatch_reply_step
 
     response = AgentResponse(reply_text="", tool_calls=[])
@@ -1050,7 +1050,7 @@ async def test_dispatch_reply_step_resolves_sse_on_empty_reply() -> None:
 async def test_dispatch_reply_step_no_outbound_on_empty_reply_without_request_id() -> None:
     """When reply is empty and there's no request_id (Telegram), nothing is published."""
     from backend.app.agent.core import AgentResponse
-    from backend.app.agent.file_store import SessionState, StoredMessage
+    from backend.app.agent.dto import SessionState, StoredMessage
     from backend.app.agent.router import PipelineContext, dispatch_reply_step
 
     response = AgentResponse(reply_text="", tool_calls=[])

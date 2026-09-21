@@ -7,7 +7,7 @@ from datetime import UTC
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from backend.app.agent.file_store import get_user_store
+from backend.app.agent.user_db import get_user_store
 from backend.app.models import Subscription, UsageQuota, User
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.agent.context import admin_compact_visible_messages, hygiene_compact_memory
-from backend.app.agent.file_store import get_user_store
+from backend.app.agent.user_db import get_user_store
 from backend.app.auth.admin_dep import get_current_admin
 from backend.app.models import (
     User,
