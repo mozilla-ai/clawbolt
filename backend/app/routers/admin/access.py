@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func as sa_func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +11,7 @@ from backend.app.models import (
     AllowedEmail,
     WaitlistEntry,
 )
-from backend.app.query_helpers import fetch_all, iso
+from backend.app.query_helpers import count_rows, fetch_all, iso
 from backend.app.schemas.admin import (
     AllowedEmailCreate,
     AllowedEmailListResponse,
@@ -37,7 +36,7 @@ async def list_allowed_emails(
     db: AsyncSession = Depends(get_async_db),
 ) -> AllowedEmailListResponse:
     """List all pre-approved email addresses."""
-    rows = (await db.execute(select(AllowedEmail).order_by(AllowedEmail.email))).scalars().all()
+    rows = await fetch_all(db, select(AllowedEmail).order_by(AllowedEmail.email))
     ctx.detail = {"count": len(rows)}
     return AllowedEmailListResponse(
         total=len(rows),
@@ -110,7 +109,7 @@ async def list_waitlist_entries(
 ) -> WaitlistListResponse:
     """List waitlist entries, newest first."""
     ctx.detail = {"offset": offset, "limit": limit}
-    total = (await db.execute(select(sa_func.count(WaitlistEntry.id)))).scalar_one() or 0
+    total = await count_rows(db, WaitlistEntry.id)
     rows = await fetch_all(
         db,
         select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc()).offset(offset).limit(limit),

@@ -94,7 +94,7 @@ async def list_shared_data_approval_events(
     ]
     return SharedDataApprovalEventListResponse(
         user_id=user.id,
-        consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        consent_at=iso_or_none(user.data_sharing_consent_at),
         items=items,
         total=len(items),
     )

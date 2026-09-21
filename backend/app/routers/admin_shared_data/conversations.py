@@ -275,7 +275,7 @@ async def list_shared_data_conversation_turns(
     return SharedDataConversationTurnsResponse(
         session_id=session.session_id,
         user_id=user.id,
-        consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        consent_at=iso_or_none(user.data_sharing_consent_at),
         turns=turns,
         total=len(turns),
         last_trim_seq=session.last_trim_seq,

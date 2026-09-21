@@ -49,6 +49,7 @@ from backend.app.middleware.security_headers import SecurityHeadersMiddleware
 from backend.app.middleware.seo_meta import SeoMetaMiddleware
 from backend.app.models import ChannelRoute, User
 from backend.app.observability import setup_logging
+from backend.app.query_helpers import fetch_all
 from backend.app.routers import (
     account,
     admin,
@@ -167,12 +168,10 @@ async def _enforce_single_channel() -> None:
     read-time drift-sync.
     """
     async with db_session_async() as db:
-        users = (await db.execute(select(User))).scalars().all()
+        users = await fetch_all(db, select(User))
         fixed = 0
         for user in users:
-            routes = (
-                (await db.execute(select(ChannelRoute).filter_by(user_id=user.id))).scalars().all()
-            )
+            routes = await fetch_all(db, select(ChannelRoute).filter_by(user_id=user.id))
             enabled_messaging = [r for r in routes if r.enabled and r.channel != "webchat"]
             if len(enabled_messaging) > 1:
                 preferred_match = next(

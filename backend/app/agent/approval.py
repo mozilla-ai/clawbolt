@@ -774,7 +774,7 @@ async def cleanup_orphaned_approvals(
         lock_acquired = True
 
         try:
-            rows = (await db.execute(select(PendingApprovalRow))).scalars().all()
+            rows = await fetch_all(db, select(PendingApprovalRow))
             snapshot = [(r.user_id, r.tool_name, r.channel, r.chat_id, r.created_at) for r in rows]
             await db.commit()
         except Exception:

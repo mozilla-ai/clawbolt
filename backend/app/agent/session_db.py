@@ -28,7 +28,7 @@ from backend.app.database import (
     db_session_async,
 )
 from backend.app.models import ChatSession, Message
-from backend.app.query_helpers import iso
+from backend.app.query_helpers import fetch_all, iso
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,7 @@ class SessionStore:
             ).scalar_one_or_none()
             if cs is None:
                 return None
-            messages = list((await db.execute(_select_messages_for_session(cs.id))).scalars().all())
+            messages = await fetch_all(db, _select_messages_for_session(cs.id))
             return _session_to_state(cs, messages)
         finally:
             await db.close()
@@ -271,9 +271,7 @@ class SessionStore:
         """Return all sessions with their messages for this user."""
         db = AsyncSessionLocal()
         try:
-            sessions = (
-                (await db.execute(_select_all_sessions_for_user(self.user_id))).scalars().all()
-            )
+            sessions = await fetch_all(db, _select_all_sessions_for_user(self.user_id))
             result = []
             for cs in sessions:
                 messages = list(

@@ -105,7 +105,7 @@ def _profile_response(c: User) -> UserProfileResponse:
         onboarding_complete=c.onboarding_complete,
         is_active=c.is_active,
         data_sharing_consent=c.data_sharing_consent,
-        data_sharing_consent_at=(iso_or_none(c.data_sharing_consent_at)),
+        data_sharing_consent_at=iso_or_none(c.data_sharing_consent_at),
         created_at=c.created_at.isoformat(),
         updated_at=c.updated_at.isoformat(),
     )
@@ -191,7 +191,7 @@ async def get_data_sharing_consent(
     """Return the current user's data sharing consent state."""
     return DataSharingConsentResponse(
         data_sharing_consent=current_user.data_sharing_consent,
-        data_sharing_consent_at=(iso_or_none(current_user.data_sharing_consent_at)),
+        data_sharing_consent_at=iso_or_none(current_user.data_sharing_consent_at),
     )
 
 
@@ -216,7 +216,7 @@ async def update_data_sharing_consent(
     await db.refresh(user)
     return DataSharingConsentResponse(
         data_sharing_consent=user.data_sharing_consent,
-        data_sharing_consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        data_sharing_consent_at=iso_or_none(user.data_sharing_consent_at),
     )
 
 
@@ -856,11 +856,7 @@ async def get_heartbeat_logs(
     db: AsyncSession = Depends(get_async_db),
 ) -> HeartbeatLogListResponse:
     """List heartbeat logs for the current user, most recent first."""
-    total: int = (
-        await db.scalar(
-            select(sa_func.count(HeartbeatLog.id)).where(HeartbeatLog.user_id == current_user.id)
-        )
-    ) or 0
+    total = await count_rows(db, HeartbeatLog.id, HeartbeatLog.user_id == current_user.id)
 
     logs = await fetch_all(
         db,

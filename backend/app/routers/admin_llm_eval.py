@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -42,7 +41,7 @@ from backend.app.auth.admin_dep import get_current_admin
 from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, Subscription, User
-from backend.app.query_helpers import count_rows
+from backend.app.query_helpers import count_rows, fetch_all, iso_or_none
 from backend.app.schemas.llm_eval import (
     AdminLLMEvalDecision,
     AdminLLMEvalReportResponse,
@@ -109,10 +108,6 @@ async def _effective_models(user_id: str, db: AsyncSession) -> tuple[str, str, s
     return settings.llm_endpoint, settings.llm_provider, model
 
 
-def _iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None
-
-
 def _summary_of(run: LLMEvalRun) -> AdminLLMEvalSummary | None:
     if not run.summary_json:
         return None
@@ -143,8 +138,8 @@ def _run_item(
         recommendation=run.recommendation,
         error=run.error,
         created_at=run.created_at.isoformat(),
-        started_at=_iso(run.started_at),
-        completed_at=_iso(run.completed_at),
+        started_at=iso_or_none(run.started_at),
+        completed_at=iso_or_none(run.completed_at),
         summary=_summary_of(run),
     )
 
@@ -463,7 +458,7 @@ async def list_runs(
         query = query.where(LLMEvalRun.user_id == user_id)
         total_query = total_query.where(LLMEvalRun.user_id == user_id)
 
-    runs = (await db.execute(query.limit(limit).offset(offset))).scalars().all()
+    runs = await fetch_all(db, query.limit(limit).offset(offset))
     total = await db.scalar(total_query) or 0
 
     # One query for the identities on this page rather than one per row.

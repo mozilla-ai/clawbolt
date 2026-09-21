@@ -25,7 +25,7 @@ from backend.app.models import (
     Subscription,
     User,
 )
-from backend.app.query_helpers import iso_or_none
+from backend.app.query_helpers import fetch_all, iso_or_none
 from backend.app.schemas.admin import (
     AdminChannelRouteEntry,
     AdminToolConfigEntry,
@@ -110,7 +110,7 @@ async def list_users(
     }
 
     # Get subscription data
-    subs = (await db.execute(select(Subscription))).scalars().all()
+    subs = await fetch_all(db, select(Subscription))
     sub_map: dict[str, Subscription] = {s.user_id: s for s in subs}
 
     # Messages-this-month per user, aggregated from Message->Session->user_id.

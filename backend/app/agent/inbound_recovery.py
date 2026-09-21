@@ -183,7 +183,7 @@ def _orphan_to_stored_and_state(
         user_id=chat_session.user_id,
         messages=[stored],
         created_at=iso(chat_session.created_at),
-        last_message_at=(iso(chat_session.last_message_at)),
+        last_message_at=iso(chat_session.last_message_at),
         channel=chat_session.channel or "",
     )
     return stored, state

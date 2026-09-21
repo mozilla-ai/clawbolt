@@ -44,6 +44,7 @@ from backend.app.config_store import MASK
 from backend.app.database import AsyncSessionLocal
 from backend.app.enums import CacheControlMode, PricingMode, ReasoningMode
 from backend.app.models import LLMEndpoint, LLMEvalRun, Subscription
+from backend.app.query_helpers import fetch_all
 from backend.app.schemas.llm import LLMEndpointItem
 from backend.app.services.llm_service import (
     LLMTarget,
@@ -104,7 +105,7 @@ async def _load_endpoints() -> dict[str, LLMEndpoint]:
         generation = _cache_generation
         db = AsyncSessionLocal()
         try:
-            rows = (await db.execute(select(LLMEndpoint))).scalars().all()
+            rows = await fetch_all(db, select(LLMEndpoint))
         finally:
             await db.close()
         loaded = {row.name: row for row in rows}

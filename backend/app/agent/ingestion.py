@@ -40,6 +40,7 @@ from backend.app.enums import MessageDirection
 from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia
 from backend.app.models import ChannelRoute, ChatSession, Message, ReportedConversation, User
+from backend.app.query_helpers import fetch_all
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         # messages to whichever account happens to be the only one, which
         # is a cross-tenant leak on a deployment early enough to have one
         # user.
-        all_users = (await db.execute(select(User))).scalars().all()
+        all_users = await fetch_all(db, select(User))
         if len(all_users) == 1 and settings.auth_mode == "single_user":
             user = all_users[0]
             logger.debug("_get_or_create_user: single-tenant reuse -> user %s", user.id)

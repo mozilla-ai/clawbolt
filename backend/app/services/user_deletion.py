@@ -21,15 +21,14 @@ from backend.app.models import (
     User,
     UserPermissionSet,
 )
+from backend.app.query_helpers import fetch_all
 
 logger = logging.getLogger(__name__)
 
 
 async def archive_usage(db: AsyncSession, user: User) -> None:
     """Archive aggregate usage before deletion to prevent quota-reset abuse."""
-    quotas = (
-        (await db.execute(select(UsageQuota).where(UsageQuota.user_id == user.id))).scalars().all()
-    )
+    quotas = await fetch_all(db, select(UsageQuota).where(UsageQuota.user_id == user.id))
     total_messages = sum(q.messages_used for q in quotas)
     total_tokens = sum(q.tokens_used for q in quotas)
 

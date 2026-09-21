@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, TypeVar
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from sqlalchemy.sql import ColumnElement
@@ -23,24 +22,6 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.selectable import Select
 
 T = TypeVar("T")
-
-
-def get_or_404(
-    db: Session,
-    model: type[T],
-    detail: str = "Not found",
-    **filters: object,
-) -> T:
-    """Query for a single row by filter or raise HTTP 404.
-
-    Usage::
-
-        user = get_or_404(db, User, detail="User not found", id=user_id)
-    """
-    row = db.execute(select(model).filter_by(**filters)).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail=detail)
-    return row
 
 
 async def get_or_404_async(

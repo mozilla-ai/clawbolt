@@ -177,7 +177,7 @@ async def list_shared_data_compaction_events(
     total = (await db.execute(count_stmt)).scalar_one() or 0
     return SharedDataCompactionEventListResponse(
         user_id=user.id,
-        consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        consent_at=iso_or_none(user.data_sharing_consent_at),
         items=items,
         total=int(total),
     )

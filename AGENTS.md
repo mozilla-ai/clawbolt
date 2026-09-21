@@ -85,11 +85,11 @@ Pool sizing is currently SQLAlchemy default (`pool_size=5`, `max_overflow=10`). 
 
 ### Common SQLAlchemy 2.0 patterns
 
-- Read: `(await db.execute(select(X).where(...))).scalar_one_or_none()`. For a scalar count use `await db.scalar(select(func.count(...)))`.
+- Read: `(await db.execute(select(X).where(...))).scalar_one_or_none()`. For the shapes that repeat, use the helpers in `backend/app/query_helpers.py`: `get_or_404_async` (fetch one or 404), `count_rows(db, Model.id, *where)` (scalar count), `fetch_all(db, stmt)` (entities as a `list`), and `iso` / `iso_or_none` (timestamp serialization, `""` or `None` fallback). Hand-roll only where the query does not fit one, e.g. a count across a join.
 - DML rowcount: at runtime `(await db.execute(update/delete)).rowcount` returns `int`, but the stubs say `Result`. Cast to access cleanly: `cast("CursorResult[object]", await db.execute(...)).rowcount`. Reference `SessionStore.delete_message` in `backend/app/agent/session_db.py`.
 - Bulk DML `synchronize_session`: the kwarg moved off `update()`/`delete()` constructors. Use `.execution_options(synchronize_session="fetch")` on the executable. Reference `_append_history_update` in `backend/app/agent/memory_db.py`.
 - Row-level lock: `(await db.execute(select(M).filter_by(id=x).with_for_update())).scalar_one_or_none()`.
-- `.scalars().all()` returns `Sequence[T]`, not `list[T]`. Wrap with `list(...)` only when the consumer is typed for `list`.
+- `.scalars().all()` returns `Sequence[T]`, not `list[T]`. Wrap with `list(...)` only when the consumer is typed for `list`; `fetch_all` already does.
 - Do not use the SQLAlchemy 1.x `db.query()` API.
 
 ### Encrypted columns: do not concat on the SQL side

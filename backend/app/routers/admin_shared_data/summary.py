@@ -255,7 +255,7 @@ async def list_shared_data_users(
             id=u.id,
             user_id=u.user_id,
             email=sub_emails.get(u.id, ""),
-            consent_at=(iso_or_none(u.data_sharing_consent_at)),
+            consent_at=iso_or_none(u.data_sharing_consent_at),
             conversation_count=activity.get(u.id, (0, None))[0],
             last_message_at=(
                 activity[u.id][1].isoformat()

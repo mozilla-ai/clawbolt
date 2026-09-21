@@ -65,7 +65,7 @@ async def get_shared_data_profile(
 
     return SharedDataProfileResponse(
         user_id=user.id,
-        consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        consent_at=iso_or_none(user.data_sharing_consent_at),
         soul_text=redact_pii(user.soul_text or ""),
         user_text=redact_pii(user.user_text or ""),
         heartbeat_text=redact_pii(user.heartbeat_text or ""),
@@ -133,7 +133,7 @@ async def list_shared_data_heartbeat_logs(
     total = (await db.execute(count_stmt)).scalar_one() or 0
     return SharedDataHeartbeatLogListResponse(
         user_id=user.id,
-        consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        consent_at=iso_or_none(user.data_sharing_consent_at),
         items=items,
         total=int(total),
     )
@@ -171,7 +171,7 @@ async def get_shared_data_memory(
     ).scalar_one_or_none()
     return SharedDataMemoryDocumentResponse(
         user_id=user.id,
-        consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        consent_at=iso_or_none(user.data_sharing_consent_at),
         memory_text=redact_pii(doc.memory_text if doc else ""),
         history_text=redact_pii(doc.history_text if doc else ""),
         updated_at=(doc.updated_at.isoformat() if doc and doc.updated_at else None),

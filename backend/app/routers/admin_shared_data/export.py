@@ -372,7 +372,7 @@ async def export_shared_data_user(
     # ---- profile + memory --------------------------------------------
     profile = SharedDataProfileResponse(
         user_id=user.id,
-        consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        consent_at=iso_or_none(user.data_sharing_consent_at),
         soul_text=redact_pii(user.soul_text or ""),
         user_text=redact_pii(user.user_text or ""),
         heartbeat_text=redact_pii(user.heartbeat_text or ""),
@@ -386,7 +386,7 @@ async def export_shared_data_user(
     ).scalar_one_or_none()
     memory = SharedDataMemoryDocumentResponse(
         user_id=user.id,
-        consent_at=(iso_or_none(user.data_sharing_consent_at)),
+        consent_at=iso_or_none(user.data_sharing_consent_at),
         memory_text=redact_pii(mem_row.memory_text if mem_row and mem_row.memory_text else ""),
         history_text=redact_pii(mem_row.history_text if mem_row and mem_row.history_text else ""),
         updated_at=(mem_row.updated_at.isoformat() if mem_row and mem_row.updated_at else None),
@@ -415,7 +415,7 @@ async def export_shared_data_user(
                 SharedDataConversationTurnsResponse(
                     session_id=sess.session_id,
                     user_id=user.id,
-                    consent_at=(iso_or_none(user.data_sharing_consent_at)),
+                    consent_at=iso_or_none(user.data_sharing_consent_at),
                     turns=grouped,
                     total=len(grouped),
                 )
