@@ -1,3 +1,4 @@
+import type { components } from '@/generated/api';
 import client from '@/lib/api-client';
 
 // --- Types (match backend schemas exactly) ---
@@ -60,33 +61,15 @@ export interface AllowedEmailList {
 // paths once items 3 + 4 land. The Admin{Message,ToolCall} types from
 // before are gone; they'll come back with the consent-path interfaces.
 
-export interface AdminToolConfigEntry {
-  tool_name: string;
-  enabled: boolean;
-}
+export type AdminToolConfigEntry = components['schemas']['AdminToolConfigEntry'];
 
-export interface AdminChannelRouteEntry {
-  channel: string;
-  channel_identifier: string;
-  enabled: boolean;
-  last_inbound_at: string | null;
-}
+export type AdminChannelRouteEntry = components['schemas']['AdminChannelRouteEntry'];
 
-export interface AdminUserPermissionEntry {
-  tool_name: string;
-  level: string;
-}
+export type AdminUserPermissionEntry = components['schemas']['AdminUserPermissionEntry'];
 
-export interface AdminUserResourcePermissionEntry {
-  tool_name: string;
-  resource: string;
-  level: string;
-}
+export type AdminUserResourcePermissionEntry = components['schemas']['AdminUserResourcePermissionEntry'];
 
-export interface AdminUserPermissions {
-  tools: AdminUserPermissionEntry[];
-  resources: AdminUserResourcePermissionEntry[];
-}
+export type AdminUserPermissions = components['schemas']['AdminUserPermissions'];
 
 export interface AdminUserDetail {
   id: string;
@@ -123,19 +106,7 @@ export interface HeartbeatLogList {
   items: HeartbeatLogItem[];
 }
 
-export interface LLMUsageLogItem {
-  id: number;
-  timestamp: string;
-  provider: string;
-  model: string;
-  purpose: string;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  cost_usd: string;
-  cache_creation_input_tokens: number | null;
-  cache_read_input_tokens: number | null;
-}
+export type LLMUsageLogItem = components['schemas']['LLMUsageLogItem'];
 
 export interface LLMUsageLogList {
   total: number;
@@ -436,13 +407,7 @@ export interface AdminLLMConfig {
   reasoning_effort: string;
 }
 
-export interface AdminLLMConfigUpdate {
-  llm_endpoint?: string;
-  llm_provider?: string;
-  llm_model?: string;
-  llm_api_base?: string;
-  reasoning_effort?: string;
-}
+export type AdminLLMConfigUpdate = components['schemas']['AdminLLMConfigUpdate'];
 
 export interface AdminUserLLMOverride {
   user_id: string;
@@ -456,11 +421,7 @@ export interface AdminUserLLMOverride {
   effective_llm_model: string;
 }
 
-export interface AdminUserLLMOverrideUpdate {
-  llm_endpoint_override?: string;
-  llm_provider_override?: string;
-  llm_model_override?: string;
-}
+export type AdminUserLLMOverrideUpdate = components['schemas']['AdminUserLLMOverrideUpdate'];
 
 // --- Named LLM endpoints (audited) ---
 //
@@ -469,30 +430,9 @@ export interface AdminUserLLMOverrideUpdate {
 // AdminConfigGuardMiddleware restricts it to admins, the same gate the rest
 // of the model config sits behind.
 
-export interface LLMEndpointItem {
-  name: string;
-  /** The any-llm provider whose wire format this endpoint speaks. */
-  dialect: string;
-  base_url: string;
-  /** The key itself is never returned. */
-  api_key_set: boolean;
-  cache_control: 'auto' | 'always' | 'never';
-  reasoning: 'auto' | 'thinking' | 'effort' | 'none';
-  pricing: 'auto' | 'unpriced';
-  notes: string;
-}
+export type LLMEndpointItem = components['schemas']['LLMEndpointItem'];
 
-export interface LLMEndpointUpsert {
-  name: string;
-  dialect: string;
-  base_url?: string;
-  /** Omit, or send the mask, to leave the stored key alone. */
-  api_key?: string;
-  cache_control?: 'auto' | 'always' | 'never';
-  reasoning?: 'auto' | 'thinking' | 'effort' | 'none';
-  pricing?: 'auto' | 'unpriced';
-  notes?: string;
-}
+export type LLMEndpointUpsert = components['schemas']['LLMEndpointUpsert'];
 
 /** Sentinel the API treats as "no change" for a stored secret.
  *  Must match ``backend.app.config_store.MASK``; there is no shared source,
@@ -529,13 +469,7 @@ export async function listEndpointModels(name: string): Promise<ProviderModelsRe
   return data as ProviderModelsResult;
 }
 
-export interface LLMEndpointTestResult {
-  ok: boolean;
-  model: string;
-  detail: string;
-  latency_ms: number;
-  reasoning: string;
-}
+export type LLMEndpointTestResult = components['schemas']['LLMEndpointTestResult'];
 
 /** Send one agent-shaped request through an endpoint and report the result.
  *
@@ -619,10 +553,7 @@ export async function updateUserPlan(
 
 // --- LLM provider/model enumeration (uses OSS endpoints; available to admins) ---
 
-export interface ProviderInfo {
-  name: string;
-  local: boolean;
-}
+export type ProviderInfo = components['schemas']['ProviderInfo'];
 
 /**
  * Module-scoped cache for ``listProviders`` and ``listProviderModels``.
@@ -832,29 +763,11 @@ export async function getSharedDataConversation(
 // between, so admins can debug "why did the agent do that this turn?"
 // without reading raw tool_interactions_json.
 
-export interface SharedDataReceipt {
-  action: string;
-  target: string;
-  url: string | null;
-}
+export type SharedDataReceipt = components['schemas']['SharedDataReceipt'];
 
-export interface SharedDataToolCall {
-  tool_call_id: string;
-  name: string;
-  args: Record<string, unknown>;
-  result: string;
-  is_error: boolean;
-  receipt: SharedDataReceipt | null;
-}
+export type SharedDataToolCall = components['schemas']['SharedDataToolCall'];
 
-export interface SharedDataTurn {
-  turn_index: number;
-  user_message: SharedDataMessage | null;
-  agent_reply: SharedDataMessage | null;
-  tool_calls: SharedDataToolCall[];
-  started_at: string | null;
-  finished_at: string | null;
-}
+export type SharedDataTurn = components['schemas']['SharedDataTurn'];
 
 export interface SharedDataConversationTurns {
   session_id: string;
@@ -967,20 +880,7 @@ export async function getSharedDataMemory(
 // getSharedDataMemory above for the running narrative; the snapshots
 // here are per-event diffs.
 
-export interface SharedDataCompactionSnapshot {
-  // Plaintext when the file was small enough to fit under
-  // ``settings.compaction_event_snapshot_max_bytes_per_file``. Null
-  // when the field was unchanged by this event, the row is still
-  // ``pending``, the row predates the feature, OR when ``truncated``
-  // is true (in which case ``head`` / ``tail`` carry the visible
-  // portion instead).
-  text: string | null;
-  truncated: boolean;
-  size_bytes: number | null;
-  head: string | null;
-  tail: string | null;
-  sha256: string | null;
-}
+export type SharedDataCompactionSnapshot = components['schemas']['SharedDataCompactionSnapshot'];
 
 export interface SharedDataCompactionEvent {
   id: number;
@@ -1108,13 +1008,7 @@ export interface ReportedConversationList {
   items: ReportedConversation[];
 }
 
-export interface ReportedConversationMessage {
-  seq: number;
-  direction: string;
-  body: string;
-  timestamp: string | null;
-  is_anchor: boolean;
-}
+export type ReportedConversationMessage = components['schemas']['ReportedConversationMessage'];
 
 export interface ReportedConversationMessageList {
   report_id: number;
@@ -1124,11 +1018,7 @@ export interface ReportedConversationMessageList {
   items: ReportedConversationMessage[];
 }
 
-export interface DismissReportedConversationResponse {
-  id: number;
-  dismissed_at: string;
-  reviewed_admin_user_id: string;
-}
+export type DismissReportedConversationResponse = components['schemas']['DismissReportedConversationResponse'];
 
 export async function getReportedConversations(params?: {
   status?: ReportedStatus;
@@ -1178,26 +1068,11 @@ export async function dismissReportedConversation(
 // expose the prefix. Each admin scopes to their own keys (the backend
 // filters by the calling admin's user id).
 
-export interface AdminApiKeyItem {
-  id: number;
-  label: string;
-  key_prefix: string;
-  created_at: string;
-  last_used_at: string | null;
-  revoked_at: string | null;
-}
+export type AdminApiKeyItem = components['schemas']['AdminApiKeyItem'];
 
-export interface AdminApiKeyListResponse {
-  items: AdminApiKeyItem[];
-}
+export type AdminApiKeyListResponse = components['schemas']['AdminApiKeyListResponse'];
 
-export interface AdminApiKeyMintResponse {
-  id: number;
-  token: string;
-  key_prefix: string;
-  label: string;
-  created_at: string;
-}
+export type AdminApiKeyMintResponse = components['schemas']['AdminApiKeyMintResponse'];
 
 export async function listAdminApiKeys(): Promise<AdminApiKeyListResponse> {
   const { data, error } = await client.GET('/api/admin/api-keys' as never);

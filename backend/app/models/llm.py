@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.database import Base
+from backend.app.enums import CacheControlMode, PricingMode, ReasoningMode
 from backend.app.models.types import EncryptedString
 
 if TYPE_CHECKING:
@@ -170,14 +171,14 @@ class LLMEndpoint(Base):
     # "auto" defers to the dialect (see llm_service._CACHE_CONTROL_PROVIDERS).
     # "never" is the setting for a gateway that drops the markers or rejects
     # them outright; "always" is for one that forwards them.
-    cache_control: Mapped[str] = mapped_column(String(16), default="auto")
+    cache_control: Mapped[CacheControlMode] = mapped_column(String(16), default="auto")
     # How to ask for reasoning: "thinking" is the Anthropic budget dict,
     # "effort" the OpenAI-style scalar, "none" omits it. "auto" follows the
     # dialect. See llm_service.ReasoningStyle for why "none" exists.
-    reasoning: Mapped[str] = mapped_column(String(16), default="auto")
+    reasoning: Mapped[ReasoningMode] = mapped_column(String(16), default="auto")
     # "unpriced" when (dialect, model) does not describe who actually billed
     # the tokens, so a cost total would be fiction. Read by the evaluator.
-    pricing: Mapped[str] = mapped_column(String(16), default="auto")
+    pricing: Mapped[PricingMode] = mapped_column(String(16), default="auto")
     notes: Mapped[str] = mapped_column(String(256), default="")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

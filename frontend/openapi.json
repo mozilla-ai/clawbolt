@@ -7974,16 +7974,31 @@
           },
           "cache_control": {
             "type": "string",
+            "enum": [
+              "auto",
+              "always",
+              "never"
+            ],
             "title": "Cache Control",
             "default": "auto"
           },
           "reasoning": {
             "type": "string",
+            "enum": [
+              "auto",
+              "thinking",
+              "effort",
+              "none"
+            ],
             "title": "Reasoning",
             "default": "auto"
           },
           "pricing": {
             "type": "string",
+            "enum": [
+              "auto",
+              "unpriced"
+            ],
             "title": "Pricing",
             "default": "auto"
           },

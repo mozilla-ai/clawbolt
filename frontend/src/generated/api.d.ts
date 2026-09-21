@@ -4409,18 +4409,21 @@ export interface components {
             /**
              * Cache Control
              * @default auto
+             * @enum {string}
              */
-            cache_control: string;
+            cache_control: "auto" | "always" | "never";
             /**
              * Reasoning
              * @default auto
+             * @enum {string}
              */
-            reasoning: string;
+            reasoning: "auto" | "thinking" | "effort" | "none";
             /**
              * Pricing
              * @default auto
+             * @enum {string}
              */
-            pricing: string;
+            pricing: "auto" | "unpriced";
             /**
              * Notes
              * @default

@@ -612,7 +612,7 @@ function ToolCallRow({
   onToggle: () => void;
 }) {
   const panelId = useId();
-  const hasArgs = Object.keys(call.args).length > 0;
+  const hasArgs = Object.keys(call.args ?? {}).length > 0;
   const hasResult = call.result.length > 0;
   const canExpand = hasArgs || hasResult || call.receipt !== null;
   return (
@@ -787,7 +787,7 @@ function buildHaystack(item: ActivityItem): string {
       break;
     case 'agent-reply':
       parts.push(item.raw.message.body, item.raw.message.thinking);
-      for (const c of item.raw.turn.tool_calls) {
+      for (const c of item.raw.turn.tool_calls ?? []) {
         parts.push(c.name, JSON.stringify(c.args), c.result);
         if (c.receipt) {
           parts.push(c.receipt.action, c.receipt.target, c.receipt.url ?? '');
@@ -984,11 +984,11 @@ export function SharedActivityView({
       if (turn.agent_reply) {
         const ts = turn.agent_reply.timestamp ?? turn.finished_at;
         if (within(ts)) {
-          const errorCount = turn.tool_calls.filter(c => c.is_error).length;
+          const errorCount = (turn.tool_calls ?? []).filter(c => c.is_error).length;
           const summary =
             turn.agent_reply.body ||
-            (turn.tool_calls.length > 0
-              ? `${turn.tool_calls.length} tool call${turn.tool_calls.length === 1 ? '' : 's'}`
+            ((turn.tool_calls ?? []).length > 0
+              ? `${(turn.tool_calls ?? []).length} tool call${(turn.tool_calls ?? []).length === 1 ? '' : 's'}`
               : '(empty)');
           out.push({
             key: `ta:${turn.agent_reply.seq}`,
@@ -1327,7 +1327,7 @@ function ActivityRowDetail({ item }: { item: ActivityItem }) {
   if (item.raw.kind === 'agent-reply') {
     const m = item.raw.message;
     const turn = item.raw.turn;
-    const errorCount = turn.tool_calls.filter(c => c.is_error).length;
+    const errorCount = (turn.tool_calls ?? []).filter(c => c.is_error).length;
     return (
       <div className="space-y-2">
         <div className="text-sm whitespace-pre-wrap break-words">
@@ -1340,10 +1340,10 @@ function ActivityRowDetail({ item }: { item: ActivityItem }) {
             onToggle={() => toggleReasoning(item.key)}
           />
         )}
-        {turn.tool_calls.length > 0 && (
+        {(turn.tool_calls ?? []).length > 0 && (
           <div className="text-xs">
             <div className="text-muted-foreground mb-1">
-              {turn.tool_calls.length} tool call{turn.tool_calls.length === 1 ? '' : 's'}
+              {(turn.tool_calls ?? []).length} tool call{(turn.tool_calls ?? []).length === 1 ? '' : 's'}
               {errorCount > 0 && (
                 <span className="text-danger font-medium">
                   {' '}· {errorCount} error{errorCount === 1 ? '' : 's'}
@@ -1351,7 +1351,7 @@ function ActivityRowDetail({ item }: { item: ActivityItem }) {
               )}
             </div>
             <ul className="border-l-2 border-border pl-3 space-y-1">
-              {turn.tool_calls.map((c, i) => {
+              {(turn.tool_calls ?? []).map((c, i) => {
                 const key = toolCallKey(item.key, i);
                 return (
                   <ToolCallRow
@@ -1546,7 +1546,7 @@ function snippetBody(item: ActivityItem): string {
 
 // Tool calls fired during an agent reply; empty for every other row type.
 function snippetToolCalls(item: ActivityItem): SharedDataToolCall[] {
-  return item.raw.kind === 'agent-reply' ? item.raw.turn.tool_calls : [];
+  return item.raw.kind === 'agent-reply' ? (item.raw.turn.tool_calls ?? []) : [];
 }
 
 // Extended-thinking text for an agent reply; '' for every other row type.
@@ -1568,7 +1568,7 @@ function clip(s: string, max = MAX_SNIPPET_FIELD): string {
 // is opened.
 function snippetToolFieldLines(call: SharedDataToolCall): string[] {
   const out: string[] = [];
-  if (Object.keys(call.args).length > 0) {
+  if (Object.keys(call.args ?? {}).length > 0) {
     out.push(`      args: ${clip(JSON.stringify(call.args))}`);
   }
   if (call.result.trim()) {
@@ -1714,7 +1714,7 @@ function SnippetMessage({
                   </span>
                   {open && (
                     <div className="mt-1 ml-3 space-y-1">
-                      {Object.keys(c.args).length > 0 && (
+                      {Object.keys(c.args ?? {}).length > 0 && (
                         <SnippetField
                           label="args"
                           value={JSON.stringify(c.args, null, 2)}

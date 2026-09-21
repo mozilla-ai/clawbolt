@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
+from backend.app.enums import CacheControlMode, PricingMode, ReasoningMode
 from backend.app.schemas.common import ReasoningEffort
 
 
@@ -55,9 +54,9 @@ class LLMEndpointItem(BaseModel):
     dialect: str
     base_url: str
     api_key_set: bool = False
-    cache_control: str = "auto"
-    reasoning: str = "auto"
-    pricing: str = "auto"
+    cache_control: CacheControlMode = "auto"
+    reasoning: ReasoningMode = "auto"
+    pricing: PricingMode = "auto"
     notes: str = ""
 
 
@@ -97,9 +96,9 @@ class LLMEndpointUpsert(BaseModel):
     dialect: str = Field(min_length=1, max_length=64)
     base_url: str = Field(default="", max_length=512)
     api_key: str | None = None
-    cache_control: Literal["auto", "always", "never"] = "auto"
-    reasoning: Literal["auto", "thinking", "effort", "none"] = "auto"
-    pricing: Literal["auto", "unpriced"] = "auto"
+    cache_control: CacheControlMode = "auto"
+    reasoning: ReasoningMode = "auto"
+    pricing: PricingMode = "auto"
     notes: str = Field(default="", max_length=256)
 
 

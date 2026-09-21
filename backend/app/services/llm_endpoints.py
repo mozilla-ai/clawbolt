@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.config import settings
 from backend.app.config_store import MASK
 from backend.app.database import AsyncSessionLocal
+from backend.app.enums import CacheControlMode, PricingMode, ReasoningMode
 from backend.app.models import LLMEndpoint, LLMEvalRun, Subscription
 from backend.app.schemas.llm import LLMEndpointItem
 from backend.app.services.llm_service import (
@@ -137,9 +138,9 @@ async def upsert_endpoint(
     dialect: str,
     base_url: str,
     api_key: str | None,
-    cache_control: str,
-    reasoning: str,
-    pricing: str,
+    cache_control: CacheControlMode,
+    reasoning: ReasoningMode,
+    pricing: PricingMode,
     notes: str,
 ) -> LLMEndpoint:
     """Create or replace one endpoint, then drop the cache.
