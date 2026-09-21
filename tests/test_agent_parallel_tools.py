@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import time
 
-import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.context import StoredToolInteraction
@@ -51,7 +50,6 @@ def _make_call(idx: int, name: str) -> tuple[ToolCallRequest, ParsedToolCall]:
     )
 
 
-@pytest.mark.asyncio()
 async def test_concurrent_tools_overlap(test_user: User) -> None:
     """Two ungrouped tool calls fan out and finish in parallel.
 
@@ -100,7 +98,6 @@ async def test_concurrent_tools_overlap(test_user: User) -> None:
     assert actions == ["Called a", "Called b"]
 
 
-@pytest.mark.asyncio()
 async def test_same_concurrency_group_serializes(test_user: User) -> None:
     """Tools sharing a non-None concurrency_group run sequentially.
 
@@ -158,7 +155,6 @@ async def test_same_concurrency_group_serializes(test_user: User) -> None:
     assert log == ["enter-a", "exit-a", "enter-b", "exit-b"]
 
 
-@pytest.mark.asyncio()
 async def test_different_groups_run_in_parallel(test_user: User) -> None:
     """Tools in distinct non-None groups still fan out across groups.
 
@@ -212,7 +208,6 @@ async def test_different_groups_run_in_parallel(test_user: User) -> None:
     assert [r.content for r in results] == ["x", "y"]
 
 
-@pytest.mark.asyncio()
 async def test_results_preserve_submission_order(test_user: User) -> None:
     """When a fast tool finishes before a slow one, results still come back
     in the order the model emitted them.
@@ -264,7 +259,6 @@ async def test_results_preserve_submission_order(test_user: User) -> None:
     assert elapsed < 0.5
 
 
-@pytest.mark.asyncio()
 async def test_callable_concurrency_group_keys_by_args(test_user: User) -> None:
     """A callable ``concurrency_group`` lets one Tool route distinct calls
     to distinct buckets based on validated arguments.

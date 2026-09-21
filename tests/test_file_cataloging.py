@@ -1,7 +1,5 @@
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from backend.app.agent.file_store import slugify as _slugify
 from backend.app.agent.tools.file_tools import (
     DEFAULT_INBOX_FOLDER,
@@ -126,7 +124,6 @@ def test_build_filename_default_extension_is_bin() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_upload_writes_file_to_caller_supplied_folder(
     test_user: User,
 ) -> None:
@@ -151,7 +148,6 @@ async def test_upload_writes_file_to_caller_supplied_folder(
     assert any("Johnson - 123 Main Streetreet/photos" in key for key in storage.files)
 
 
-@pytest.mark.asyncio()
 async def test_upload_emits_receipt_with_drive_link(
     test_user: User,
 ) -> None:
@@ -184,7 +180,6 @@ async def test_upload_emits_receipt_with_drive_link(
     assert result.receipt.url.startswith("https://")
 
 
-@pytest.mark.asyncio()
 async def test_upload_persists_description_on_storage_metadata(
     test_user: User,
 ) -> None:
@@ -207,7 +202,6 @@ async def test_upload_persists_description_on_storage_metadata(
     assert saved.description == "receipt for fasteners"
 
 
-@pytest.mark.asyncio()
 async def test_upload_defaults_to_inbox_when_folder_path_omitted(
     test_user: User,
 ) -> None:
@@ -232,7 +226,6 @@ async def test_upload_defaults_to_inbox_when_folder_path_omitted(
     assert path.endswith(".pdf")
 
 
-@pytest.mark.asyncio()
 async def test_upload_accepts_root_folder_path(
     test_user: User,
 ) -> None:
@@ -250,7 +243,6 @@ async def test_upload_accepts_root_folder_path(
     assert len(storage.files) == 1
 
 
-@pytest.mark.asyncio()
 async def test_upload_rejects_invalid_folder_path(
     test_user: User,
 ) -> None:
@@ -269,7 +261,6 @@ async def test_upload_rejects_invalid_folder_path(
     assert len(storage.files) == 0
 
 
-@pytest.mark.asyncio()
 async def test_upload_no_media_returns_error_pointing_at_move_file(
     test_user: User,
 ) -> None:
@@ -284,7 +275,6 @@ async def test_upload_no_media_returns_error_pointing_at_move_file(
     assert result.is_error is True
 
 
-@pytest.mark.asyncio()
 async def test_upload_uses_first_media_if_no_url(
     test_user: User,
 ) -> None:
@@ -303,7 +293,6 @@ async def test_upload_uses_first_media_if_no_url(
     assert len(storage.files) == 1
 
 
-@pytest.mark.asyncio()
 async def test_upload_sequential_indexing(
     test_user: User,
 ) -> None:
@@ -332,7 +321,6 @@ async def test_upload_sequential_indexing(
     assert "_002." in result2.content
 
 
-@pytest.mark.asyncio()
 async def test_upload_creates_folder(
     test_user: User,
 ) -> None:
@@ -351,7 +339,6 @@ async def test_upload_creates_folder(
     assert "/photos" in storage.folders[0]
 
 
-@pytest.mark.asyncio()
 async def test_upload_picks_distinct_filenames_when_list_folder_is_stale(
     test_user: User,
 ) -> None:
@@ -420,7 +407,6 @@ def _move_file_function(test_user: User, storage: MockStorageBackend):  # noqa: 
     return next(t for t in tools if t.name == ToolName.MOVE_FILE).function
 
 
-@pytest.mark.asyncio()
 async def test_move_file_relocates_to_named_folder(
     test_user: User,
 ) -> None:
@@ -442,7 +428,6 @@ async def test_move_file_relocates_to_named_folder(
     assert any("John Smith" in k for k in storage.files)
 
 
-@pytest.mark.asyncio()
 async def test_move_file_renames_when_filename_provided(
     test_user: User,
 ) -> None:
@@ -462,7 +447,6 @@ async def test_move_file_renames_when_filename_provided(
     assert "front_porch.jpg" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_move_file_avoids_overwrite_on_filename_collision(
     test_user: User,
 ) -> None:
@@ -482,7 +466,6 @@ async def test_move_file_avoids_overwrite_on_filename_collision(
     assert "photo_002.jpg" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_move_file_emits_receipt(
     test_user: User,
 ) -> None:
@@ -504,7 +487,6 @@ async def test_move_file_emits_receipt(
     assert result.receipt.url is not None
 
 
-@pytest.mark.asyncio()
 async def test_move_file_not_found(
     test_user: User,
 ) -> None:
@@ -520,7 +502,6 @@ async def test_move_file_not_found(
     assert "File not found" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_move_file_rejects_invalid_destination(
     test_user: User,
 ) -> None:
@@ -536,7 +517,6 @@ async def test_move_file_rejects_invalid_destination(
     assert result.is_error is True
 
 
-@pytest.mark.asyncio()
 async def test_move_file_normalizes_missing_leading_slash(
     test_user: User,
 ) -> None:
@@ -553,7 +533,6 @@ async def test_move_file_normalizes_missing_leading_slash(
     assert result.content.startswith("ok")
 
 
-@pytest.mark.asyncio()
 async def test_move_file_from_drive_root(
     test_user: User,
 ) -> None:
@@ -578,7 +557,6 @@ async def test_move_file_from_drive_root(
     assert any("Acme/photos/stray.jpg" in key for key in storage.files)
 
 
-@pytest.mark.asyncio()
 async def test_move_file_rejects_invalid_from_path(
     test_user: User,
 ) -> None:
@@ -600,7 +578,6 @@ async def test_move_file_rejects_invalid_from_path(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_find_saved_files_matches_query_tokens(
     test_user: User,
 ) -> None:
@@ -631,7 +608,6 @@ async def test_find_saved_files_matches_query_tokens(
     assert "/Acme/photos/photo_001.jpg" not in result.content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.tools.file_tools.run_vision_on_media", new_callable=AsyncMock)
 async def test_analyze_saved_file_reads_from_durable_storage(
     mock_vision: AsyncMock,
@@ -666,7 +642,6 @@ async def test_analyze_saved_file_reads_from_durable_storage(
     )
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.tools.file_tools.run_vision_on_media", new_callable=AsyncMock)
 async def test_analyze_saved_file_uses_turn_text_when_context_omitted(
     mock_vision: AsyncMock,
@@ -698,7 +673,6 @@ async def test_analyze_saved_file_uses_turn_text_when_context_omitted(
     )
 
 
-@pytest.mark.asyncio()
 async def test_analyze_saved_file_rejects_non_image(
     test_user: User,
 ) -> None:
@@ -726,7 +700,6 @@ async def test_analyze_saved_file_rejects_non_image(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_write_to_storage_creates_text_file(
     test_user: User,
 ) -> None:
@@ -749,7 +722,6 @@ async def test_write_to_storage_creates_text_file(
     assert stored == b"this is a test"
 
 
-@pytest.mark.asyncio()
 async def test_write_to_storage_defaults_to_inbox(
     test_user: User,
 ) -> None:
@@ -768,7 +740,6 @@ async def test_write_to_storage_defaults_to_inbox(
     assert stored == b"some notes"
 
 
-@pytest.mark.asyncio()
 async def test_write_to_storage_creates_file_in_specified_folder(
     test_user: User,
 ) -> None:
@@ -788,7 +759,6 @@ async def test_write_to_storage_creates_file_in_specified_folder(
     assert stored == b"# Report\n\nSome content"
 
 
-@pytest.mark.asyncio()
 async def test_write_to_storage_avoids_overwrite(
     test_user: User,
 ) -> None:
@@ -810,7 +780,6 @@ async def test_write_to_storage_avoids_overwrite(
     assert orig == b"existing"
 
 
-@pytest.mark.asyncio()
 async def test_write_to_storage_rejects_empty_filename(
     test_user: User,
 ) -> None:
@@ -826,7 +795,6 @@ async def test_write_to_storage_rejects_empty_filename(
     assert result.is_error is True
 
 
-@pytest.mark.asyncio()
 async def test_write_to_storage_rejects_empty_content(
     test_user: User,
 ) -> None:
@@ -842,7 +810,6 @@ async def test_write_to_storage_rejects_empty_content(
     assert result.is_error is True
 
 
-@pytest.mark.asyncio()
 async def test_write_to_storage_rejects_invalid_filename(
     test_user: User,
 ) -> None:
@@ -858,7 +825,6 @@ async def test_write_to_storage_rejects_invalid_filename(
     assert result.is_error is True
 
 
-@pytest.mark.asyncio()
 async def test_write_to_storage_emits_receipt(
     test_user: User,
 ) -> None:
@@ -883,7 +849,6 @@ async def test_write_to_storage_emits_receipt(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_read_from_storage_returns_file_content(
     test_user: User,
 ) -> None:
@@ -899,7 +864,6 @@ async def test_read_from_storage_returns_file_content(
     assert result.content == "hello world"
 
 
-@pytest.mark.asyncio()
 async def test_read_from_storage_file_not_found(
     test_user: User,
 ) -> None:
@@ -913,7 +877,6 @@ async def test_read_from_storage_file_not_found(
     assert "not found" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_read_from_storage_rejects_empty_path(
     test_user: User,
 ) -> None:
@@ -931,7 +894,6 @@ async def test_read_from_storage_rejects_empty_path(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_edit_storage_file_replaces_text(
     test_user: User,
 ) -> None:
@@ -959,7 +921,6 @@ async def test_edit_storage_file_replaces_text(
     assert updated == b"Hello, my name is Alice"
 
 
-@pytest.mark.asyncio()
 async def test_edit_storage_file_text_not_found(
     test_user: User,
 ) -> None:
@@ -978,7 +939,6 @@ async def test_edit_storage_file_text_not_found(
     assert "not found" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_edit_storage_file_ambiguous_match(
     test_user: User,
 ) -> None:
@@ -997,7 +957,6 @@ async def test_edit_storage_file_ambiguous_match(
     assert "matches" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_edit_storage_file_file_not_found(
     test_user: User,
 ) -> None:

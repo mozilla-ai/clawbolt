@@ -61,7 +61,6 @@ def e2e_client(
 # -- Service-level tests -------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_send_text_message(
     telegram_service: TelegramChannel,
     test_chat_id: str,

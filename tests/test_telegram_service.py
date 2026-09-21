@@ -47,7 +47,6 @@ def telegram_service(mock_bot: MagicMock) -> TelegramChannel:
     return service
 
 
-@pytest.mark.asyncio()
 async def test_send_text(telegram_service: TelegramChannel, mock_bot: MagicMock) -> None:
     """send_text should call bot.send_message with MarkdownV2."""
     msg_id = await telegram_service.send_text(to="123456789", body="Your estimate is ready")
@@ -58,7 +57,6 @@ async def test_send_text(telegram_service: TelegramChannel, mock_bot: MagicMock)
     assert call_kwargs["text"] == markdown_to_telegram_mdv2("Your estimate is ready")
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.channels.telegram.httpx.AsyncClient")
 async def test_send_media_image(
     mock_client_class: MagicMock,
@@ -86,7 +84,6 @@ async def test_send_media_image(
     mock_bot.send_photo.assert_called_once()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.channels.telegram.httpx.AsyncClient")
 async def test_send_media_document(
     mock_client_class: MagicMock,
@@ -114,7 +111,6 @@ async def test_send_media_document(
     mock_bot.send_document.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_send_media_rejects_invalid_url(
     telegram_service: TelegramChannel,
 ) -> None:
@@ -127,7 +123,6 @@ async def test_send_media_rejects_invalid_url(
         )
 
 
-@pytest.mark.asyncio()
 async def test_send_message_text_only(
     telegram_service: TelegramChannel, mock_bot: MagicMock
 ) -> None:
@@ -140,7 +135,6 @@ async def test_send_message_text_only(
     assert call_kwargs["text"] == markdown_to_telegram_mdv2("Hello")
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.channels.telegram.httpx.AsyncClient")
 async def test_send_message_multi_media_caption_once(
     mock_client_class: MagicMock,
@@ -176,7 +170,6 @@ async def test_send_message_multi_media_caption_once(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_send_typing_indicator(
     telegram_service: TelegramChannel, mock_bot: MagicMock
 ) -> None:
@@ -187,7 +180,6 @@ async def test_send_typing_indicator(
     mock_bot.send_chat_action.assert_called_once_with(chat_id=123456789, action=ChatAction.TYPING)
 
 
-@pytest.mark.asyncio()
 async def test_send_typing_indicator_failure_does_not_raise(
     telegram_service: TelegramChannel, mock_bot: MagicMock
 ) -> None:
@@ -202,7 +194,6 @@ async def test_send_typing_indicator_failure_does_not_raise(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_start_skips_cloudflared_discovery_when_app_base_url_is_https() -> None:
     """start() must not poll cloudflared when APP_BASE_URL is https.
 
@@ -230,7 +221,6 @@ async def test_start_skips_cloudflared_discovery_when_app_base_url_is_https() ->
     mock_sleep.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_start_runs_cloudflared_discovery_when_app_base_url_is_http() -> None:
     """start() polls cloudflared when APP_BASE_URL is http (local dev).
 

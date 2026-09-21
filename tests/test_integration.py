@@ -5,7 +5,6 @@ InboundMessage -> process_inbound_from_bus -> agent pipeline -> outbound
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from sqlalchemy import select
 
 from backend.app.agent.file_store import (
@@ -27,7 +26,6 @@ async def _get_all_messages(user_id: str) -> list[StoredMessage]:
     return list(session.messages)
 
 
-@pytest.mark.asyncio
 async def test_full_message_round_trip(
     test_user: UserData,
 ) -> None:
@@ -76,7 +74,6 @@ async def test_full_message_round_trip(
     assert found_reply
 
 
-@pytest.mark.asyncio
 async def test_full_message_round_trip_new_user() -> None:
     """New user sends message -> auto-created -> agent replies."""
     inbound = InboundMessage(
@@ -121,7 +118,6 @@ async def test_full_message_round_trip_new_user() -> None:
     assert directions == {"inbound", "outbound"}
 
 
-@pytest.mark.asyncio
 async def test_full_message_agent_failure_still_stores_inbound(
     test_user: UserData,
 ) -> None:

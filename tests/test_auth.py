@@ -19,7 +19,6 @@ def _request() -> Request:
     return Request({"type": "http", "method": "GET", "path": "/api/me", "headers": []})
 
 
-@pytest.mark.asyncio()
 async def test_get_current_user_creates_local_user(
     async_db: async_sessionmaker,
 ) -> None:
@@ -30,7 +29,6 @@ async def test_get_current_user_creates_local_user(
         assert user.id is not None
 
 
-@pytest.mark.asyncio()
 async def test_local_user_needs_onboarding(
     async_db: async_sessionmaker,
 ) -> None:
@@ -45,7 +43,6 @@ async def test_local_user_needs_onboarding(
         assert is_onboarding_needed(user)
 
 
-@pytest.mark.asyncio()
 async def test_get_current_user_returns_same_user(
     async_db: async_sessionmaker,
 ) -> None:
@@ -56,7 +53,6 @@ async def test_get_current_user_returns_same_user(
         assert c1.id == c2.id
 
 
-@pytest.mark.asyncio()
 async def test_get_current_user_returns_existing_telegram_user(
     async_db: async_sessionmaker,
 ) -> None:
@@ -93,7 +89,6 @@ def test_auth_config_returns_none_mode(client: TestClient) -> None:
     assert data == {"method": "none", "required": False}
 
 
-@pytest.mark.asyncio()
 async def test_scoping_returns_404_for_wrong_user() -> None:
     """Scoping should return 404 when user doesn't belong to requester."""
     async with db_session_async() as db:
@@ -115,7 +110,6 @@ async def test_scoping_returns_404_for_wrong_user() -> None:
         assert exc_info.value.status_code == 404
 
 
-@pytest.mark.asyncio()
 async def test_scoping_returns_user_for_correct_user() -> None:
     """Scoping should return user when user_id matches."""
     async with db_session_async() as db:

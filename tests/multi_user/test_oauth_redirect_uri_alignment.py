@@ -53,7 +53,6 @@ def test_default_redirect_uri_uses_app_base_url(
     assert _default_redirect_uri() == ("https://dev.clawbolt.ai/api/auth/oauth/google/callback")
 
 
-@pytest.mark.asyncio
 async def test_exchange_google_code_uses_explicit_redirect_uri(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -100,7 +99,6 @@ async def test_exchange_google_code_uses_explicit_redirect_uri(
     assert captured["data"]["redirect_uri"] == "https://explicit.example.com/callback"
 
 
-@pytest.mark.asyncio
 async def test_exchange_google_code_default_uri_tracks_app_base_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

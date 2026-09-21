@@ -63,7 +63,6 @@ def _clear_cache() -> None:
 # -- reply_to_unknown_sender direct tests ---------------------------------
 
 
-@pytest.mark.asyncio
 async def test_replies_to_unknown_sender() -> None:
     channel = _RecordingChannel()
     sent = await reply_to_unknown_sender(channel, "+15551234567")
@@ -74,7 +73,6 @@ async def test_replies_to_unknown_sender() -> None:
     assert "Clawbolt" in body
 
 
-@pytest.mark.asyncio
 async def test_rate_limited_within_cooldown() -> None:
     channel = _RecordingChannel()
     with patch(
@@ -88,7 +86,6 @@ async def test_rate_limited_within_cooldown() -> None:
     assert len(channel.sent) == 1
 
 
-@pytest.mark.asyncio
 async def test_zero_cooldown_lets_every_message_reply() -> None:
     channel = _RecordingChannel()
     with patch(
@@ -99,7 +96,6 @@ async def test_zero_cooldown_lets_every_message_reply() -> None:
     assert len(channel.sent) == 2
 
 
-@pytest.mark.asyncio
 async def test_per_sender_isolation() -> None:
     channel = _RecordingChannel()
     await reply_to_unknown_sender(channel, "+15551111111")
@@ -107,7 +103,6 @@ async def test_per_sender_isolation() -> None:
     assert {to for to, _ in channel.sent} == {"+15551111111", "+15552222222"}
 
 
-@pytest.mark.asyncio
 async def test_per_channel_isolation() -> None:
     """The cooldown is keyed by (channel, sender), so the same number on a
     different channel still gets a reply."""
@@ -119,7 +114,6 @@ async def test_per_channel_isolation() -> None:
     assert len(imessage.sent) == 1
 
 
-@pytest.mark.asyncio
 async def test_send_failure_is_swallowed_but_consumes_slot() -> None:
     """A failed send still updates the cooldown so a flood of inbound from one
     spoofed sender can't trigger repeated outbound attempts."""
@@ -130,7 +124,6 @@ async def test_send_failure_is_swallowed_but_consumes_slot() -> None:
     assert second is False
 
 
-@pytest.mark.asyncio
 async def test_empty_sender_id_is_skipped() -> None:
     channel = _RecordingChannel()
     sent = await reply_to_unknown_sender(channel, "")
@@ -168,7 +161,6 @@ def test_claim_reply_slot_is_monotonic_per_now() -> None:
 # -- handle_webhook_inbound integration tests -----------------------------
 
 
-@pytest.mark.asyncio
 async def test_handle_webhook_inbound_replies_when_allowlist_rejects(
     _stub_unknown_sender_reply: AsyncMock,
 ) -> None:

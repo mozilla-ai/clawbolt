@@ -58,28 +58,24 @@ async def second_user() -> User:
     return user
 
 
-@pytest.mark.asyncio()
 async def test_stage_and_retrieve(test_user: User) -> None:
     await media_staging.stage(test_user.id, "bb_abc", b"bytes", "image/jpeg")
     result = await media_staging.get_all_for_user(test_user.id)
     assert result == {"bb_abc": b"bytes"}
 
 
-@pytest.mark.asyncio()
 async def test_stage_ignores_empty_url_or_content(test_user: User) -> None:
     await media_staging.stage(test_user.id, "", b"bytes", "image/jpeg")
     await media_staging.stage(test_user.id, "bb_empty", b"", "image/jpeg")
     assert await media_staging.get_all_for_user(test_user.id) == {}
 
 
-@pytest.mark.asyncio()
 async def test_evict_removes_entry(test_user: User) -> None:
     await media_staging.stage(test_user.id, "bb_abc", b"bytes", "image/jpeg")
     await media_staging.evict(test_user.id, "bb_abc")
     assert await media_staging.get_all_for_user(test_user.id) == {}
 
 
-@pytest.mark.asyncio()
 async def test_expired_entries_are_purged(test_user: User) -> None:
     """Rows past ``expires_at`` are filtered out by reads and removed by purge.
 
@@ -97,7 +93,6 @@ async def test_expired_entries_are_purged(test_user: User) -> None:
     assert await media_staging.get_all_for_user(test_user.id) == {}
 
 
-@pytest.mark.asyncio()
 async def test_isolation_between_users(test_user: User, second_user: User) -> None:
     await media_staging.stage(test_user.id, "bb_abc", b"bytes-a", "image/jpeg")
     await media_staging.stage(second_user.id, "bb_abc", b"bytes-b", "image/jpeg")
@@ -106,7 +101,6 @@ async def test_isolation_between_users(test_user: User, second_user: User) -> No
     await media_staging.clear_user(second_user.id)
 
 
-@pytest.mark.asyncio()
 async def test_upload_record_round_trip(test_user: User) -> None:
     """``mark_uploaded`` writes onto the staged row and ``get_uploaded`` reads it back."""
     await media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
@@ -126,7 +120,6 @@ async def test_upload_record_round_trip(test_user: User) -> None:
     assert rec.status == "uploaded"
 
 
-@pytest.mark.asyncio()
 async def test_upload_record_resolvable_by_either_handle_or_url(test_user: User) -> None:
     """``get_uploaded`` accepts either the staged handle or the original URL.
 
@@ -166,7 +159,6 @@ async def test_upload_record_resolvable_by_either_handle_or_url(test_user: User)
     assert rec_by_url.external_id == "/Inbox/photo_001.jpg"
 
 
-@pytest.mark.asyncio()
 async def test_upload_record_dropped_with_evict(test_user: User) -> None:
     """Eviction drops the staged row entirely, so the receipt goes with it.
 
@@ -190,7 +182,6 @@ async def test_upload_record_dropped_with_evict(test_user: User) -> None:
     assert await media_staging.get_uploaded(test_user.id, "bb_photo") is None
 
 
-@pytest.mark.asyncio()
 async def test_upload_record_isolated_per_user(test_user: User, second_user: User) -> None:
     """One user's receipt does not surface for a different user with the same handle."""
     await media_staging.stage(test_user.id, "bb_photo", b"bytes-a", "image/jpeg")
@@ -206,7 +197,6 @@ async def test_upload_record_isolated_per_user(test_user: User, second_user: Use
     assert await media_staging.get_uploaded(second_user.id, "bb_photo") is None
 
 
-@pytest.mark.asyncio()
 async def test_upload_record_survives_simulated_worker_restart(test_user: User) -> None:
     """Regression for #1347: receipts must survive a process restart.
 
@@ -254,7 +244,6 @@ async def test_upload_record_survives_simulated_worker_restart(test_user: User) 
     assert rec.external_id == "/Inbox/photo_001.jpg"
 
 
-@pytest.mark.asyncio()
 async def test_upload_record_or_keyed_lookup_does_not_crash_on_multi_match(
     test_user: User,
 ) -> None:
@@ -296,7 +285,6 @@ async def test_upload_record_or_keyed_lookup_does_not_crash_on_multi_match(
     assert rec.external_id == "/Inbox/photo_B.jpg"
 
 
-@pytest.mark.asyncio()
 async def test_cap_evicts_receipts_before_raw_bytes(
     test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -347,7 +335,6 @@ async def test_cap_evicts_receipts_before_raw_bytes(
     assert "url_fresher" in remaining
 
 
-@pytest.mark.asyncio()
 async def test_cap_falls_through_to_non_receipts_when_no_receipts_left(
     test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -369,7 +356,6 @@ async def test_cap_falls_through_to_non_receipts_when_no_receipts_left(
     assert "url_c" in remaining
 
 
-@pytest.mark.asyncio()
 async def test_upload_record_returns_none_for_unstaged_handle(test_user: User) -> None:
     """A ``mark_uploaded`` call for a never-staged URL is a no-op."""
     await media_staging.mark_uploaded(
@@ -387,7 +373,6 @@ async def test_upload_record_returns_none_for_unstaged_handle(test_user: User) -
     )
 
 
-@pytest.mark.asyncio()
 async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
     test_user: User,
 ) -> None:
@@ -414,7 +399,6 @@ async def test_file_factory_merges_staged_bytes_when_current_turn_has_none(
     assert "bb_photo" in await media_staging.get_all_for_user(test_user.id)
 
 
-@pytest.mark.asyncio()
 async def test_file_factory_prefers_current_turn_over_stale_staging(
     test_user: User,
 ) -> None:
@@ -446,14 +430,12 @@ async def test_file_factory_prefers_current_turn_over_stale_staging(
     assert any(v == b"fresh-bytes" for v in storage.files.values())
 
 
-@pytest.mark.asyncio()
 async def test_get_mime_type_returns_staged_value(test_user: User) -> None:
     await media_staging.stage(test_user.id, "bb_doc", b"pdf-bytes", "application/pdf")
     assert await media_staging.get_mime_type(test_user.id, "bb_doc") == "application/pdf"
     assert await media_staging.get_mime_type(test_user.id, "missing") is None
 
 
-@pytest.mark.asyncio()
 async def test_upload_uses_staged_mime_over_llm_argument(test_user: User) -> None:
     """The download layer knows the real mime; the LLM-supplied value must not
     overwrite it (e.g. agent defaults to image/jpeg but file is a PDF)."""
@@ -476,7 +458,6 @@ async def test_upload_uses_staged_mime_over_llm_argument(test_user: User) -> Non
     assert ".pdf" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_upload_keeps_staged_entry(test_user: User) -> None:
     """A successful storage upload must NOT evict the staged bytes.
 
@@ -506,7 +487,6 @@ async def test_upload_keeps_staged_entry(test_user: User) -> None:
     assert rec is not None and rec.service == "storage"
 
 
-@pytest.mark.asyncio()
 async def test_upload_to_storage_idempotent_on_same_handle_retry(test_user: User) -> None:
     """A second ``upload_to_storage`` for the same handle returns the existing receipt.
 
@@ -540,7 +520,6 @@ class _FakeUploadParams(BaseModel):
     client_name: str = Field(default="")
 
 
-@pytest.mark.asyncio()
 async def test_approval_cache_coalesces_repeat_ask(test_user: User) -> None:
     """When the agent calls the same ASK tool three times with the same
     resource within one run, the user should only be prompted once."""
@@ -605,7 +584,6 @@ async def test_approval_cache_coalesces_repeat_ask(test_user: User) -> None:
     assert calls == ["Acme Plumbing", "Acme Plumbing", "Acme Plumbing"]
 
 
-@pytest.mark.asyncio()
 async def test_always_allow_for_upload_to_storage_persists_globally(
     test_user: User,
 ) -> None:
@@ -666,7 +644,6 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
     assert level_different_client == PermissionLevel.ALWAYS
 
 
-@pytest.mark.asyncio()
 async def test_always_deny_does_not_emit_synthetic_tool_record(test_user: User) -> None:
     """Symmetric to the ALWAYS_ALLOW test: ALWAYS_DENY persists silently
     to the DB and must NOT surface as a synthetic PERMISSIONS.json tool
@@ -719,7 +696,6 @@ async def test_always_deny_does_not_emit_synthetic_tool_record(test_user: User) 
     assert level == PermissionLevel.NEVER
 
 
-@pytest.mark.asyncio()
 async def test_permissions_path_match_is_case_insensitive(test_user: User) -> None:
     """Case variants of the filename all hit the DB row rather than
     falling through to an unintended on-disk write."""
@@ -739,7 +715,6 @@ async def test_permissions_path_match_is_case_insensitive(test_user: User) -> No
         assert '"Invoice": "always"' in result.content
 
 
-@pytest.mark.asyncio()
 async def test_always_allow_does_not_emit_synthetic_tool_record(test_user: User) -> None:
     """ALWAYS_ALLOW persists silently to the DB. The chat should NOT contain
     a synthetic tool record that mimics the agent editing PERMISSIONS.json
@@ -797,7 +772,6 @@ async def test_always_allow_does_not_emit_synthetic_tool_record(test_user: User)
     assert level == PermissionLevel.ALWAYS
 
 
-@pytest.mark.asyncio()
 async def test_always_allow_short_circuits_sibling_ask_entries_in_same_round(
     test_user: User,
 ) -> None:
@@ -878,7 +852,6 @@ async def test_always_allow_short_circuits_sibling_ask_entries_in_same_round(
     assert calls == queries  # all three ran
 
 
-@pytest.mark.asyncio()
 async def test_denied_short_circuits_sibling_ask_entries(test_user: User) -> None:
     """Symmetric: if the agent fires the same tool+resource multiple times
     and the user says 'no', we shouldn't re-prompt for the siblings."""
@@ -941,7 +914,6 @@ async def test_denied_short_circuits_sibling_ask_entries(test_user: User) -> Non
     assert gate.request_approval.await_count == 1  # type: ignore[attr-defined]
 
 
-@pytest.mark.asyncio()
 async def test_permissions_json_readable_via_workspace_tools(test_user: User) -> None:
     """read_file("PERMISSIONS.json") hits the same DB row as ApprovalStore
     so the agent can answer "what are my permissions?" correctly."""
@@ -960,7 +932,6 @@ async def test_permissions_json_readable_via_workspace_tools(test_user: User) ->
     assert '"Invoice": "always"' in result.content
 
 
-@pytest.mark.asyncio()
 async def test_permissions_json_write_flows_into_approval_store(test_user: User) -> None:
     """write_file on PERMISSIONS.json persists through the same DB row
     ApprovalStore uses, so the dashboard / chat / approval gate all see
@@ -992,7 +963,6 @@ async def test_permissions_json_write_flows_into_approval_store(test_user: User)
     assert level == PermissionLevel.NEVER
 
 
-@pytest.mark.asyncio()
 async def test_permissions_write_normalizes_minified_json(test_user: User) -> None:
     """Minified JSON from write_file gets normalized to indented form so
     subsequent edit_file calls have stable text to match against."""
@@ -1019,7 +989,6 @@ async def test_permissions_write_normalizes_minified_json(test_user: User) -> No
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_resolve_media_ref_by_handle(test_user: User) -> None:
     """resolve_media_ref resolves a handle to (original_url, bytes, mime)."""
     handle = await media_staging.stage(test_user.id, "bb_photo_1", b"photo", "image/jpeg")
@@ -1032,7 +1001,6 @@ async def test_resolve_media_ref_by_handle(test_user: User) -> None:
     assert mime == "image/jpeg"
 
 
-@pytest.mark.asyncio()
 async def test_resolve_media_ref_by_url(test_user: User) -> None:
     """resolve_media_ref resolves a URL to (url, bytes, mime)."""
     await media_staging.stage(test_user.id, "bb_photo_2", b"photo2", "image/png")
@@ -1044,7 +1012,6 @@ async def test_resolve_media_ref_by_url(test_user: User) -> None:
     assert mime == "image/png"
 
 
-@pytest.mark.asyncio()
 async def test_resolve_media_ref_wrong_user(test_user: User, second_user: User) -> None:
     """resolve_media_ref rejects handles owned by a different user."""
     handle = await media_staging.stage(second_user.id, "bb_foreign", b"data", "image/jpeg")
@@ -1053,14 +1020,12 @@ async def test_resolve_media_ref_wrong_user(test_user: User, second_user: User) 
     assert result is None
 
 
-@pytest.mark.asyncio()
 async def test_resolve_media_ref_unknown_ref(test_user: User) -> None:
     """resolve_media_ref returns None for unrecognized references."""
     assert await media_staging.resolve_media_ref(test_user.id, "media_UNKNOWN") is None
     assert await media_staging.resolve_media_ref(test_user.id, "https://no.such/url") is None
 
 
-@pytest.mark.asyncio()
 async def test_upload_to_storage_resolves_handle(test_user: User) -> None:
     """Regression: upload_to_storage must accept media handles, not just URLs."""
     handle = await media_staging.stage(test_user.id, "bb_real_url", b"photo-bytes", "image/jpeg")

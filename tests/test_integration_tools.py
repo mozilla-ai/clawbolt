@@ -2,8 +2,6 @@
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import ToolResult
 from backend.app.agent.tools.integration_tools import (
@@ -48,7 +46,6 @@ def test_integration_factory_registered() -> None:
     assert "integration" in default_registry.core_factory_names
 
 
-@pytest.mark.asyncio()
 async def test_manage_integration_in_core_tools() -> None:
     """manage_integration should appear in core tools."""
     user = User(id="test-core-int", user_id="test")
@@ -63,7 +60,6 @@ async def test_manage_integration_in_core_tools() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_status_shows_all_groups(test_user: User) -> None:
     """Status should list all registered tool groups."""
     result = await _call(test_user, "status")
@@ -73,7 +69,6 @@ async def test_status_shows_all_groups(test_user: User) -> None:
     assert "Core tools:" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_status_shows_enabled_disabled(test_user: User) -> None:
     """Status should reflect disabled groups."""
     store = ToolConfigStore(test_user.id)
@@ -84,7 +79,6 @@ async def test_status_shows_enabled_disabled(test_user: User) -> None:
     assert "disabled" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_usage_hint_instructs_status_check_first(test_user: User) -> None:
     """The manage_integration usage_hint must tell the agent to call
     action='status' before offering connect links.
@@ -106,7 +100,6 @@ async def test_usage_hint_instructs_status_check_first(test_user: User) -> None:
     )
 
 
-@pytest.mark.asyncio()
 async def test_usage_hint_lists_current_oauth_integrations(test_user: User) -> None:
     """The manage_integration usage_hint must enumerate every OAuth integration
     registered on the current deployment, render their human-readable labels,
@@ -163,7 +156,6 @@ async def test_usage_hint_lists_current_oauth_integrations(test_user: User) -> N
     )
 
 
-@pytest.mark.asyncio()
 async def test_status_shows_oauth_connection_state(test_user: User) -> None:
     """Status should show connected/not connected for OAuth integrations."""
     mock_config = OAuthConfig(
@@ -192,7 +184,6 @@ async def test_status_shows_oauth_connection_state(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_enable_domain_tool(test_user: User) -> None:
     """Enabling a domain tool should persist to the store."""
     store = ToolConfigStore(test_user.id)
@@ -210,7 +201,6 @@ async def test_enable_domain_tool(test_user: User) -> None:
     assert "calendar" not in disabled
 
 
-@pytest.mark.asyncio()
 async def test_enable_core_tool_noop(test_user: User) -> None:
     """Enabling a core tool should return a message (it's always enabled)."""
     result = await _call(test_user, "enable", "workspace")
@@ -218,7 +208,6 @@ async def test_enable_core_tool_noop(test_user: User) -> None:
     assert "always enabled" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_enable_unknown_tool_rejected(test_user: User) -> None:
     """Enabling an unknown tool should return an error."""
     result = await _call(test_user, "enable", "foobar")
@@ -232,7 +221,6 @@ async def test_enable_unknown_tool_rejected(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_disable_domain_tool(test_user: User) -> None:
     """Disabling a domain tool should persist to the store."""
     store = ToolConfigStore(test_user.id)
@@ -245,7 +233,6 @@ async def test_disable_domain_tool(test_user: User) -> None:
     assert "calendar" in disabled
 
 
-@pytest.mark.asyncio()
 async def test_disable_core_tool_rejected(test_user: User) -> None:
     """Disabling a core tool should return an error."""
     result = await _call(test_user, "disable", "workspace")
@@ -253,7 +240,6 @@ async def test_disable_core_tool_rejected(test_user: User) -> None:
     assert "cannot be disabled" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_disable_unknown_tool_rejected(test_user: User) -> None:
     """Disabling an unknown tool should return an error."""
     result = await _call(test_user, "disable", "foobar")
@@ -266,7 +252,6 @@ async def test_disable_unknown_tool_rejected(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_connect_returns_oauth_url(test_user: User) -> None:
     """Connecting should return an OAuth URL."""
     mock_config = OAuthConfig(
@@ -301,7 +286,6 @@ async def test_connect_returns_oauth_url(test_user: User) -> None:
         )
 
 
-@pytest.mark.asyncio()
 async def test_connect_via_tool_group_name(test_user: User) -> None:
     """Connecting with tool group name 'calendar' should map to 'google_calendar'."""
     mock_config = OAuthConfig(
@@ -329,7 +313,6 @@ async def test_connect_via_tool_group_name(test_user: User) -> None:
         assert "https://example.com/auth" not in result.content
 
 
-@pytest.mark.asyncio()
 async def test_connect_link_survives_llm_dropping_it(test_user: User) -> None:
     """Regression: the OAuth connect URL reaches the user even when the LLM's
     prose omits it.
@@ -397,7 +380,6 @@ async def test_connect_link_survives_llm_dropping_it(test_user: User) -> None:
     assert "Tap the link" in outbound
 
 
-@pytest.mark.asyncio()
 async def test_connect_unconfigured_integration(test_user: User) -> None:
     """Connecting a not-configured integration should return an error."""
     with patch(
@@ -409,7 +391,6 @@ async def test_connect_unconfigured_integration(test_user: User) -> None:
         assert "not configured" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_connect_non_oauth_integration(test_user: User) -> None:
     """Connecting a non-OAuth integration should return an error."""
     result = await _call(test_user, "connect", "web_search")
@@ -417,7 +398,6 @@ async def test_connect_non_oauth_integration(test_user: User) -> None:
     assert "does not use OAuth" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_connect_already_connected(test_user: User) -> None:
     """Connecting an already-connected integration should inform the user."""
     mock_config = OAuthConfig(
@@ -447,7 +427,6 @@ async def test_connect_already_connected(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_disconnect_removes_tokens(test_user: User) -> None:
     """Disconnecting should call delete_token on the OAuth service."""
     with patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth:
@@ -460,7 +439,6 @@ async def test_disconnect_removes_tokens(test_user: User) -> None:
         mock_oauth.delete_token.assert_called_once_with(test_user.id, "google_calendar")
 
 
-@pytest.mark.asyncio()
 async def test_disconnect_not_connected(test_user: User) -> None:
     """Disconnecting a not-connected integration should return an error."""
     with patch("backend.app.agent.tools.integration_tools.oauth_service") as mock_oauth:
@@ -471,7 +449,6 @@ async def test_disconnect_not_connected(test_user: User) -> None:
         assert "not currently connected" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_disconnect_non_oauth(test_user: User) -> None:
     """Disconnecting a non-OAuth integration should return an error."""
     result = await _call(test_user, "disconnect", "web_search")
@@ -484,7 +461,6 @@ async def test_disconnect_non_oauth(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_invalid_action(test_user: User) -> None:
     """An unknown action should return an error."""
     result = await _call(test_user, "foobar", "calendar")
@@ -492,7 +468,6 @@ async def test_invalid_action(test_user: User) -> None:
     assert "Unknown action" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_missing_target_for_enable(test_user: User) -> None:
     """Enable without a target should return an error."""
     result = await _call(test_user, "enable")
@@ -505,7 +480,6 @@ async def test_missing_target_for_enable(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_set_enabled_creates_new_row(test_user: User) -> None:
     """set_enabled should create a row when none exists."""
     store = ToolConfigStore(test_user.id)
@@ -519,7 +493,6 @@ async def test_set_enabled_creates_new_row(test_user: User) -> None:
     assert "calendar" in disabled
 
 
-@pytest.mark.asyncio()
 async def test_set_enabled_updates_existing_row(test_user: User) -> None:
     """set_enabled should update an existing row."""
     store = ToolConfigStore(test_user.id)
@@ -538,7 +511,6 @@ async def test_set_enabled_updates_existing_row(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_status_lists_appfolio_with_connection_state(test_user: User) -> None:
     """Status should surface AppFolio's magic-link connection state.
 
@@ -557,7 +529,6 @@ async def test_status_lists_appfolio_with_connection_state(test_user: User) -> N
     assert "not connected" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_status_marks_appfolio_connected(test_user: User) -> None:
     """When AppFolio has a credential, status should say 'connected'."""
     with patch(
@@ -573,7 +544,6 @@ async def test_status_marks_appfolio_connected(test_user: User) -> None:
     assert "not connected" not in appfolio_line
 
 
-@pytest.mark.asyncio()
 async def test_connect_appfolio_directs_to_web_app(test_user: User) -> None:
     """Connect with target='appfolio_vendor' should route the user to the web app.
 
@@ -593,7 +563,6 @@ async def test_connect_appfolio_directs_to_web_app(test_user: User) -> None:
     assert "does not use OAuth" not in result.content
 
 
-@pytest.mark.asyncio()
 async def test_connect_servicetitan_directs_to_web_app(test_user: User) -> None:
     """Connect with target='servicetitan' should route the user to the web app."""
     with (
@@ -611,7 +580,6 @@ async def test_connect_servicetitan_directs_to_web_app(test_user: User) -> None:
     assert "ServiceTitan" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_connect_servicetitan_unavailable_without_app_key(test_user: User) -> None:
     """Connect must refuse (not advertise the web flow) when the deployment has
     no SERVICETITAN_APP_KEY, since connect_credentials would hard-fail."""
@@ -621,7 +589,6 @@ async def test_connect_servicetitan_unavailable_without_app_key(test_user: User)
     assert "not available" in result.content.lower() or "not configured" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_connect_appfolio_when_already_connected(test_user: User) -> None:
     """Connecting an already-connected AppFolio should report it, not re-prompt."""
     with patch(
@@ -633,7 +600,6 @@ async def test_connect_appfolio_when_already_connected(test_user: User) -> None:
     assert "already connected" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_disconnect_appfolio_clears_credential(test_user: User) -> None:
     """Disconnecting AppFolio should call clear_credential."""
     is_connected_mock = AsyncMock(return_value=True)
@@ -654,7 +620,6 @@ async def test_disconnect_appfolio_clears_credential(test_user: User) -> None:
     clear_mock.assert_awaited_once_with(test_user.id)
 
 
-@pytest.mark.asyncio()
 async def test_disconnect_appfolio_when_not_connected(test_user: User) -> None:
     """Disconnecting AppFolio with no credential should return a NOT_FOUND error."""
     with patch(
@@ -666,7 +631,6 @@ async def test_disconnect_appfolio_when_not_connected(test_user: User) -> None:
     assert "not currently connected" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_web_connect_usage_hint_points_to_web_app(test_user: User) -> None:
     """The usage_hint should tell the agent AppFolio and ServiceTitan connect
     in the web app, never over chat.
@@ -689,7 +653,6 @@ async def test_web_connect_usage_hint_points_to_web_app(test_user: User) -> None
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_status_marks_servicetitan_connected(test_user: User) -> None:
     """When ServiceTitan has a credential (and an App Key is set), status says 'connected'."""
     with (
@@ -708,7 +671,6 @@ async def test_status_marks_servicetitan_connected(test_user: User) -> None:
     assert "not connected" not in st_line
 
 
-@pytest.mark.asyncio()
 async def test_status_servicetitan_not_configured_without_app_key(test_user: User) -> None:
     """Without SERVICETITAN_APP_KEY the deployment can't support ServiceTitan, so
     status says 'not configured by admin' rather than advertising a connect flow
@@ -719,7 +681,6 @@ async def test_status_servicetitan_not_configured_without_app_key(test_user: Use
     assert "not configured by admin" in st_line
 
 
-@pytest.mark.asyncio()
 async def test_disconnect_servicetitan_clears_credentials(test_user: User) -> None:
     """Disconnecting ServiceTitan should call clear_credentials."""
     clear_mock = AsyncMock()
@@ -744,7 +705,6 @@ async def test_disconnect_servicetitan_clears_credentials(test_user: User) -> No
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_status_renders_registry_display_names_for_every_integration(
     test_user: User,
 ) -> None:
@@ -840,7 +800,6 @@ def test_user_facing_integrations_declare_display_names() -> None:
         assert factory.display_name, f"Web-form factory {target!r} must declare a display_name"
 
 
-@pytest.mark.asyncio()
 async def test_connect_renders_registry_display_name(test_user: User) -> None:
     """Connect output must use the factory's registered display_name.
 
@@ -881,7 +840,6 @@ async def test_connect_renders_registry_display_name(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_get_user_connected_integrations_skips_unconfigured_oauth() -> None:
     """OAuth integrations the operator has not wired must be omitted entirely.
 
@@ -934,7 +892,6 @@ async def test_get_user_connected_integrations_skips_unconfigured_oauth() -> Non
     assert "appfolio_vendor" in result
 
 
-@pytest.mark.asyncio
 async def test_get_user_connected_integrations_reflects_per_user_state() -> None:
     """Connection state is read live per user; no caching."""
     from backend.app.agent.tools.integration_tools import (

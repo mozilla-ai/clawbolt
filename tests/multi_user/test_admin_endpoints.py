@@ -4,7 +4,6 @@ import datetime
 import uuid
 from datetime import UTC
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -83,7 +82,6 @@ def _create_other_user(db_session: Session) -> User:
 
 
 class TestActivateDeactivate:
-    @pytest.mark.asyncio
     async def test_deactivate_user(
         self,
         client: TestClient,
@@ -99,7 +97,6 @@ class TestActivateDeactivate:
         assert updated is not None
         assert updated.is_active is False
 
-    @pytest.mark.asyncio
     async def test_activate_user(
         self,
         client: TestClient,

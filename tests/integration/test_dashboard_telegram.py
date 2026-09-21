@@ -143,7 +143,6 @@ async def _seed_memory(user: User) -> None:
 class TestDashboardSeesTelegramData:
     """Dashboard endpoints return the Telegram user's data."""
 
-    @pytest.mark.asyncio
     async def test_profile_returns_telegram_user(
         self,
         real_auth_client: AsyncClient,
@@ -154,7 +153,6 @@ class TestDashboardSeesTelegramData:
         data = resp.json()
         assert data["user_id"] == "telegram_123456789"
 
-    @pytest.mark.asyncio
     async def test_sessions_returns_telegram_sessions(
         self,
         real_auth_client: AsyncClient,
@@ -184,7 +182,6 @@ class TestDashboardSeesTelegramData:
         assert data["session_id"] == "1_100"
         assert len(data["messages"]) == 2
 
-    @pytest.mark.asyncio
     async def test_memory_returns_telegram_facts(
         self,
         real_auth_client: AsyncClient,
@@ -197,7 +194,6 @@ class TestDashboardSeesTelegramData:
         assert "hourly_rate" in data["content"]
         assert "specialty" in data["content"]
 
-    @pytest.mark.asyncio
     async def test_stats_returns_telegram_stats(
         self,
         real_auth_client: AsyncClient,

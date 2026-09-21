@@ -236,7 +236,6 @@ def test_line_diff_counts_large_removal_visible() -> None:
 # --- compact_session tests ---
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
     """compact_session should call LLM and write updated MEMORY.md."""
     llm_response_content = json.dumps(
@@ -275,7 +274,6 @@ async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
     assert llm_messages[-1]["role"] == "user"
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_skips_memory_write_on_concurrent_change(
     test_user: UserData,
 ) -> None:
@@ -330,7 +328,6 @@ async def test_compact_session_skips_memory_write_on_concurrent_change(
         assert event.memory_updated is False
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_includes_current_memory_and_user(
     test_user: UserData,
 ) -> None:
@@ -366,7 +363,6 @@ async def test_compact_session_includes_current_memory_and_user(
     assert "</conversation>" in user_content
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_user_profile_in_separate_xml_section(
     test_user: UserData,
 ) -> None:
@@ -418,7 +414,6 @@ async def test_compact_session_user_profile_in_separate_xml_section(
     assert "<current_memory>" in system_prompt
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_includes_soul_and_heartbeat(
     test_user: UserData,
 ) -> None:
@@ -454,7 +449,6 @@ async def test_compact_session_includes_soul_and_heartbeat(
     assert "Follow up with Bob about the deck estimate" in user_content
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_soul_in_separate_xml_section(
     test_user: UserData,
 ) -> None:
@@ -491,7 +485,6 @@ async def test_compact_session_soul_in_separate_xml_section(
     assert "helpful construction assistant" not in memory_section
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_heartbeat_in_separate_xml_section(
     test_user: UserData,
 ) -> None:
@@ -530,7 +523,6 @@ async def test_compact_session_heartbeat_in_separate_xml_section(
     assert "Call supplier about lumber delivery" not in memory_section
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_empty_soul_and_heartbeat(
     test_user: UserData,
 ) -> None:
@@ -561,7 +553,6 @@ async def test_compact_session_empty_soul_and_heartbeat(
     assert "(empty)" in heartbeat_section
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_returns_max_message_seq(test_user: UserData) -> None:
     """compact_session should return the max_message_seq when provided."""
     mock_response = make_text_response(
@@ -577,7 +568,6 @@ async def test_compact_session_returns_max_message_seq(test_user: UserData) -> N
     assert max_seq == 42
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_writes_user_profile(test_user: UserData) -> None:
     """compact_session should write USER.md when LLM returns user_profile_update."""
     store = get_memory_store(test_user.id)
@@ -607,7 +597,6 @@ async def test_compact_session_writes_user_profile(test_user: UserData) -> None:
     assert "General contractor" in updated_profile
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_writes_soul(test_user: UserData) -> None:
     """compact_session should write SOUL.md when LLM returns soul_update."""
     store = get_memory_store(test_user.id)
@@ -636,7 +625,6 @@ async def test_compact_session_writes_soul(test_user: UserData) -> None:
     assert "Skip the pleasantries" in updated_soul
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_skips_empty_profile_and_soul(test_user: UserData) -> None:
     """compact_session should not write USER.md or SOUL.md when updates are empty."""
     store = get_memory_store(test_user.id)
@@ -668,7 +656,6 @@ async def test_compact_session_skips_empty_profile_and_soul(test_user: UserData)
     assert "Bob: 555-0100" in await store.read_memory_async()
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_empty_messages(test_user: UserData) -> None:
     """compact_session with no messages should return empty without LLM call."""
     with patch("backend.app.agent.compaction.amessages_streamed") as mock_llm:
@@ -679,7 +666,6 @@ async def test_compact_session_empty_messages(test_user: UserData) -> None:
     mock_llm.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_disabled(test_user: UserData) -> None:
     """compact_session should skip when compaction_enabled is False."""
     messages: list[AgentMessage] = [UserMessage(content="Some content")]
@@ -696,7 +682,6 @@ async def test_compact_session_disabled(test_user: UserData) -> None:
     mock_llm.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_llm_failure_returns_empty(test_user: UserData) -> None:
     """compact_session should return empty string if LLM call fails."""
     messages: list[AgentMessage] = [UserMessage(content="Some content")]
@@ -711,7 +696,6 @@ async def test_compact_session_llm_failure_returns_empty(test_user: UserData) ->
     assert max_seq is None
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_invalid_llm_response(test_user: UserData) -> None:
     """compact_session should handle unparseable LLM responses gracefully."""
     mock_response = make_text_response("Sorry, I can't do that.")
@@ -725,7 +709,6 @@ async def test_compact_session_invalid_llm_response(test_user: UserData) -> None
     assert max_seq is None
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_no_new_info(test_user: UserData) -> None:
     """compact_session should handle LLM returning empty memory_update."""
     mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
@@ -742,7 +725,6 @@ async def test_compact_session_no_new_info(test_user: UserData) -> None:
     assert max_seq is None
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_emits_structured_summary_log(
     test_user: UserData, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -804,7 +786,6 @@ async def test_compact_session_emits_structured_summary_log(
     assert "memory_lines_removed=" in msg
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_summary_log_marks_all_updates_false_when_llm_returns_empty(
     test_user: UserData, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -841,7 +822,6 @@ async def test_compact_session_summary_log_marks_all_updates_false_when_llm_retu
     assert "summary_len=0" in msg
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_uses_configured_model(test_user: UserData) -> None:
     """compact_session should use compaction_model/provider when configured."""
     mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
@@ -873,7 +853,6 @@ async def test_compact_session_uses_configured_model(test_user: UserData) -> Non
     assert call_kwargs.kwargs.get("model") == "test-compact-model"
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_falls_back_to_llm_model(test_user: UserData) -> None:
     """compact_session should fall back to llm_model when compaction_model is empty."""
     mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
@@ -908,7 +887,6 @@ async def test_compact_session_falls_back_to_llm_model(test_user: UserData) -> N
 # --- compact_session llm_usage_logs tests ---
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_logs_llm_usage(test_user: UserData) -> None:
     """Successful compaction should record a llm_usage_logs row with purpose='compaction'."""
     mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
@@ -942,7 +920,6 @@ async def test_compact_session_logs_llm_usage(test_user: UserData) -> None:
     assert kwargs.get("purpose") == "compaction"
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_does_not_log_when_llm_fails(test_user: UserData) -> None:
     """A failed amessages call should not emit a usage log row."""
     messages: list[AgentMessage] = [UserMessage(content="hello")]
@@ -959,7 +936,6 @@ async def test_compact_session_does_not_log_when_llm_fails(test_user: UserData) 
     mock_log.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_does_not_log_when_disabled(test_user: UserData) -> None:
     """When compaction is disabled, no usage log row should be written."""
     messages: list[AgentMessage] = [UserMessage(content="hello")]
@@ -976,7 +952,6 @@ async def test_compact_session_does_not_log_when_disabled(test_user: UserData) -
     mock_log.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_does_not_log_when_no_messages(test_user: UserData) -> None:
     """An empty message list should short-circuit before any usage log is written."""
     with (
@@ -998,7 +973,6 @@ async def test_compact_session_does_not_log_when_no_messages(test_user: UserData
 # PR #843 to remove the original loader-driven compaction.
 
 
-@pytest.mark.asyncio()
 async def test_load_history_returns_all_messages_under_limit(
     test_user: UserData,
     session: SessionState,
@@ -1015,7 +989,6 @@ async def test_load_history_returns_all_messages_under_limit(
     assert len(history) == 7
 
 
-@pytest.mark.asyncio()
 async def test_load_history_soft_limit_caps_messages(
     test_user: UserData,
     session: SessionState,
@@ -1029,7 +1002,6 @@ async def test_load_history_soft_limit_caps_messages(
     assert len(history) == 4
 
 
-@pytest.mark.asyncio()
 async def test_load_history_overflow_routes_to_compaction(
     test_user: UserData,
     session: SessionState,
@@ -1057,7 +1029,6 @@ async def test_load_history_overflow_routes_to_compaction(
     assert len(history) == 4
 
 
-@pytest.mark.asyncio()
 async def test_load_history_overflow_batch_capped_per_turn(
     test_user: UserData,
     session: SessionState,
@@ -1083,7 +1054,6 @@ async def test_load_history_overflow_batch_capped_per_turn(
     assert max(seqs) == 200
 
 
-@pytest.mark.asyncio()
 async def test_load_history_overflow_skips_when_compaction_disabled(
     test_user: UserData,
     session: SessionState,
@@ -1105,7 +1075,6 @@ async def test_load_history_overflow_skips_when_compaction_disabled(
     assert len(history) == 4
 
 
-@pytest.mark.asyncio()
 async def test_load_history_overflow_advances_watermark_and_compacts(
     test_user: User,
 ) -> None:
@@ -1147,7 +1116,6 @@ async def test_load_history_overflow_advances_watermark_and_compacts(
     assert "fact: from_overflow" in content
 
 
-@pytest.mark.asyncio()
 async def test_load_history_overflow_does_not_refire_after_watermark(
     test_user: User,
 ) -> None:
@@ -1182,7 +1150,6 @@ async def test_load_history_overflow_does_not_refire_after_watermark(
 # --- trigger_compaction_for_dropped tests ---
 
 
-@pytest.mark.asyncio()
 async def test_trigger_compaction_for_dropped_fires_background_task(
     test_user: UserData,
 ) -> None:
@@ -1217,7 +1184,6 @@ async def test_trigger_compaction_for_dropped_fires_background_task(
     assert "fact: from_trim" in content
 
 
-@pytest.mark.asyncio()
 async def test_trigger_compaction_for_dropped_skips_empty(
     test_user: UserData,
 ) -> None:
@@ -1231,7 +1197,6 @@ async def test_trigger_compaction_for_dropped_skips_empty(
     mock_llm.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_trigger_compaction_for_dropped_skips_when_disabled(
     test_user: UserData,
 ) -> None:
@@ -1254,7 +1219,6 @@ async def test_trigger_compaction_for_dropped_skips_when_disabled(
 # --- compact_session HISTORY.md tests ---
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_appends_history(test_user: UserData) -> None:
     """compact_session should write summary to HISTORY.md."""
     llm_response_text = json.dumps(
@@ -1283,7 +1247,6 @@ async def test_compact_session_appends_history(test_user: UserData) -> None:
     assert "[20" in history_content
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_preserves_event_timestamps_in_summary(
     test_user: UserData,
 ) -> None:
@@ -1328,7 +1291,6 @@ async def test_compact_session_preserves_event_timestamps_in_summary(
     assert "today" not in history_content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_no_summary_skips_history(test_user: UserData) -> None:
     """compact_session should not write HISTORY.md when summary is empty."""
     llm_response_text = json.dumps({"memory_update": "", "summary": ""})
@@ -1346,7 +1308,6 @@ async def test_compact_session_no_summary_skips_history(test_user: UserData) -> 
     assert await memory_store.read_history_async() == ""
 
 
-@pytest.mark.asyncio()
 async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
     """Two concurrent get_or_create_session calls for the same user must
     converge on the same session row.
@@ -1397,7 +1358,6 @@ async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
 # --- CompactionEvent persistence ---
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_writes_event_row(test_user: UserData) -> None:
     """Every successful compaction must leave one CompactionEvent row.
 
@@ -1458,7 +1418,6 @@ async def test_compact_session_writes_event_row(test_user: UserData) -> None:
     assert row.triggered_at is not None
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_db_failure_does_not_fail_compaction(
     test_user: UserData,
 ) -> None:
@@ -1584,7 +1543,6 @@ def test_format_messages_keeps_user_content_urls() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_does_not_write_when_memory_unchanged(
     test_user: UserData,
 ) -> None:
@@ -1619,7 +1577,6 @@ async def test_compact_session_does_not_write_when_memory_unchanged(
     assert event.memory_updated is False
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_summary_log_marks_memory_unchanged_when_llm_echoes(
     test_user: UserData, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1653,7 +1610,6 @@ async def test_compact_session_summary_log_marks_memory_unchanged_when_llm_echoe
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_compaction_history_snapshot_matches_db_after_append(
     test_user: UserData,
 ) -> None:
@@ -1734,7 +1690,6 @@ async def _seed_session_with_messages(user: User, message_count: int) -> ChatSes
         return cs
 
 
-@pytest.mark.asyncio()
 async def test_load_conversation_history_respects_last_trim_seq(test_user: User) -> None:
     """Messages with seq <= last_trim_seq must be filtered out."""
     cs = await _seed_session_with_messages(test_user, message_count=20)
@@ -1759,7 +1714,6 @@ async def test_load_conversation_history_respects_last_trim_seq(test_user: User)
     assert "msg 19" in contents
 
 
-@pytest.mark.asyncio()
 async def test_load_conversation_history_null_watermark_no_filter(test_user: User) -> None:
     """NULL watermark (default) is the back-compat behavior: no filtering."""
     cs = await _seed_session_with_messages(test_user, message_count=10)
@@ -1781,7 +1735,6 @@ async def test_load_conversation_history_null_watermark_no_filter(test_user: Use
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_trigger_compaction_for_dropped_no_seqs_skips(test_user: User) -> None:
     """When no dropped messages carry seq (all in-memory placeholders),
     trigger_compaction must NOT insert an event or advance the watermark.
@@ -1800,7 +1753,6 @@ async def test_trigger_compaction_for_dropped_no_seqs_skips(test_user: User) -> 
     assert rows == 0
 
 
-@pytest.mark.asyncio()
 async def test_trigger_compaction_for_dropped_inserts_pending_and_advances_watermark(
     test_user: User,
 ) -> None:
@@ -1843,7 +1795,6 @@ async def test_trigger_compaction_for_dropped_inserts_pending_and_advances_water
         assert event.status == "pending"
 
 
-@pytest.mark.asyncio()
 async def test_watermark_event_seq_invariant_after_compaction(test_user: User) -> None:
     """After a successful compaction, sessions.last_trim_seq must equal
     compaction_events.max_message_seq for that event's row.
@@ -1870,7 +1821,6 @@ async def test_watermark_event_seq_invariant_after_compaction(test_user: User) -
         assert cs_ref.last_trim_seq == event.max_message_seq == 8
 
 
-@pytest.mark.asyncio()
 async def test_trigger_compaction_skips_rows_below_live_watermark(test_user: User) -> None:
     """Rows at or below the live watermark must not be re-compacted.
 
@@ -1944,7 +1894,6 @@ async def test_trigger_compaction_skips_rows_below_live_watermark(test_user: Use
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_with_event_id_updates_existing_row(
     test_user: User,
 ) -> None:
@@ -2002,7 +1951,6 @@ async def test_compact_session_with_event_id_updates_existing_row(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_captures_llm_prompt_raw_and_parsed(
     test_user: User,
 ) -> None:
@@ -2065,7 +2013,6 @@ async def test_compact_session_captures_llm_prompt_raw_and_parsed(
         assert parsed["soul_update"] == ""
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_truncates_oversized_prompt(
     test_user: User,
 ) -> None:
@@ -2115,7 +2062,6 @@ async def test_compact_session_truncates_oversized_prompt(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_admin_compact_visible_messages_compacts_everything_above_watermark(
     test_user: User,
 ) -> None:
@@ -2170,7 +2116,6 @@ async def test_admin_compact_visible_messages_compacts_everything_above_watermar
         assert events[0].trimmed_count == 7
 
 
-@pytest.mark.asyncio()
 async def test_admin_compact_visible_messages_keeps_recent_tail(test_user: User) -> None:
     """``keep_recent`` must preserve the tail so the agent retains an
     immediate request even when older context is being cleared.
@@ -2196,7 +2141,6 @@ async def test_admin_compact_visible_messages_keeps_recent_tail(test_user: User)
     assert seqs == list(range(1, 8))
 
 
-@pytest.mark.asyncio()
 async def test_admin_compact_visible_messages_admin_note_flows_through(
     test_user: User,
 ) -> None:
@@ -2220,7 +2164,6 @@ async def test_admin_compact_visible_messages_admin_note_flows_through(
     assert captured["kwargs"]["admin_note"] == "ignore prior agent self-claims about AppFolio"
 
 
-@pytest.mark.asyncio()
 async def test_admin_compact_visible_messages_no_visible_returns_zero(
     test_user: User,
 ) -> None:
@@ -2257,7 +2200,6 @@ async def test_admin_compact_visible_messages_no_visible_returns_zero(
         assert events == []
 
 
-@pytest.mark.asyncio()
 async def test_admin_compact_visible_messages_no_op_surfaces_previous_event_id(
     test_user: User,
 ) -> None:
@@ -2294,7 +2236,6 @@ async def test_admin_compact_visible_messages_no_op_surfaces_previous_event_id(
     assert second.previous_event_id == first.event_id
 
 
-@pytest.mark.asyncio()
 async def test_admin_compact_visible_messages_skips_when_disabled(test_user: User) -> None:
     """When ``compaction_enabled`` is off, the admin path must be a no-op."""
     await _seed_session_with_messages(test_user, message_count=5)
@@ -2313,7 +2254,6 @@ async def test_admin_compact_visible_messages_skips_when_disabled(test_user: Use
     assert result.event_id is None
 
 
-@pytest.mark.asyncio()
 async def test_admin_compact_visible_messages_keep_recent_larger_than_visible(
     test_user: User,
 ) -> None:
@@ -2332,7 +2272,6 @@ async def test_admin_compact_visible_messages_keep_recent_larger_than_visible(
     assert result.compacted_message_count == 0
 
 
-@pytest.mark.asyncio()
 async def test_admin_compact_visible_messages_rejects_negative_keep_recent(
     test_user: User,
 ) -> None:
@@ -2346,7 +2285,6 @@ async def test_admin_compact_visible_messages_rejects_negative_keep_recent(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_admin_note_prepended_to_conversation(
     test_user: User,
 ) -> None:
@@ -2373,7 +2311,6 @@ async def test_compact_session_admin_note_prepended_to_conversation(
     assert "[admin note:" in user_content[conv_start:conv_end]
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_no_admin_note_no_prefix(test_user: User) -> None:
     """Without an admin note the conversation block must not contain
     ``[admin note:``. Locks in that the trim-driven hot path (which never
@@ -2394,7 +2331,6 @@ async def test_compact_session_no_admin_note_no_prefix(test_user: User) -> None:
 # --- Bounded-growth: compaction must survive over-budget LLM rewrites ---
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_skips_memory_update_when_llm_rewrite_exceeds_budget(
     test_user: User,
     caplog: pytest.LogCaptureFixture,
@@ -2436,7 +2372,6 @@ async def test_compact_session_skips_memory_update_when_llm_rewrite_exceeds_budg
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_compliance_audit_removes_excluded_content(
     test_user: UserData,
 ) -> None:
@@ -2518,7 +2453,6 @@ async def test_compact_session_compliance_audit_removes_excluded_content(
     assert "customer ID 12345" not in persisted
 
 
-@pytest.mark.asyncio()
 async def test_compact_session_compliance_audit_removes_excluded_that_is_still_relevant(
     test_user: UserData,
 ) -> None:
@@ -2574,7 +2508,6 @@ async def test_compact_session_compliance_audit_removes_excluded_that_is_still_r
     assert "QuickBooks for invoices" in memory_update
 
 
-@pytest.mark.asyncio()
 async def test_hygiene_only_compaction_cleans_memory_without_conversation(
     test_user: UserData,
 ) -> None:
@@ -2625,7 +2558,6 @@ async def test_hygiene_only_compaction_cleans_memory_without_conversation(
     assert "555-0100" not in persisted
 
 
-@pytest.mark.asyncio()
 async def test_hygiene_only_compaction_skips_empty_memory(
     test_user: UserData,
 ) -> None:

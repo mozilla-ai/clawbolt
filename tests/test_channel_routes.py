@@ -301,7 +301,6 @@ async def test_last_inbound_at_null_until_first_inbound(
     assert routes[0]["last_inbound_at"] is None
 
 
-@pytest.mark.asyncio
 async def test_last_inbound_at_stamped_by_ingestion(client: TestClient, test_user: User) -> None:
     """An inbound message resolving to a route updates last_inbound_at so the
     channel picker UI can flip to "Verified"."""

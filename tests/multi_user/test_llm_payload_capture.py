@@ -18,7 +18,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -94,7 +93,6 @@ async def _read_capture(async_db: async_sessionmaker, user_id: str) -> LLMPayloa
         ).scalar_one_or_none()
 
 
-@pytest.mark.asyncio()
 async def test_capture_skipped_when_no_consent(async_db: async_sessionmaker) -> None:
     user_id = await _insert_user(async_db, consent=False)
     await capture_llm_request(_make_payload(user_id=user_id, min_seq=10))
@@ -103,7 +101,6 @@ async def test_capture_skipped_when_no_consent(async_db: async_sessionmaker) -> 
     assert row is None
 
 
-@pytest.mark.asyncio()
 async def test_capture_skips_non_agent_main_purposes(
     async_db: async_sessionmaker,
 ) -> None:
@@ -119,7 +116,6 @@ async def test_capture_skips_non_agent_main_purposes(
     assert row is None
 
 
-@pytest.mark.asyncio()
 async def test_capture_writes_current_era_for_consenting_user(
     async_db: async_sessionmaker,
 ) -> None:
@@ -138,7 +134,6 @@ async def test_capture_writes_current_era_for_consenting_user(
     assert row.previous_era_min_message_seq is None
 
 
-@pytest.mark.asyncio()
 async def test_same_era_marker_overwrites_current_only(
     async_db: async_sessionmaker,
 ) -> None:
@@ -157,7 +152,6 @@ async def test_same_era_marker_overwrites_current_only(
     assert row.previous_era_payload is None
 
 
-@pytest.mark.asyncio()
 async def test_era_change_rotates_current_into_previous(
     async_db: async_sessionmaker,
 ) -> None:
@@ -228,7 +222,6 @@ async def test_era_change_rotates_current_into_previous(
     assert row.current_era_payload["messages"] == [{"role": "user", "content": "era-C-msg-1"}]
 
 
-@pytest.mark.asyncio()
 async def test_null_to_int_era_marker_rotates(
     async_db: async_sessionmaker,
 ) -> None:
@@ -247,7 +240,6 @@ async def test_null_to_int_era_marker_rotates(
     assert row.current_era_request_id == "S1"
 
 
-@pytest.mark.asyncio()
 async def test_oversize_payload_is_dropped(async_db: async_sessionmaker) -> None:
     user_id = await _insert_user(async_db, consent=True)
 
@@ -262,7 +254,6 @@ async def test_oversize_payload_is_dropped(async_db: async_sessionmaker) -> None
     assert row is None
 
 
-@pytest.mark.asyncio()
 async def test_lazy_purge_when_consent_flips_off(
     async_db: async_sessionmaker,
 ) -> None:
@@ -355,7 +346,6 @@ def _make_response_payload(
     )
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_writes_to_current_era_when_request_matches(
     async_db: async_sessionmaker,
 ) -> None:
@@ -378,7 +368,6 @@ async def test_response_capture_writes_to_current_era_when_request_matches(
     assert row.previous_era_response is None
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_writes_to_previous_era_after_rotation(
     async_db: async_sessionmaker,
 ) -> None:
@@ -402,7 +391,6 @@ async def test_response_capture_writes_to_previous_era_after_rotation(
     assert row.current_era_response is None
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_drops_when_no_matching_request(
     async_db: async_sessionmaker,
 ) -> None:
@@ -421,7 +409,6 @@ async def test_response_capture_drops_when_no_matching_request(
     assert row.previous_era_response is None
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_drops_when_no_request_row(
     async_db: async_sessionmaker,
 ) -> None:
@@ -435,7 +422,6 @@ async def test_response_capture_drops_when_no_request_row(
     assert row is None
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_skips_non_agent_main_purposes(
     async_db: async_sessionmaker,
 ) -> None:
@@ -452,7 +438,6 @@ async def test_response_capture_skips_non_agent_main_purposes(
     assert row.current_era_response is None
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_skips_when_request_id_is_none(
     async_db: async_sessionmaker,
 ) -> None:
@@ -488,7 +473,6 @@ async def test_response_capture_skips_when_request_id_is_none(
     assert row.current_era_response is None
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_drops_oversize(
     async_db: async_sessionmaker,
 ) -> None:
@@ -512,7 +496,6 @@ async def test_response_capture_drops_oversize(
     assert row.current_era_payload is not None
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_succeeds_after_request_commits_late() -> None:
     """If the response observer fires before the request has committed,
     the response capture's bounded retry should wait briefly and then
@@ -564,7 +547,6 @@ async def test_response_capture_succeeds_after_request_commits_late() -> None:
     assert row.current_era_response["content_blocks"][0]["text"] == "hello back"
 
 
-@pytest.mark.asyncio()
 async def test_response_capture_eventually_drops_when_request_never_arrives(
     async_db: async_sessionmaker,
 ) -> None:
@@ -586,7 +568,6 @@ async def test_response_capture_eventually_drops_when_request_never_arrives(
 _OBSERVED_PRODUCTION_PAYLOAD_BYTES = 520_000
 
 
-@pytest.mark.asyncio()
 async def test_realistic_production_payload_is_captured(async_db: async_sessionmaker) -> None:
     """A normal heavy user must be captured, not dropped.
 

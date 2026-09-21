@@ -19,7 +19,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -72,7 +71,6 @@ def _query_message(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_disabled_lookback_returns_zero_without_http() -> None:
     """``bluebubbles_backfill_lookback_minutes=0`` short-circuits before HTTP."""
     channel = BlueBubblesChannel()
@@ -91,7 +89,6 @@ async def test_disabled_lookback_returns_zero_without_http() -> None:
     mock_http.post.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_unconfigured_returns_zero_without_http() -> None:
     """No server_url or password short-circuits before HTTP."""
     channel = BlueBubblesChannel()
@@ -111,7 +108,6 @@ async def test_unconfigured_returns_zero_without_http() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_missed_message_is_replayed(bluebubbles_client: object, async_db: object) -> None:
     """A message returned by /api/v1/message/query is replayed onto the bus.
 
@@ -148,7 +144,6 @@ async def test_missed_message_is_replayed(bluebubbles_client: object, async_db: 
     assert inbound.external_message_id == "bb_missed-001"
 
 
-@pytest.mark.asyncio
 async def test_is_from_me_messages_are_skipped(
     bluebubbles_client: object, async_db: object
 ) -> None:
@@ -178,7 +173,6 @@ async def test_is_from_me_messages_are_skipped(
     assert mock_pub.call_args[0][0].external_message_id == "bb_in-1"
 
 
-@pytest.mark.asyncio
 async def test_already_seen_messages_are_deduped(
     bluebubbles_client: object, async_db: object
 ) -> None:
@@ -211,7 +205,6 @@ async def test_already_seen_messages_are_deduped(
     assert mock_pub.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_webhook_processed_message_is_not_replayed_after_restart(
     bluebubbles_client: httpx.AsyncClient,
     async_db: object,
@@ -275,7 +268,6 @@ async def test_webhook_processed_message_is_not_replayed_after_restart(
     )
 
 
-@pytest.mark.asyncio
 async def test_chat_guid_is_cached_for_outbound_replies(
     bluebubbles_client: object, async_db: object
 ) -> None:
@@ -308,7 +300,6 @@ async def test_chat_guid_is_cached_for_outbound_replies(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_http_error_returns_zero_without_raising(
     bluebubbles_client: object, async_db: object
 ) -> None:
@@ -334,7 +325,6 @@ async def test_http_error_returns_zero_without_raising(
     mock_pub.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_4xx_response_returns_zero(bluebubbles_client: object, async_db: object) -> None:
     """A 4xx (e.g. wrong password) is logged but does not block startup."""
     channel = BlueBubblesChannel()
@@ -358,7 +348,6 @@ async def test_4xx_response_returns_zero(bluebubbles_client: object, async_db: o
     mock_pub.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_empty_response_returns_zero(bluebubbles_client: object, async_db: object) -> None:
     """No messages in the lookback window is the common healthy-boot case."""
     channel = BlueBubblesChannel()
@@ -387,7 +376,6 @@ async def test_empty_response_returns_zero(bluebubbles_client: object, async_db:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_lookback_minutes_drives_after_param(
     bluebubbles_client: object, async_db: object
 ) -> None:
@@ -454,7 +442,6 @@ class TestBackfillLockConnectionPinning:
        caller acquire.
     """
 
-    @pytest.mark.asyncio()
     async def test_unlock_on_different_async_connection_is_a_no_op(self) -> None:
         """``pg_advisory_unlock`` on a different ``AsyncConnection`` is a
         silent no-op: the lock stays held by the original connection.
@@ -520,7 +507,6 @@ class TestBackfillLockConnectionPinning:
         finally:
             await engine.dispose()
 
-    @pytest.mark.asyncio()
     async def test_run_startup_backfill_serializes_concurrent_workers(self) -> None:
         """Mutation-test invariant for the production caller.
 
@@ -677,7 +663,6 @@ class TestBackfillLockConnectionPinning:
             _db_module._async_engine = old_async_engine
             _db_module._async_session_factory = old_async_factory
 
-    @pytest.mark.asyncio()
     async def test_async_connection_pinning_serializes_two_workers(self) -> None:
         """Positive proof: with the ``AsyncConnection``-based helpers,
         two callers contending on the lock are correctly serialized.

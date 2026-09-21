@@ -11,13 +11,11 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi import FastAPI
 
 from backend.app.main import lifespan
 
 
-@pytest.mark.asyncio
 async def test_lifespan_loads_settings_store_before_llm_check() -> None:
     """``store.load()`` must run before ``_verify_llm_settings()``."""
     call_order: list[str] = []

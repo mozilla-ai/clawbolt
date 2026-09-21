@@ -5,8 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
-
 from backend.app.agent.router import (
     DEFAULT_PIPELINE,
     PipelineContext,
@@ -28,7 +26,6 @@ if TYPE_CHECKING:
     from backend.app.agent.core import AgentResponse
 
 
-@pytest.mark.asyncio
 async def test_run_pipeline_executes_steps_in_order() -> None:
     """Steps should execute sequentially, each receiving the context from the prior step."""
     call_order: list[str] = []
@@ -58,7 +55,6 @@ async def test_run_pipeline_executes_steps_in_order() -> None:
     assert call_order == ["a", "b", "c"]
 
 
-@pytest.mark.asyncio
 async def test_run_pipeline_passes_context_through() -> None:
     """Each step should receive and return the same context object."""
     seen_contexts: list[PipelineContext] = []
@@ -80,7 +76,6 @@ async def test_run_pipeline_passes_context_through() -> None:
     assert all(c is ctx for c in seen_contexts)
 
 
-@pytest.mark.asyncio
 async def test_run_pipeline_empty_steps() -> None:
     """An empty pipeline should return the context unchanged."""
     ctx = PipelineContext(
@@ -114,7 +109,6 @@ def test_default_pipeline_length() -> None:
     assert len(DEFAULT_PIPELINE) == 8
 
 
-@pytest.mark.asyncio
 async def test_custom_pipeline_can_skip_steps() -> None:
     """A custom pipeline can omit steps from the default."""
     call_order: list[str] = []
@@ -139,7 +133,6 @@ async def test_custom_pipeline_can_skip_steps() -> None:
     assert call_order == ["prepare", "agent"]
 
 
-@pytest.mark.asyncio
 async def test_custom_pipeline_can_add_steps() -> None:
     """A custom pipeline can inject extra steps between default ones."""
     call_order: list[str] = []
@@ -164,7 +157,6 @@ async def test_custom_pipeline_can_add_steps() -> None:
     assert call_order == ["default", "custom", "default"]
 
 
-@pytest.mark.asyncio
 async def test_custom_pipeline_can_reorder_steps() -> None:
     """A custom pipeline can reorder steps."""
     call_order: list[str] = []
@@ -194,7 +186,6 @@ async def test_custom_pipeline_can_reorder_steps() -> None:
     assert call_order == ["z", "y", "x"]
 
 
-@pytest.mark.asyncio
 async def test_pipeline_step_can_mutate_context() -> None:
     """A step should be able to set fields on the context for later steps."""
 
@@ -217,7 +208,6 @@ async def test_pipeline_step_can_mutate_context() -> None:
     await run_pipeline(ctx, [set_context, check_context])
 
 
-@pytest.mark.asyncio
 async def test_prepare_media_step_preserves_pre_downloaded_media() -> None:
     """prepare_media_step must not discard already-downloaded media.
 
@@ -330,7 +320,6 @@ def _make_ctx(
     )
 
 
-@pytest.mark.asyncio
 async def test_dispatch_reply_appends_receipt_for_imessage_write_tool() -> None:
     """On plain-text channels (bluebubbles iMessage), the outbound body
     must carry a deterministic receipt line generated from real tool
@@ -362,7 +351,6 @@ async def test_dispatch_reply_appends_receipt_for_imessage_write_tool() -> None:
     assert "https://" not in outbound.content
 
 
-@pytest.mark.asyncio
 async def test_dispatch_reply_also_appends_receipt_for_webchat() -> None:
     """Receipts now ship on every channel, including the web dashboard,
     so the admin chat and the contractor's iMessage thread show the
@@ -395,7 +383,6 @@ async def test_dispatch_reply_also_appends_receipt_for_webchat() -> None:
     assert "https://" not in outbound.content
 
 
-@pytest.mark.asyncio
 async def test_dispatch_reply_omits_receipt_for_failed_mutation() -> None:
     """A mutation that errored did NOT actually happen. The receipt
     block must not imply success; failures live in the reply text."""
@@ -423,7 +410,6 @@ async def test_dispatch_reply_omits_receipt_for_failed_mutation() -> None:
     assert "- Created" not in outbound.content
 
 
-@pytest.mark.asyncio
 async def test_dispatch_reply_omits_receipt_for_read_tool() -> None:
     """Read-side tools (qb_query, calendar_list_events, memory recall)
     return data which is self-verifying. They don't populate a receipt
@@ -448,7 +434,6 @@ async def test_dispatch_reply_omits_receipt_for_read_tool() -> None:
     assert outbound.content == "Davis estimate total is $2,360."
 
 
-@pytest.mark.asyncio
 async def test_dispatch_reply_records_dispatched_body_on_response() -> None:
     """``dispatch_reply_step`` should expose the actually-sent body on the
     response so ``persist_outbound_step`` can store the same text the user

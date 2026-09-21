@@ -18,7 +18,6 @@ import datetime
 import uuid
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.agent.inbound_recovery import (
@@ -298,7 +297,6 @@ def test_parse_media_refs_handles_invalid_json() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_recover_dispatches_each_orphan(async_db: async_sessionmaker) -> None:
     """The recovery loop calls ``_dispatch_to_pipeline`` once per orphan
     and returns the count of successes.
@@ -340,7 +338,6 @@ async def test_recover_dispatches_each_orphan(async_db: async_sessionmaker) -> N
     assert set(captured_bodies) == {"one", "two"}
 
 
-@pytest.mark.asyncio()
 async def test_recover_short_circuits_when_lookback_zero() -> None:
     async with db_session_async() as db:
         user = await _make_user(db)
@@ -362,7 +359,6 @@ async def test_recover_short_circuits_when_lookback_zero() -> None:
     mock_dispatch.assert_not_awaited()
 
 
-@pytest.mark.asyncio()
 async def test_recover_continues_past_individual_dispatch_failure(
     async_db: async_sessionmaker,
 ) -> None:
@@ -468,7 +464,6 @@ async def test_orphan_is_no_longer_detected_after_outbound_lands() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_recovery_skips_when_another_worker_holds_the_lock() -> None:
     """``pg_try_advisory_lock`` returns False to a second caller when
     another connection already holds the lock. The sweep must short-circuit

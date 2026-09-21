@@ -23,7 +23,6 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -189,7 +188,6 @@ def _run_upgrade(sync_conn: Any) -> None:
     sync_conn.execute(text("ALTER TABLE tool_configs DROP COLUMN disabled_sub_tools"))
 
 
-@pytest.mark.asyncio
 async def test_upgrade_moves_disabled_sub_tools_into_permissions(
     migration_engine: AsyncEngine,
 ) -> None:
@@ -235,7 +233,6 @@ async def test_upgrade_moves_disabled_sub_tools_into_permissions(
         assert data["tools"]["calendar_create_event"] == "never"
 
 
-@pytest.mark.asyncio
 async def test_upgrade_merges_with_existing_permissions(
     migration_engine: AsyncEngine,
 ) -> None:
@@ -289,7 +286,6 @@ async def test_upgrade_merges_with_existing_permissions(
     assert data["resources"]["web_fetch"]["*.gov"] == "always"
 
 
-@pytest.mark.asyncio
 async def test_upgrade_creates_permissions_row_for_user_with_none(
     migration_engine: AsyncEngine,
 ) -> None:
@@ -326,7 +322,6 @@ async def test_upgrade_creates_permissions_row_for_user_with_none(
     assert data["resources"] == {}
 
 
-@pytest.mark.asyncio
 async def test_upgrade_is_idempotent_when_column_already_dropped(
     migration_engine: AsyncEngine,
 ) -> None:
@@ -353,7 +348,6 @@ async def test_upgrade_is_idempotent_when_column_already_dropped(
         await conn.run_sync(_no_op_if_column_gone)
 
 
-@pytest.mark.asyncio
 async def test_upgrade_unions_multiple_factories_per_user(
     migration_engine: AsyncEngine,
 ) -> None:

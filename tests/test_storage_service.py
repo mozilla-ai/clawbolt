@@ -20,7 +20,6 @@ def storage() -> MockStorageBackend:
     return MockStorageBackend()
 
 
-@pytest.mark.asyncio()
 async def test_upload_file(storage: MockStorageBackend) -> None:
     """upload_file should store bytes and return SavedFile metadata."""
     saved = await storage.upload_file(b"pdf-content", "/estimates", "EST-001.pdf")
@@ -30,7 +29,6 @@ async def test_upload_file(storage: MockStorageBackend) -> None:
     assert storage.files["estimates/EST-001.pdf"] == b"pdf-content"
 
 
-@pytest.mark.asyncio()
 async def test_create_folder(storage: MockStorageBackend) -> None:
     """create_folder should register the folder path."""
     path = await storage.create_folder("/Job Photos/2026-02-28")
@@ -38,7 +36,6 @@ async def test_create_folder(storage: MockStorageBackend) -> None:
     assert "/Job Photos/2026-02-28" in storage.folders
 
 
-@pytest.mark.asyncio()
 async def test_list_folder(storage: MockStorageBackend) -> None:
     """list_folder should return files in the specified path."""
     await storage.upload_file(b"photo1", "/photos", "photo1.jpg")
@@ -52,14 +49,12 @@ async def test_list_folder(storage: MockStorageBackend) -> None:
     assert "photo2.jpg" in names
 
 
-@pytest.mark.asyncio()
 async def test_list_empty_folder(storage: MockStorageBackend) -> None:
     """list_folder on empty folder should return empty list."""
     files = await storage.list_folder("/empty")
     assert files == []
 
 
-@pytest.mark.asyncio()
 async def test_mock_download_file(storage: MockStorageBackend) -> None:
     """download_file should return stored bytes by logical path."""
     await storage.upload_file(b"photo1", "/photos", "photo1.jpg")
@@ -69,7 +64,6 @@ async def test_mock_download_file(storage: MockStorageBackend) -> None:
     assert content == b"photo1"
 
 
-@pytest.mark.asyncio()
 async def test_mock_move_file(storage: MockStorageBackend) -> None:
     """move_file should move bytes from old key to new key."""
     await storage.upload_file(b"data", "/Unsorted/2026-03-02", "file_001.jpg")
@@ -82,7 +76,6 @@ async def test_mock_move_file(storage: MockStorageBackend) -> None:
     assert moved.path == "/John/photos/deck_001.jpg"
 
 
-@pytest.mark.asyncio()
 async def test_mock_move_file_not_found(storage: MockStorageBackend) -> None:
     """move_file should raise FileNotFoundError for missing files."""
     with pytest.raises(FileNotFoundError):
@@ -130,7 +123,6 @@ def gdrive_storage(mock_drive_service: MagicMock) -> GoogleDriveStorage:
     return s
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_upload_returns_saved_file(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -142,7 +134,6 @@ async def test_gdrive_upload_returns_saved_file(
     mock_drive_service.files.return_value.create.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_upload_records_storage_path_on_metadata(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -156,7 +147,6 @@ async def test_gdrive_upload_records_storage_path_on_metadata(
     assert saved.path == "/folder-id/doc.pdf"
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_create_folder_returns_id(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -170,7 +160,6 @@ async def test_gdrive_create_folder_returns_id(
     assert result == "date-folder-id"
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_create_folder_reuses_existing(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -183,7 +172,6 @@ async def test_gdrive_create_folder_reuses_existing(
     mock_drive_service.files.return_value.create.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_list_folder(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -198,7 +186,6 @@ async def test_gdrive_list_folder(
     mock_drive_service.files.return_value.list.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_download_file(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -214,7 +201,6 @@ async def test_gdrive_download_file(
     mock_drive_service.files.return_value.get_media.assert_called_once_with(fileId="file-123")
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_move_file(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -237,7 +223,6 @@ async def test_gdrive_move_file(
     mock_drive_service.files.return_value.update.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_move_file_not_found(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -249,7 +234,6 @@ async def test_gdrive_move_file_not_found(
         await gdrive_storage.move_file("src", "missing.jpg", "dest", "file.jpg")
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_get_file_falls_back_to_app_property_when_folder_walk_fails(
     mock_drive_service: MagicMock,
 ) -> None:
@@ -292,7 +276,6 @@ async def test_gdrive_get_file_falls_back_to_app_property_when_folder_walk_fails
     assert saved.metadata.get("id") == "file-xyz"
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_move_file_uses_actual_parents_for_remove(
     mock_drive_service: MagicMock,
 ) -> None:
@@ -337,7 +320,6 @@ async def test_gdrive_move_file_uses_actual_parents_for_remove(
     assert update_call.kwargs.get("addParents") == "dest-folder-id"
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_download_file_falls_back_to_app_property(
     mock_drive_service: MagicMock,
 ) -> None:
@@ -359,7 +341,6 @@ async def test_gdrive_download_file_falls_back_to_app_property(
     mock_drive_service.files.return_value.get_media.assert_called_once_with(fileId="file-xyz")
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_resolve_path_caches_results(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -375,7 +356,6 @@ async def test_gdrive_resolve_path_caches_results(
     assert mock_drive_service.files.return_value.create.return_value.execute.call_count == 1
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_upload_wraps_api_error(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -392,7 +372,6 @@ async def test_gdrive_upload_wraps_api_error(
         await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_root_folder_created_on_first_resolve(
     mock_drive_service: MagicMock,
 ) -> None:
@@ -410,7 +389,6 @@ async def test_gdrive_root_folder_created_on_first_resolve(
     assert s._folder_cache[f"{ROOT_FOLDER_NAME}/Unsorted"] == "unsorted-id"
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_search_files_matches_storage_path_tokens(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -465,7 +443,6 @@ async def test_gdrive_search_files_matches_storage_path_tokens(
     assert "/Other/folder/unrelated.jpg" not in returned_paths
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_search_files_skips_fallback_when_native_query_returns_enough(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -528,7 +505,6 @@ def test_gdrive_get_service_honors_test_override() -> None:
     build_mock.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_upload_retries_ssl_error_then_succeeds(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -545,7 +521,6 @@ async def test_gdrive_upload_retries_ssl_error_then_succeeds(
     assert mock_drive_service.files.return_value.create.return_value.execute.call_count == 2
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_upload_retries_timeout_then_succeeds(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -560,7 +535,6 @@ async def test_gdrive_upload_retries_timeout_then_succeeds(
     assert saved.metadata.get("id") == "file-after-retry"
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_upload_gives_up_after_max_retries(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
@@ -578,7 +552,6 @@ async def test_gdrive_upload_gives_up_after_max_retries(
     assert mock_drive_service.files.return_value.create.return_value.execute.call_count == 3
 
 
-@pytest.mark.asyncio()
 async def test_gdrive_upload_does_not_retry_http_error(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:

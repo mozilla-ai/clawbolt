@@ -110,7 +110,6 @@ class TestAllowedEmailAdmin:
 class TestRegistrationGating:
     """Registration restriction logic in get_or_create_user."""
 
-    @pytest.mark.asyncio
     async def test_restricted_mode_blocks_unapproved(self, async_db: async_sessionmaker) -> None:
         """New user with unapproved email is rejected in restricted mode."""
         user_info = {
@@ -127,7 +126,6 @@ class TestRegistrationGating:
                 with pytest.raises(RegistrationNotAllowed):
                     await get_or_create_user(db, user_info)
 
-    @pytest.mark.asyncio
     async def test_restricted_mode_allows_approved(self, async_db: async_sessionmaker) -> None:
         """New user with approved email is allowed in restricted mode."""
         user_info = {
@@ -144,7 +142,6 @@ class TestRegistrationGating:
                 user = await get_or_create_user(db, user_info)
             assert user is not None
 
-    @pytest.mark.asyncio
     async def test_restricted_mode_allows_admin_email(self, async_db: async_sessionmaker) -> None:
         """Admin email is always allowed even without being in allowed_emails."""
         user_info = {
@@ -159,7 +156,6 @@ class TestRegistrationGating:
                 user = await get_or_create_user(db, user_info)
             assert user is not None
 
-    @pytest.mark.asyncio
     async def test_open_mode_allows_all(self, async_db: async_sessionmaker) -> None:
         """Open mode does not restrict registration."""
         user_info = {

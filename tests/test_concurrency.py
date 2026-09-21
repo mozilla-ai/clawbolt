@@ -3,8 +3,6 @@
 import asyncio
 import time
 
-import pytest
-
 from backend.app.agent.concurrency import UserLockManager, user_locks
 
 
@@ -31,7 +29,6 @@ class TestUserLockManager:
         assert lock1 is not lock2
         assert mgr.active_count == 2
 
-    @pytest.mark.asyncio
     async def test_same_user_serialized(self) -> None:
         """Two tasks for the same user should run sequentially."""
         mgr = UserLockManager()
@@ -54,7 +51,6 @@ class TestUserLockManager:
         # task_a should fully complete before task_b starts
         assert order == ["a_start", "a_end", "b_start", "b_end"]
 
-    @pytest.mark.asyncio
     async def test_different_users_parallel(self) -> None:
         """Two tasks for different users should run in parallel."""
         mgr = UserLockManager()
@@ -98,7 +94,6 @@ class TestUserLockManager:
         assert removed == 0
         assert mgr.active_count == 1
 
-    @pytest.mark.asyncio
     async def test_cleanup_skips_locked(self) -> None:
         """Cleanup should not remove locks that are currently held."""
         mgr = UserLockManager(expiry_seconds=0)

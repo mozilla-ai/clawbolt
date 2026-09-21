@@ -119,7 +119,6 @@ def test_tool_schemas_rebuilt_after_specialist_activation(
     assert [s["name"] for s in second] == ["t1", "t2"]
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_responds_to_message(mock_amessages: object, test_user: User) -> None:
     """Agent should produce a reply from LLM response."""
@@ -132,7 +131,6 @@ async def test_agent_responds_to_message(mock_amessages: object, test_user: User
     mock_amessages.assert_called_once()  # type: ignore[union-attr]
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_includes_conversation_history(mock_amessages: object, test_user: User) -> None:
     """Agent should include conversation history in LLM call."""
@@ -155,7 +153,6 @@ async def test_agent_includes_conversation_history(mock_amessages: object, test_
     assert messages[2]["content"].endswith("What about a deck?")
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_system_prompt_includes_soul(mock_amessages: object, test_user: User) -> None:
     """Agent system prompt should include user profile info."""
@@ -169,7 +166,6 @@ async def test_agent_system_prompt_includes_soul(mock_amessages: object, test_us
     assert "AI assistant for solo tradespeople" in system_prompt
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_system_prompt_includes_tool_hints(mock_amessages: object, test_user: User) -> None:
     """Tool usage hints are dynamic, so they ride on the current user turn,
@@ -209,7 +205,6 @@ async def test_system_prompt_includes_tool_hints(mock_amessages: object, test_us
     assert "Tool Guidelines" not in extract_system_text(call_args.kwargs["system"])
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_system_prompt_omits_tool_section_when_no_hints(
     mock_amessages: object, test_user: User
@@ -226,7 +221,6 @@ async def test_system_prompt_omits_tool_section_when_no_hints(
     assert "Tool Guidelines" not in system_prompt
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_system_prompt_skips_tools_without_hints(
     mock_amessages: object, test_user: User
@@ -264,7 +258,6 @@ async def test_system_prompt_skips_tools_without_hints(
     assert "tool_without_hint" not in current_turn
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_system_prompt_includes_mobile_formatting_rules(
     mock_amessages: object, test_user: User
@@ -281,7 +274,6 @@ async def test_system_prompt_includes_mobile_formatting_rules(
     assert "Never use bold markers" in system_prompt
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_does_not_pass_api_key(mock_amessages: object, test_user: User) -> None:
     """acompletion should be called without api_key so the SDK resolves keys from env."""
@@ -294,7 +286,6 @@ async def test_agent_does_not_pass_api_key(mock_amessages: object, test_user: Us
     assert "api_key" not in call_args.kwargs
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_tool_loop_sends_results_back(mock_amessages: object, test_user: User) -> None:
     """After tool calls, agent should send results back to LLM for a follow-up response."""
@@ -337,7 +328,6 @@ async def test_agent_tool_loop_sends_results_back(mock_amessages: object, test_u
     assert response.tool_calls[0].name == "save_fact"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_tool_loop_includes_tool_results_in_followup(
     mock_amessages: object, test_user: User
@@ -383,7 +373,6 @@ async def test_agent_tool_loop_includes_tool_results_in_followup(
     assert "hourly_rate: $75/hr" in tool_result_block["content"]
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_does_not_echo_rendered_receipt_into_tool_result(
     mock_amessages: object, test_user: User
@@ -449,7 +438,6 @@ async def test_agent_does_not_echo_rendered_receipt_into_tool_result(
     assert "Total: $0.00" in content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_does_not_echo_receipt_when_tool_errored(
     mock_amessages: object, test_user: User
@@ -500,7 +488,6 @@ async def test_agent_does_not_echo_receipt_when_tool_errored(
     assert "appended to the reply the user sees" not in content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_multi_round_tool_calls(mock_amessages: object, test_user: User) -> None:
     """Agent should support multiple rounds of tool calls, not just one."""
@@ -568,7 +555,6 @@ async def test_agent_multi_round_tool_calls(mock_amessages: object, test_user: U
     assert response.tool_calls[1].name == "generate_estimate"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_tool_loop_respects_max_rounds(mock_amessages: object, test_user: User) -> None:
     """Agent should stop after MAX_TOOL_ROUNDS even if LLM keeps requesting tools."""
@@ -613,7 +599,6 @@ async def test_agent_tool_loop_respects_max_rounds(mock_amessages: object, test_
     assert response.reply_text == "Still thinking..."
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_handles_malformed_tool_arguments(
     mock_amessages: object, test_user: User
@@ -667,7 +652,6 @@ async def test_agent_handles_malformed_tool_arguments(
     assert any("bad args" in a for a in response.actions_taken)
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_passes_dict_arguments_to_tool(mock_amessages: object, test_user: User) -> None:
     """Messages API delivers tool inputs as dicts; agent should pass them through."""
@@ -705,7 +689,6 @@ async def test_agent_passes_dict_arguments_to_tool(mock_amessages: object, test_
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.random.uniform", return_value=0.5)
 @patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
 @patch("backend.app.agent.core.amessages")
@@ -729,7 +712,6 @@ async def test_agent_retries_on_rate_limit_error(
     mock_sleep.assert_called_once_with(1.5)  # 2**0 + 0.5 jitter
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.random.uniform", return_value=0.5)
 @patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
 @patch("backend.app.agent.core.LLM_MAX_RETRIES", 3)
@@ -757,7 +739,6 @@ async def test_agent_rate_limit_exponential_backoff(
     mock_sleep.assert_any_call(2.5)  # 2**1 + 0.5
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.random.uniform", return_value=0.5)
 @patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
 @patch("backend.app.agent.core.LLM_MAX_RETRIES", 3)
@@ -825,7 +806,6 @@ def test_trim_messages_preserves_tool_call_result_pairs() -> None:
         assert has_tool_msg, "Tool call assistant message present without its tool result"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_trims_context_on_context_length_exceeded(
     mock_amessages: AsyncMock,
@@ -860,7 +840,6 @@ async def test_agent_trims_context_on_context_length_exceeded(
     assert len(retry_messages) < 150
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_trims_history_when_exceeding_token_limit(
     mock_amessages: AsyncMock,
@@ -890,7 +869,6 @@ async def test_agent_trims_history_when_exceeding_token_limit(
     assert len(messages) < 150
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_records_full_prompt_size_including_cached_tokens(
     mock_amessages: AsyncMock,
@@ -923,7 +901,6 @@ async def test_agent_records_full_prompt_size_including_cached_tokens(
     reset_last_input_tokens()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_token_trim_fires_on_cached_heavy_context(
     mock_amessages: AsyncMock,
@@ -978,7 +955,6 @@ async def test_agent_token_trim_fires_on_cached_heavy_context(
     reset_last_input_tokens()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_reactive_trim_drops_messages_on_cached_heavy_context(
     mock_amessages: AsyncMock,
@@ -1033,7 +1009,6 @@ async def test_reactive_trim_drops_messages_on_cached_heavy_context(
     reset_last_input_tokens()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_raises_content_filter_error(
     mock_amessages: AsyncMock,
@@ -1049,7 +1024,6 @@ async def test_agent_raises_content_filter_error(
     assert mock_amessages.call_count == 1
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_preserves_system_and_user_during_trimming(
     mock_amessages: AsyncMock,
@@ -1087,7 +1061,6 @@ async def test_agent_preserves_system_and_user_during_trimming(
     assert len(messages) >= 1
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_raises_authentication_error(
     mock_amessages: AsyncMock,
@@ -1184,7 +1157,6 @@ def test_trim_token_fires_at_trigger_drops_to_target() -> None:
     assert len(result.messages) < len(messages)
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_does_not_trim_normal_conversations(
     mock_amessages: AsyncMock,
@@ -1214,7 +1186,6 @@ async def test_agent_does_not_trim_normal_conversations(
     assert len(messages) == 5
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_logs_warning_when_trimming(
     mock_amessages: AsyncMock,
@@ -1599,7 +1570,6 @@ def test_trim_messages_combined_token_and_turn_budgets() -> None:
     assert len(result.dropped) > 0
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_trims_chatty_conversation_below_token_limit(
     mock_amessages: AsyncMock,
@@ -1638,7 +1608,6 @@ async def test_agent_trims_chatty_conversation_below_token_limit(
     assert len(sent_messages) < 400
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_process_message_injects_summary_when_trimming(
     mock_amessages: AsyncMock,
@@ -1721,7 +1690,6 @@ def test_register_tools_warns_on_duplicate_name(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_tool_result_error_appends_hint(
     mock_amessages: AsyncMock,
@@ -1753,7 +1721,6 @@ async def test_tool_result_error_appends_hint(
     assert "[Analyze the error" in response.tool_calls[0].result
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_tool_result_success_no_hint(
     mock_amessages: AsyncMock,
@@ -1782,7 +1749,6 @@ async def test_tool_result_success_no_hint(
     assert "[Analyze the error" not in response.tool_calls[0].result
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_tool_exception_appends_hint(
     mock_amessages: AsyncMock,
@@ -1811,7 +1777,6 @@ async def test_tool_exception_appends_hint(
     assert any("Failed: bad_tool" in a for a in response.actions_taken)
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_tool_exception_message_surfaced_to_llm(
     mock_amessages: AsyncMock,
@@ -1850,7 +1815,6 @@ async def test_tool_exception_message_surfaced_to_llm(
     assert "insufficient scope" in tool_result_blob
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_tool_exception_scrubs_secrets_before_surfacing(
     mock_amessages: AsyncMock,
@@ -1897,7 +1861,6 @@ async def test_tool_exception_scrubs_secrets_before_surfacing(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_unknown_tool_error_lists_available_tools(
     mock_amessages: AsyncMock,
@@ -1954,7 +1917,6 @@ async def test_unknown_tool_error_lists_available_tools(
     assert "[Analyze the error" in content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_validation_error_includes_expected_schema(
     mock_amessages: AsyncMock,
@@ -2018,7 +1980,6 @@ async def test_validation_error_includes_expected_schema(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_kind_not_found_produces_specific_hint(
     mock_amessages: AsyncMock,
@@ -2053,7 +2014,6 @@ async def test_error_kind_not_found_produces_specific_hint(
     assert "[The requested resource was not found" in result_content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_kind_service_produces_specific_hint(
     mock_amessages: AsyncMock,
@@ -2087,7 +2047,6 @@ async def test_error_kind_service_produces_specific_hint(
     assert "[An external service is temporarily unavailable" in result_content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_kind_validation_produces_specific_hint(
     mock_amessages: AsyncMock,
@@ -2121,7 +2080,6 @@ async def test_error_kind_validation_produces_specific_hint(
     assert "[Check the expected parameter format" in result_content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_kind_internal_produces_specific_hint(
     mock_amessages: AsyncMock,
@@ -2155,7 +2113,6 @@ async def test_error_kind_internal_produces_specific_hint(
     assert "[An internal error occurred" in result_content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_with_no_kind_uses_default_hint(
     mock_amessages: AsyncMock,
@@ -2188,7 +2145,6 @@ async def test_error_with_no_kind_uses_default_hint(
     assert "[Analyze the error above and try a different approach.]" in result_content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_with_custom_hint_overrides_kind_default(
     mock_amessages: AsyncMock,
@@ -2228,7 +2184,6 @@ async def test_error_with_custom_hint_overrides_kind_default(
     assert "requested resource was not found" not in result_content
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_different_error_kinds_produce_different_hints(
     mock_amessages: AsyncMock,
@@ -2271,7 +2226,6 @@ async def test_different_error_kinds_produce_different_hints(
     )
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_unhandled_exception_uses_internal_hint(
     mock_amessages: AsyncMock,
@@ -2319,7 +2273,6 @@ async def test_unhandled_exception_uses_internal_hint(
 class TestToolRegistry:
     """Tests for the ToolRegistry and related helpers."""
 
-    @pytest.mark.asyncio()
     async def test_register_and_create_tools(self, test_user: User) -> None:
         """Registry should create tools from registered factories."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
@@ -2345,7 +2298,6 @@ class TestToolRegistry:
         assert len(tools) == 1
         assert tools[0].name == "dummy"
 
-    @pytest.mark.asyncio()
     async def test_skips_factory_when_storage_missing(self, test_user: User) -> None:
         """Factories requiring storage should be skipped when storage is None."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
@@ -2367,7 +2319,6 @@ class TestToolRegistry:
         tools = await registry.create_tools(ctx)
         assert len(tools) == 0
 
-    @pytest.mark.asyncio()
     async def test_skips_factory_when_outbound_missing(self, test_user: User) -> None:
         """Factories requiring outbound should be skipped when publish_outbound is None."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
@@ -2389,7 +2340,6 @@ class TestToolRegistry:
         tools = await registry.create_tools(ctx)
         assert len(tools) == 0
 
-    @pytest.mark.asyncio()
     async def test_includes_factory_when_deps_satisfied(
         self,
         test_user: User,
@@ -2467,7 +2417,6 @@ class TestToolRegistry:
         count2 = len(default_registry.factory_names)
         assert count1 == count2
 
-    @pytest.mark.asyncio()
     async def test_overwrite_warns(self, test_user: User) -> None:
         """Registering the same name twice should overwrite (with a warning)."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
@@ -2509,7 +2458,6 @@ class TestToolRegistry:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_emits_debug_logs_for_full_loop(
     mock_amessages: AsyncMock,
@@ -2560,7 +2508,6 @@ async def test_agent_emits_debug_logs_for_full_loop(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_stop_reason_sets_is_error_fallback(
     mock_amessages: object, test_user: User
@@ -2575,7 +2522,6 @@ async def test_error_stop_reason_sets_is_error_fallback(
     assert response.reply_text  # should have a fallback message
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_stop_reason_mid_loop_preserves_earlier_tool_calls(
     mock_amessages: object, test_user: User
@@ -2606,7 +2552,6 @@ async def test_error_stop_reason_mid_loop_preserves_earlier_tool_calls(
     assert response.tool_calls[0].name == "save_fact"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_tool_errors_still_returned_to_llm_in_loop(
     mock_amessages: object, test_user: User
@@ -2643,7 +2588,6 @@ async def test_tool_errors_still_returned_to_llm_in_loop(
     assert mock_amessages.call_count == 3  # type: ignore[union-attr]
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_valid_stop_reasons_not_treated_as_error(
     mock_amessages: object, test_user: User
@@ -2674,7 +2618,6 @@ async def test_valid_stop_reasons_not_treated_as_error(
         assert response.reply_text == "Reply!"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_empty_reply_after_tool_calls_is_silent(
     mock_amessages: object, test_user: User
@@ -2723,7 +2666,6 @@ async def test_agent_empty_reply_after_tool_calls_is_silent(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_truncated_tool_call_sends_truncation_hint(
     mock_amessages: AsyncMock,
@@ -2785,7 +2727,6 @@ async def test_truncated_tool_call_sends_truncation_hint(
     assert tool_msg["content"][0].get("is_error") is True
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_truncated_response_increases_max_tokens(
     mock_amessages: AsyncMock,
@@ -2836,7 +2777,6 @@ async def test_truncated_response_increases_max_tokens(
 _LEAKED_MARKUP = '<|DSML|tool_calls>\n<|DSML|invoke name="calendar_create_event">\n<|DSML|para'
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_truncated_no_tool_calls_retries_with_larger_budget(
     mock_amessages: AsyncMock,
@@ -2859,7 +2799,6 @@ async def test_truncated_no_tool_calls_retries_with_larger_budget(
     assert second_max == first_max * 2
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_truncated_no_tool_calls_never_delivered_at_ceiling(
     mock_amessages: AsyncMock,
@@ -2881,7 +2820,6 @@ async def test_truncated_no_tool_calls_never_delivered_at_ceiling(
     assert len(budgets) < MAX_TOOL_ROUNDS
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_truncated_response_increases_max_tokens_without_validation_errors(
     mock_amessages: AsyncMock,
@@ -2924,7 +2862,6 @@ async def test_truncated_response_increases_max_tokens_without_validation_errors
     assert second_max == first_max * 2
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_truncation_ladder_never_lowers_a_budget_above_the_ceiling(
     mock_amessages: AsyncMock,
@@ -3003,7 +2940,6 @@ def test_tool_prefix_warns_on_reorder(caplog: pytest.LogCaptureFixture, test_use
     )
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_response_rolls_up_cache_tokens_across_rounds(
     mock_amessages: object, test_user: User
@@ -3056,7 +2992,6 @@ async def test_agent_response_rolls_up_cache_tokens_across_rounds(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_uses_provider_and_model_override(
     mock_amessages: object, test_user: User
@@ -3075,7 +3010,6 @@ async def test_agent_uses_provider_and_model_override(
     assert call_args.kwargs["model"] == "claude-haiku-4-5"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_override_falls_back_to_settings_when_field_empty(
     mock_amessages: object, test_user: User
@@ -3108,7 +3042,6 @@ async def test_agent_override_falls_back_to_settings_when_field_empty(
         settings.llm_model = original_model
 
 
-@pytest.mark.asyncio()
 async def test_duplicate_tool_call_within_turn_emits_telemetry(
     test_user: User, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -3166,7 +3099,6 @@ async def test_duplicate_tool_call_within_turn_emits_telemetry(
     assert any("search_thing" in rec.getMessage() for rec in duplicate_logs)
 
 
-@pytest.mark.asyncio()
 async def test_duplicate_tool_call_within_round_emits_telemetry(
     test_user: User, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -3283,7 +3215,6 @@ def test_is_context_overflow_reads_the_original_exception() -> None:
     assert _is_context_overflow(wrapped) is True
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_trims_on_overflow_reported_as_invalid_request(
     mock_amessages: AsyncMock,
@@ -3315,7 +3246,6 @@ async def test_agent_trims_on_overflow_reported_as_invalid_request(
     assert len(retry_call.kwargs["messages"]) < 150
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_does_not_retry_a_non_overflow_invalid_request(
     mock_amessages: AsyncMock,

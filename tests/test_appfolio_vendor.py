@@ -107,7 +107,6 @@ def test_generate_fingerprint_is_hex_and_unique() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_credential_save_and_load_round_trip(async_test_user: Any) -> None:
     user_id = async_test_user.id
 
@@ -131,7 +130,6 @@ async def test_credential_save_and_load_round_trip(async_test_user: Any) -> None
     assert await is_connected(user_id) is True
 
 
-@pytest.mark.asyncio()
 async def test_upsert_fingerprint_persists_and_reuses(async_test_user: Any) -> None:
     user_id = async_test_user.id
     first = await upsert_fingerprint(user_id)
@@ -152,7 +150,6 @@ async def test_upsert_fingerprint_persists_and_reuses(async_test_user: Any) -> N
     assert cred.fingerprint == first
 
 
-@pytest.mark.asyncio()
 async def test_load_credential_without_jwt_returns_none(async_test_user: Any) -> None:
     """A row created by upsert_fingerprint alone should not look connected."""
     user_id = async_test_user.id
@@ -161,7 +158,6 @@ async def test_load_credential_without_jwt_returns_none(async_test_user: Any) ->
     assert await is_connected(user_id) is False
 
 
-@pytest.mark.asyncio()
 async def test_save_credential_writes_refresh_token_to_encrypted_column(
     async_test_user: Any,
 ) -> None:
@@ -202,7 +198,6 @@ async def test_save_credential_writes_refresh_token_to_encrypted_column(
     assert cred.refresh_token == "refresh-secret"
 
 
-@pytest.mark.asyncio()
 async def test_load_credential_falls_back_to_legacy_extra_refresh_token(
     async_test_user: Any,
 ) -> None:
@@ -242,7 +237,6 @@ async def test_load_credential_falls_back_to_legacy_extra_refresh_token(
     assert cred.refresh_token == "legacy-refresh"
 
 
-@pytest.mark.asyncio()
 async def test_save_credential_strips_legacy_refresh_token_from_extra(
     async_test_user: Any,
 ) -> None:
@@ -369,7 +363,6 @@ def test_service_full_url_handles_relative_and_absolute() -> None:
     assert s._full_url("https://other/x") == "https://other/x"
 
 
-@pytest.mark.asyncio()
 async def test_service_get_returns_json() -> None:
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={"hello": "world"})
@@ -379,7 +372,6 @@ async def test_service_get_returns_json() -> None:
     assert result == {"hello": "world"}
 
 
-@pytest.mark.asyncio()
 async def test_service_401_without_login_url_raises_auth_scope() -> None:
     """401 without a ``login_url`` body means the request scope is wrong.
 
@@ -402,7 +394,6 @@ async def test_service_401_without_login_url_raises_auth_scope() -> None:
     assert not isinstance(exc_info.value, AuthExpiredError)
 
 
-@pytest.mark.asyncio()
 async def test_service_scope_401_does_not_spend_the_one_shot_refresh() -> None:
     """A scope 401 must not burn the refresh: the credential is already good.
 
@@ -444,7 +435,6 @@ def test_collect_customer_ids_ignores_the_search_hit_plural_field() -> None:
     ) == ["42", "7"]
 
 
-@pytest.mark.asyncio()
 async def test_service_401_with_no_evidence_raises_auth_expired() -> None:
     """A 401 we cannot classify defaults to expired, and relays login_url.
 
@@ -461,7 +451,6 @@ async def test_service_401_with_no_evidence_raises_auth_expired() -> None:
     assert exc_info.value.login_url == "https://login/here"
 
 
-@pytest.mark.asyncio()
 async def test_service_401_after_a_success_raises_auth_scope_despite_login_url() -> None:
     """A 401 on a credential that just returned 200 is not an expired session.
 
@@ -491,7 +480,6 @@ async def test_service_401_after_a_success_raises_auth_scope_despite_login_url()
     assert not isinstance(exc_info.value, AuthExpiredError)
 
 
-@pytest.mark.asyncio()
 async def test_service_401_after_successful_refresh_raises_auth_scope() -> None:
     """A refresh the OAuth endpoint honoured also proves the credential is live."""
     cred = _credential()
@@ -510,7 +498,6 @@ async def test_service_401_after_successful_refresh_raises_auth_scope() -> None:
             await service.get("/denied")
 
 
-@pytest.mark.asyncio()
 async def test_service_401_with_rejected_refresh_grant_raises_auth_expired() -> None:
     """The OAuth endpoint refusing the refresh grant is the one true expiry signal."""
     cred = _credential()
@@ -529,7 +516,6 @@ async def test_service_401_with_rejected_refresh_grant_raises_auth_expired() -> 
             await service.get("/anything")
 
 
-@pytest.mark.asyncio()
 async def test_service_error_to_tool_result_distinguishes_scope_from_expired() -> None:
     """The errors→ToolResult mapper must give scope and expired
     different user-facing messages and hints.
@@ -586,7 +572,6 @@ def test_log_unexpected_response_shape_list(caplog: Any) -> None:
     assert any("list len=2" in r.message and "['id', 'name']" in r.message for r in caplog.records)
 
 
-@pytest.mark.asyncio()
 async def test_service_5xx_raises_appfolio_error() -> None:
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(status_code=503)
@@ -719,7 +704,6 @@ def test_fmt_work_order_line_surfaces_customer_id() -> None:
     assert "customer_id=cust-9001" in line
 
 
-@pytest.mark.asyncio()
 async def test_add_work_order_note_includes_customer_id_in_body() -> None:
     """AppFolio's note POST requires ``customer_id`` at the top level.
 
@@ -751,7 +735,6 @@ async def test_add_work_order_note_includes_customer_id_in_body() -> None:
     assert sent["files"] == []
 
 
-@pytest.mark.asyncio()
 async def test_add_work_order_note_resolves_customer_id_from_work_order_list() -> None:
     """Every OAuth2-connected credential starts with ``customer_ids=[]``.
 
@@ -802,7 +785,6 @@ async def test_add_work_order_note_resolves_customer_id_from_work_order_list() -
     assert persisted == [["cust-9001"]]
 
 
-@pytest.mark.asyncio()
 async def test_resolve_customer_id_falls_back_to_profile_when_list_is_empty() -> None:
     """A vendor with no open work orders still resolves via ``/profiles/me``."""
     cred = AppFolioCredential(
@@ -825,7 +807,6 @@ async def test_resolve_customer_id_falls_back_to_profile_when_list_is_empty() ->
     assert cred.customer_ids == ["cust-9001"]
 
 
-@pytest.mark.asyncio()
 async def test_resolve_customer_id_does_not_report_profile_401_as_expired() -> None:
     """A 401 from the ``/profiles/me`` fallback is not an expired session.
 
@@ -854,7 +835,6 @@ async def test_resolve_customer_id_does_not_report_profile_401_as_expired() -> N
     assert not isinstance(exc_info.value, AuthExpiredError)
 
 
-@pytest.mark.asyncio()
 async def test_resolve_customer_id_raises_when_nothing_yields_one() -> None:
     """No customer IDs anywhere should raise rather than succeed with bad data."""
     cred = AppFolioCredential(
@@ -872,7 +852,6 @@ async def test_resolve_customer_id_raises_when_nothing_yields_one() -> None:
             await service.add_work_order_note("999001", body_text="x")
 
 
-@pytest.mark.asyncio()
 async def test_update_work_order_status_sends_patch_with_customer_id() -> None:
     """``update_work_order_status`` must PATCH the work-order endpoint with
     the SPA-verified body shape: ``{"work_order": {"status_code": N},
@@ -910,7 +889,6 @@ async def test_update_work_order_status_sends_patch_with_customer_id() -> None:
     }
 
 
-@pytest.mark.asyncio()
 async def test_undo_work_order_status_sends_patch_to_undo_endpoint() -> None:
     """``undo_work_order_status`` must PATCH the dedicated ``/undo_status``
     sub-route with ``{"work_order": {"status": <prev>}, "customer_id":
@@ -980,7 +958,6 @@ def test_client_version_header_is_opaque_hex() -> None:
     assert "clawbolt" not in _CLIENT_VERSION.lower()
 
 
-@pytest.mark.asyncio()
 async def test_service_error_message_omits_response_body() -> None:
     """Raised AppFolioError must not echo the response body.
 
@@ -1000,7 +977,6 @@ async def test_service_error_message_omits_response_body() -> None:
     assert secret not in msg
 
 
-@pytest.mark.asyncio()
 async def test_list_work_orders_passes_filter_params() -> None:
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={"work_orders": []})
@@ -1033,7 +1009,6 @@ async def test_list_work_orders_passes_filter_params() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_exchange_magic_link_posts_oauth_token_and_returns_jwt() -> None:
     response = _mock_response(
         json_data={
@@ -1064,7 +1039,6 @@ async def test_exchange_magic_link_posts_oauth_token_and_returns_jwt() -> None:
     assert kwargs["json"]["idp_type"] == "vendor"
 
 
-@pytest.mark.asyncio()
 async def test_exchange_magic_link_raises_when_no_access_token() -> None:
     response = _mock_response(json_data={"some_other_field": "x"})
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -1073,7 +1047,6 @@ async def test_exchange_magic_link_raises_when_no_access_token() -> None:
             await exchange_magic_link(magic_link_token="t")
 
 
-@pytest.mark.asyncio()
 async def test_exchange_magic_link_propagates_4xx() -> None:
     response = _mock_response(json_data={}, status_code=403)
     with patch("backend.app.integrations.appfolio_vendor.service.httpx.AsyncClient") as cls:
@@ -1082,7 +1055,6 @@ async def test_exchange_magic_link_propagates_4xx() -> None:
             await exchange_magic_link(magic_link_token="t")
 
 
-@pytest.mark.asyncio()
 async def test_exchange_magic_link_error_message_omits_response_body() -> None:
     """The OAuth exchange's raised error must not include the response body.
 
@@ -1100,7 +1072,6 @@ async def test_exchange_magic_link_error_message_omits_response_body() -> None:
     assert secret not in msg
 
 
-@pytest.mark.asyncio()
 async def test_refresh_access_token_returns_new_jwt() -> None:
     from backend.app.integrations.appfolio_vendor.service import refresh_access_token
 
@@ -1128,7 +1099,6 @@ async def test_refresh_access_token_returns_new_jwt() -> None:
     assert kwargs["json"]["refresh_token"] == "rt-1"
 
 
-@pytest.mark.asyncio()
 async def test_service_request_refreshes_on_401_and_retries() -> None:
     from backend.app.integrations.appfolio_vendor.service import AppFolioVendorService
 
@@ -1212,7 +1182,6 @@ def test_list_work_orders_params_defaults() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_add_note_inlines_base64_files() -> None:
     from backend.app.integrations.appfolio_vendor.service import FileUpload
 
@@ -1239,7 +1208,6 @@ async def test_add_note_inlines_base64_files() -> None:
     assert entry["file_in_base64"] == base64.b64encode(b"\x89PNGfake").decode("ascii")
 
 
-@pytest.mark.asyncio()
 async def test_add_note_sends_empty_files_array_when_no_attachments() -> None:
     """The SPA always sends ``files: []`` rather than omitting it; we
     mirror that shape so AppFolio's request validator can't get clever
@@ -1266,7 +1234,6 @@ async def test_add_note_sends_empty_files_array_when_no_attachments() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_resolve_staged_files_pulls_from_downloaded_media() -> None:
     from backend.app.integrations.appfolio_vendor.media_resolver import (
         resolve_staged_files,
@@ -1308,7 +1275,6 @@ async def test_resolve_staged_files_pulls_from_downloaded_media() -> None:
     assert first.name.endswith(".jpg")
 
 
-@pytest.mark.asyncio()
 async def test_resolve_staged_files_returns_error_for_missing_ref() -> None:
     from backend.app.integrations.appfolio_vendor.media_resolver import (
         resolve_staged_files,
@@ -1340,7 +1306,6 @@ async def test_resolve_staged_files_returns_error_for_missing_ref() -> None:
     assert result.is_error is True
 
 
-@pytest.mark.asyncio()
 async def test_resolve_staged_files_empty_list_returns_empty_list() -> None:
     from backend.app.integrations.appfolio_vendor.media_resolver import (
         resolve_staged_files,
@@ -1366,7 +1331,6 @@ def _patch_request(response: httpx.Response) -> Any:
     return cm, client
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_serializes_line_items() -> None:
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
     response = _mock_response(json_data={"id": "inv-1"})
@@ -1401,7 +1365,6 @@ async def test_create_invoice_serializes_line_items() -> None:
     assert "files" not in payload
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_has_no_files_parameter() -> None:
     """Regression: the line-itemized invoice path must not carry files.
 
@@ -1432,7 +1395,6 @@ async def test_create_invoice_has_no_files_parameter() -> None:
     assert "media_refs" not in create.params_model.model_fields
 
 
-@pytest.mark.asyncio()
 async def test_upload_invoice_pdf_omits_line_items() -> None:
     from backend.app.integrations.appfolio_vendor.service import FileUpload
 
@@ -1459,7 +1421,6 @@ async def test_upload_invoice_pdf_omits_line_items() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_tool_rejects_empty_line_items() -> None:
     """The tool should validate before any HTTP call."""
     from backend.app.agent.tools.base import ToolErrorKind
@@ -1477,7 +1438,6 @@ async def test_create_invoice_tool_rejects_empty_line_items() -> None:
     assert result.error_kind == ToolErrorKind.VALIDATION
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_tool_rejects_malformed_line_item() -> None:
     """Per-item Pydantic errors surface as a validation ToolResult, not an exception."""
     from backend.app.agent.tools.base import ToolErrorKind
@@ -1658,7 +1618,6 @@ def test_address_from_work_order_top_level_overrides_nested() -> None:
     assert _address_from_work_order(wo)["address_1"] == "Top Level Street"
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_tool_includes_address_from_work_order() -> None:
     """The tool fetches the WO and ships the SPA-shaped address block."""
     from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
@@ -1700,7 +1659,6 @@ async def test_create_invoice_tool_includes_address_from_work_order() -> None:
     }
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_tool_short_circuits_when_address_extraction_empty() -> None:
     """Empty address extraction surfaces a clear error and skips the POST.
 
@@ -1731,7 +1689,6 @@ async def test_create_invoice_tool_short_circuits_when_address_extraction_empty(
     create_invoice.assert_not_awaited()
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_tool_surfaces_work_order_lookup_failure() -> None:
     """A failed WO lookup short-circuits before the invoice POST."""
     from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
@@ -1758,7 +1715,6 @@ async def test_create_invoice_tool_surfaces_work_order_lookup_failure() -> None:
     create_invoice.assert_not_awaited()
 
 
-@pytest.mark.asyncio()
 async def test_upload_invoice_pdf_tool_includes_address_from_work_order() -> None:
     from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
     from backend.app.integrations.appfolio_vendor.service import FileUpload
@@ -1792,7 +1748,6 @@ async def test_upload_invoice_pdf_tool_includes_address_from_work_order() -> Non
     assert upload_pdf.call_args.kwargs["address"] == {"address_1": "123 Example Street"}
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_tool_falls_back_when_customer_id_scope_rejected() -> None:
     """When the agent's customer_id is wrong, the tool retries with the canonical one.
 
@@ -1857,7 +1812,6 @@ async def test_create_invoice_tool_falls_back_when_customer_id_scope_rejected() 
     assert create_invoice.call_args.kwargs["customer_id"] == "canonical-cust"
 
 
-@pytest.mark.asyncio()
 async def test_get_work_order_tool_falls_back_when_customer_id_scope_rejected() -> None:
     """appfolio_get_work_order retries with the canonical customer on a scope 401.
 
@@ -1905,7 +1859,6 @@ async def test_get_work_order_tool_falls_back_when_customer_id_scope_rejected() 
     assert "Work order #42" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_search_work_orders_no_match_explains_visibility_limits() -> None:
     """A no-match search result tells the agent why the number may be missing,
     so it can explain (closed/archived or different property manager) instead
@@ -1929,7 +1882,6 @@ async def test_search_work_orders_no_match_explains_visibility_limits() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_tool_sends_line_total_not_unit_price() -> None:
     """The tool wrapper multiplies quantity by amount before POST.
 
@@ -1976,7 +1928,6 @@ async def test_create_invoice_tool_sends_line_total_not_unit_price() -> None:
     assert "$314.07" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_create_invoice_tool_fractional_quantity_collapses_correctly() -> None:
     """Decimal quantities multiply too (e.g. 1.5 hours at $80/hr = $120)."""
     from backend.app.integrations.appfolio_vendor.invoices import build_invoice_tools
@@ -2092,7 +2043,6 @@ def test_create_invoice_approval_description_falls_back_on_malformed_items() -> 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_4xx_failure_logs_request_body_and_response(caplog: Any) -> None:
     import logging
 
@@ -2125,7 +2075,6 @@ async def test_4xx_failure_logs_request_body_and_response(caplog: Any) -> None:
     assert "422" in record_text
 
 
-@pytest.mark.asyncio()
 async def test_4xx_log_summarizes_base64_files(caplog: Any) -> None:
     import logging
 
@@ -2158,7 +2107,6 @@ async def test_4xx_log_summarizes_base64_files(caplog: Any) -> None:
     assert "chars base64" in caplog.text  # marker token
 
 
-@pytest.mark.asyncio()
 async def test_connect_via_magic_link_persists_credential(async_test_user: Any) -> None:
     """The connect orchestration (backing the web endpoint) persists a credential."""
     from backend.app.integrations.appfolio_vendor.service import AccessExchangeResult
@@ -2185,7 +2133,6 @@ async def test_connect_via_magic_link_persists_credential(async_test_user: Any) 
     assert cred.jwt == "jwt-1"
 
 
-@pytest.mark.asyncio()
 async def test_connect_via_magic_link_rejects_unparseable_input(
     async_test_user: Any,
 ) -> None:
@@ -2194,7 +2141,6 @@ async def test_connect_via_magic_link_rejects_unparseable_input(
         await connect_via_magic_link(async_test_user.id, "")
 
 
-@pytest.mark.asyncio()
 async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
     import logging
 
@@ -2227,7 +2173,6 @@ async def test_access_failure_does_not_log_magic_link(caplog: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_disconnected_data_factory_reports_not_connected_and_returns_no_tools() -> None:
     """A disconnected user must see ``appfolio_vendor`` as "Not connected".
 
@@ -2276,7 +2221,6 @@ async def test_disconnected_data_factory_reports_not_connected_and_returns_no_to
     assert ToolName.APPFOLIO_LIST_WORK_ORDERS not in data_names
 
 
-@pytest.mark.asyncio()
 async def test_factory_persists_discovered_customer_ids() -> None:
     """Customer IDs discovered mid-turn are written back to the credential.
 
@@ -2330,7 +2274,6 @@ async def test_factory_persists_discovered_customer_ids() -> None:
     assert kwargs["fingerprint"] == "fp-1"
 
 
-@pytest.mark.asyncio()
 async def test_unconnected_user_sees_appfolio_in_unauthenticated_list() -> None:
     """When the user has no AppFolio credential, ``list_capabilities`` must
     show ``appfolio_vendor`` under "Not connected", not in the available
@@ -2367,7 +2310,6 @@ async def test_unconnected_user_sees_appfolio_in_unauthenticated_list() -> None:
     assert "not connected" in unauth["appfolio_vendor"].lower()
 
 
-@pytest.mark.asyncio()
 async def test_connected_user_sees_appfolio_in_specialist_summaries() -> None:
     """The complementary case: when the user has a usable credential,
     ``appfolio_vendor`` must show up as a ready specialist. The summary
@@ -2470,7 +2412,6 @@ def test_response_shape_describes_dict_and_list() -> None:
     assert _response_shape([{"id": 1}, {"id": 2}]) == "list len=2 sample_keys=['id']"
 
 
-@pytest.mark.asyncio()
 async def test_successful_read_logs_raw_response_body(caplog: Any) -> None:
     """A 200 OK is logged at INFO with the full (summarized) body, so a
     surprising shape is reconstructable from logs alone. This is the exact
@@ -2497,7 +2438,6 @@ async def test_successful_read_logs_raw_response_body(caplog: Any) -> None:
     assert "list len=1 sample_keys=['id']" in record_text
 
 
-@pytest.mark.asyncio()
 async def test_raw_response_log_redacts_tokens(caplog: Any) -> None:
     """Secret values in a JSON response body never reach the log line."""
     service = AppFolioVendorService(_credential(), api_base="https://api.test")
@@ -2543,7 +2483,6 @@ def test_normalize_search_hit_passes_through_work_order_shape() -> None:
     assert _normalize_search_hit(wo) == wo
 
 
-@pytest.mark.asyncio()
 async def test_search_work_orders_surfaces_number_and_customer_id() -> None:
     """Regression: a number search used to render the bare internal id and a
     false "doesn't match". The hit's result_text/customer_ids must drive the
@@ -2698,7 +2637,6 @@ def test_appfolio_concurrency_key_is_none_without_work_order_id() -> None:
     assert work_order_concurrency_key({"work_order_id": "wo-1"}) == "appfolio_work_order:wo-1"
 
 
-@pytest.mark.asyncio()
 async def test_update_note_accepts_id_returned_by_add_note() -> None:
     """The normal add-then-edit flow must still work."""
     from backend.app.integrations.appfolio_vendor.notes import build_note_tools
@@ -2718,7 +2656,6 @@ async def test_update_note_accepts_id_returned_by_add_note() -> None:
     update_mock.assert_awaited_once()
 
 
-@pytest.mark.asyncio()
 async def test_update_note_refuses_predicted_id_after_add_in_same_turn() -> None:
     """A predicted note id would overwrite a different real note's body."""
     from backend.app.agent.tools.base import ToolErrorKind
@@ -2741,7 +2678,6 @@ async def test_update_note_refuses_predicted_id_after_add_in_same_turn() -> None
     update_mock.assert_not_awaited()
 
 
-@pytest.mark.asyncio()
 async def test_update_note_guard_is_scoped_per_work_order() -> None:
     """Adding a note on one work order must not restrict edits on another."""
     from backend.app.integrations.appfolio_vendor.notes import build_note_tools
@@ -2759,7 +2695,6 @@ async def test_update_note_guard_is_scoped_per_work_order() -> None:
     assert result.is_error is False
 
 
-@pytest.mark.asyncio()
 async def test_update_note_allows_any_id_when_no_note_added_this_turn() -> None:
     """Editing a pre-existing note stays unrestricted."""
     from backend.app.integrations.appfolio_vendor.notes import build_note_tools
@@ -2775,7 +2710,6 @@ async def test_update_note_allows_any_id_when_no_note_added_this_turn() -> None:
     assert result.is_error is False
 
 
-@pytest.mark.asyncio()
 async def test_update_note_guard_inert_when_appfolio_returns_no_note_id() -> None:
     """AppFolio does not always echo an id; an empty set must not block edits."""
     from backend.app.integrations.appfolio_vendor.notes import build_note_tools
@@ -2793,7 +2727,6 @@ async def test_update_note_guard_inert_when_appfolio_returns_no_note_id() -> Non
     assert result.is_error is False
 
 
-@pytest.mark.asyncio()
 async def test_update_note_guard_does_not_leak_between_tool_builds() -> None:
     """The tool list is rebuilt per inbound message, so the guard must reset."""
     from backend.app.integrations.appfolio_vendor.notes import build_note_tools

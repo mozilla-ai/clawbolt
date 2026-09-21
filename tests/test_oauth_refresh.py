@@ -102,7 +102,6 @@ class TestIsPermanentRefreshFailure:
 
 
 class TestRefreshToken:
-    @pytest.mark.asyncio()
     async def test_happy_path(self, oauth_svc: OAuthService) -> None:
         """Refresh succeeds: new access token saved to DB."""
         stored = OAuthTokenData(
@@ -149,7 +148,6 @@ class TestRefreshToken:
         assert result.expires_at > time.time()
         save_mock.assert_called_once()
 
-    @pytest.mark.asyncio()
     async def test_rotates_refresh_token(self, oauth_svc: OAuthService) -> None:
         """When provider returns a new refresh_token, it should be saved."""
         stored = OAuthTokenData(
@@ -193,20 +191,17 @@ class TestRefreshToken:
         assert result.refresh_token == "rotated-rt"
         save_mock.assert_called_once()
 
-    @pytest.mark.asyncio()
     async def test_no_token_returns_none(self, oauth_svc: OAuthService) -> None:
         with patch.object(oauth_svc, "load_token", new_callable=AsyncMock, return_value=None):
             result = await oauth_svc.refresh_token("user-1", "google_calendar")
         assert result is None
 
-    @pytest.mark.asyncio()
     async def test_no_refresh_token_returns_none(self, oauth_svc: OAuthService) -> None:
         stored = OAuthTokenData(access_token="at", refresh_token="")
         with patch.object(oauth_svc, "load_token", new_callable=AsyncMock, return_value=stored):
             result = await oauth_svc.refresh_token("user-1", "google_calendar")
         assert result is None
 
-    @pytest.mark.asyncio()
     async def test_uses_expires_in(self, oauth_svc: OAuthService) -> None:
         """expires_at should be calculated from the provider's expires_in."""
         stored = OAuthTokenData(
@@ -246,7 +241,6 @@ class TestRefreshToken:
         assert result is not None
         assert result.expires_at >= before + 7200
 
-    @pytest.mark.asyncio()
     async def test_uses_absolute_expires_at(self, oauth_svc: OAuthService) -> None:
         """When provider returns expires_at (absolute timestamp), use it directly."""
         stored = OAuthTokenData(access_token="old-at", refresh_token="rt", expires_at=0)
@@ -282,7 +276,6 @@ class TestRefreshToken:
         assert result is not None
         assert result.expires_at == pytest.approx(absolute_ts, abs=1)
 
-    @pytest.mark.asyncio()
     async def test_missing_expiry_treated_as_non_expiring(self, oauth_svc: OAuthService) -> None:
         """When provider omits both expires_in and expires_at, token never expires."""
         stored = OAuthTokenData(
@@ -329,7 +322,6 @@ class TestRefreshToken:
 
 
 class TestGetValidToken:
-    @pytest.mark.asyncio()
     async def test_fresh_token_returned_as_is(self, oauth_svc: OAuthService) -> None:
         fresh = OAuthTokenData(
             access_token="at-good",
@@ -341,13 +333,11 @@ class TestGetValidToken:
         assert result is not None
         assert result.access_token == "at-good"
 
-    @pytest.mark.asyncio()
     async def test_no_token_returns_none(self, oauth_svc: OAuthService) -> None:
         with patch.object(oauth_svc, "load_token", new_callable=AsyncMock, return_value=None):
             result = await oauth_svc.get_valid_token("user-1", "google_calendar")
         assert result is None
 
-    @pytest.mark.asyncio()
     async def test_expired_no_refresh_returns_none(self, oauth_svc: OAuthService) -> None:
         expired = OAuthTokenData(
             access_token="at",
@@ -358,7 +348,6 @@ class TestGetValidToken:
             result = await oauth_svc.get_valid_token("user-1", "google_calendar")
         assert result is None
 
-    @pytest.mark.asyncio()
     async def test_expired_refresh_succeeds(self, oauth_svc: OAuthService) -> None:
         expired = OAuthTokenData(
             access_token="old-at",
@@ -380,7 +369,6 @@ class TestGetValidToken:
         assert result is not None
         assert result.access_token == "new-at"
 
-    @pytest.mark.asyncio()
     async def test_permanent_failure_deletes_token(self, oauth_svc: OAuthService) -> None:
         expired = OAuthTokenData(
             access_token="old-at",
@@ -403,7 +391,6 @@ class TestGetValidToken:
         delete_mock.assert_called_once_with("user-1", "google_calendar")
         notify_mock.assert_called_once_with("user-1", "google_calendar")
 
-    @pytest.mark.asyncio()
     async def test_transient_failure_preserves_token(self, oauth_svc: OAuthService) -> None:
         expired = OAuthTokenData(
             access_token="old-at",
@@ -431,7 +418,6 @@ class TestGetValidToken:
 
 
 class TestNotifyReauthNeeded:
-    @pytest.mark.asyncio()
     async def test_notification_failure_does_not_crash(self, oauth_svc: OAuthService) -> None:
         """Notification errors should be swallowed silently."""
         with patch(
@@ -441,7 +427,6 @@ class TestNotifyReauthNeeded:
             # Should not raise
             await oauth_svc._notify_reauth_needed("user-1", "google_calendar")
 
-    @pytest.mark.asyncio()
     async def test_sends_via_bus_when_route_exists(self, oauth_svc: OAuthService) -> None:
         """Should publish an outbound message when a channel route exists."""
         mock_route = MagicMock()
@@ -484,7 +469,6 @@ class TestAdvisoryLockBounded:
     indefinitely when the lock was held by an orphaned session-scoped lock from
     a dropped connection. The acquire path must fail fast under contention."""
 
-    @pytest.mark.asyncio()
     async def test_async_acquire_returns_false_when_lock_held_by_peer(
         self, _pg_async_engine: AsyncEngine
     ) -> None:
@@ -515,7 +499,6 @@ class TestAdvisoryLockBounded:
             await peer.commit()
             await peer.close()
 
-    @pytest.mark.asyncio()
     async def test_async_acquire_succeeds_when_lock_free(
         self, _pg_async_engine: AsyncEngine
     ) -> None:
@@ -578,7 +561,6 @@ class TestRefreshTokenLockSerialization:
     # Generous bound so a slow CI runner does not flake the test.
     _TIMEOUT_S = 5.0
 
-    @pytest.mark.asyncio()
     async def test_async_refresh_serializes_concurrent_callers(
         self, _pg_async_engine: AsyncEngine, oauth_svc: OAuthService
     ) -> None:
@@ -854,7 +836,6 @@ class TestRefreshTokenLockSerialization:
             f"row before any thread's save landed."
         )
 
-    @pytest.mark.asyncio()
     async def test_async_helper_with_session_input_is_documented_misuse(
         self, _pg_async_engine: AsyncEngine
     ) -> None:

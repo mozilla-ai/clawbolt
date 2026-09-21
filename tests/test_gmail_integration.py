@@ -218,7 +218,6 @@ def test_build_rfc822_omits_threading_headers_for_new_message() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_search_messages_fetches_summaries_per_id() -> None:
     service = _make_service()
     list_resp = {"messages": [{"id": "m1"}, {"id": "m2"}]}
@@ -260,7 +259,6 @@ async def test_search_messages_fetches_summaries_per_id() -> None:
     assert results[0].subject == "Hi"
 
 
-@pytest.mark.asyncio()
 async def test_search_messages_skips_404_per_id() -> None:
     service = _make_service()
     list_resp = {"messages": [{"id": "m1"}, {"id": "m2"}]}
@@ -296,7 +294,6 @@ async def test_search_messages_skips_404_per_id() -> None:
     assert [r.id for r in results] == ["m2"]
 
 
-@pytest.mark.asyncio()
 async def test_search_messages_caps_max_results() -> None:
     service = _make_service()
     captured: dict[str, dict[str, str]] = {}
@@ -314,7 +311,6 @@ async def test_search_messages_caps_max_results() -> None:
     assert captured["params"]["maxResults"] == "500"
 
 
-@pytest.mark.asyncio()
 async def test_get_message_returns_full_message_with_links() -> None:
     service = _make_service()
     body_text = "Hi there\nHere is a link https://magic.example/?token=abc\nThanks"
@@ -348,7 +344,6 @@ async def test_get_message_returns_full_message_with_links() -> None:
     assert msg.rfc822_message_id == "<orig@mail.example.com>"
 
 
-@pytest.mark.asyncio()
 async def test_send_message_threads_when_reply_id_given() -> None:
     service = _make_service()
     parent = GmailMessage(
@@ -388,7 +383,6 @@ async def test_send_message_threads_when_reply_id_given() -> None:
     assert "References: <orig@mail.example.com>" in raw_decoded
 
 
-@pytest.mark.asyncio()
 async def test_send_message_omits_threadid_for_new_message() -> None:
     service = _make_service()
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -398,14 +392,12 @@ async def test_send_message_omits_threadid_for_new_message() -> None:
     assert "threadId" not in body
 
 
-@pytest.mark.asyncio()
 async def test_send_message_requires_recipient() -> None:
     service = _make_service()
     with pytest.raises(ValueError, match="recipient"):
         await service.send_message(to=[], subject="x", body="y")
 
 
-@pytest.mark.asyncio()
 async def test_request_refreshes_and_retries_on_401() -> None:
     """A 401 from Gmail triggers a refresh+retry so a stale access token gets rotated."""
     service = _make_service()
@@ -442,7 +434,6 @@ async def test_request_refreshes_and_retries_on_401() -> None:
     assert second_headers["Authorization"] == "Bearer rotated-token"
 
 
-@pytest.mark.asyncio()
 async def test_send_message_resolves_sender_lazily() -> None:
     service = GmailService(
         access_token="t",
@@ -518,7 +509,6 @@ def test_send_description_distinguishes_reply_from_new(gmail_tools: list[Tool]) 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_gmail_search_tool_formats_results() -> None:
     service = _make_service()
     summaries = [
@@ -542,7 +532,6 @@ async def test_gmail_search_tool_formats_results() -> None:
     assert "[id: m1]" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_gmail_search_tool_handles_401_as_disconnected() -> None:
     service = _make_service()
     err = httpx.HTTPStatusError(
@@ -562,7 +551,6 @@ async def test_gmail_search_tool_handles_401_as_disconnected() -> None:
     assert "disconnected" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_gmail_search_tool_403_surfaces_gmail_message() -> None:
     """403 with a non-scope cause (Gmail API disabled in GCP) must surface the
     actual Gmail message, not the canned 'missing scope, reconnect' guess.
@@ -620,7 +608,6 @@ async def test_gmail_search_tool_403_surfaces_gmail_message() -> None:
     assert "reconnect" not in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_gmail_search_tool_403_insufficient_permissions_keeps_reconnect_hint() -> None:
     """When Gmail's reason is genuinely ``insufficientPermissions`` the
     "disconnect and reconnect to grant scopes" advice IS the right fix, so we
@@ -647,7 +634,6 @@ async def test_gmail_search_tool_403_insufficient_permissions_keeps_reconnect_hi
     assert "reconnect" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_gmail_search_tool_403_with_unparseable_body_falls_back() -> None:
     service = _make_service()
     err = httpx.HTTPStatusError(
@@ -665,7 +651,6 @@ async def test_gmail_search_tool_403_with_unparseable_body_falls_back() -> None:
     assert "HTTP 403" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_gmail_get_message_tool_renders_full_message() -> None:
     service = _make_service()
     msg = GmailMessage(
@@ -690,7 +675,6 @@ async def test_gmail_get_message_tool_renders_full_message() -> None:
     assert "https://magic.example/?token=abc" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_tool_emits_receipt() -> None:
     service = _make_service()
     sent = GmailSendResult(id="sent-1", thread_id="thread-1")
@@ -705,7 +689,6 @@ async def test_gmail_send_tool_emits_receipt() -> None:
     assert "alice@example.com" in result.receipt.target
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_tool_rejects_empty_recipients() -> None:
     service = _make_service()
     tools = create_gmail_tools(service)
@@ -715,7 +698,6 @@ async def test_gmail_send_tool_rejects_empty_recipients() -> None:
     assert result.error_kind == ToolErrorKind.VALIDATION
 
 
-@pytest.mark.asyncio()
 async def test_gmail_list_recent_calls_search_with_empty_query() -> None:
     service = _make_service()
     with patch.object(service, "search_messages", new_callable=AsyncMock, return_value=[]) as m:
@@ -740,7 +722,6 @@ def _make_ctx() -> ToolContext:
     return ctx
 
 
-@pytest.mark.asyncio()
 async def test_gmail_factory_returns_empty_when_not_configured() -> None:
     with patch("backend.app.integrations.gmail.factory.settings") as mock_settings:
         mock_settings.gmail_client_id = ""
@@ -748,7 +729,6 @@ async def test_gmail_factory_returns_empty_when_not_configured() -> None:
         assert await _gmail_factory(_make_ctx()) == []
 
 
-@pytest.mark.asyncio()
 async def test_gmail_factory_returns_empty_when_user_not_connected() -> None:
     with (
         patch("backend.app.integrations.gmail.factory.settings") as mock_settings,
@@ -760,7 +740,6 @@ async def test_gmail_factory_returns_empty_when_user_not_connected() -> None:
         assert await _gmail_factory(_make_ctx()) == []
 
 
-@pytest.mark.asyncio()
 async def test_gmail_factory_returns_4_tools_when_connected() -> None:
     token = MagicMock()
     token.access_token = "ax"
@@ -777,7 +756,6 @@ async def test_gmail_factory_returns_4_tools_when_connected() -> None:
     assert len(tools) == 4
 
 
-@pytest.mark.asyncio()
 async def test_gmail_auth_check_returns_none_when_unconfigured() -> None:
     """When the operator has not configured Gmail, hide the integration entirely."""
     with patch("backend.app.integrations.gmail.factory.settings") as mock_settings:
@@ -786,7 +764,6 @@ async def test_gmail_auth_check_returns_none_when_unconfigured() -> None:
         assert await _gmail_auth_check(_make_ctx()) is None
 
 
-@pytest.mark.asyncio()
 async def test_gmail_auth_check_returns_reason_when_user_not_connected() -> None:
     """When admin configured Gmail but user hasn't, surface a reason string."""
     with (
@@ -802,7 +779,6 @@ async def test_gmail_auth_check_returns_reason_when_user_not_connected() -> None
     assert "manage_integration" in reason
 
 
-@pytest.mark.asyncio()
 async def test_gmail_auth_check_returns_none_when_user_connected() -> None:
     token = MagicMock()
     token.access_token = "ax"
@@ -1003,7 +979,6 @@ def _saved(path: str, name: str | None = None) -> SavedFile:
     return SavedFile(path=path, name=name or path.rsplit("/", 1)[-1])
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_with_attachments_resolves_paths_and_calls_service() -> None:
     """End-to-end: the tool resolves saved-file paths and forwards them to
     the service as GmailAttachment records, which then build a multipart
@@ -1054,7 +1029,6 @@ async def test_gmail_send_with_attachments_resolves_paths_and_calls_service() ->
     assert attachments[1].subtype == "jpeg"
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_attachments_reject_total_over_cap() -> None:
     """Sum of attachment bytes over 20 MB must return a VALIDATION error
     before any send is attempted."""
@@ -1084,7 +1058,6 @@ async def test_gmail_send_attachments_reject_total_over_cap() -> None:
     mock_send.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_attachments_unknown_extension_falls_back_to_octet_stream() -> None:
     """An attachment whose extension mimetypes can't classify still attaches,
     as application/octet-stream."""
@@ -1118,7 +1091,6 @@ async def test_gmail_send_attachments_unknown_extension_falls_back_to_octet_stre
     assert attachments[0].subtype == "octet-stream"
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_rejects_folder_path_attachment() -> None:
     """A path ending with '/' is a folder reference and must be rejected
     with a clean validation error, not a 500."""
@@ -1140,7 +1112,6 @@ async def test_gmail_send_rejects_folder_path_attachment() -> None:
     mock_send.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_surfaces_download_filenotfound_as_validation() -> None:
     """If the storage backend raises FileNotFoundError (e.g. the path resolves
     to a folder in Drive), the tool surfaces a validation error rather than
@@ -1173,7 +1144,6 @@ async def test_gmail_send_surfaces_download_filenotfound_as_validation() -> None
     mock_send.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_attachment_with_no_storage_backend_is_rejected() -> None:
     """When Drive isn't connected (storage is None), any attachment request
     must error cleanly so the user gets pointed at the Drive connect flow."""
@@ -1192,7 +1162,6 @@ async def test_gmail_send_attachment_with_no_storage_backend_is_rejected() -> No
     assert "drive" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_without_attachments_still_works() -> None:
     """Backwards-compat: callers that don't pass attachments get the same
     plain-text behaviour as before."""
@@ -1244,7 +1213,6 @@ def test_gmail_send_approval_description_mentions_attachment_count() -> None:
     assert "1 attachment" in desc_reply
 
 
-@pytest.mark.asyncio()
 async def test_gmail_send_attachment_missing_file_returns_not_found() -> None:
     """A path that doesn't resolve via find_saved_file/search must surface
     NOT_FOUND rather than a generic SERVICE error."""

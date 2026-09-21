@@ -16,7 +16,6 @@ from backend.app.models import Subscription, User
 
 
 class TestAdminAutoPromotion:
-    @pytest.mark.asyncio
     async def test_admin_email_case_insensitive(self, async_db: async_sessionmaker) -> None:
         """Mixed-case admin_email should still match after normalization.
 
@@ -46,7 +45,6 @@ class TestAdminAutoPromotion:
         assert sub is not None
         assert sub.role == "admin"
 
-    @pytest.mark.asyncio
     async def test_admin_email_match_sets_admin_role(self, async_db: async_sessionmaker) -> None:
         """First login with matching admin_email should set role='admin' on Subscription."""
         google_info = {"sub": "admin_sub", "name": "Admin User", "email": "admin@example.com"}
@@ -61,7 +59,6 @@ class TestAdminAutoPromotion:
         assert sub is not None
         assert sub.role == "admin"
 
-    @pytest.mark.asyncio
     async def test_non_admin_email_gets_user_role(self, async_db: async_sessionmaker) -> None:
         """First login without matching admin_email should get role='user' on Subscription."""
         google_info = {"sub": "user_sub", "name": "Regular User", "email": "user@example.com"}
@@ -76,7 +73,6 @@ class TestAdminAutoPromotion:
         assert sub is not None
         assert sub.role == "user"
 
-    @pytest.mark.asyncio
     async def test_empty_admin_email_gets_user_role(self, async_db: async_sessionmaker) -> None:
         """When admin_email is not configured, all users get role='user'."""
         google_info = {"sub": "any_sub", "name": "Any User", "email": "any@example.com"}
@@ -91,7 +87,6 @@ class TestAdminAutoPromotion:
         assert sub is not None
         assert sub.role == "user"
 
-    @pytest.mark.asyncio
     async def test_no_email_in_google_info_gets_user_role(
         self, async_db: async_sessionmaker
     ) -> None:
@@ -119,7 +114,6 @@ class TestGetCurrentAdmin:
     ``tests/conftest.py``.
     """
 
-    @pytest.mark.asyncio
     async def test_allows_admin_role(
         self,
         async_db: async_sessionmaker,
@@ -140,7 +134,6 @@ class TestGetCurrentAdmin:
             result = await get_current_admin(user=async_test_user, db=db)
         assert result.id == async_test_user.id
 
-    @pytest.mark.asyncio
     async def test_env_var_alone_does_not_grant_admin(
         self,
         async_db: async_sessionmaker,
@@ -175,7 +168,6 @@ class TestGetCurrentAdmin:
                 await get_current_admin(user=async_test_user, db=db)
         assert exc_info.value.status_code == 403
 
-    @pytest.mark.asyncio
     async def test_denies_non_admin(
         self,
         async_db: async_sessionmaker,
@@ -197,7 +189,6 @@ class TestGetCurrentAdmin:
                 await get_current_admin(user=async_test_user, db=db)
         assert exc_info.value.status_code == 403
 
-    @pytest.mark.asyncio
     async def test_denies_when_no_subscription_row(
         self,
         async_db: async_sessionmaker,

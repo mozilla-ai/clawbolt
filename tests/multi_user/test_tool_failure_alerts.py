@@ -85,12 +85,10 @@ def _consent(user_id: str, consented: bool) -> None:
 
 
 class TestHook:
-    @pytest.mark.asyncio
     async def test_reporting_without_a_handler_is_a_no_op(self) -> None:
         """Single-user deployments and CI must pay nothing for this."""
         await report_tool_failure(_payload())  # must not raise
 
-    @pytest.mark.asyncio
     async def test_a_raising_handler_never_reaches_the_agent_loop(self) -> None:
         """A reporting bug must not break the user's turn."""
 
@@ -111,7 +109,6 @@ class TestHook:
 
 
 class TestKindFiltering:
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "kind", [ToolErrorKind.INTERNAL, ToolErrorKind.SERVICE, ToolErrorKind.AUTH]
     )
@@ -122,7 +119,6 @@ class TestKindFiltering:
         await tool_failure_alerts.handle_tool_failure(_payload(kind=kind))
         assert admin_alerts._store.pending_count() == 1
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "kind",
         [
@@ -142,7 +138,6 @@ class TestKindFiltering:
         await tool_failure_alerts.handle_tool_failure(_payload(kind=kind))
         assert admin_alerts._store.pending_count() == 0
 
-    @pytest.mark.asyncio
     async def test_nothing_is_recorded_when_alerting_is_unconfigured(self) -> None:
         _consent("user-1", True)
         await tool_failure_alerts.handle_tool_failure(_payload())
@@ -155,7 +150,6 @@ class TestKindFiltering:
 
 
 class TestConsentGating:
-    @pytest.mark.asyncio
     async def test_consenting_user_contributes_detail(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -170,7 +164,6 @@ class TestConsentGating:
         assert "Invoice" in failures[0].samples[0]
         assert failures[0].consented_user_count == 1
 
-    @pytest.mark.asyncio
     async def test_non_consenting_user_counts_but_shows_nothing(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -188,7 +181,6 @@ class TestConsentGating:
         assert failures[0].consented_user_count == 0
         assert failures[0].samples == []
 
-    @pytest.mark.asyncio
     async def test_no_argument_text_leaks_for_a_non_consenting_user(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -206,7 +198,6 @@ class TestConsentGating:
         rendered = str(_admin_alert_message("admin@example.com", [], 0, failures))
         assert "Wayne Enterprises" not in rendered
 
-    @pytest.mark.asyncio
     async def test_unknown_consent_fails_closed(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -222,7 +213,6 @@ class TestConsentGating:
         assert failures[0].count == 1
         assert failures[0].samples == []
 
-    @pytest.mark.asyncio
     async def test_mixed_consent_reports_both_populations(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -245,7 +235,6 @@ class TestConsentGating:
 
 
 class TestGrouping:
-    @pytest.mark.asyncio
     async def test_a_storm_collapses_into_one_group(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -263,7 +252,6 @@ class TestGrouping:
         assert failures[0].count == 40
         assert failures[0].user_count == 40
 
-    @pytest.mark.asyncio
     async def test_distinct_tools_are_distinct_groups(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -277,7 +265,6 @@ class TestGrouping:
         names = {f.tool_name for f in send_mock.call_args.kwargs["tool_failures"]}
         assert names == {"qb_query", "web_search"}
 
-    @pytest.mark.asyncio
     async def test_same_tool_different_kinds_are_distinct_groups(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -289,7 +276,6 @@ class TestGrouping:
         kinds = {f.error_kind for f in send_mock.call_args.kwargs["tool_failures"]}
         assert kinds == {str(ToolErrorKind.AUTH), str(ToolErrorKind.SERVICE)}
 
-    @pytest.mark.asyncio
     async def test_samples_are_bounded(self, send_mock: AsyncMock, alerts_configured: None) -> None:
         """Twenty copies of one broken call tells you nothing the first did."""
         for i in range(20):
@@ -303,7 +289,6 @@ class TestGrouping:
         assert summary.count == 20
         assert len(summary.samples) <= admin_alerts._MAX_SAMPLES_PER_GROUP
 
-    @pytest.mark.asyncio
     async def test_identical_samples_are_not_repeated(
         self, send_mock: AsyncMock, alerts_configured: None
     ) -> None:
@@ -314,7 +299,6 @@ class TestGrouping:
 
         assert len(send_mock.call_args.kwargs["tool_failures"][0].samples) == 1
 
-    @pytest.mark.asyncio
     async def test_a_failed_send_puts_the_group_back(self, alerts_configured: None) -> None:
         """Unlike an ERROR log, a tool failure has no second record anywhere,
         so a dropped batch is the only copy."""
@@ -375,7 +359,6 @@ class TestRendering:
         # 4 users seen, 1 consented, so 3 are counted but not shown.
         assert "3 further user(s) have not opted into data sharing" in str(msg)
 
-    @pytest.mark.asyncio
     async def test_send_is_skipped_when_there_is_nothing_to_report(self) -> None:
         from backend.app.services.email_service import send_admin_alert
 

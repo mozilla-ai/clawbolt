@@ -111,7 +111,6 @@ def test_move_file_requires_from_path_and_to_folder_path() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_failure_returns_error_result(
     mock_amessages: AsyncMock,
@@ -157,7 +156,6 @@ async def test_agent_validation_failure_returns_error_result(
     assert "name" in response.tool_calls[0].result
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_success_calls_tool(
     mock_amessages: AsyncMock,
@@ -197,7 +195,6 @@ async def test_agent_validation_success_calls_tool(
     assert any("Called typed_tool" in a for a in response.actions_taken)
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_coerces_types(
     mock_amessages: AsyncMock,
@@ -236,7 +233,6 @@ async def test_agent_validation_coerces_types(
     mock_func.assert_called_once_with(name="test", value=42)
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_wrong_type_returns_field_error(
     mock_amessages: AsyncMock,
@@ -290,7 +286,6 @@ def test_delete_file_params_accepts_valid_path() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_coerces_int_for_string_field(
     mock_amessages: AsyncMock,
@@ -330,7 +325,6 @@ async def test_agent_validation_coerces_int_for_string_field(
     assert response.tool_calls[0].is_error is False
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_coerces_number_in_nested_string_field(
     mock_amessages: AsyncMock,
@@ -372,7 +366,6 @@ async def test_agent_validation_coerces_number_in_nested_string_field(
     assert response.tool_calls[0].is_error is False
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_does_not_coerce_bool_for_string_field(
     mock_amessages: AsyncMock,
@@ -416,7 +409,6 @@ async def test_agent_validation_does_not_coerce_bool_for_string_field(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_batch_validation_reports_all_errors_at_once(
     mock_amessages: AsyncMock,
@@ -477,7 +469,6 @@ async def test_batch_validation_reports_all_errors_at_once(
     assert error_records[1].tool_call_id == "call_b"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_batch_validation_executes_valid_calls_alongside_invalid(
     mock_amessages: AsyncMock,
@@ -593,7 +584,6 @@ def test_summarize_tool_params_resolves_anyof_types() -> None:
     assert '"client_name": string (optional)' in summary
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_validation_error_for_missing_line_items_shows_item_structure(
     mock_amessages: AsyncMock,

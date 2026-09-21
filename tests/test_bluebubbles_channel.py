@@ -1119,7 +1119,6 @@ async def test_check_server_reachable_connect_error() -> None:
 
 
 class TestRegisterPaasWebhook:
-    @pytest.mark.asyncio
     async def test_returns_none_when_server_url_missing(self) -> None:
         """register_paas_webhook returns None when server URL is not set."""
         channel = BlueBubblesChannel()
@@ -1128,7 +1127,6 @@ class TestRegisterPaasWebhook:
             s.bluebubbles_password = "pw"
             assert await channel.register_paas_webhook("https://app.example.com") is None
 
-    @pytest.mark.asyncio
     async def test_returns_none_when_password_missing(self) -> None:
         """register_paas_webhook returns None when password is not set."""
         channel = BlueBubblesChannel()
@@ -1137,7 +1135,6 @@ class TestRegisterPaasWebhook:
             s.bluebubbles_password = ""
             assert await channel.register_paas_webhook("https://app.example.com") is None
 
-    @pytest.mark.asyncio
     async def test_uses_derived_token(self) -> None:
         """register_paas_webhook uses a derived token, not the raw password."""
         channel = BlueBubblesChannel()
@@ -1160,7 +1157,6 @@ class TestRegisterPaasWebhook:
             f"https://app.example.com/api/webhooks/bluebubbles?token={expected_token}",
         )
 
-    @pytest.mark.asyncio
     async def test_delegates_to_register_function(self) -> None:
         """register_paas_webhook calls register_bluebubbles_webhook with correct args."""
         channel = BlueBubblesChannel()

@@ -145,7 +145,6 @@ def _result(text: str = "", tools: list[ToolCall] | None = None) -> ModelCallRes
     )
 
 
-@pytest.mark.asyncio()
 async def test_run_writes_a_turn_row_per_sample_and_completes(
     db_session: Session, test_user: User
 ) -> None:
@@ -183,7 +182,6 @@ async def test_run_writes_a_turn_row_per_sample_and_completes(
     assert stored[0]["name"] == "lookup"
 
 
-@pytest.mark.asyncio()
 async def test_each_side_is_called_with_its_own_reasoning_effort(
     db_session: Session, test_user: User
 ) -> None:
@@ -211,7 +209,6 @@ async def test_each_side_is_called_with_its_own_reasoning_effort(
     assert sorted(seen) == [("candidate", "none"), ("incumbent", "high")]
 
 
-@pytest.mark.asyncio()
 async def test_a_failing_turn_does_not_abort_the_run(db_session: Session, test_user: User) -> None:
     run_id = _make_run(db_session, test_user.id, samples=3)
     calls = {"n": 0}
@@ -244,7 +241,6 @@ async def test_a_failing_turn_does_not_abort_the_run(db_session: Session, test_u
     assert sum(1 for t in turns if t.candidate_error) == 1
 
 
-@pytest.mark.asyncio()
 async def test_cancelled_run_stops_and_keeps_the_turns_it_finished(
     db_session: Session, test_user: User
 ) -> None:
@@ -285,7 +281,6 @@ async def test_cancelled_run_stops_and_keeps_the_turns_it_finished(
     assert len(turns) < 4
 
 
-@pytest.mark.asyncio()
 async def test_a_run_deleted_mid_flight_unwinds_quietly(
     db_session: Session, test_user: User
 ) -> None:
@@ -328,7 +323,6 @@ async def test_a_run_deleted_mid_flight_unwinds_quietly(
     )
 
 
-@pytest.mark.asyncio()
 async def test_a_turn_that_cannot_be_replayed_is_marked_not_compared(
     db_session: Session, test_user: User
 ) -> None:
@@ -364,7 +358,6 @@ async def test_a_turn_that_cannot_be_replayed_is_marked_not_compared(
         assert "prompt could not be assembled" in t.candidate_error
 
 
-@pytest.mark.asyncio()
 async def test_progress_never_walks_backwards_under_concurrency(
     db_session: Session, test_user: User
 ) -> None:
@@ -382,7 +375,6 @@ async def test_progress_never_walks_backwards_under_concurrency(
     assert run.progress_completed == 8
 
 
-@pytest.mark.asyncio()
 async def test_run_never_executes_a_tool(db_session: Session, test_user: User) -> None:
     """The safety property the whole design rests on.
 
@@ -410,7 +402,6 @@ async def test_run_never_executes_a_tool(db_session: Session, test_user: User) -
     assert executed == []
 
 
-@pytest.mark.asyncio()
 async def test_each_completed_turn_touches_the_heartbeat(
     db_session: Session, test_user: User
 ) -> None:
@@ -434,7 +425,6 @@ async def test_each_completed_turn_touches_the_heartbeat(
     assert finished.heartbeat_at is not None
 
 
-@pytest.mark.asyncio()
 async def test_a_live_run_survives_another_process_booting(
     db_session: Session, test_user: User
 ) -> None:
@@ -461,7 +451,6 @@ async def test_a_live_run_survives_another_process_booting(
     assert swept.status == str(RunStatus.RUNNING)
 
 
-@pytest.mark.asyncio()
 async def test_a_run_whose_process_died_is_still_swept(
     db_session: Session, test_user: User
 ) -> None:
@@ -485,7 +474,6 @@ async def test_a_run_whose_process_died_is_still_swept(
     assert swept.status == str(RunStatus.INTERRUPTED)
 
 
-@pytest.mark.asyncio()
 async def test_a_run_that_never_started_a_turn_falls_back_to_created_at(
     db_session: Session, test_user: User
 ) -> None:
@@ -510,7 +498,6 @@ async def test_a_run_that_never_started_a_turn_falls_back_to_created_at(
     assert swept.status == str(RunStatus.INTERRUPTED)
 
 
-@pytest.mark.asyncio()
 async def test_user_with_no_turns_completes_as_inconclusive(
     db_session: Session, test_user: User
 ) -> None:
@@ -531,7 +518,6 @@ async def test_user_with_no_turns_completes_as_inconclusive(
     assert any("no replayable turns" in r for r in run.summary_json["reasons"])
 
 
-@pytest.mark.asyncio()
 async def test_run_stops_after_consecutive_provider_failures(
     db_session: Session, test_user: User
 ) -> None:
@@ -575,7 +561,6 @@ async def test_run_stops_after_consecutive_provider_failures(
     assert "consecutive provider failures" in summary["reasons"][0]
 
 
-@pytest.mark.asyncio()
 async def test_an_intermittent_failure_does_not_stop_the_run(
     db_session: Session, test_user: User
 ) -> None:
@@ -608,7 +593,6 @@ async def test_an_intermittent_failure_does_not_stop_the_run(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_a_non_blocking_finding_does_not_suppress_the_judge(
     db_session: Session, test_user: User
 ) -> None:
@@ -658,7 +642,6 @@ async def test_a_non_blocking_finding_does_not_suppress_the_judge(
     assert row.judge_verdict == str(JudgeVerdict.CANDIDATE_WORSE)
 
 
-@pytest.mark.asyncio()
 async def test_a_blocking_finding_still_suppresses_the_judge(
     db_session: Session, test_user: User
 ) -> None:
@@ -693,7 +676,6 @@ async def test_a_blocking_finding_still_suppresses_the_judge(
     assert row.judge_verdict == str(JudgeVerdict.NOT_JUDGED)
 
 
-@pytest.mark.asyncio()
 async def test_the_summary_records_why_each_turn_went_unjudged(
     db_session: Session, test_user: User
 ) -> None:

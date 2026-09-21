@@ -3,7 +3,6 @@
 import datetime
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -93,7 +92,6 @@ async def _add_conversation(user_id: str, *, days_ago: int = 0) -> None:
 
 
 class TestGetInactiveFreeUsers:
-    @pytest.mark.asyncio
     async def test_finds_inactive_users(self, db_session: Session) -> None:
         """Should find free-tier users with no recent activity."""
         inactive_user = await _make_user(db_session, "inactive_1", created_days_ago=400)
@@ -105,7 +103,6 @@ class TestGetInactiveFreeUsers:
         ids = [c.id for c in result]
         assert inactive_user.id in ids
 
-    @pytest.mark.asyncio
     async def test_excludes_pro_users(self, db_session: Session) -> None:
         """Should not include pro-tier users even if inactive."""
         await _make_user(db_session, "pro_1", plan="pro", created_days_ago=400)
@@ -115,7 +112,6 @@ class TestGetInactiveFreeUsers:
             result = await get_inactive_free_users(adb, cutoff)
         assert len(result) == 0
 
-    @pytest.mark.asyncio
     async def test_excludes_recently_active(self, db_session: Session) -> None:
         """Should not include users with recent conversation activity."""
         user = await _make_user(db_session, "recent_1", created_days_ago=400)
@@ -126,7 +122,6 @@ class TestGetInactiveFreeUsers:
             result = await get_inactive_free_users(adb, cutoff)
         assert len(result) == 0
 
-    @pytest.mark.asyncio
     async def test_includes_old_conversation(self, db_session: Session) -> None:
         """Should include users whose last conversation is older than cutoff."""
         user = await _make_user(db_session, "old_conv_1", created_days_ago=400)
@@ -138,7 +133,6 @@ class TestGetInactiveFreeUsers:
         ids = [c.id for c in result]
         assert user.id in ids
 
-    @pytest.mark.asyncio
     async def test_excludes_deactivated(self, db_session: Session) -> None:
         """Should not include already-deactivated users."""
         store = get_user_store()
@@ -152,7 +146,6 @@ class TestGetInactiveFreeUsers:
 
 
 class TestWarnInactiveUsers:
-    @pytest.mark.asyncio
     async def test_warns_inactive_users(self, db_session: Session) -> None:
         """Should warn users inactive for 11 months but not yet 12."""
         user = await _make_user(db_session, "warn_1", created_days_ago=335)
@@ -174,7 +167,6 @@ class TestWarnInactiveUsers:
         finally:
             oss_db.close()
 
-    @pytest.mark.asyncio
     async def test_skips_users_past_delete_threshold(self, db_session: Session) -> None:
         """Should skip users past 12 months (they'll be deleted instead)."""
         await _make_user(db_session, "old_1", created_days_ago=400)
@@ -183,7 +175,6 @@ class TestWarnInactiveUsers:
             count = await warn_inactive_users(adb)
         assert count == 0
 
-    @pytest.mark.asyncio
     async def test_skips_already_warned(self, db_session: Session) -> None:
         """Should not re-warn users who have already been warned."""
         await _make_user(db_session, "warned_1", created_days_ago=335, warned_days_ago=10)
@@ -194,7 +185,6 @@ class TestWarnInactiveUsers:
 
 
 class TestCleanupInactiveAccounts:
-    @pytest.mark.asyncio
     async def test_deletes_inactive_accounts(self, db_session: Session) -> None:
         """Should delete accounts inactive 12+ months that were warned 30+ days ago."""
         user = await _make_user(db_session, "delete_1", created_days_ago=400, warned_days_ago=35)
@@ -211,7 +201,6 @@ class TestCleanupInactiveAccounts:
         call_args = mock_delete.call_args
         assert call_args[0][1].id == user.id
 
-    @pytest.mark.asyncio
     async def test_skips_unwarned_users(self, db_session: Session) -> None:
         """Should not delete users who haven't been warned first."""
         await _make_user(db_session, "unwarned_1", created_days_ago=400)
@@ -226,7 +215,6 @@ class TestCleanupInactiveAccounts:
         assert count == 0
         mock_delete.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_skips_recently_warned(self, db_session: Session) -> None:
         """Should not delete users warned less than 30 days ago."""
         await _make_user(db_session, "recent_warn_1", created_days_ago=400, warned_days_ago=15)
@@ -241,7 +229,6 @@ class TestCleanupInactiveAccounts:
         assert count == 0
         mock_delete.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_skips_recent_users(self, db_session: Session) -> None:
         """Should not delete users with recent activity."""
         user = await _make_user(db_session, "recent_2", created_days_ago=400, warned_days_ago=35)
@@ -257,7 +244,6 @@ class TestCleanupInactiveAccounts:
         assert count == 0
         mock_delete.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_skips_paid_users(self, db_session: Session) -> None:
         """Should not delete pro/business users even if inactive."""
         await _make_user(db_session, "pro_old", plan="pro", created_days_ago=400)

@@ -3,7 +3,6 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.approval import (
@@ -166,7 +165,6 @@ class TestFormatPlanMessage:
 
 
 class TestBatchApproval:
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_all_auto_no_plan(self, mock_amessages: object, test_user: User) -> None:
         """All ALWAYS tools execute without prompting."""
@@ -179,7 +177,6 @@ class TestBatchApproval:
         response = await agent.process_message("read it")
         assert any(tc.name == "reader" and not tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_all_deny(self, mock_amessages: object, test_user: User) -> None:
         """All DENY tools return errors."""
@@ -192,7 +189,6 @@ class TestBatchApproval:
         response = await agent.process_message("do it")
         assert any(tc.name == "blocked" and tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_mixed_plan_approved(self, mock_amessages: object, test_user: User) -> None:
         """Mixed ALWAYS+ASK tools: user approves plan, all execute."""
@@ -239,7 +235,6 @@ class TestBatchApproval:
                 prompt_sent = True
         assert prompt_sent
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_mixed_plan_denied_auto_still_executes(
         self, mock_amessages: object, test_user: User
@@ -280,7 +275,6 @@ class TestBatchApproval:
         assert any(tc.name == "reader" and not tc.is_error for tc in response.tool_calls)
         assert any(tc.name == "writer" and tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_always_persists_per_tool(self, mock_amessages: object, test_user: User) -> None:
         """'always' persists ALWAYS for each tool individually."""
@@ -329,7 +323,6 @@ class TestBatchApproval:
         assert await store.check_permission(test_user.id, "writer") == PermissionLevel.ALWAYS
         assert await store.check_permission(test_user.id, "sender") == PermissionLevel.ALWAYS
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_never_persists_deny_per_tool(
         self, mock_amessages: object, test_user: User
@@ -377,7 +370,6 @@ class TestBatchApproval:
         assert await store.check_permission(test_user.id, "writer") == PermissionLevel.NEVER
         assert await store.check_permission(test_user.id, "sender") == PermissionLevel.NEVER
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_selective_approval(self, mock_amessages: object, test_user: User) -> None:
         """Sequential approval: approve some tools, deny others."""
@@ -431,7 +423,6 @@ class TestBatchApproval:
         assert any(tc.name == "sender" and tc.is_error for tc in response.tool_calls)
         assert any(tc.name == "deleter" and not tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_interrupted_stops_remaining(
         self, mock_amessages: object, test_user: User
@@ -493,7 +484,6 @@ class TestBatchApproval:
         assert await store.check_permission(test_user.id, "writer") == PermissionLevel.ASK
         assert await store.check_permission(test_user.id, "sender") == PermissionLevel.ASK
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_timeout_denies_ask_tools(self, mock_amessages: object, test_user: User) -> None:
         """Timeout on plan approval denies ask tools, auto tools still execute."""
@@ -524,7 +514,6 @@ class TestBatchApproval:
         assert any(tc.name == "reader" and not tc.is_error for tc in response.tool_calls)
         assert any(tc.name == "writer" and tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_no_channel_denies_ask_tools(
         self, mock_amessages: object, test_user: User
@@ -545,7 +534,6 @@ class TestBatchApproval:
         response = await agent.process_message("write it")
         assert any(tc.name == "writer" and tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_stored_auto_skips_plan(self, mock_amessages: object, test_user: User) -> None:
         """Tools already set to ALWAYS in store skip the plan prompt."""
@@ -580,7 +568,6 @@ class TestBatchApproval:
             if isinstance(msg, OutboundMessage):
                 assert "reply with one of" not in msg.content.lower()
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_plan_prompt_not_double_wrapped(
         self, mock_amessages: object, test_user: User
@@ -625,7 +612,6 @@ class TestBatchApproval:
         # Should not contain the format_approval_message wrapper
         assert "wants to use the tool" not in approval_msgs[0]
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_always_persists_per_resource(
         self, mock_amessages: object, test_user: User
@@ -684,7 +670,6 @@ class TestBatchApproval:
             == PermissionLevel.ASK
         )
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_approval_prompt_not_persisted_to_session(
         self, mock_amessages: object, test_user: User

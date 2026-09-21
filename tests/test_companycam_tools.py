@@ -44,7 +44,6 @@ def _mock_response(json_data: object, status_code: int = 200) -> httpx.Response:
     return resp
 
 
-@pytest.mark.asyncio()
 async def test_validate_token() -> None:
     service = CompanyCamService(access_token="test-token")
     user_data = {"id": "1", "first_name": "John", "email_address": "john@example.com"}
@@ -60,7 +59,6 @@ async def test_validate_token() -> None:
     assert result.first_name == "John"
 
 
-@pytest.mark.asyncio()
 async def test_search_projects() -> None:
     service = CompanyCamService(access_token="test-token")
     projects = [{"id": "42", "name": "Smith Residence"}]
@@ -77,7 +75,6 @@ async def test_search_projects() -> None:
     assert result[0].id == "42"
 
 
-@pytest.mark.asyncio()
 async def test_create_project() -> None:
     service = CompanyCamService(access_token="test-token")
     created = {"id": "99", "name": "New Project"}
@@ -93,7 +90,6 @@ async def test_create_project() -> None:
     assert result.id == "99"
 
 
-@pytest.mark.asyncio()
 async def test_create_project_with_null_integration_relation_id() -> None:
     """Regression: CompanyCam API returns integrations with relation_id=null."""
     service = CompanyCamService(access_token="test-token")
@@ -116,7 +112,6 @@ async def test_create_project_with_null_integration_relation_id() -> None:
     assert result.integrations[0].relation_id is None
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo() -> None:
     service = CompanyCamService(access_token="test-token")
     photo = {
@@ -145,7 +140,6 @@ async def test_upload_photo() -> None:
     assert body["photo"]["tags"] == ["kitchen", "demo"]
 
 
-@pytest.mark.asyncio()
 async def test_list_project_photos() -> None:
     service = CompanyCamService(access_token="test-token")
     photos = [{"id": "10", "uris": []}]
@@ -280,7 +274,6 @@ class TestTagsJsonStringCoercion:
         assert p.tags == ["before", "kitchen"]
 
 
-@pytest.mark.asyncio()
 async def test_companycam_auth_check_not_connected() -> None:
     """Auth check should return a reason when OAuth is not connected."""
     from backend.app.config import settings
@@ -304,7 +297,6 @@ async def test_companycam_auth_check_not_connected() -> None:
     assert "manage_integration" in result
 
 
-@pytest.mark.asyncio()
 async def test_companycam_auth_check_connected() -> None:
     """Auth check should return None when OAuth is connected."""
     from backend.app.config import settings
@@ -326,7 +318,6 @@ async def test_companycam_auth_check_connected() -> None:
     assert result is None
 
 
-@pytest.mark.asyncio()
 async def test_companycam_auth_check_not_configured() -> None:
     """Auth check should return None (hide tools) when OAuth creds are not configured."""
     from backend.app.config import settings
@@ -351,7 +342,6 @@ async def test_companycam_auth_check_not_configured() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_get_project() -> None:
     service = CompanyCamService(access_token="test-token")
     project = {"id": "42", "name": "Smith Residence", "status": "active"}
@@ -368,7 +358,6 @@ async def test_get_project() -> None:
     assert result.name == "Smith Residence"
 
 
-@pytest.mark.asyncio()
 async def test_delete_project() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -383,7 +372,6 @@ async def test_delete_project() -> None:
     client.delete.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_archive_project() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -398,7 +386,6 @@ async def test_archive_project() -> None:
     client.patch.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_restore_project() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -413,7 +400,6 @@ async def test_restore_project() -> None:
     client.put.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_update_notepad() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -434,7 +420,6 @@ async def test_update_notepad() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_project_documents() -> None:
     service = CompanyCamService(access_token="test-token")
     docs = [{"id": "1", "name": "contract.pdf", "url": "https://example.com/c.pdf"}]
@@ -451,7 +436,6 @@ async def test_list_project_documents() -> None:
     assert result[0].name == "contract.pdf"
 
 
-@pytest.mark.asyncio()
 async def test_list_project_documents_pagination() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -469,7 +453,6 @@ async def test_list_project_documents_pagination() -> None:
     assert params["per_page"] == 25
 
 
-@pytest.mark.asyncio()
 async def test_list_project_comments() -> None:
     service = CompanyCamService(access_token="test-token")
     comments = [{"id": "1", "content": "Looking good", "creator_name": "John"}]
@@ -486,7 +469,6 @@ async def test_list_project_comments() -> None:
     assert result[0].content == "Looking good"
 
 
-@pytest.mark.asyncio()
 async def test_add_project_comment() -> None:
     service = CompanyCamService(access_token="test-token")
     comment = {"id": "5", "content": "Done!", "creator_name": "Bot"}
@@ -504,7 +486,6 @@ async def test_add_project_comment() -> None:
     assert body == {"comment": {"content": "Done!"}}
 
 
-@pytest.mark.asyncio()
 async def test_list_project_labels() -> None:
     service = CompanyCamService(access_token="test-token")
     labels = [{"id": "1", "display_value": "Roofing", "value": "roofing"}]
@@ -521,7 +502,6 @@ async def test_list_project_labels() -> None:
     assert result[0].display_value == "Roofing"
 
 
-@pytest.mark.asyncio()
 async def test_add_project_labels() -> None:
     service = CompanyCamService(access_token="test-token")
     labels = [{"id": "2", "display_value": "Priority", "value": "priority"}]
@@ -545,7 +525,6 @@ async def test_add_project_labels() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_search_photos() -> None:
     service = CompanyCamService(access_token="test-token")
     photos = [{"id": "10", "uris": []}]
@@ -562,7 +541,6 @@ async def test_search_photos() -> None:
     assert result[0].id == "10"
 
 
-@pytest.mark.asyncio()
 async def test_search_photos_normalize() -> None:
     """search_photos applies _normalize_photo (coordinates dict -> list)."""
     service = CompanyCamService(access_token="test-token")
@@ -580,7 +558,6 @@ async def test_search_photos_normalize() -> None:
     assert isinstance(result[0].coordinates, list)
 
 
-@pytest.mark.asyncio()
 async def test_search_photos_with_project_id_uses_project_scoped_endpoint() -> None:
     """Regression: a singular project_id query param on /v2/photos is silently
     ignored by CompanyCam (its filter is project_ids[], an array), so the
@@ -605,7 +582,6 @@ async def test_search_photos_with_project_id_uses_project_scoped_endpoint() -> N
     assert "project_ids" not in params
 
 
-@pytest.mark.asyncio()
 async def test_search_photos_without_project_id_uses_global_endpoint() -> None:
     """When no project_id is given, hit the global /photos endpoint."""
     service = CompanyCamService(access_token="test-token")
@@ -622,7 +598,6 @@ async def test_search_photos_without_project_id_uses_global_endpoint() -> None:
     assert url.endswith("/v2/photos")
 
 
-@pytest.mark.asyncio()
 async def test_search_photos_passes_dates_and_pagination_on_project_route() -> None:
     """Date and pagination filters must travel through the project-scoped path,
     not get dropped when project_id is supplied."""
@@ -649,7 +624,6 @@ async def test_search_photos_passes_dates_and_pagination_on_project_route() -> N
     assert params["per_page"] == 25
 
 
-@pytest.mark.asyncio()
 async def test_delete_photo() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -664,7 +638,6 @@ async def test_delete_photo() -> None:
     client.delete.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_list_photo_tags() -> None:
     service = CompanyCamService(access_token="test-token")
     tags = [{"id": "1", "display_value": "Kitchen", "value": "kitchen"}]
@@ -681,7 +654,6 @@ async def test_list_photo_tags() -> None:
     assert result[0].display_value == "Kitchen"
 
 
-@pytest.mark.asyncio()
 async def test_add_photo_tags() -> None:
     service = CompanyCamService(access_token="test-token")
     tags = [
@@ -702,7 +674,6 @@ async def test_add_photo_tags() -> None:
     assert body == {"tags": ["before", "kitchen"]}
 
 
-@pytest.mark.asyncio()
 async def test_list_photo_comments() -> None:
     service = CompanyCamService(access_token="test-token")
     comments = [{"id": "1", "content": "Nice shot"}]
@@ -718,7 +689,6 @@ async def test_list_photo_comments() -> None:
     assert len(result) == 1
 
 
-@pytest.mark.asyncio()
 async def test_add_photo_comment() -> None:
     service = CompanyCamService(access_token="test-token")
     comment = {"id": "3", "content": "Check this", "creator_name": "Bot"}
@@ -741,7 +711,6 @@ async def test_add_photo_comment() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_checklist_templates() -> None:
     service = CompanyCamService(access_token="test-token")
     templates = [{"id": "1", "name": "Roof Inspection"}]
@@ -758,7 +727,6 @@ async def test_list_checklist_templates() -> None:
     assert result[0].name == "Roof Inspection"
 
 
-@pytest.mark.asyncio()
 async def test_list_project_checklists() -> None:
     service = CompanyCamService(access_token="test-token")
     checklists = [{"id": "10", "name": "Inspection", "project_id": "42"}]
@@ -775,7 +743,6 @@ async def test_list_project_checklists() -> None:
     assert result[0].name == "Inspection"
 
 
-@pytest.mark.asyncio()
 async def test_create_project_checklist() -> None:
     service = CompanyCamService(access_token="test-token")
     checklist = {"id": "20", "name": "Roof Survey", "project_id": "42"}
@@ -793,7 +760,6 @@ async def test_create_project_checklist() -> None:
     assert body["checklist_template_id"] == "tmpl-1"
 
 
-@pytest.mark.asyncio()
 async def test_get_checklist() -> None:
     service = CompanyCamService(access_token="test-token")
     checklist = {
@@ -831,7 +797,6 @@ async def test_get_checklist() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_search_projects_pagination() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -848,7 +813,6 @@ async def test_search_projects_pagination() -> None:
     assert params["per_page"] == 10
 
 
-@pytest.mark.asyncio()
 async def test_list_project_photos_pagination() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -870,7 +834,6 @@ async def test_list_project_photos_pagination() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_companycam_ask_tools_have_approval_policy() -> None:
     """Regression: every CompanyCam tool with default_permission='ask' must have
     an ApprovalPolicy on the Tool object so the runtime actually enforces it.
@@ -922,7 +885,6 @@ async def test_companycam_ask_tools_have_approval_policy() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_get_project_404() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -936,7 +898,6 @@ async def test_get_project_404() -> None:
             await service.get_project("nonexistent")
 
 
-@pytest.mark.asyncio()
 async def test_delete_photo_404() -> None:
     service = CompanyCamService(access_token="test-token")
 
@@ -1076,7 +1037,6 @@ def _get_tool(tools: list, name: str) -> Any:
     raise AssertionError(f"tool {name} not found")
 
 
-@pytest.mark.asyncio()
 async def test_receipt_create_project_is_clean() -> None:
     """Receipt for create_project: human name, full URL, no raw id."""
     from backend.app.agent.tools.names import ToolName
@@ -1096,7 +1056,6 @@ async def test_receipt_create_project_is_clean() -> None:
     assert result.receipt.target == "Smith Residence"
 
 
-@pytest.mark.asyncio()
 async def test_receipt_archive_project_is_clean() -> None:
     """Receipt for archive_project (void return) uses generic target + URL from id."""
     from backend.app.agent.tools.names import ToolName
@@ -1109,7 +1068,6 @@ async def test_receipt_archive_project_is_clean() -> None:
     assert result.receipt.target == "project"
 
 
-@pytest.mark.asyncio()
 async def test_receipt_delete_project_is_clean_no_url() -> None:
     """Delete receipt: generic target, no URL (entity is gone)."""
     from backend.app.agent.tools.names import ToolName
@@ -1122,7 +1080,6 @@ async def test_receipt_delete_project_is_clean_no_url() -> None:
     assert result.receipt.target == "project"
 
 
-@pytest.mark.asyncio()
 async def test_receipt_update_notepad_is_clean() -> None:
     from backend.app.agent.tools.names import ToolName
 
@@ -1133,7 +1090,6 @@ async def test_receipt_update_notepad_is_clean() -> None:
     _assert_receipt_clean(result.receipt, expect_url=True)
 
 
-@pytest.mark.asyncio()
 async def test_receipt_add_comment_uses_parent_url() -> None:
     """Comments have no own URL. The receipt links to the parent entity."""
     from backend.app.agent.tools.names import ToolName
@@ -1154,7 +1110,6 @@ async def test_receipt_add_comment_uses_parent_url() -> None:
     assert "projects/388472672" in result.receipt.url
 
 
-@pytest.mark.asyncio()
 async def test_receipt_add_comment_truncates_long_content() -> None:
     """A 500-char comment never reaches the iMessage footer intact."""
     from backend.app.agent.tools.names import ToolName
@@ -1174,7 +1129,6 @@ async def test_receipt_add_comment_truncates_long_content() -> None:
     assert result.receipt.target.endswith("\u2026")
 
 
-@pytest.mark.asyncio()
 async def test_receipt_tag_photo_is_clean() -> None:
     from backend.app.agent.tools.names import ToolName
 
@@ -1194,7 +1148,6 @@ async def test_receipt_tag_photo_is_clean() -> None:
     assert result.receipt.target == "kitchen, demo"
 
 
-@pytest.mark.asyncio()
 async def test_receipt_delete_photo_is_clean_no_url() -> None:
     from backend.app.agent.tools.names import ToolName
 
@@ -1207,7 +1160,6 @@ async def test_receipt_delete_photo_is_clean_no_url() -> None:
     assert result.receipt.target == "photo"
 
 
-@pytest.mark.asyncio()
 async def test_receipt_create_checklist_is_clean() -> None:
     from backend.app.agent.tools.names import ToolName
 
@@ -1225,7 +1177,6 @@ async def test_receipt_create_checklist_is_clean() -> None:
     assert result.receipt.target == "Rough-in inspection"
 
 
-@pytest.mark.asyncio()
 async def test_receipt_upload_photo_uses_app_url() -> None:
     """Regression: upload receipt must link to the app, not the CDN image."""
     from backend.app.agent.tools.names import ToolName
@@ -1278,7 +1229,6 @@ async def test_receipt_upload_photo_uses_app_url() -> None:
     assert result.receipt.url not in result.content
 
 
-@pytest.mark.asyncio()
 async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
     """Regression: duplicate-photo receipt must link to the app, not the CDN."""
     from backend.app.agent.tools.names import ToolName
@@ -1325,7 +1275,6 @@ async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
     assert "photos/39951388" in result.receipt.url
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_keeps_staging_on_success(test_user: User) -> None:
     """A successful upload must NOT evict the staged bytes.
 
@@ -1394,7 +1343,6 @@ async def test_upload_photo_keeps_staging_on_success(test_user: User) -> None:
         await media_staging.clear_user(user_id)
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_keeps_staging_on_duplicate(test_user: User) -> None:
     """``duplicate`` response from CompanyCam must NOT evict the staged bytes.
 
@@ -1456,7 +1404,6 @@ async def test_upload_photo_keeps_staging_on_duplicate(test_user: User) -> None:
         await media_staging.clear_user(user_id)
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_keeps_staging_on_upload_exception(test_user: User) -> None:
     """If the upload itself raises, the staged bytes must remain so the
     user (or the agent on retry) can try again. The eviction spy is kept
@@ -1510,7 +1457,6 @@ async def test_upload_photo_keeps_staging_on_upload_exception(test_user: User) -
         await media_staging.clear_user(user_id)
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_keeps_staging_on_processing_error(test_user: User) -> None:
     """Regression #1282: ``processing_error`` means CompanyCam could not
     fetch the temp URL. A retry can succeed if the connectivity issue
@@ -1591,7 +1537,6 @@ def test_upload_photo_concurrency_group_serializes_per_project() -> None:
     assert tool.concurrency_group({}) is None, "missing project_id should not block siblings"
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_strips_dict_description() -> None:
     """Regression: LLM may pass a dict repr as the photo description.
     The tool must strip it before sending to CompanyCam so the project
@@ -1644,7 +1589,6 @@ async def test_upload_photo_strips_dict_description() -> None:
     assert call_kwargs.kwargs.get("description", "") == ""
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_can_reuse_saved_file_from_storage(test_user: User) -> None:
     """Saved photos should be reusable when the agent quotes their storage path.
 
@@ -1704,7 +1648,6 @@ async def test_upload_photo_can_reuse_saved_file_from_storage(test_user: User) -
     assert create_temp.call_args.args[0] == b"saved-jpg"
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_finds_staged_bytes_after_prior_storage_upload(
     test_user: User,
 ) -> None:
@@ -1778,7 +1721,6 @@ async def test_upload_photo_finds_staged_bytes_after_prior_storage_upload(
         await media_staging.clear_user(user_id)
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_idempotent_on_same_handle_retry(test_user: User) -> None:
     """A second CompanyCam upload for the same handle returns the existing receipt.
 
@@ -1828,7 +1770,6 @@ async def test_upload_photo_idempotent_on_same_handle_retry(test_user: User) -> 
         await media_staging.clear_user(user_id)
 
 
-@pytest.mark.asyncio()
 async def test_receipt_rendered_output_has_no_raw_ids() -> None:
     """End-to-end: a grouped footer of five actions on one project
     never surfaces a raw CompanyCam id in the rendered output."""
@@ -1909,7 +1850,6 @@ async def test_receipt_rendered_output_has_no_raw_ids() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_rejects_empty_original_url() -> None:
     """Option C: empty ``original_url`` must hit a clear validation error.
 
@@ -1933,7 +1873,6 @@ async def test_upload_photo_rejects_empty_original_url() -> None:
     service.upload_photo.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_idempotent_retry_after_first_upload(
     test_user: User,
 ) -> None:
@@ -2007,7 +1946,6 @@ async def test_upload_photo_idempotent_retry_after_first_upload(
         await media_staging.clear_user(user_id)
 
 
-@pytest.mark.asyncio()
 async def test_upload_photo_records_duplicate_status_for_retry(test_user: User) -> None:
     """When CompanyCam dedupes the first upload, a retry on the same handle
     still surfaces the duplicate receipt (no spurious ``No photo`` error).
@@ -2204,7 +2142,6 @@ async def _run_companycam_receipt_tools() -> list[ToolResult]:
     return results
 
 
-@pytest.mark.asyncio()
 async def test_invariant_no_url_duplication_across_companycam_tools() -> None:
     """For every CompanyCam tool returning a ToolReceipt with a URL,
     ToolResult.content must not contain that URL. Regression for #1069."""
@@ -2215,7 +2152,6 @@ async def test_invariant_no_url_duplication_across_companycam_tools() -> None:
         _assert_no_url_duplication(result)
 
 
-@pytest.mark.asyncio()
 async def test_two_photo_upload_renders_each_url_exactly_once() -> None:
     """Regression for #1069 (seq 112): a turn that uploads two photos must
     produce a final reply where each photo URL appears exactly once.

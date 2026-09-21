@@ -12,7 +12,6 @@ def publish_outbound() -> AsyncMock:
     return AsyncMock()
 
 
-@pytest.mark.asyncio()
 async def test_send_media_reply_rejects_empty_url(
     publish_outbound: AsyncMock,
 ) -> None:
@@ -25,7 +24,6 @@ async def test_send_media_reply_rejects_empty_url(
     publish_outbound.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_send_media_reply_tool(publish_outbound: AsyncMock) -> None:
     """send_media_reply tool should publish an OutboundMessage with media."""
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
@@ -43,7 +41,6 @@ async def test_send_media_reply_tool(publish_outbound: AsyncMock) -> None:
     assert msg.channel == "telegram"
 
 
-@pytest.mark.asyncio()
 async def test_send_media_reply_accepts_local_file(
     publish_outbound: AsyncMock,
     tmp_path: Path,
@@ -60,7 +57,6 @@ async def test_send_media_reply_accepts_local_file(
     publish_outbound.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_send_media_reply_rejects_invalid_url(publish_outbound: AsyncMock) -> None:
     """send_media_reply should reject a URL without protocol that isn't a local file."""
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
@@ -74,7 +70,6 @@ async def test_send_media_reply_rejects_invalid_url(publish_outbound: AsyncMock)
     publish_outbound.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_send_media_reply_rejects_bare_domain(publish_outbound: AsyncMock) -> None:
     """send_media_reply should reject a URL like 'example.com/file.pdf' (no protocol)."""
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
@@ -88,7 +83,6 @@ async def test_send_media_reply_rejects_bare_domain(publish_outbound: AsyncMock)
     publish_outbound.assert_not_called()
 
 
-@pytest.mark.asyncio()
 async def test_create_messaging_tools_exposes_only_send_media_reply(
     publish_outbound: AsyncMock,
 ) -> None:

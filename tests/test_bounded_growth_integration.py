@@ -91,7 +91,6 @@ def _huge() -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_write_file_rejects_over_budget_user_md(test_user: User) -> None:
     write_fn = _get_tool_fn(test_user.id, "write_file")
     result = await write_fn(path="USER.md", content=_huge())
@@ -100,7 +99,6 @@ async def test_write_file_rejects_over_budget_user_md(test_user: User) -> None:
     assert "exceeds" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_write_file_rejects_over_budget_soul_md(test_user: User) -> None:
     write_fn = _get_tool_fn(test_user.id, "write_file")
     result = await write_fn(path="SOUL.md", content=_huge())
@@ -108,7 +106,6 @@ async def test_write_file_rejects_over_budget_soul_md(test_user: User) -> None:
     assert "SOUL.md" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_write_file_rejects_over_budget_heartbeat_md(test_user: User) -> None:
     write_fn = _get_tool_fn(test_user.id, "write_file")
     result = await write_fn(path="HEARTBEAT.md", content=_huge())
@@ -116,7 +113,6 @@ async def test_write_file_rejects_over_budget_heartbeat_md(test_user: User) -> N
     assert "HEARTBEAT.md" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_write_file_rejects_over_budget_memory_md(test_user: User) -> None:
     write_fn = _get_tool_fn(test_user.id, "write_file")
     result = await write_fn(path="memory/MEMORY.md", content=_huge())
@@ -124,7 +120,6 @@ async def test_write_file_rejects_over_budget_memory_md(test_user: User) -> None
     assert "MEMORY.md" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_write_file_refuses_to_rewrite_history_md(test_user: User) -> None:
     """HISTORY.md must not be writable via write_file: the append-with-window
     invariant lives in append_history, and a full rewrite would silently
@@ -136,7 +131,6 @@ async def test_write_file_refuses_to_rewrite_history_md(test_user: User) -> None
     assert "append" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_write_file_under_budget_still_succeeds(test_user: User) -> None:
     """Sanity: well-under-budget writes are unchanged."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
@@ -144,7 +138,6 @@ async def test_write_file_under_budget_still_succeeds(test_user: User) -> None:
     assert result.is_error is False
 
 
-@pytest.mark.asyncio()
 async def test_write_file_rejects_over_budget_disk_bootstrap_md(test_user: User) -> None:
     """BOOTSTRAP.md is in the registry but lives on disk, so it
     exercises the third branch in write_file (after column-backed and
@@ -155,7 +148,6 @@ async def test_write_file_rejects_over_budget_disk_bootstrap_md(test_user: User)
     assert "BOOTSTRAP.md" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_write_file_unknown_disk_markdown_unconstrained(test_user: User) -> None:
     """Unknown disk markdown (scratch notes) is not in the registry and
     must not be policed by the cap. The registry is opt-in; arbitrary
@@ -170,7 +162,6 @@ async def test_write_file_unknown_disk_markdown_unconstrained(test_user: User) -
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_edit_file_rejects_when_replacement_blows_budget(test_user: User) -> None:
     """An edit that grows the file past the budget must be rejected,
     not silently truncated."""
@@ -189,7 +180,6 @@ async def test_edit_file_rejects_when_replacement_blows_budget(test_user: User) 
         assert user.user_text == seeded
 
 
-@pytest.mark.asyncio()
 async def test_edit_file_refuses_history_md(test_user: User) -> None:
     edit_fn = _get_tool_fn(test_user.id, "edit_file")
     result = await edit_fn(path="memory/HISTORY.md", old_text="anything", new_text="something")
@@ -202,7 +192,6 @@ async def test_edit_file_refuses_history_md(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_write_memory_async_raises_on_over_budget(test_user: User) -> None:
     reset_memory_stores()
     store = get_memory_store(test_user.id)
@@ -210,7 +199,6 @@ async def test_write_memory_async_raises_on_over_budget(test_user: User) -> None
         await store.write_memory_async(_huge())
 
 
-@pytest.mark.asyncio()
 async def test_write_user_async_raises_on_over_budget(test_user: User) -> None:
     reset_memory_stores()
     store = get_memory_store(test_user.id)
@@ -219,7 +207,6 @@ async def test_write_user_async_raises_on_over_budget(test_user: User) -> None:
         await store.write_user_async(_huge())
 
 
-@pytest.mark.asyncio()
 async def test_write_soul_async_raises_on_over_budget(test_user: User) -> None:
     reset_memory_stores()
     store = get_memory_store(test_user.id)
@@ -232,7 +219,6 @@ async def test_write_soul_async_raises_on_over_budget(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_append_history_keeps_storage_bounded_across_many_appends(
     test_user: User,
 ) -> None:
@@ -264,7 +250,6 @@ async def test_append_history_keeps_storage_bounded_across_many_appends(
     assert f"iter={iterations - 1:04d}" in history, "latest entry should be retained"
 
 
-@pytest.mark.asyncio()
 async def test_append_history_preserves_lock_semantics(test_user: User) -> None:
     """The locked append continues to return the row's full plaintext
     so the compaction audit can record an accurate post-append
@@ -282,7 +267,6 @@ async def test_append_history_preserves_lock_semantics(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_build_user_section_truncates_legacy_over_budget_row(
     test_user: User,
 ) -> None:
@@ -301,7 +285,6 @@ async def test_build_user_section_truncates_legacy_over_budget_row(
     assert section.startswith("[truncated:")
 
 
-@pytest.mark.asyncio()
 async def test_build_soul_prompt_truncates_legacy_over_budget_row(
     test_user: User,
 ) -> None:
@@ -317,7 +300,6 @@ async def test_build_soul_prompt_truncates_legacy_over_budget_row(
     assert section.startswith("[truncated:")
 
 
-@pytest.mark.asyncio()
 async def test_build_memory_section_truncates_legacy_over_budget_row(
     test_user: User,
 ) -> None:
@@ -334,7 +316,6 @@ async def test_build_memory_section_truncates_legacy_over_budget_row(
     assert section.startswith("[truncated:")
 
 
-@pytest.mark.asyncio()
 async def test_build_memory_section_under_budget_passes_through(
     test_user: User,
 ) -> None:

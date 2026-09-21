@@ -74,7 +74,6 @@ async def _get_bearer(client: httpx.AsyncClient) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_token_endpoint_returns_15_minute_bearer(client: httpx.AsyncClient) -> None:
     resp = await client.post(
         "/connect/token",
@@ -91,7 +90,6 @@ async def test_token_endpoint_returns_15_minute_bearer(client: httpx.AsyncClient
     assert body["expires_in"] == ACCESS_TOKEN_TTL_SECONDS
 
 
-@pytest.mark.asyncio()
 async def test_token_endpoint_rejects_other_grants(client: httpx.AsyncClient) -> None:
     resp = await client.post(
         "/connect/token",
@@ -105,7 +103,6 @@ async def test_token_endpoint_rejects_other_grants(client: httpx.AsyncClient) ->
     assert resp.json()["error"] == "unsupported_grant_type"
 
 
-@pytest.mark.asyncio()
 async def test_token_endpoint_requires_client_credentials(client: httpx.AsyncClient) -> None:
     resp = await client.post(
         "/connect/token",
@@ -120,7 +117,6 @@ async def test_token_endpoint_requires_client_credentials(client: httpx.AsyncCli
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_resource_requires_bearer(client: httpx.AsyncClient) -> None:
     resp = await client.get(f"/crm/v2/tenant/{DEFAULT_TENANT_ID}/customers")
     assert resp.status_code == 401
@@ -129,7 +125,6 @@ async def test_resource_requires_bearer(client: httpx.AsyncClient) -> None:
     assert "Authorization" in body["detail"]
 
 
-@pytest.mark.asyncio()
 async def test_resource_requires_app_key(
     backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
 ) -> None:
@@ -150,7 +145,6 @@ async def test_resource_requires_app_key(
     assert "ST-App-Key" in resp.json()["detail"]
 
 
-@pytest.mark.asyncio()
 async def test_expired_token_returns_401(
     backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
 ) -> None:
@@ -168,7 +162,6 @@ async def test_expired_token_returns_401(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_customers_list_shape(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -189,7 +182,6 @@ async def test_customers_list_shape(client: httpx.AsyncClient) -> None:
     assert {"street", "city", "state", "zip", "country"} <= set(first["address"].keys())
 
 
-@pytest.mark.asyncio()
 async def test_customers_search_by_name(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -203,7 +195,6 @@ async def test_customers_search_by_name(client: httpx.AsyncClient) -> None:
     assert body["data"][0]["name"] == "Steelbrook Property Group"
 
 
-@pytest.mark.asyncio()
 async def test_customers_search_by_phone(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     # Search using a phone fragment matching one of the seed contacts.
@@ -217,7 +208,6 @@ async def test_customers_search_by_phone(client: httpx.AsyncClient) -> None:
     assert body["data"][0]["name"] == "Marcus Chen"
 
 
-@pytest.mark.asyncio()
 async def test_customer_get_by_id(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     cust_id = next(iter(iter_seed_customer_ids()))
@@ -230,7 +220,6 @@ async def test_customer_get_by_id(client: httpx.AsyncClient) -> None:
     assert body["id"] == cust_id
 
 
-@pytest.mark.asyncio()
 async def test_customer_get_missing_returns_404(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -242,7 +231,6 @@ async def test_customer_get_missing_returns_404(client: httpx.AsyncClient) -> No
     assert body["status"] == 404
 
 
-@pytest.mark.asyncio()
 async def test_customer_contacts_subresource(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -256,7 +244,6 @@ async def test_customer_contacts_subresource(client: httpx.AsyncClient) -> None:
     assert {"id", "type", "value"} <= set(contact.keys())
 
 
-@pytest.mark.asyncio()
 async def test_customers_search_by_city(client: httpx.AsyncClient) -> None:
     """Address-level filters do case-insensitive substring match."""
     bearer = await _get_bearer(client)
@@ -270,7 +257,6 @@ async def test_customers_search_by_city(client: httpx.AsyncClient) -> None:
     assert all("pittsburgh" in c["address"]["city"].lower() for c in body["data"])
 
 
-@pytest.mark.asyncio()
 async def test_customers_search_by_state(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -284,7 +270,6 @@ async def test_customers_search_by_state(client: httpx.AsyncClient) -> None:
     assert all(c["address"]["state"] == "PA" for c in body["data"])
 
 
-@pytest.mark.asyncio()
 async def test_customers_search_by_unit(client: httpx.AsyncClient) -> None:
     """Optional address fields (``unit``) match only against records that have them."""
     bearer = await _get_bearer(client)
@@ -299,7 +284,6 @@ async def test_customers_search_by_unit(client: httpx.AsyncClient) -> None:
         assert "suite" in (c["address"].get("unit") or "").lower()
 
 
-@pytest.mark.asyncio()
 async def test_customers_modified_on_or_after_filter(
     backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
 ) -> None:
@@ -320,7 +304,6 @@ async def test_customers_modified_on_or_after_filter(
     assert body["data"][0]["id"] == backend.customers[0]["id"]
 
 
-@pytest.mark.asyncio()
 async def test_jobs_completed_date_range(
     backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
 ) -> None:
@@ -339,7 +322,6 @@ async def test_jobs_completed_date_range(
     assert body["totalCount"] == 0
 
 
-@pytest.mark.asyncio()
 async def test_customers_sort_descending_by_id(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -352,7 +334,6 @@ async def test_customers_sort_descending_by_id(client: httpx.AsyncClient) -> Non
     assert ids == sorted(ids, reverse=True)
 
 
-@pytest.mark.asyncio()
 async def test_appointments_sort_ascending_by_start(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -365,7 +346,6 @@ async def test_appointments_sort_ascending_by_start(client: httpx.AsyncClient) -
     assert starts == sorted(starts)
 
 
-@pytest.mark.asyncio()
 async def test_include_total_false_returns_minus_one(client: httpx.AsyncClient) -> None:
     """When the caller suppresses the count, the envelope returns -1."""
     bearer = await _get_bearer(client)
@@ -380,7 +360,6 @@ async def test_include_total_false_returns_minus_one(client: httpx.AsyncClient) 
     assert body["data"]
 
 
-@pytest.mark.asyncio()
 async def test_customers_pagination(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -400,7 +379,6 @@ async def test_customers_pagination(client: httpx.AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_jobs_list_shape(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -435,7 +413,6 @@ async def test_jobs_list_shape(client: httpx.AsyncClient) -> None:
         assert field_name in first, f"missing {field_name}"
 
 
-@pytest.mark.asyncio()
 async def test_jobs_filter_by_status(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -449,7 +426,6 @@ async def test_jobs_filter_by_status(client: httpx.AsyncClient) -> None:
     assert statuses  # not empty
 
 
-@pytest.mark.asyncio()
 async def test_jobs_filter_by_customer(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -462,7 +438,6 @@ async def test_jobs_filter_by_customer(client: httpx.AsyncClient) -> None:
     assert body["totalCount"] >= 1
 
 
-@pytest.mark.asyncio()
 async def test_job_get_by_id(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     job_id = next(iter(iter_seed_job_ids()))
@@ -474,7 +449,6 @@ async def test_job_get_by_id(client: httpx.AsyncClient) -> None:
     assert resp.json()["id"] == job_id
 
 
-@pytest.mark.asyncio()
 async def test_job_get_missing_returns_404(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -489,7 +463,6 @@ async def test_job_get_missing_returns_404(client: httpx.AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_post_job_note_round_trips(
     backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
 ) -> None:
@@ -516,7 +489,6 @@ async def test_post_job_note_round_trips(
     assert any(n["text"].startswith("Test note") for n in notes)
 
 
-@pytest.mark.asyncio()
 async def test_post_job_note_validates_text(
     backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
 ) -> None:
@@ -530,7 +502,6 @@ async def test_post_job_note_validates_text(
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio()
 async def test_post_job_note_missing_job_404(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.post(
@@ -546,7 +517,6 @@ async def test_post_job_note_missing_job_404(client: httpx.AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_appointments_list_shape(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -575,7 +545,6 @@ async def test_appointments_list_shape(client: httpx.AsyncClient) -> None:
     assert appt["technicianIds"], "every appointment should have at least one tech"
 
 
-@pytest.mark.asyncio()
 async def test_appointments_filter_by_date_range(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     day_start = SEED_TODAY.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -595,7 +564,6 @@ async def test_appointments_filter_by_date_range(client: httpx.AsyncClient) -> N
         assert appt["start"].startswith(SEED_TODAY.strftime("%Y-%m-%d"))
 
 
-@pytest.mark.asyncio()
 async def test_appointments_filter_by_status(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(
@@ -614,7 +582,6 @@ async def test_appointments_filter_by_status(client: httpx.AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_force_rate_limit_returns_429(
     backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
 ) -> None:
@@ -639,7 +606,6 @@ async def test_force_rate_limit_returns_429(
     assert third.status_code == 200
 
 
-@pytest.mark.asyncio()
 async def test_rate_limit_does_not_affect_token_endpoint(
     backend: ServiceTitanFakeBackend, client: httpx.AsyncClient
 ) -> None:
@@ -660,7 +626,6 @@ async def test_rate_limit_does_not_affect_token_endpoint(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_other_tenant_returns_empty_collection(client: httpx.AsyncClient) -> None:
     bearer = await _get_bearer(client)
     resp = await client.get(

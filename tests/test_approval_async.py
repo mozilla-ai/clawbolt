@@ -25,7 +25,6 @@ import contextlib
 import time
 import uuid
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from backend.app.agent.approval import (
@@ -41,7 +40,6 @@ from backend.app.models import User
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_set_permission_persists_and_reads_back(
     async_test_user: User,
 ) -> None:
@@ -54,7 +52,6 @@ async def test_set_permission_persists_and_reads_back(
     assert data["tools"]["send_media_reply"] == "never"
 
 
-@pytest.mark.asyncio()
 async def test_ensure_complete_backfills_missing_tools(
     async_test_user: User,
 ) -> None:
@@ -66,7 +63,6 @@ async def test_ensure_complete_backfills_missing_tools(
     assert len(data["tools"]) > 0
 
 
-@pytest.mark.asyncio()
 async def test_check_permission_resolves_resource_then_tool(
     async_test_user: User,
 ) -> None:
@@ -87,7 +83,6 @@ async def test_check_permission_resolves_resource_then_tool(
     assert level == PermissionLevel.ASK
 
 
-@pytest.mark.asyncio()
 async def test_reset_permissions_writes_defaults(
     async_test_user: User,
 ) -> None:
@@ -152,7 +147,6 @@ class TestApprovalLockSerializationAsync:
             await db.commit()
             result[f"{label}_committed"] = time.monotonic()
 
-    @pytest.mark.asyncio()
     async def test_same_user_lock_serializes_concurrent_writers(
         self,
         _pg_async_engine: AsyncEngine,
@@ -196,7 +190,6 @@ class TestApprovalLockSerializationAsync:
         b_release.set()
         await asyncio.wait_for(task_b, timeout=self._ACQUIRE_TIMEOUT_S)
 
-    @pytest.mark.asyncio()
     async def test_different_users_do_not_contend(
         self,
         _pg_async_engine: AsyncEngine,
@@ -254,7 +247,6 @@ def test_user_permissions_lock_key_is_stable() -> None:
 _ISO_CANARY_USER_ID = f"approval-async-iso-{uuid.uuid4().hex[:12]}"
 
 
-@pytest.mark.asyncio()
 async def test_async_isolation_rolls_back_between_tests_part_a(
     async_test_user: User,
 ) -> None:
@@ -266,7 +258,6 @@ async def test_async_isolation_rolls_back_between_tests_part_a(
     assert data["tools"]["send_media_reply"] == "never"
 
 
-@pytest.mark.asyncio()
 async def test_async_isolation_rolls_back_between_tests_part_b(
     async_test_user: User,
 ) -> None:

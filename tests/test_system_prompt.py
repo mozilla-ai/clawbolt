@@ -140,7 +140,6 @@ class TestBuildParts:
         assert "cache_control" in blocks[0]
         assert blocks[0]["text"] == "Just a plain prompt"
 
-    @pytest.mark.asyncio
     async def test_agent_prompt_parts_split_dynamic_out(self) -> None:
         """build_agent_system_prompt_parts returns memory in the dynamic half only."""
         user = MagicMock()
@@ -169,7 +168,6 @@ class TestSectionBuilders:
         result = build_identity_section(user)
         assert "Mike" in result
 
-    @pytest.mark.asyncio
     async def test_build_memory_section_with_content(self) -> None:
         """Should return memory context when available."""
         with patch(
@@ -180,7 +178,6 @@ class TestSectionBuilders:
             result = await build_memory_section(user_id="1")
         assert "John Doe" in result
 
-    @pytest.mark.asyncio
     async def test_build_memory_section_empty(self) -> None:
         """Should return placeholder when no memories exist."""
         with patch(
@@ -249,7 +246,6 @@ class TestBuildAgentSystemPrompt:
         ):
             yield
 
-    @pytest.mark.asyncio
     async def test_assembles_all_sections(self) -> None:
         """Full agent prompt should contain all key sections."""
         user = MagicMock()
@@ -279,7 +275,6 @@ class TestBuildAgentSystemPrompt:
         assert "save_fact" in result
         assert "Proactive Messaging" in result
 
-    @pytest.mark.asyncio
     async def test_tool_guidelines_live_in_dynamic_half(self) -> None:
         """Tool guidelines must sit in the dynamic half so that specialist
         activation mid-conversation does not bust the stable system-prompt
@@ -311,7 +306,6 @@ class TestBuildAgentSystemPrompt:
         assert "Tool Guidelines" not in stable
         assert "save_fact" not in stable
 
-    @pytest.mark.asyncio
     async def test_preamble_is_generic(self) -> None:
         """Agent prompt preamble should be generic (no assistant_name)."""
         user = MagicMock()
@@ -333,7 +327,6 @@ class TestBuildAgentSystemPrompt:
 
         assert "You are an AI assistant for solo tradespeople" in result
 
-    @pytest.mark.asyncio
     async def test_no_trade_guidance_in_prompt(self) -> None:
         """Agent prompt should not contain trade-specific guidance (removed from model)."""
         user = MagicMock()
@@ -357,7 +350,6 @@ class TestBuildAgentSystemPrompt:
         assert "Trade guidance" not in result
         assert "NEC codes" not in result
 
-    @pytest.mark.asyncio
     async def test_curly_braces_in_soul_text(self) -> None:
         """Soul text with curly braces should not break the prompt."""
         user = MagicMock()
@@ -435,7 +427,6 @@ class TestAgentSystemPromptExcludesTime:
         ):
             yield
 
-    @pytest.mark.asyncio
     async def test_agent_prompt_does_not_include_time(self) -> None:
         """System prompt should NOT include current time (moved to user message for caching)."""
         user = MagicMock()
@@ -576,7 +567,6 @@ class TestBuildUserSectionStripsIntegrations:
 
 
 class TestBuildIntegrationStatusSection:
-    @pytest.mark.asyncio
     async def test_renders_connected_and_not_connected(self) -> None:
         with patch(
             "backend.app.agent.tools.integration_tools.get_user_connected_integrations",
@@ -593,7 +583,6 @@ class TestBuildIntegrationStatusSection:
         assert "Not connected: appfolio_vendor, google_drive" in result
         assert "Authoritative" in result
 
-    @pytest.mark.asyncio
     async def test_empty_when_no_integrations_configured(self) -> None:
         """No section content when the deployment has zero integrations wired."""
         with patch(
@@ -604,7 +593,6 @@ class TestBuildIntegrationStatusSection:
             result = await build_integration_status_section("user-123")
         assert result == ""
 
-    @pytest.mark.asyncio
     async def test_renders_all_not_connected(self) -> None:
         """If nothing is connected, the section explicitly says so."""
         with patch(
@@ -618,7 +606,6 @@ class TestBuildIntegrationStatusSection:
 
 
 class TestAgentPromptIncludesLiveIntegrationStatus:
-    @pytest.mark.asyncio
     async def test_section_lands_in_dynamic_half(self) -> None:
         """The live integration status sits in the dynamic half.
 
@@ -659,7 +646,6 @@ class TestAgentPromptIncludesLiveIntegrationStatus:
         assert "Not connected: google_drive" in dynamic
         assert "## Connected Integrations" not in stable
 
-    @pytest.mark.asyncio
     async def test_heartbeat_prompt_includes_section(self) -> None:
         """The heartbeat-decision prompt also gets the live integration section.
 
@@ -692,7 +678,6 @@ class TestAgentPromptIncludesLiveIntegrationStatus:
         assert "Connected: google_calendar" in prompt
         assert "Not connected: google_drive" in prompt
 
-    @pytest.mark.asyncio
     async def test_heartbeat_prompt_omits_section_when_no_integrations(self) -> None:
         """When the deployment has no integrations configured, the section
         is suppressed entirely rather than rendering an empty heading."""

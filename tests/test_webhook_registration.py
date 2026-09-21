@@ -4,7 +4,6 @@ import socket
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
-import pytest
 
 from backend.app.services.webhook import (
     discover_tunnel_url,
@@ -18,7 +17,6 @@ CLOUDFLARED_QUICKTUNNEL_RESPONSE = {
 }
 
 
-@pytest.mark.asyncio
 async def test_discover_tunnel_url_success() -> None:
     """Returns HTTPS URL from cloudflared metrics API response."""
     mock_response = Mock()
@@ -38,7 +36,6 @@ async def test_discover_tunnel_url_success() -> None:
     assert url == "https://random-words.trycloudflare.com"
 
 
-@pytest.mark.asyncio
 async def test_discover_tunnel_url_retries_on_failure() -> None:
     """Retries when cloudflared isn't ready, then succeeds."""
     error_response = httpx.Response(status_code=502, request=httpx.Request("GET", "http://x"))
@@ -64,7 +61,6 @@ async def test_discover_tunnel_url_retries_on_failure() -> None:
     assert mock_client.get.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_discover_tunnel_url_returns_none_after_max_retries() -> None:
     """Returns None after exhausting retries."""
     with patch("backend.app.services.webhook.httpx.AsyncClient") as mock_client_cls:
@@ -80,7 +76,6 @@ async def test_discover_tunnel_url_returns_none_after_max_retries() -> None:
     assert mock_client.get.call_count == 3
 
 
-@pytest.mark.asyncio
 async def test_register_webhook_success() -> None:
     """Calls Telegram API and returns True on success."""
     mock_response = Mock()
@@ -110,7 +105,6 @@ async def test_register_webhook_success() -> None:
     assert call_kwargs.kwargs["json"]["secret_token"] == "mysecret"
 
 
-@pytest.mark.asyncio
 async def test_register_webhook_failure() -> None:
     """Handles API error and returns False."""
     with patch("backend.app.services.webhook.httpx.AsyncClient") as mock_client_cls:
@@ -128,7 +122,6 @@ async def test_register_webhook_failure() -> None:
     assert result is False
 
 
-@pytest.mark.asyncio
 async def test_wait_for_dns_success() -> None:
     """Returns True once hostname resolves."""
     with patch("backend.app.services.webhook.socket.getaddrinfo") as mock_dns:
@@ -138,7 +131,6 @@ async def test_wait_for_dns_success() -> None:
     assert result is True
 
 
-@pytest.mark.asyncio
 async def test_wait_for_dns_retries_then_succeeds() -> None:
     """Retries on gaierror, then succeeds."""
     with patch("backend.app.services.webhook.socket.getaddrinfo") as mock_dns:
@@ -153,7 +145,6 @@ async def test_wait_for_dns_retries_then_succeeds() -> None:
     assert mock_dns.call_count == 3
 
 
-@pytest.mark.asyncio
 async def test_wait_for_dns_exhausts_retries() -> None:
     """Returns False after max retries."""
     with patch("backend.app.services.webhook.socket.getaddrinfo") as mock_dns:

@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import datetime
 
-import pytest
-
 from backend.app.agent.compaction_note import build_pending_compaction_note
 from backend.app.agent.file_store import UserData
 from backend.app.database import db_session_async
@@ -75,13 +73,11 @@ async def _insert_event(
         return event.id
 
 
-@pytest.mark.asyncio()
 async def test_no_note_without_events(test_user: UserData) -> None:
     await _seed_session_with_messages(test_user.id, message_count=6)
     assert await build_pending_compaction_note(test_user.id) == ""
 
 
-@pytest.mark.asyncio()
 async def test_note_while_event_pending(test_user: UserData) -> None:
     """A recent pending event produces a summary of the covered rows."""
     await _seed_session_with_messages(test_user.id, message_count=6)
@@ -95,7 +91,6 @@ async def test_note_while_event_pending(test_user: UserData) -> None:
     assert "being written to your memory" in note
 
 
-@pytest.mark.asyncio()
 async def test_note_is_deterministic_across_turns(test_user: UserData) -> None:
     """The note is byte-identical while the same event stays pending."""
     await _seed_session_with_messages(test_user.id, message_count=6)
@@ -106,7 +101,6 @@ async def test_note_is_deterministic_across_turns(test_user: UserData) -> None:
     assert first == second != ""
 
 
-@pytest.mark.asyncio()
 async def test_no_note_after_completion(test_user: UserData) -> None:
     """Completed events stop producing the note: MEMORY.md has the facts."""
     await _seed_session_with_messages(test_user.id, message_count=6)
@@ -115,7 +109,6 @@ async def test_no_note_after_completion(test_user: UserData) -> None:
     assert await build_pending_compaction_note(test_user.id) == ""
 
 
-@pytest.mark.asyncio()
 async def test_no_note_for_stale_pending_event(test_user: UserData) -> None:
     """A long-stuck pending event must not pin a stale note forever."""
     await _seed_session_with_messages(test_user.id, message_count=6)
@@ -124,7 +117,6 @@ async def test_no_note_for_stale_pending_event(test_user: UserData) -> None:
     assert await build_pending_compaction_note(test_user.id) == ""
 
 
-@pytest.mark.asyncio()
 async def test_note_covers_multiple_pending_events(test_user: UserData) -> None:
     await _seed_session_with_messages(test_user.id, message_count=10)
     await _insert_event(test_user.id, min_seq=1, max_seq=3)

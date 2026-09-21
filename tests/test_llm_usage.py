@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from any_llm.types.messages import MessageResponse, MessageUsage
 from sqlalchemy import select
 
@@ -57,7 +56,6 @@ async def _read_usage_entries(user_id: str) -> list[dict[str, object]]:
         ]
 
 
-@pytest.mark.asyncio()
 async def test_log_llm_usage_saves(test_user: User) -> None:
     """log_llm_usage should persist token counts to the usage log."""
     response = _make_response_with_usage(prompt_tokens=200, completion_tokens=80, total_tokens=280)
@@ -74,7 +72,6 @@ async def test_log_llm_usage_saves(test_user: User) -> None:
     assert entries[0]["purpose"] == "agent_main"
 
 
-@pytest.mark.asyncio()
 async def test_log_llm_usage_zero_tokens(test_user: User) -> None:
     """log_llm_usage should handle zero token counts gracefully."""
     response = _make_response_with_usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
@@ -88,7 +85,6 @@ async def test_log_llm_usage_zero_tokens(test_user: User) -> None:
     assert entries[0]["total_tokens"] == 0
 
 
-@pytest.mark.asyncio()
 async def test_log_llm_usage_computes_total(test_user: User) -> None:
     """log_llm_usage should compute total_tokens as prompt + completion."""
     response = _make_response_with_usage(prompt_tokens=100, completion_tokens=50, total_tokens=0)
@@ -100,7 +96,6 @@ async def test_log_llm_usage_computes_total(test_user: User) -> None:
     assert entries[0]["total_tokens"] == 150
 
 
-@pytest.mark.asyncio()
 async def test_log_llm_usage_multiple_entries(test_user: User) -> None:
     """Multiple log_llm_usage calls should create separate entries."""
     for i in range(3):
@@ -118,7 +113,6 @@ async def test_log_llm_usage_multiple_entries(test_user: User) -> None:
     assert entries[2]["purpose"] == "purpose_2"
 
 
-@pytest.mark.asyncio()
 async def test_log_llm_usage_different_models(test_user: User) -> None:
     """log_llm_usage should correctly record different model names."""
     for model_name in ["model-a", "model-b", "model-c"]:
@@ -135,7 +129,6 @@ async def test_log_llm_usage_different_models(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_process_message_logs_usage(
     mock_amessages: MagicMock,
@@ -159,7 +152,6 @@ async def test_agent_process_message_logs_usage(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_log_llm_usage_cache_tokens_stored(test_user: User) -> None:
     """log_llm_usage should persist cache token fields when present."""
     response = _make_response_with_usage(prompt_tokens=500, completion_tokens=100)
@@ -174,7 +166,6 @@ async def test_log_llm_usage_cache_tokens_stored(test_user: User) -> None:
     assert entries[0]["cache_read_input_tokens"] == 300
 
 
-@pytest.mark.asyncio()
 async def test_log_llm_usage_cache_tokens_null_when_absent(test_user: User) -> None:
     """Cache token fields should be NULL when not set on the response."""
     response = _make_response_with_usage(prompt_tokens=100, completion_tokens=50)

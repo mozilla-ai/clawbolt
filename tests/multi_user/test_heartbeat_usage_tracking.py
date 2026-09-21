@@ -128,7 +128,6 @@ class TestHookRegistration:
 class TestHeartbeatEndToEnd:
     """End-to-end: OSS heartbeat run updates premium's UsageQuota via the hook."""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")

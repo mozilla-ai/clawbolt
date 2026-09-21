@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 from backend.app.agent.skills.loader import (
     _skill_instructions,
     extract_delivered_skills,
@@ -87,7 +85,6 @@ def test_load_all_skills_discovers_servicetitan() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_capabilities_includes_skill_instructions() -> None:
     """Looking up a category with a SKILL.md should include the SKILL guidance."""
     load_all_skills()
@@ -100,7 +97,6 @@ async def test_list_capabilities_includes_skill_instructions() -> None:
     assert "Common Workflows" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_capabilities_without_skill_instructions() -> None:
     """Looking up a category without a SKILL.md should just show the guidance message."""
     tool = create_list_capabilities_tool({"other_category": "Some tools"})
@@ -111,7 +107,6 @@ async def test_list_capabilities_without_skill_instructions() -> None:
     assert "SKILL" not in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_capabilities_listing_unchanged() -> None:
     """Listing categories (no category arg) should work as before."""
     tool = create_list_capabilities_tool({"quickbooks": "QB tools", "files": "File tools"})
@@ -121,7 +116,6 @@ async def test_list_capabilities_listing_unchanged() -> None:
     assert "files" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_capabilities_unknown_category() -> None:
     """Unknown categories should still return an error."""
     tool = create_list_capabilities_tool({"quickbooks": "QB tools"})
@@ -130,7 +124,6 @@ async def test_list_capabilities_unknown_category() -> None:
     assert "Unknown category" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_capabilities_result_carries_delivery_marker() -> None:
     """SKILL.md delivery must be tagged so the agent loop can detect it in history."""
     load_all_skills()

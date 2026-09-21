@@ -47,7 +47,6 @@ def test_default_mode_is_single_user() -> None:
     assert settings.auth_mode == "single_user"
 
 
-@pytest.mark.asyncio()
 async def test_single_user_resolves_without_credentials(
     async_db: async_sessionmaker,
 ) -> None:
@@ -57,7 +56,6 @@ async def test_single_user_resolves_without_credentials(
         assert user.user_id == LOCAL_USER_ID
 
 
-@pytest.mark.asyncio()
 async def test_single_user_ignores_a_registered_resolver(
     async_db: async_sessionmaker,
 ) -> None:
@@ -77,7 +75,6 @@ async def test_single_user_ignores_a_registered_resolver(
         assert user.user_id == LOCAL_USER_ID
 
 
-@pytest.mark.asyncio()
 async def test_multi_user_delegates_to_the_resolver(
     async_db: async_sessionmaker,
     monkeypatch: pytest.MonkeyPatch,
@@ -100,7 +97,6 @@ async def test_multi_user_delegates_to_the_resolver(
     assert seen == [request], "the resolver must receive the live request"
 
 
-@pytest.mark.asyncio()
 async def test_multi_user_propagates_resolver_rejection(
     async_db: async_sessionmaker,
     monkeypatch: pytest.MonkeyPatch,
@@ -119,7 +115,6 @@ async def test_multi_user_propagates_resolver_rejection(
     assert exc_info.value.detail == "Invalid token"
 
 
-@pytest.mark.asyncio()
 async def test_multi_user_without_credentials_refuses_rather_than_falling_back(
     async_db: async_sessionmaker,
     monkeypatch: pytest.MonkeyPatch,

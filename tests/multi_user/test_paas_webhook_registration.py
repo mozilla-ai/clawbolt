@@ -50,7 +50,6 @@ def _make_mock_channel(name: str, result: bool | None = None) -> MagicMock:
     return ch
 
 
-@pytest.mark.asyncio
 async def test_register_paas_webhook_called_for_all_channels() -> None:
     """Premium lifespan should schedule register_paas_webhook on every channel.
 
@@ -86,7 +85,6 @@ async def test_register_paas_webhook_called_for_all_channels() -> None:
     tg.register_paas_webhook.assert_called_once_with("https://app.clawbolt.ai")
 
 
-@pytest.mark.asyncio
 async def test_register_paas_webhook_skipped_on_localhost() -> None:
     """Premium lifespan should skip webhook registration on localhost."""
     bb = _make_mock_channel("bluebubbles", True)
@@ -111,7 +109,6 @@ async def test_register_paas_webhook_skipped_on_localhost() -> None:
     bb.register_paas_webhook.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_register_paas_webhook_none_is_silent() -> None:
     """Channels returning None (not configured) should not log anything."""
     webchat = _make_mock_channel("webchat", None)
@@ -136,7 +133,6 @@ async def test_register_paas_webhook_none_is_silent() -> None:
     webchat.register_paas_webhook.assert_called_once_with("https://app.clawbolt.ai")
 
 
-@pytest.mark.asyncio
 async def test_register_paas_webhook_failure_logs_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -166,7 +162,6 @@ async def test_register_paas_webhook_failure_logs_warning(
     assert any("bluebubbles webhook auto-registration failed" in msg for msg in caplog.messages)
 
 
-@pytest.mark.asyncio
 async def test_lifespan_calls_start_all_and_stop_all() -> None:
     """Lifespan should call manager.start_all() on startup and stop_all() on shutdown."""
     mock_manager = MagicMock()
@@ -186,7 +181,6 @@ async def test_lifespan_calls_start_all_and_stop_all() -> None:
     mock_manager.stop_all.assert_awaited_once()
 
 
-@pytest.mark.asyncio
 async def test_lifespan_starts_and_stops_oauth_refresh_scheduler() -> None:
     """Premium lifespan must start and stop the OAuth refresh scheduler.
 

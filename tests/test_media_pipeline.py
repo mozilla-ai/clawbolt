@@ -1,7 +1,5 @@
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from backend.app.agent import media_staging
 from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import (
@@ -23,7 +21,6 @@ def _make_media(
     )
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
 async def test_process_single_image_stages_without_vision(
     mock_vision: AsyncMock, test_user: User
@@ -47,7 +44,6 @@ async def test_process_single_image_stages_without_vision(
     await media_staging.clear_user(test_user.id)
 
 
-@pytest.mark.asyncio()
 async def test_process_text_only() -> None:
     """Text-only message (no media) should produce a simple context."""
     result = await process_message_media("Just a text message", [])
@@ -56,7 +52,6 @@ async def test_process_text_only() -> None:
     assert "Just a text message" in result.combined_context
 
 
-@pytest.mark.asyncio()
 async def test_text_only_message_has_no_wrapper() -> None:
     """Text-only messages pass through verbatim, without the "[Text message]:"
     delimiter. The wrapper only earns its keep next to media parts; alone it
@@ -65,7 +60,6 @@ async def test_text_only_message_has_no_wrapper() -> None:
     assert result.combined_context == "Yes"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
 async def test_text_with_media_keeps_wrapper(mock_vision: AsyncMock, test_user: User) -> None:
     """When media parts are present, the text keeps its delimiting wrapper."""
@@ -81,7 +75,6 @@ async def test_text_with_media_keeps_wrapper(mock_vision: AsyncMock, test_user: 
     await media_staging.clear_user(test_user.id)
 
 
-@pytest.mark.asyncio()
 async def test_process_unknown_media_type() -> None:
     """Unknown media type should be skipped gracefully with a placeholder."""
     result = await process_message_media("", [_make_media("application/octet-stream")])
@@ -89,7 +82,6 @@ async def test_process_unknown_media_type() -> None:
     assert result.media_results[0].category == "unknown"
 
 
-@pytest.mark.asyncio()
 @patch(
     "backend.app.media.vision.analyze_image",
     new_callable=AsyncMock,
@@ -102,7 +94,6 @@ async def test_run_vision_on_media_failure_produces_fallback(mock_vision: AsyncM
     assert result == VISION_FALLBACK
 
 
-@pytest.mark.asyncio()
 @patch(
     "backend.app.media.vision.analyze_image",
     new_callable=AsyncMock,
@@ -114,7 +105,6 @@ async def test_run_vision_on_media_timeout_produces_fallback(mock_vision: AsyncM
     assert result == VISION_FALLBACK
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
 async def test_image_document_classified_as_image(mock_vision: AsyncMock) -> None:
     """Images sent as documents with image/* MIME type should be classified as

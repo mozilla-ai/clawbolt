@@ -92,7 +92,6 @@ class TestCoreSpecialistClassification:
 class TestCreateCoreTools:
     """create_core_tools only returns tools from core factories."""
 
-    @pytest.mark.asyncio()
     async def test_only_core_tools_returned(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"))
@@ -100,7 +99,6 @@ class TestCreateCoreTools:
         names = {t.name for t in tools}
         assert names == {"send_media_reply", "read_file", "write_file"}
 
-    @pytest.mark.asyncio()
     async def test_specialist_tools_excluded(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"))
@@ -114,7 +112,6 @@ class TestCreateCoreTools:
 class TestAvailableSpecialistSummaries:
     """get_available_specialist_summaries filters by dependency satisfaction."""
 
-    @pytest.mark.asyncio()
     async def test_returns_all_specialists_when_deps_met(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(
@@ -126,7 +123,6 @@ class TestAvailableSpecialistSummaries:
         assert "heartbeat" in summaries
         assert "file" in summaries
 
-    @pytest.mark.asyncio()
     async def test_excludes_file_when_no_storage(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=None)
@@ -135,7 +131,6 @@ class TestAvailableSpecialistSummaries:
         assert "heartbeat" in summaries
         assert "file" not in summaries
 
-    @pytest.mark.asyncio()
     async def test_excludes_core_factories(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"))
@@ -147,7 +142,6 @@ class TestAvailableSpecialistSummaries:
 class TestListCapabilitiesTool:
     """The list_capabilities meta-tool returns correct information."""
 
-    @pytest.mark.asyncio
     async def test_list_all_categories(self) -> None:
         summaries = {
             "estimate": "Generate estimates",
@@ -159,7 +153,6 @@ class TestListCapabilitiesTool:
         assert "heartbeat" in result.content
         assert not result.is_error
 
-    @pytest.mark.asyncio
     async def test_lookup_known_category_returns_guidance(self) -> None:
         summaries = {"estimate": "Generate estimates"}
         tool = create_list_capabilities_tool(summaries)
@@ -167,7 +160,6 @@ class TestListCapabilitiesTool:
         assert "already loaded" in result.content.lower()
         assert not result.is_error
 
-    @pytest.mark.asyncio
     async def test_activate_unknown_category_returns_error(self) -> None:
         summaries = {"estimate": "Generate estimates"}
         tool = create_list_capabilities_tool(summaries)
@@ -175,7 +167,6 @@ class TestListCapabilitiesTool:
         assert result.is_error
         assert "estimate" in result.content  # hint about available categories
 
-    @pytest.mark.asyncio
     async def test_no_specialists_available(self) -> None:
         tool = create_list_capabilities_tool({})
         result = await tool.function(category=None)
@@ -196,7 +187,6 @@ class TestListCapabilitiesTool:
         assert "heartbeat" in tool.usage_hint
         assert "estimate" in tool.usage_hint
 
-    @pytest.mark.asyncio
     async def test_lookup_directs_llm_to_call_tool(self) -> None:
         """Looking up a category must explicitly direct the LLM to call the
         specific tool, and warn against claiming completion before the
@@ -288,7 +278,6 @@ class TestGetSpecialistFactoryForTool:
 class TestListCapabilitiesTelemetry:
     """list_capabilities with a non-null category logs a structured event."""
 
-    @pytest.mark.asyncio
     async def test_logs_lookup_when_category_provided(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -300,7 +289,6 @@ class TestListCapabilitiesTelemetry:
         assert "list_capabilities_lookup" in caplog.text
         assert "category=estimate" in caplog.text
 
-    @pytest.mark.asyncio
     async def test_does_not_log_when_category_is_none(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -311,7 +299,6 @@ class TestListCapabilitiesTelemetry:
         assert not result.is_error
         assert "list_capabilities_lookup" not in caplog.text
 
-    @pytest.mark.asyncio
     async def test_logs_unknown_category_as_lookup(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.INFO)
         summaries = {"estimate": "Generate estimates"}
@@ -326,7 +313,6 @@ class TestListCapabilitiesTelemetry:
 class TestSpecialistToolInvocationTelemetry:
     """Specialist tool invocations log a structured event with the category."""
 
-    @pytest.mark.asyncio
     async def test_logs_specialist_tool_invocation(self) -> None:
         """When a specialist tool is executed, the logger fires with tool and category."""
 
@@ -377,7 +363,6 @@ class TestSpecialistToolInvocationTelemetry:
             assert "test_tool" in str(args)
             assert "test_specialist" in str(args)
 
-    @pytest.mark.asyncio
     async def test_does_not_log_core_tool_invocation(self) -> None:
         """Core tools do not trigger the specialist telemetry log."""
 

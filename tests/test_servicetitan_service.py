@@ -52,14 +52,12 @@ def _force_fake_backend() -> Any:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_build_service_returns_none_without_credentials(
     async_test_user: Any,
 ) -> None:
     assert await build_service_for_user(async_test_user.id) is None
 
 
-@pytest.mark.asyncio()
 async def test_build_service_eagerly_refreshes_bearer(async_test_user: Any) -> None:
     """An expired row at build time should still produce a usable service."""
     user_id = async_test_user.id
@@ -99,7 +97,6 @@ def _seed_connected_credential() -> dict[str, Any]:
     }
 
 
-@pytest.mark.asyncio()
 async def test_request_sends_bearer_and_app_key_headers(async_test_user: Any) -> None:
     user_id = async_test_user.id
     await save_credentials(user_id, **_seed_connected_credential())
@@ -115,7 +112,6 @@ async def test_request_sends_bearer_and_app_key_headers(async_test_user: Any) ->
     assert payload["totalCount"] == 10  # seed customer count
 
 
-@pytest.mark.asyncio()
 async def test_request_refreshes_bearer_on_401(async_test_user: Any) -> None:
     """A stale bearer that the fake rejects should be refreshed once."""
     user_id = async_test_user.id
@@ -142,7 +138,6 @@ async def test_request_refreshes_bearer_on_401(async_test_user: Any) -> None:
     assert service.credential.access_token == fake_module.FAKE_TOKEN_VALUE
 
 
-@pytest.mark.asyncio()
 async def test_request_raises_for_unknown_path(async_test_user: Any) -> None:
     user_id = async_test_user.id
     await save_credentials(user_id, **_seed_connected_credential())
@@ -153,7 +148,6 @@ async def test_request_raises_for_unknown_path(async_test_user: Any) -> None:
         await service.get("/this/does/not/exist")
 
 
-@pytest.mark.asyncio()
 async def test_request_without_usable_credential_raises(async_test_user: Any) -> None:
     """A service built from an empty bearer that cannot be refreshed should fail loudly."""
     user_id = async_test_user.id
@@ -172,7 +166,6 @@ async def test_request_without_usable_credential_raises(async_test_user: Any) ->
         await service.get(f"/crm/v2/tenant/{service.tenant_id}/customers")
 
 
-@pytest.mark.asyncio()
 async def test_one_post_to_job_notes_round_trips(async_test_user: Any) -> None:
     """Smoke test: a POST also threads through the auth headers and fake."""
     user_id = async_test_user.id

@@ -78,7 +78,6 @@ def _get_tool(tools: list, name: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_customer() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -105,7 +104,6 @@ async def test_qb_create_customer() -> None:
     assert body["PrimaryEmailAddr"]["Address"] == "new@example.com"
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_customer_minimal() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -127,7 +125,6 @@ async def test_qb_create_customer_minimal() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_estimate() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -171,7 +168,6 @@ async def test_qb_create_estimate() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_invoice() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -201,7 +197,6 @@ async def test_qb_create_invoice() -> None:
     assert body["DueDate"] == "2026-04-15"
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_invoice_with_linked_estimate() -> None:
     """Creating an invoice with LinkedTxn (estimate-to-invoice workflow)."""
     svc = FakeQBService()
@@ -236,7 +231,6 @@ async def test_qb_create_invoice_with_linked_estimate() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_item() -> None:
     """Create a service Item in QuickBooks."""
     svc = FakeQBService()
@@ -263,7 +257,6 @@ async def test_qb_create_item() -> None:
     assert body["IncomeAccountRef"]["value"] == "1"
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_item_inventory() -> None:
     """Create an inventory Item with QtyOnHand."""
     svc = FakeQBService()
@@ -293,7 +286,6 @@ async def test_qb_create_item_inventory() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_rejects_disallowed_entity() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -305,7 +297,6 @@ async def test_qb_create_rejects_disallowed_entity() -> None:
     assert "not allowed" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_api_error() -> None:
     svc = FakeQBService()
     svc.create_entity = AsyncMock(side_effect=Exception("QB API error"))  # type: ignore[method-assign]
@@ -326,7 +317,6 @@ async def test_qb_create_api_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_qb_update_estimate() -> None:
     """Update an estimate with changed line items."""
     svc = FakeQBService()
@@ -361,7 +351,6 @@ async def test_qb_update_estimate() -> None:
     assert body["SyncToken"] == "0"
 
 
-@pytest.mark.asyncio()
 async def test_qb_update_customer() -> None:
     """Update a customer's contact info."""
     svc = FakeQBService()
@@ -390,7 +379,6 @@ async def test_qb_update_customer() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_qb_update_item() -> None:
     """Update an Item's name and price."""
     svc = FakeQBService()
@@ -419,7 +407,6 @@ async def test_qb_update_item() -> None:
     assert body["SyncToken"] == "0"
 
 
-@pytest.mark.asyncio()
 async def test_qb_update_rejects_disallowed_entity() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -491,7 +478,6 @@ def test_qb_create_params_json_string_of_non_object_raises() -> None:
         QBCreateParams.model_validate({"entity_type": "Customer", "data": json.dumps([1, 2, 3])})
 
 
-@pytest.mark.asyncio()
 async def test_qb_update_api_error() -> None:
     svc = FakeQBService()
     svc.update_entity = AsyncMock(side_effect=Exception("QB API error"))  # type: ignore[method-assign]
@@ -524,7 +510,6 @@ def test_qb_send_policy_offers_blanket_recipient_approval() -> None:
     assert tool.approval_policy.resource_noun == "recipients"
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_invoice_success() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -541,7 +526,6 @@ async def test_qb_send_invoice_success() -> None:
     assert svc.sent == [("Invoice", "42", "client@example.com")]
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_estimate_success() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -555,7 +539,6 @@ async def test_qb_send_estimate_success() -> None:
     assert svc.sent == [("Estimate", "2001", "client@example.com")]
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_content_does_not_invite_receipt_mimicry() -> None:
     """The LLM-facing content for qb_send must not carry the action verb
     or recipient that the auto-receipt already renders.
@@ -603,7 +586,6 @@ async def test_qb_send_content_does_not_invite_receipt_mimicry() -> None:
         assert verb not in lowered, f"content uses receipt-shaped verb {verb!r}: {result.content!r}"
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_rejects_disallowed_entity() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
@@ -615,7 +597,6 @@ async def test_qb_send_rejects_disallowed_entity() -> None:
     assert "not allowed" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_failure() -> None:
     svc = FakeQBService()
     svc.send_entity_email = AsyncMock(side_effect=Exception("Email failed"))  # type: ignore[method-assign]
@@ -628,7 +609,6 @@ async def test_qb_send_failure() -> None:
     assert "Failed to send invoice" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_failure_surfaces_qbo_error_envelope() -> None:
     """When QBO returns a Fault.Error[] envelope on a send failure, qb_send
     must surface that body so users see Intuit's reason instead of just
@@ -681,7 +661,6 @@ def test_quickbooks_tools_count() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_invoice_returns_receipt() -> None:
     """Write-side QB tools must populate a ToolReceipt so plain-text
     channels can confirm the mutation without relying on LLM text."""
@@ -710,7 +689,6 @@ async def test_qb_create_invoice_returns_receipt() -> None:
     assert "$2,560.00" in result.receipt.target
 
 
-@pytest.mark.asyncio()
 async def test_qb_query_does_not_return_a_receipt() -> None:
     """Read-side queries return data which is self-verifying. They must
     not populate a receipt because no external state mutated."""
@@ -785,7 +763,6 @@ class FakeQBOServiceWithURL(QuickBooksOnlineService):
         return {entity_type: {"Id": entity_id, "EmailStatus": "EmailSent"}}
 
 
-@pytest.mark.asyncio()
 async def test_invariant_no_url_duplication_across_qb_tools() -> None:
     """For every QuickBooks tool returning a ToolReceipt with a URL,
     ToolResult.content must not contain that URL. Regression for #1069."""
@@ -1212,7 +1189,6 @@ def test_qb_query_has_no_concurrency_group() -> None:
     assert _get_tool_obj(tools, "qb_query").concurrency_group is None
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_accepts_id_returned_by_create_in_same_turn() -> None:
     """The normal create-then-send flow must still work."""
     svc = FakeQBService()
@@ -1233,7 +1209,6 @@ async def test_qb_send_accepts_id_returned_by_create_in_same_turn() -> None:
     assert svc.sent == [("Estimate", new_id, "dev@example.com")]
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_refuses_predicted_id_after_create_in_same_turn() -> None:
     """A send must not target an id the model guessed rather than read back.
 
@@ -1260,7 +1235,6 @@ async def test_qb_send_refuses_predicted_id_after_create_in_same_turn() -> None:
     assert svc.sent == [], "no email may go out for an unverified id"
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_allows_any_id_when_no_create_ran_this_turn() -> None:
     """Sending a previously existing entity stays unrestricted."""
     svc = FakeQBService()
@@ -1273,7 +1247,6 @@ async def test_qb_send_allows_any_id_when_no_create_ran_this_turn() -> None:
     assert svc.sent == [("Invoice", "9001", "dev@example.com")]
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_guard_is_scoped_per_entity_type() -> None:
     """Creating an Item must not restrict which Invoice may be sent."""
     svc = FakeQBService()
@@ -1287,7 +1260,6 @@ async def test_qb_send_guard_is_scoped_per_entity_type() -> None:
     assert result.is_error is False
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_guard_does_not_leak_between_tool_builds() -> None:
     """The tool list is rebuilt per inbound message, so the guard must reset."""
     svc = FakeQBService()
@@ -1323,7 +1295,6 @@ def _fault_error(code: str, status: int = 400) -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError(f"{status}", request=request, response=response)
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_610_is_not_found_not_service() -> None:
     """610 is a 4xx about a missing object, not an outage.
 
@@ -1343,7 +1314,6 @@ async def test_qb_send_610_is_not_found_not_service() -> None:
     assert result.error_kind is ToolErrorKind.NOT_FOUND
 
 
-@pytest.mark.asyncio()
 async def test_qb_send_other_faults_stay_service() -> None:
     svc = FakeQBService()
     svc.send_entity_email = AsyncMock(side_effect=_fault_error("2030"))  # type: ignore[method-assign]
@@ -1357,7 +1327,6 @@ async def test_qb_send_other_faults_stay_service() -> None:
     assert result.error_kind is ToolErrorKind.SERVICE
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_610_is_not_found() -> None:
     svc = FakeQBService()
     svc.create_entity = AsyncMock(side_effect=_fault_error("610"))  # type: ignore[method-assign]
@@ -1371,7 +1340,6 @@ async def test_qb_create_610_is_not_found() -> None:
     assert result.error_kind is ToolErrorKind.NOT_FOUND
 
 
-@pytest.mark.asyncio()
 async def test_qb_create_non_http_error_stays_service() -> None:
     svc = FakeQBService()
     svc.create_entity = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]

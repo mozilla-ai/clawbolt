@@ -35,7 +35,6 @@ def qb_tool(qb_service: MockQuickBooksService) -> Tool:
 # -- Basic queries --
 
 
-@pytest.mark.asyncio()
 async def test_query_invoices(qb_tool: Tool) -> None:
     """Should return all invoices."""
     result = await qb_tool.function(query="SELECT * FROM Invoice")
@@ -46,7 +45,6 @@ async def test_query_invoices(qb_tool: Tool) -> None:
     assert "INV-1002" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_query_customers(qb_tool: Tool) -> None:
     """Should return all customers."""
     result = await qb_tool.function(query="SELECT * FROM Customer")
@@ -57,7 +55,6 @@ async def test_query_customers(qb_tool: Tool) -> None:
     assert "Jane Doe" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_query_estimates(qb_tool: Tool) -> None:
     """Should return estimates with SyncToken visible."""
     result = await qb_tool.function(query="SELECT * FROM Estimate")
@@ -68,7 +65,6 @@ async def test_query_estimates(qb_tool: Tool) -> None:
     assert "SyncToken: 0" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_query_items(qb_tool: Tool) -> None:
     """Should return items."""
     result = await qb_tool.function(query="SELECT * FROM Item")
@@ -77,7 +73,6 @@ async def test_query_items(qb_tool: Tool) -> None:
     assert "Drywall" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_query_invoices_includes_line_items(qb_tool: Tool) -> None:
     """Query results should include line item details, not just a count."""
     result = await qb_tool.function(query="SELECT * FROM Invoice")
@@ -91,7 +86,6 @@ async def test_query_invoices_includes_line_items(qb_tool: Tool) -> None:
 # -- Filtering --
 
 
-@pytest.mark.asyncio()
 async def test_query_with_like_filter(qb_tool: Tool) -> None:
     """WHERE LIKE should filter results."""
     result = await qb_tool.function(query="SELECT * FROM Customer WHERE DisplayName LIKE '%John%'")
@@ -102,7 +96,6 @@ async def test_query_with_like_filter(qb_tool: Tool) -> None:
     assert "Jane" not in result.content
 
 
-@pytest.mark.asyncio()
 async def test_query_with_maxresults(qb_tool: Tool) -> None:
     """MAXRESULTS should limit rows."""
     result = await qb_tool.function(query="SELECT * FROM Invoice MAXRESULTS 1")
@@ -111,7 +104,6 @@ async def test_query_with_maxresults(qb_tool: Tool) -> None:
     assert "1 result(s)" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_query_no_results(qb_tool: Tool) -> None:
     """Query with no matches should return 0 results message."""
     result = await qb_tool.function(
@@ -125,7 +117,6 @@ async def test_query_no_results(qb_tool: Tool) -> None:
 # -- Validation --
 
 
-@pytest.mark.asyncio()
 async def test_query_rejects_non_select(qb_tool: Tool) -> None:
     """Non-SELECT queries should be rejected."""
     result = await qb_tool.function(query="DELETE FROM Invoice WHERE Id = '1'")
@@ -137,7 +128,6 @@ async def test_query_rejects_non_select(qb_tool: Tool) -> None:
 # -- Error handling --
 
 
-@pytest.mark.asyncio()
 async def test_query_api_error(qb_service: MockQuickBooksService) -> None:
     """API errors should be returned gracefully."""
 
@@ -169,7 +159,6 @@ def test_quickbooks_tools_count(qb_service: MockQuickBooksService) -> None:
     assert len(tools) == 4
 
 
-@pytest.mark.asyncio()
 async def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
     """_quickbooks_factory should return [] when client_id/secret are empty."""
     ctx = MagicMock(spec=ToolContext)
@@ -185,7 +174,6 @@ async def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
         assert await _quickbooks_factory(ctx) == []
 
 
-@pytest.mark.asyncio()
 async def test_quickbooks_factory_returns_empty_when_not_connected() -> None:
     """_quickbooks_factory should return [] when user has no OAuth token."""
     ctx = MagicMock(spec=ToolContext)

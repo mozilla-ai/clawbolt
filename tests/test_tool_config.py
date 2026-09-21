@@ -1,6 +1,5 @@
 """Tests for the configurable tool registry (tool config API and store)."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.agent.file_store import (
@@ -23,7 +22,6 @@ ensure_tool_modules_imported()
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_tool_config_store_empty_on_first_load(
     test_user: UserData,
 ) -> None:
@@ -33,7 +31,6 @@ async def test_tool_config_store_empty_on_first_load(
     assert entries == []
 
 
-@pytest.mark.asyncio()
 async def test_tool_config_store_save_and_load(
     test_user: UserData,
 ) -> None:
@@ -54,7 +51,6 @@ async def test_tool_config_store_save_and_load(
     assert loaded[1].enabled is True
 
 
-@pytest.mark.asyncio()
 async def test_tool_config_store_get_disabled_tool_names(
     test_user: UserData,
 ) -> None:
@@ -76,7 +72,6 @@ async def test_tool_config_store_get_disabled_tool_names(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_create_core_tools_excludes_disabled_factories() -> None:
     """create_core_tools should skip excluded factories."""
     user = User(id="999", user_id="test")
@@ -91,7 +86,6 @@ async def test_create_core_tools_excludes_disabled_factories() -> None:
     assert "read_file" not in excluded_names
 
 
-@pytest.mark.asyncio()
 async def test_specialist_summaries_excludes_core_factories() -> None:
     """Core factories (workspace, profile, etc.) should not appear in specialist summaries."""
     user = User(id="999", user_id="test")
@@ -360,7 +354,6 @@ def test_specialist_dashboard_groups_are_consistent() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_create_core_tools_excludes_individual_tools() -> None:
     """excluded_tool_names filters individual tools after factory creation."""
     user = User(id="999", user_id="test")
@@ -556,7 +549,6 @@ def test_put_tool_config_can_re_enable_a_never_sub_tool(client: TestClient) -> N
     assert sub_by_name["write_file"]["permission_level"] == "always"
 
 
-@pytest.mark.asyncio()
 async def test_never_permission_filters_sub_tool_from_agent_schema(
     test_user: UserData,
 ) -> None:

@@ -67,7 +67,6 @@ async def _fixture_for(user: User) -> ReplayFixture:
     return fixture
 
 
-@pytest.mark.asyncio()
 async def test_selects_only_inbound_turns_most_recent_last(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -87,7 +86,6 @@ async def test_selects_only_inbound_turns_most_recent_last(
     assert [s.seq for s in samples] == [1, 3]
 
 
-@pytest.mark.asyncio()
 async def test_limit_keeps_the_most_recent_turns(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -97,7 +95,6 @@ async def test_limit_keeps_the_most_recent_turns(
     assert [s.message_context for s in samples] == ["ask 4", "ask 5"]
 
 
-@pytest.mark.asyncio()
 async def test_blank_inbound_placeholders_are_skipped(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -113,7 +110,6 @@ async def test_blank_inbound_placeholders_are_skipped(
     assert [s.message_context for s in samples] == ["real question"]
 
 
-@pytest.mark.asyncio()
 async def test_historic_tool_calls_are_recovered(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -142,7 +138,6 @@ async def test_historic_tool_calls_are_recovered(
     assert samples[0].historic_reply == "Booked."
 
 
-@pytest.mark.asyncio()
 async def test_history_slice_excludes_the_turn_and_everything_after(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -173,7 +168,6 @@ async def test_history_slice_excludes_the_turn_and_everything_after(
     assert "future ask" not in joined
 
 
-@pytest.mark.asyncio()
 async def test_user_with_no_messages_yields_no_samples(
     test_user: User, _reset_stores: None
 ) -> None:
@@ -181,7 +175,6 @@ async def test_user_with_no_messages_yields_no_samples(
     assert select_samples(fixture, limit=100) == []
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.router.oauth_service.load_token", new_callable=AsyncMock)
 @patch("backend.app.agent.router.oauth_service.get_valid_token", new_callable=AsyncMock)
 async def test_building_a_fixture_never_refreshes_the_users_drive_token(
@@ -221,7 +214,6 @@ async def test_building_a_fixture_never_refreshes_the_users_drive_token(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_a_bounded_read_gives_the_same_samples_as_a_full_one(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -259,7 +251,6 @@ async def test_a_bounded_read_gives_the_same_samples_as_a_full_one(
         ]
 
 
-@pytest.mark.asyncio()
 async def test_the_bound_falls_back_rather_than_shrinking_a_run(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -282,7 +273,6 @@ async def test_the_bound_falls_back_rather_than_shrinking_a_run(
     assert len(select_samples(bounded, limit=5)) == 5
 
 
-@pytest.mark.asyncio()
 async def test_a_window_that_fills_exactly_still_falls_back(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -320,7 +310,6 @@ async def test_a_window_that_fills_exactly_still_falls_back(
         ]
 
 
-@pytest.mark.asyncio()
 async def test_a_window_holding_enough_turns_but_no_history_falls_back(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -360,7 +349,6 @@ async def test_a_window_holding_enough_turns_but_no_history_falls_back(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_rapid_fire_turns_all_see_the_response_to_the_batch(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -404,7 +392,6 @@ async def test_rapid_fire_turns_all_see_the_response_to_the_batch(
         assert sample.historic_reply == "sent"
 
 
-@pytest.mark.asyncio()
 async def test_a_trailing_turn_with_no_response_yet_reports_no_tools(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:
@@ -431,7 +418,6 @@ async def test_a_trailing_turn_with_no_response_yet_reports_no_tools(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_replayed_turn_is_stamped_with_its_own_time_not_now(
     db_session: Session, test_user: User, _reset_stores: None
 ) -> None:

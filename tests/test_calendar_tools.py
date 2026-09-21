@@ -60,7 +60,6 @@ def _get_tool(tools: list[Tool], name: str) -> Tool:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_factory_returns_empty_when_not_configured() -> None:
     """_calendar_factory should return [] when client_id/secret are empty."""
     ctx = MagicMock(spec=ToolContext)
@@ -74,7 +73,6 @@ async def test_factory_returns_empty_when_not_configured() -> None:
         assert await _calendar_factory(ctx) == []
 
 
-@pytest.mark.asyncio()
 async def test_factory_returns_empty_when_not_connected() -> None:
     """_calendar_factory should return [] when user has no OAuth token."""
     ctx = MagicMock(spec=ToolContext)
@@ -95,7 +93,6 @@ async def test_factory_returns_empty_when_not_connected() -> None:
     assert tools == []
 
 
-@pytest.mark.asyncio()
 async def test_factory_returns_6_tools_when_configured() -> None:
     """_calendar_factory should return 6 tools when configured and connected."""
     ctx = MagicMock(spec=ToolContext)
@@ -290,7 +287,6 @@ def test_delete_event_description_builder(cal_tools: list[Tool]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_calendars_shows_enabled(cal_tools: list[Tool]) -> None:
     """Should return enabled calendars (not all Google calendars)."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_CALENDARS)
@@ -301,7 +297,6 @@ async def test_list_calendars_shows_enabled(cal_tools: list[Tool]) -> None:
     assert "Jobs" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_calendars_single() -> None:
     """With a single enabled calendar, should show just that one."""
     service = MockGoogleCalendarService()
@@ -315,7 +310,6 @@ async def test_list_calendars_single() -> None:
     assert "Jobs" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_calendars_default_primary() -> None:
     """With no enabled_calendars, should default to primary."""
     service = MockGoogleCalendarService()
@@ -331,7 +325,6 @@ async def test_list_calendars_default_primary() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_events_multi_calendar_merge(cal_tools: list[Tool]) -> None:
     """Should merge events from all enabled calendars with labels."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
@@ -348,7 +341,6 @@ async def test_list_events_multi_calendar_merge(cal_tools: list[Tool]) -> None:
     assert "[Jobs]" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_events_single_calendar_no_label() -> None:
     """With a single enabled calendar, events should not have labels."""
     service = MockGoogleCalendarService()
@@ -364,7 +356,6 @@ async def test_list_events_single_calendar_no_label() -> None:
     assert "[Personal]" not in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_events_specific_calendar(cal_tools: list[Tool]) -> None:
     """Specifying a calendar_id should only query that calendar."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
@@ -379,7 +370,6 @@ async def test_list_events_specific_calendar(cal_tools: list[Tool]) -> None:
     assert "Jones Roof Repair" not in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_events_invalid_calendar(cal_tools: list[Tool]) -> None:
     """Should reject a calendar_id not in the enabled set."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
@@ -393,7 +383,6 @@ async def test_list_events_invalid_calendar(cal_tools: list[Tool]) -> None:
     assert "not in the enabled set" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_events_no_results(cal_tools: list[Tool]) -> None:
     """Should handle empty result set."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
@@ -405,7 +394,6 @@ async def test_list_events_no_results(cal_tools: list[Tool]) -> None:
     assert "No events found" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_events_invalid_date(cal_tools: list[Tool]) -> None:
     """Should reject invalid date format."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
@@ -417,7 +405,6 @@ async def test_list_events_invalid_date(cal_tools: list[Tool]) -> None:
     assert result.error_kind == ToolErrorKind.VALIDATION
 
 
-@pytest.mark.asyncio()
 async def test_list_events_api_error(cal_service: MockGoogleCalendarService) -> None:
     """Should handle API errors gracefully."""
 
@@ -440,7 +427,6 @@ async def test_list_events_api_error(cal_service: MockGoogleCalendarService) -> 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_create_event_auto_select_single_calendar() -> None:
     """With one enabled calendar, should auto-select it."""
     service = MockGoogleCalendarService()
@@ -455,7 +441,6 @@ async def test_create_event_auto_select_single_calendar() -> None:
     assert result.content.startswith("ok")
 
 
-@pytest.mark.asyncio()
 async def test_create_event_requires_calendar_id_multi(cal_tools: list[Tool]) -> None:
     """With multiple enabled calendars and no primary marked, must specify calendar_id."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
@@ -469,7 +454,6 @@ async def test_create_event_requires_calendar_id_multi(cal_tools: list[Tool]) ->
     assert "Multiple calendars available" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_create_event_uses_primary_when_id_omitted(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -497,7 +481,6 @@ async def test_create_event_uses_primary_when_id_omitted(
     assert cal_service._event_calendar_map[new_event.id] == "primary"
 
 
-@pytest.mark.asyncio()
 async def test_create_event_falls_through_when_primary_not_in_allowed_set(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -521,7 +504,6 @@ async def test_create_event_falls_through_when_primary_not_in_allowed_set(
     assert "Multiple calendars available" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_validate_calendar_id_prefers_primary() -> None:
     """Direct test of the helper: when calendar_id is empty and primary
     is in the allowed set, return it instead of the ambiguity error.
@@ -542,7 +524,6 @@ async def test_validate_calendar_id_prefers_primary() -> None:
     assert resolved == "primary"
 
 
-@pytest.mark.asyncio()
 async def test_validate_calendar_id_single_calendar_unaffected() -> None:
     """Single-calendar users still auto-resolve regardless of primary
     flag (preserves the historical fast path).
@@ -560,7 +541,6 @@ async def test_validate_calendar_id_single_calendar_unaffected() -> None:
     assert resolved == "primary"
 
 
-@pytest.mark.asyncio()
 async def test_create_event_validates_calendar_id(cal_tools: list[Tool]) -> None:
     """Should reject a calendar_id not in the enabled set."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
@@ -575,7 +555,6 @@ async def test_create_event_validates_calendar_id(cal_tools: list[Tool]) -> None
     assert "not in the enabled set" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_create_event_happy_path(cal_tools: list[Tool]) -> None:
     """Should create an event when calendar_id is specified."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
@@ -596,7 +575,6 @@ async def test_create_event_happy_path(cal_tools: list[Tool]) -> None:
     assert result.receipt.target.startswith("Job: Test - Plumbing on 2026-03-28")
 
 
-@pytest.mark.asyncio()
 async def test_create_event_content_is_minimal(cal_tools: list[Tool]) -> None:
     """The LLM-visible content for create_event must omit title and dates.
 
@@ -626,7 +604,6 @@ async def test_create_event_content_is_minimal(cal_tools: list[Tool]) -> None:
     assert "2026-04-30" in result.receipt.target
 
 
-@pytest.mark.asyncio()
 async def test_update_event_content_is_minimal() -> None:
     """update_event content must also exclude title/dates (same reason as create)."""
     service = MockGoogleCalendarService()
@@ -643,7 +620,6 @@ async def test_update_event_content_is_minimal() -> None:
     assert "Lunch with Tam (revised)" in result.receipt.target
 
 
-@pytest.mark.asyncio()
 async def test_create_event_passes_reminder_minutes_through(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -674,7 +650,6 @@ async def test_create_event_passes_reminder_minutes_through(
     assert captured["reminder_minutes_before"] == 0
 
 
-@pytest.mark.asyncio()
 async def test_create_event_default_reminder_is_none(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -702,7 +677,6 @@ async def test_create_event_default_reminder_is_none(
     assert captured["reminder_minutes_before"] is None
 
 
-@pytest.mark.asyncio()
 async def test_create_event_invalid_date(cal_tools: list[Tool]) -> None:
     """Should reject invalid date format."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
@@ -716,7 +690,6 @@ async def test_create_event_invalid_date(cal_tools: list[Tool]) -> None:
     assert result.error_kind == ToolErrorKind.VALIDATION
 
 
-@pytest.mark.asyncio()
 async def test_create_event_end_before_start(cal_tools: list[Tool]) -> None:
     """Should reject end time before start time."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
@@ -731,7 +704,6 @@ async def test_create_event_end_before_start(cal_tools: list[Tool]) -> None:
     assert "after start" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_create_event_api_error(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -757,7 +729,6 @@ async def test_create_event_api_error(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_update_event_happy_path() -> None:
     """Should update an existing event with single calendar (auto-select)."""
     service = MockGoogleCalendarService()
@@ -775,7 +746,6 @@ async def test_update_event_happy_path() -> None:
     assert "Revised" in result.receipt.target
 
 
-@pytest.mark.asyncio()
 async def test_update_event_not_found(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -790,7 +760,6 @@ async def test_update_event_not_found(
     assert result.error_kind == ToolErrorKind.SERVICE
 
 
-@pytest.mark.asyncio()
 async def test_update_event_invalid_date(cal_tools: list[Tool]) -> None:
     """Should reject invalid date in update."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_UPDATE_EVENT)
@@ -808,7 +777,6 @@ async def test_update_event_invalid_date(cal_tools: list[Tool]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_delete_event_happy_path(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -823,7 +791,6 @@ async def test_delete_event_happy_path(
     assert len([e for e in cal_service.events if e.id == "evt-001"]) == 0
 
 
-@pytest.mark.asyncio()
 async def test_delete_event_not_found(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -840,7 +807,6 @@ async def test_delete_event_not_found(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_busy(cal_tools: list[Tool]) -> None:
     """Should return busy slots from all enabled calendars."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
@@ -852,7 +818,6 @@ async def test_check_availability_busy(cal_tools: list[Tool]) -> None:
     assert "busy slot(s)" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_free(cal_tools: list[Tool]) -> None:
     """Should report free when no busy slots."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
@@ -864,7 +829,6 @@ async def test_check_availability_free(cal_tools: list[Tool]) -> None:
     assert "free" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_invalid_date(cal_tools: list[Tool]) -> None:
     """Should reject invalid date format."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
@@ -876,7 +840,6 @@ async def test_check_availability_invalid_date(cal_tools: list[Tool]) -> None:
     assert result.error_kind == ToolErrorKind.VALIDATION
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_invalid_calendar(cal_tools: list[Tool]) -> None:
     """Should reject a calendar_id not in the enabled set."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
@@ -889,7 +852,6 @@ async def test_check_availability_invalid_calendar(cal_tools: list[Tool]) -> Non
     assert result.error_kind == ToolErrorKind.VALIDATION
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_api_error(
     cal_service: MockGoogleCalendarService,
 ) -> None:
@@ -963,7 +925,6 @@ def test_parse_dt_defaults_to_utc_when_no_tz() -> None:
     assert dt.tzinfo is UTC
 
 
-@pytest.mark.asyncio()
 async def test_list_events_respects_user_timezone() -> None:
     """Calendar tools with a user timezone interpret naive dates locally."""
     service = MockGoogleCalendarService()
@@ -984,7 +945,6 @@ async def test_list_events_respects_user_timezone() -> None:
     assert "Smith Kitchen Remodel" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_events_utc_default_without_timezone() -> None:
     """Without user timezone, naive dates are interpreted as UTC."""
     service = MockGoogleCalendarService()
@@ -1000,7 +960,6 @@ async def test_list_events_utc_default_without_timezone() -> None:
     assert "Smith Kitchen Remodel" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_factory_passes_enabled_calendars() -> None:
     """_calendar_factory should pass enabled_calendars to create_calendar_tools."""
     ctx = MagicMock(spec=ToolContext)
@@ -1059,7 +1018,6 @@ _MIXED_PERMS: list[tuple[str, str, list[str], str]] = [
 ]
 
 
-@pytest.mark.asyncio()
 async def test_list_calendars_shows_per_tool_access() -> None:
     """calendar_list_calendars should show per-calendar tool access."""
     service = MockGoogleCalendarService()
@@ -1071,7 +1029,6 @@ async def test_list_calendars_shows_per_tool_access() -> None:
     assert "blocked: create event, update event, delete event" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_calendars_shows_read_only() -> None:
     """Calendars with all per-calendar tools disabled should show READ-ONLY."""
     service = MockGoogleCalendarService()
@@ -1087,7 +1044,6 @@ async def test_list_calendars_shows_read_only() -> None:
     assert "blocked: list events, create event, update event, delete event" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_events_reads_from_restricted_calendar() -> None:
     """list_events should query calendars where list_events is not disabled."""
     service = MockGoogleCalendarService()
@@ -1103,7 +1059,6 @@ async def test_list_events_reads_from_restricted_calendar() -> None:
     assert "Jones Roof Repair" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_create_event_blocked_on_disabled_calendar() -> None:
     """create_event should reject a calendar where create_event is disabled."""
     service = MockGoogleCalendarService()
@@ -1120,7 +1075,6 @@ async def test_create_event_blocked_on_disabled_calendar() -> None:
     assert "does not allow create event" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_create_event_auto_selects_allowed_calendar() -> None:
     """With mixed perms, auto-select should pick the calendar that allows creation."""
     service = MockGoogleCalendarService()
@@ -1136,7 +1090,6 @@ async def test_create_event_auto_selects_allowed_calendar() -> None:
     assert result.content.startswith("ok")
 
 
-@pytest.mark.asyncio()
 async def test_update_event_blocked_on_disabled() -> None:
     """update_event should reject a calendar where update_event is disabled."""
     service = MockGoogleCalendarService()
@@ -1151,7 +1104,6 @@ async def test_update_event_blocked_on_disabled() -> None:
     assert "does not allow update event" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_delete_event_blocked_on_disabled() -> None:
     """delete_event should reject a calendar where delete_event is disabled."""
     service = MockGoogleCalendarService()
@@ -1165,7 +1117,6 @@ async def test_delete_event_blocked_on_disabled() -> None:
     assert "does not allow delete event" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_no_calendars_allow_tool_error() -> None:
     """Write tools should error when all calendars have that tool disabled."""
     service = MockGoogleCalendarService()
@@ -1186,7 +1137,6 @@ async def test_no_calendars_allow_tool_error() -> None:
     assert "No calendars allow create event" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_works_on_restricted_calendar() -> None:
     """check_availability should work even when write tools are disabled."""
     service = MockGoogleCalendarService()
@@ -1203,7 +1153,6 @@ async def test_check_availability_works_on_restricted_calendar() -> None:
     assert "busy slot(s)" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_events_skips_disabled_calendar() -> None:
     """list_events should skip calendars where list_events is disabled."""
     service = MockGoogleCalendarService()
@@ -1230,7 +1179,6 @@ async def test_list_events_skips_disabled_calendar() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_calendars_shows_access_role() -> None:
     """calendar_list_calendars should display the Google access role."""
     service = MockGoogleCalendarService()
@@ -1248,7 +1196,6 @@ async def test_list_calendars_shows_access_role() -> None:
     assert "access: reader" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_read_only_calendar_blocks_write_tools() -> None:
     """Write tools should be auto-blocked on a read-only (reader role) calendar."""
     service = MockGoogleCalendarService()
@@ -1272,7 +1219,6 @@ async def test_read_only_calendar_blocks_write_tools() -> None:
     assert result.content.startswith("ok")
 
 
-@pytest.mark.asyncio()
 async def test_read_only_calendar_explicit_write_blocked() -> None:
     """Explicitly targeting a read-only calendar for a write should fail."""
     service = MockGoogleCalendarService()
@@ -1294,7 +1240,6 @@ async def test_read_only_calendar_explicit_write_blocked() -> None:
     assert "read-only calendar" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_read_only_calendar_allows_list_events() -> None:
     """Read-only calendars should still allow listing events."""
     service = MockGoogleCalendarService()
@@ -1312,7 +1257,6 @@ async def test_read_only_calendar_allows_list_events() -> None:
     assert result.is_error is False
 
 
-@pytest.mark.asyncio()
 async def test_free_busy_reader_blocks_writes() -> None:
     """freeBusyReader calendars should also block write tools."""
     service = MockGoogleCalendarService()

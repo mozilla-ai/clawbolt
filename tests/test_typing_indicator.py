@@ -30,7 +30,6 @@ class _InputParams(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_sends_typing_indicator_before_llm_call(
     mock_amessages: object, test_user: User
@@ -59,7 +58,6 @@ async def test_agent_sends_typing_indicator_before_llm_call(
     assert typing_calls[0].args[0].chat_id == "123456789"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_sends_typing_indicator_before_each_tool_round(
     mock_amessages: object,
@@ -108,7 +106,6 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
     assert typing_calls[0].args[0].chat_id == "123456789"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_works_without_publish_outbound(
     mock_amessages: object, test_user: User
@@ -123,7 +120,6 @@ async def test_agent_works_without_publish_outbound(
     mock_amessages.assert_called_once()  # type: ignore[union-attr]
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_typing_indicator_failure_does_not_break_agent(
     mock_amessages: object, test_user: User
@@ -145,7 +141,6 @@ async def test_agent_typing_indicator_failure_does_not_break_agent(
     mock_publish.assert_called()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_no_typing_indicator_without_chat_id(
     mock_amessages: object, test_user: User
@@ -172,7 +167,6 @@ async def test_agent_no_typing_indicator_without_chat_id(
     assert len(typing_calls) == 0
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_sends_one_typing_indicator_per_tool_round(
     mock_amessages: object,
@@ -243,7 +237,6 @@ def _typing_calls(mock_publish: AsyncMock) -> list[OutboundMessage]:
     ]
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
 @patch("backend.app.agent.core.amessages")
 async def test_agent_refreshes_typing_indicator_during_slow_tool_call(
@@ -306,7 +299,6 @@ async def test_agent_refreshes_typing_indicator_during_slow_tool_call(
     assert len(_typing_calls(mock_publish)) == settled, "keepalive outlived the agent turn"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
 @patch("backend.app.agent.core.amessages")
 async def test_typing_keepalive_stops_when_tool_raises(
@@ -351,7 +343,6 @@ async def test_typing_keepalive_stops_when_tool_raises(
     assert len(_typing_calls(mock_publish)) == settled, "keepalive survived a raising tool"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
 @patch("backend.app.agent.core.amessages")
 async def test_typing_keepalive_stops_when_the_wrapped_await_raises(
@@ -391,7 +382,6 @@ async def test_typing_keepalive_stops_when_the_wrapped_await_raises(
     assert len(_typing_calls(mock_publish)) == settled, "keepalive survived a raising LLM call"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core._TYPING_KEEPALIVE_SECONDS", 0.01)
 @patch("backend.app.agent.core.amessages")
 async def test_typing_keepalive_noop_without_chat_id(
@@ -438,7 +428,6 @@ async def test_typing_keepalive_noop_without_chat_id(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_bus_activity_queue_register_publish_remove() -> None:
     """Activity queues should receive events and clean up on removal."""
     bus = MessageBus()
@@ -464,7 +453,6 @@ async def test_bus_activity_queue_register_publish_remove() -> None:
     assert "user-1" not in bus._activity_queues
 
 
-@pytest.mark.asyncio()
 async def test_bus_activity_replays_last_event_on_register() -> None:
     """New activity subscribers should immediately receive the last published event.
 
@@ -491,7 +479,6 @@ async def test_bus_activity_replays_last_event_on_register() -> None:
     assert (await q2.get()) == {"type": "done"}
 
 
-@pytest.mark.asyncio()
 async def test_bus_activity_no_replay_without_prior_events() -> None:
     """When no activity has been published, new queues should start empty."""
     bus = MessageBus()
@@ -499,14 +486,12 @@ async def test_bus_activity_no_replay_without_prior_events() -> None:
     assert q.empty()
 
 
-@pytest.mark.asyncio()
 async def test_bus_publish_activity_no_subscribers() -> None:
     """Publishing activity with no subscribers should not raise."""
     bus = MessageBus()
     await bus.publish_activity("no-one", {"type": "thinking"})
 
 
-@pytest.mark.asyncio()
 async def test_activity_forwarder_turn_start() -> None:
     """Activity forwarder should emit 'thinking' on TurnStartEvent."""
     with patch("backend.app.bus.message_bus") as mock_bus:
@@ -520,7 +505,6 @@ async def test_activity_forwarder_turn_start() -> None:
         )
 
 
-@pytest.mark.asyncio()
 async def test_activity_forwarder_tool_execution() -> None:
     """Activity forwarder should emit 'tool_call' on ToolExecutionStartEvent."""
     with patch("backend.app.bus.message_bus") as mock_bus:
@@ -535,7 +519,6 @@ async def test_activity_forwarder_tool_execution() -> None:
         )
 
 
-@pytest.mark.asyncio()
 async def test_activity_forwarder_agent_end() -> None:
     """Activity forwarder should emit 'done' on AgentEndEvent."""
     with patch("backend.app.bus.message_bus") as mock_bus:
@@ -554,7 +537,6 @@ async def test_activity_forwarder_agent_end() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.log_llm_usage")
 @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
 @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -631,7 +613,6 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     assert typing_calls[0].args[0].chat_id == test_user.channel_identifier
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.log_llm_usage")
 @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
 @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -696,7 +677,6 @@ async def test_heartbeat_works_without_channel(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_early_typing_indicator_published_on_inbound() -> None:
     """process_inbound_from_bus should publish a typing indicator before dispatch."""
     inbound = InboundMessage(
@@ -757,7 +737,6 @@ async def test_early_typing_indicator_published_on_inbound() -> None:
         mock_dispatch.assert_called_once()
 
 
-@pytest.mark.asyncio()
 async def test_early_typing_indicator_swallows_bus_errors() -> None:
     """_send_early_typing_indicator should not raise even when the bus fails."""
     from backend.app.agent.ingestion import _send_early_typing_indicator

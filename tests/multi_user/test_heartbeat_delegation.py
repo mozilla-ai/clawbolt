@@ -8,7 +8,6 @@ invariant so a future change cannot silently reintroduce the filter.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from backend.app.agent.file_store import get_user_store
@@ -16,7 +15,6 @@ from backend.app.agent.heartbeat import HeartbeatScheduler
 from backend.app.models import ChannelRoute, Subscription
 
 
-@pytest.mark.asyncio
 async def test_canceled_subscription_user_still_evaluated(
     async_db: async_sessionmaker,
 ) -> None:

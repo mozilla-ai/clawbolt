@@ -49,14 +49,12 @@ class TestJWTAuth:
 
 
 class TestOAuthFlow:
-    @pytest.mark.asyncio
     async def test_get_or_create_user_new(self, async_db: async_sessionmaker) -> None:
         google_info = {"sub": "new_user_123", "name": "New User"}
         async with async_db() as db:
             user = await get_or_create_user(db, google_info)
         assert user.user_id == "google_new_user_123"
 
-    @pytest.mark.asyncio
     async def test_get_or_create_user_existing(self, async_db: async_sessionmaker) -> None:
         google_info = {"sub": "existing_123", "name": "Existing User"}
         async with async_db() as db:
@@ -64,7 +62,6 @@ class TestOAuthFlow:
             u2 = await get_or_create_user(db, google_info)
         assert u1.id == u2.id
 
-    @pytest.mark.asyncio
     async def test_new_oauth_user_gets_default_soul_text(
         self, async_db: async_sessionmaker
     ) -> None:
@@ -79,7 +76,6 @@ class TestOAuthFlow:
         assert db_user.soul_text, "soul_text should be non-empty after provision"
         assert db_user.user_text, "user_text should be non-empty after provision"
 
-    @pytest.mark.asyncio
     async def test_existing_oauth_user_skips_provision(self, async_db: async_sessionmaker) -> None:
         """Calling get_or_create_user twice should not re-provision (#197)."""
         google_info = {"sub": "provision_test_2", "name": "Provision Twice"}
@@ -99,7 +95,6 @@ class TestOAuthFlow:
 
 
 class TestRefreshTokenRevocation:
-    @pytest.mark.asyncio
     async def test_deactivated_user_cannot_refresh(
         self, client: TestClient, test_user: User
     ) -> None:
@@ -129,7 +124,6 @@ class TestPremiumAuth:
     and be invisible to the async read.
     """
 
-    @pytest.mark.asyncio
     async def test_deactivated_user_returns_401(
         self,
         async_db: async_sessionmaker,
@@ -154,7 +148,6 @@ class TestPremiumAuth:
             await resolve_multi_user(request)
         assert exc_info.value.status_code == 401
 
-    @pytest.mark.asyncio
     async def test_active_user_authenticates(
         self,
         async_db: async_sessionmaker,
@@ -183,7 +176,6 @@ class TestOAuthBackendIsActive:
     different connection and be invisible to the async read.
     """
 
-    @pytest.mark.asyncio
     async def test_deactivated_user_rejected_by_backend(
         self,
         async_db: async_sessionmaker,
@@ -199,7 +191,6 @@ class TestOAuthBackendIsActive:
         assert exc_info.value.status_code == 401
         assert "deactivated" in exc_info.value.detail.lower()
 
-    @pytest.mark.asyncio
     async def test_active_user_accepted_by_backend(
         self,
         async_db: async_sessionmaker,

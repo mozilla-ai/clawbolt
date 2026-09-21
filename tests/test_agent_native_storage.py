@@ -13,7 +13,6 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select, update
 
@@ -75,20 +74,17 @@ def _make_media(url: str = "https://example.com/media") -> DownloadedMedia:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_stage_returns_handle(test_user: User) -> None:
     handle = await media_staging.stage(test_user.id, "url-1", b"bytes", "image/jpeg")
     assert handle is not None
     assert handle.startswith("media_")
 
 
-@pytest.mark.asyncio()
 async def test_stage_returns_none_for_empty_inputs(test_user: User) -> None:
     assert await media_staging.stage(test_user.id, "", b"bytes", "image/jpeg") is None
     assert await media_staging.stage(test_user.id, "url", b"", "image/jpeg") is None
 
 
-@pytest.mark.asyncio()
 async def test_handle_is_stable_across_restage(test_user: User) -> None:
     """Re-staging the same URL returns the same handle so the agent can
     reference it consistently across turns."""
@@ -97,7 +93,6 @@ async def test_handle_is_stable_across_restage(test_user: User) -> None:
     assert h1 == h2
 
 
-@pytest.mark.asyncio()
 async def test_restage_overwrites_bytes(test_user: User) -> None:
     """Re-staging updates the bytes the next reader sees."""
     handle = await media_staging.stage(test_user.id, "url-1", b"first", "image/jpeg")
@@ -110,7 +105,6 @@ async def test_restage_overwrites_bytes(test_user: User) -> None:
     assert mime == "image/png"
 
 
-@pytest.mark.asyncio()
 async def test_media_handle_uniqueness_across_urls(test_user: User) -> None:
     """Different URLs must get distinct handles so analyze_photo(handle)
     never pulls the wrong bytes."""
@@ -119,7 +113,6 @@ async def test_media_handle_uniqueness_across_urls(test_user: User) -> None:
     assert h1 != h2
 
 
-@pytest.mark.asyncio()
 async def test_get_by_handle_returns_bytes(test_user: User) -> None:
     handle = await media_staging.stage(test_user.id, "url-1", b"bytes", "image/jpeg")
     assert handle is not None
@@ -132,12 +125,10 @@ async def test_get_by_handle_returns_bytes(test_user: User) -> None:
     assert mime == "image/jpeg"
 
 
-@pytest.mark.asyncio()
 async def test_get_by_handle_missing(test_user: User) -> None:
     assert await media_staging.get_by_handle("media_missing") is None
 
 
-@pytest.mark.asyncio()
 async def test_evict_unlinks_disk_file(test_user: User) -> None:
     """The single-URL ``evict()`` path must remove the backing ``.bin`` file.
 
@@ -156,7 +147,6 @@ async def test_evict_unlinks_disk_file(test_user: User) -> None:
     assert not disk_path.exists()
 
 
-@pytest.mark.asyncio()
 async def test_touch_rejects_cross_user_handle(test_user: User, second_user: User) -> None:
     """A handle owned by user A must not have its TTL extended by user B.
 
@@ -169,7 +159,6 @@ async def test_touch_rejects_cross_user_handle(test_user: User, second_user: Use
     assert await media_staging.touch(handle, user_id=test_user.id) is False
 
 
-@pytest.mark.asyncio()
 async def test_evict_by_handle(test_user: User) -> None:
     handle = await media_staging.stage(test_user.id, "url-1", b"bytes", "image/jpeg")
     assert handle is not None
@@ -188,7 +177,6 @@ async def test_evict_by_handle(test_user: User) -> None:
     assert await media_staging.evict_by_handle(handle) is False
 
 
-@pytest.mark.asyncio()
 async def test_touch_extends_ttl(test_user: User) -> None:
     """``touch`` updates ``expires_at`` so a near-expired entry survives.
 
@@ -220,12 +208,10 @@ async def test_touch_extends_ttl(test_user: User) -> None:
     assert refreshed.expires_at > initial_exp
 
 
-@pytest.mark.asyncio()
 async def test_touch_unknown_handle(test_user: User) -> None:
     assert await media_staging.touch("media_missing", user_id=test_user.id) is False
 
 
-@pytest.mark.asyncio()
 async def test_get_handle_for_roundtrip(test_user: User) -> None:
     handle = await media_staging.stage(test_user.id, "url-xyz", b"b", "image/jpeg")
     assert handle is not None
@@ -233,7 +219,6 @@ async def test_get_handle_for_roundtrip(test_user: User) -> None:
     assert await media_staging.get_handle_for(test_user.id, "missing") is None
 
 
-@pytest.mark.asyncio()
 async def test_staged_bytes_survive_in_process_state_reset(test_user: User) -> None:
     """Bytes outlive a process-state wipe.
 
@@ -252,7 +237,6 @@ async def test_staged_bytes_survive_in_process_state_reset(test_user: User) -> N
     assert content == b"persist"
 
 
-@pytest.mark.asyncio()
 async def test_purge_expired_drops_dead_rows(test_user: User) -> None:
     """Rows past ``expires_at`` get swept and their disk bytes removed."""
     handle = await media_staging.stage(test_user.id, "url-expired", b"bytes", "image/jpeg")
@@ -282,7 +266,6 @@ async def test_purge_expired_drops_dead_rows(test_user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
 async def test_pipeline_skips_vision(mock_vision: AsyncMock, test_user: User) -> None:
     """Pipeline stages bytes and labels the context with a handle, but does
@@ -297,7 +280,6 @@ async def test_pipeline_skips_vision(mock_vision: AsyncMock, test_user: User) ->
     assert handle in result.combined_context
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
 async def test_pipeline_empty_extracted_text(mock_vision: AsyncMock, test_user: User) -> None:
     """ProcessedMedia.extracted_text is empty so nothing leaks into
@@ -313,7 +295,6 @@ async def test_pipeline_empty_extracted_text(mock_vision: AsyncMock, test_user: 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.tools.media_tools.run_vision_on_media", new_callable=AsyncMock)
 async def test_analyze_photo_happy_path(mock_vision: AsyncMock, test_user: User) -> None:
     mock_vision.return_value = "A damaged roof."
@@ -334,7 +315,6 @@ async def test_analyze_photo_happy_path(mock_vision: AsyncMock, test_user: User)
     assert passed_context == "tell me what this is"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.tools.media_tools.run_vision_on_media", new_callable=AsyncMock)
 async def test_analyze_photo_cached_second_call(mock_vision: AsyncMock, test_user: User) -> None:
     mock_vision.return_value = "A deck."
@@ -351,7 +331,6 @@ async def test_analyze_photo_cached_second_call(mock_vision: AsyncMock, test_use
     assert mock_vision.await_count == 1
 
 
-@pytest.mark.asyncio()
 async def test_analyze_photo_missing_handle(test_user: User) -> None:
     tools = create_media_tools(test_user.id, "", {})
     analyze = next(t for t in tools if t.name == ToolName.ANALYZE_PHOTO)
@@ -361,7 +340,6 @@ async def test_analyze_photo_missing_handle(test_user: User) -> None:
     assert "expired" in result.content or "No staged media" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_analyze_photo_wrong_user(test_user: User, second_user: User) -> None:
     """A handle minted for another user must not leak bytes across users."""
     handle = await media_staging.stage(second_user.id, "url-1", b"bytes", "image/jpeg")
@@ -378,7 +356,6 @@ async def test_analyze_photo_wrong_user(test_user: User, second_user: User) -> N
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_discard_media_evicts_handle(test_user: User) -> None:
     handle = await media_staging.stage(test_user.id, "url-1", b"bytes", "image/jpeg")
     assert handle is not None
@@ -389,7 +366,6 @@ async def test_discard_media_evicts_handle(test_user: User) -> None:
     assert await media_staging.get_by_handle(handle) is None
 
 
-@pytest.mark.asyncio()
 async def test_discard_media_idempotent(test_user: User) -> None:
     """A second discard on the same handle must not error — otherwise the
     agent gets stuck retrying."""
@@ -404,7 +380,6 @@ async def test_discard_media_idempotent(test_user: User) -> None:
     assert "already discarded" in r2.content or "not staged" in r2.content
 
 
-@pytest.mark.asyncio()
 async def test_discard_media_missing_handle_returns_idempotent_success(
     test_user: User,
 ) -> None:
@@ -432,7 +407,6 @@ def test_media_factory_always_registers_tools(test_user: User) -> None:
     assert names == {ToolName.ANALYZE_PHOTO, ToolName.DISCARD_MEDIA}
 
 
-@pytest.mark.asyncio()
 async def test_media_factory_registers_tools_when_staged(test_user: User) -> None:
     await media_staging.stage(test_user.id, "url-1", b"b", "image/jpeg")
     ctx = ToolContext(user=test_user, downloaded_media=[_make_media("url-1")])
@@ -442,7 +416,6 @@ async def test_media_factory_registers_tools_when_staged(test_user: User) -> Non
     assert ToolName.DISCARD_MEDIA in names
 
 
-@pytest.mark.asyncio()
 async def test_media_factory_tool_list_stable_across_media_state(test_user: User) -> None:
     """The tool name sequence must be identical regardless of media state.
 

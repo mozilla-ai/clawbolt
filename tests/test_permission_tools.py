@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from backend.app.agent.approval import get_approval_store
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import (
@@ -27,7 +25,6 @@ def test_permissions_factory_not_registered() -> None:
     assert "permissions" not in default_registry.factory_names
 
 
-@pytest.mark.asyncio()
 async def test_no_update_permission_in_core_tools() -> None:
     """update_permission tool should no longer appear in core tools."""
     user = User(id="test-core-perm", user_id="test")

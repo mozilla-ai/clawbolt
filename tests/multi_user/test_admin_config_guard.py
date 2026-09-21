@@ -453,7 +453,6 @@ class TestIsAdminAsyncDB:
     cannot exercise without cross-API transaction stitching.
     """
 
-    @pytest.mark.asyncio
     async def test_admin_role_returns_true(
         self,
         async_db: async_sessionmaker,
@@ -472,7 +471,6 @@ class TestIsAdminAsyncDB:
         token = create_access_token(async_test_user.id)
         assert await _is_admin(token) is True
 
-    @pytest.mark.asyncio
     async def test_user_role_returns_false(
         self,
         async_db: async_sessionmaker,
@@ -491,7 +489,6 @@ class TestIsAdminAsyncDB:
         token = create_access_token(async_test_user.id)
         assert await _is_admin(token) is False
 
-    @pytest.mark.asyncio
     async def test_no_subscription_returns_false(
         self,
         async_db: async_sessionmaker,
@@ -500,6 +497,5 @@ class TestIsAdminAsyncDB:
         token = create_access_token(async_test_user.id)
         assert await _is_admin(token) is False
 
-    @pytest.mark.asyncio
     async def test_invalid_token_returns_false(self) -> None:
         assert await _is_admin("not-a-real-jwt") is False

@@ -21,7 +21,6 @@ class TestDiscoverBotUsername:
     def _reset_cache(self) -> None:
         tw_module._bot_username = ""
 
-    @pytest.mark.asyncio
     async def test_discover_succeeds(self) -> None:
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -47,7 +46,6 @@ class TestDiscoverBotUsername:
         assert result == "TestBot"
         assert tw_module.get_bot_username() == "TestBot"
 
-    @pytest.mark.asyncio
     async def test_discover_no_token(self) -> None:
         with patch("backend.app.services.telegram_webhook.settings") as mock_settings:
             mock_settings.telegram_bot_token = ""
@@ -56,7 +54,6 @@ class TestDiscoverBotUsername:
         assert result is None
         assert tw_module.get_bot_username() == ""
 
-    @pytest.mark.asyncio
     async def test_discover_api_failure(self) -> None:
         mock_response = MagicMock()
         mock_response.json.return_value = {"ok": False, "description": "Unauthorized"}
@@ -85,7 +82,6 @@ class TestDiscoverBotUsername:
 
 
 class TestRegisterWebhook:
-    @pytest.mark.asyncio
     async def test_register_with_explicit_url(self) -> None:
         mock_response = MagicMock()
         mock_response.json.return_value = {"ok": True}
@@ -112,7 +108,6 @@ class TestRegisterWebhook:
         assert ok is True
         assert url == "https://example.com/api/webhooks/telegram"
 
-    @pytest.mark.asyncio
     async def test_register_constructs_url_from_base(self) -> None:
         mock_response = MagicMock()
         mock_response.json.return_value = {"ok": True}
@@ -141,7 +136,6 @@ class TestRegisterWebhook:
         assert ok is True
         assert url == "https://app.clawbolt.ai/api/webhooks/telegram"
 
-    @pytest.mark.asyncio
     async def test_register_no_token(self) -> None:
         with patch("backend.app.services.telegram_webhook.settings") as mock_settings:
             mock_settings.telegram_bot_token = ""
@@ -150,7 +144,6 @@ class TestRegisterWebhook:
         assert ok is False
         assert url == ""
 
-    @pytest.mark.asyncio
     async def test_register_api_failure(self) -> None:
         mock_response = MagicMock()
         mock_response.json.return_value = {"ok": False, "description": "Bad Request"}

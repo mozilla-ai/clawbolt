@@ -3,7 +3,6 @@
 import json
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.core import ClawboltAgent
@@ -124,7 +123,6 @@ def test_messaging_tools_have_sends_reply_tag() -> None:
 # --- Agent core integration ---
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_tool_call_records_include_tags(
     mock_amessages: object, test_user: User
@@ -158,7 +156,6 @@ async def test_agent_tool_call_records_include_tags(
     assert ToolTags.SENDS_REPLY in response.tool_calls[0].tags
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_untagged_tool_has_empty_tags(mock_amessages: object, test_user: User) -> None:
     """Tool without tags should produce tool_call record with empty tags set."""

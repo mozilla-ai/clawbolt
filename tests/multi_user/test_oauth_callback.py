@@ -99,7 +99,6 @@ class TestOAuthCallback:
 class TestDeactivatedAccount:
     """Deactivated users (User.is_active=False) cannot sign in via OAuth."""
 
-    @pytest.mark.asyncio
     async def test_get_or_create_user_raises_for_deactivated(
         self,
         async_db: async_sessionmaker,
@@ -166,7 +165,6 @@ class TestDeactivatedAccount:
 class TestEmailBackfill:
     """Returning users with missing subscription email get it backfilled (#154)."""
 
-    @pytest.mark.asyncio
     async def test_existing_user_gets_email_backfilled(
         self,
         async_db: async_sessionmaker,
@@ -194,7 +192,6 @@ class TestEmailBackfill:
         assert updated is not None
         assert updated.email == "backfill@example.com"
 
-    @pytest.mark.asyncio
     async def test_existing_email_not_overwritten(
         self,
         async_db: async_sessionmaker,
@@ -233,7 +230,6 @@ class TestEmailBackfill:
 class TestAsyncProvisioningRecovery:
     """AsyncSession signup path must heal partial state and stay atomic."""
 
-    @pytest.mark.asyncio
     async def test_existing_user_missing_subscription_and_quota_are_healed(
         self,
         async_db: async_sessionmaker,
@@ -270,7 +266,6 @@ class TestAsyncProvisioningRecovery:
         assert subscription.plan == "free"
         assert len(quotas) == 1
 
-    @pytest.mark.asyncio
     async def test_async_signup_rolls_back_when_quota_bootstrap_fails(
         self,
         async_db: async_sessionmaker,

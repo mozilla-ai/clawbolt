@@ -18,7 +18,6 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import pytest_asyncio
 
 from backend.app.agent import media_staging
@@ -39,7 +38,6 @@ async def _clear_staging_between_tests(test_user: User) -> AsyncGenerator[None]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.tools.media_tools.run_vision_on_media", new_callable=AsyncMock)
 async def test_eval_contextual_companycam_routing(mock_vision: AsyncMock, test_user: User) -> None:
     """Contractor texts 'kitchen demo at 123 Main St' + photo.
@@ -77,7 +75,6 @@ async def test_eval_contextual_companycam_routing(mock_vision: AsyncMock, test_u
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.tools.media_tools.run_vision_on_media", new_callable=AsyncMock)
 async def test_eval_no_context_photo(mock_vision: AsyncMock, test_user: User) -> None:
     """Contractor texts a photo with no caption or just a greeting.
@@ -115,7 +112,6 @@ async def test_eval_no_context_photo(mock_vision: AsyncMock, test_user: User) ->
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.tools.media_tools.run_vision_on_media", new_callable=AsyncMock)
 async def test_eval_opt_out(mock_vision: AsyncMock, test_user: User) -> None:
     """Contractor texts 'don't save this one' + photo.

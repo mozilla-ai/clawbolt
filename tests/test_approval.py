@@ -450,7 +450,6 @@ class TestFormatApprovalMessage:
 
 
 class TestApprovalGate:
-    @pytest.mark.asyncio()
     async def test_resolve_sets_event_and_decision(self) -> None:
         gate = ApprovalGate()
         mock_publish = AsyncMock()
@@ -473,7 +472,6 @@ class TestApprovalGate:
         assert decision == ApprovalDecision.APPROVED
         assert not gate.has_pending("1")
 
-    @pytest.mark.asyncio()
     async def test_timeout_returns_denied(self) -> None:
         gate = ApprovalGate()
         mock_publish = AsyncMock()
@@ -494,7 +492,6 @@ class TestApprovalGate:
         gate = ApprovalGate()
         assert await gate.resolve("999", ApprovalDecision.APPROVED) is False
 
-    @pytest.mark.asyncio()
     async def test_request_approval_persists_row_and_cleans_up_on_resolve(
         self, test_user: User
     ) -> None:
@@ -543,7 +540,6 @@ class TestApprovalGate:
                 "row must be deleted once the approval resolves"
             )
 
-    @pytest.mark.asyncio()
     async def test_cleanup_orphaned_approvals_notifies_and_clears(self, test_user: User) -> None:
         """On worker startup, every pending_approvals row (orphaned from a
         prior crash) gets a recovery message and is deleted."""
@@ -576,7 +572,6 @@ class TestApprovalGate:
         async with db_session_async() as db:
             assert await db.get(PendingApprovalRow, test_user.id) is None
 
-    @pytest.mark.asyncio()
     async def test_cleanup_drops_malformed_rows_without_publishing(self, test_user: User) -> None:
         """Rows missing channel or chat_id cannot be delivered anywhere,
         so they should be deleted with a warning rather than left lingering."""
@@ -607,7 +602,6 @@ class TestApprovalGate:
         async with db_session_async() as db:
             assert await db.get(PendingApprovalRow, test_user.id) is None
 
-    @pytest.mark.asyncio()
     async def test_cleanup_drops_expired_rows_when_publish_fails(self, test_user: User) -> None:
         """If publish keeps failing on an orphan older than the TTL, the row
         must still be deleted so a permanently broken channel cannot keep
@@ -639,7 +633,6 @@ class TestApprovalGate:
         async with db_session_async() as db:
             assert await db.get(PendingApprovalRow, test_user.id) is None
 
-    @pytest.mark.asyncio()
     async def test_cleanup_keeps_fresh_rows_when_publish_fails(self, test_user: User) -> None:
         """A fresh orphan whose publish fails should stay in the table so a
         later restart can retry. Only expired rows are force-deleted."""
@@ -669,7 +662,6 @@ class TestApprovalGate:
                 "fresh rows must survive a failed publish"
             )
 
-    @pytest.mark.asyncio()
     async def test_resolve_deletes_row_before_waking_waiter(self, test_user: User) -> None:
         """resolve() must delete the pending_approvals row before event.set()
         so a crash between wake-up and the waiter's trailing cleanup can't
@@ -715,7 +707,6 @@ class TestApprovalGate:
         decision = await asyncio.wait_for(request_task, timeout=1.0)
         assert decision == ApprovalDecision.APPROVED
 
-    @pytest.mark.asyncio()
     async def test_persist_pending_row_upsert_is_idempotent(self, test_user: User) -> None:
         """_persist_pending_row uses ON CONFLICT DO UPDATE so repeated calls
         for the same user overwrite cleanly rather than racing a PK violation."""
@@ -732,7 +723,6 @@ class TestApprovalGate:
             assert row.channel == "bluebubbles"
             assert row.chat_id == "chat_2"
 
-    @pytest.mark.asyncio()
     async def test_cleanup_skips_when_another_worker_holds_lock(
         self, test_user: User, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -792,7 +782,6 @@ class TestApprovalGate:
                 "the peer worker that owns the lock must remain responsible for the row"
             )
 
-    @pytest.mark.asyncio()
     async def test_has_pending(self) -> None:
         gate = ApprovalGate()
         assert not gate.has_pending("1")
@@ -816,7 +805,6 @@ class TestApprovalGate:
         )
         await task
 
-    @pytest.mark.asyncio()
     async def test_note_ambiguous_reply_returns_prompt_then_caps(self) -> None:
         """note_ambiguous_reply returns the prompt until the re-prompt cap."""
         gate = ApprovalGate()
@@ -857,7 +845,6 @@ class TestApprovalGate:
 
 
 class TestAgentApproval:
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_without_policy_executes_normally(
         self, mock_amessages: object, test_user: User
@@ -879,7 +866,6 @@ class TestAgentApproval:
         assert response.reply_text == "Done!"
         assert any(tc.name == "echo" and not tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_with_auto_skips_gate(self, mock_amessages: object, test_user: User) -> None:
         """Tool with AUTO default_level executes without prompting."""
@@ -899,7 +885,6 @@ class TestAgentApproval:
         response = await agent.process_message("echo hello")
         assert any(tc.name == "echo" and not tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_with_deny_returns_error(
         self, mock_amessages: object, test_user: User
@@ -921,7 +906,6 @@ class TestAgentApproval:
         response = await agent.process_message("do it")
         assert any(tc.name == "dangerous" and tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_with_ask_approved_executes(
         self, mock_amessages: object, test_user: User
@@ -968,7 +952,6 @@ class TestAgentApproval:
         assert any(tc.name == "fetcher" and not tc.is_error for tc in response.tool_calls)
         mock_publish.assert_called()
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_with_ask_denied_returns_error(
         self, mock_amessages: object, test_user: User
@@ -1011,7 +994,6 @@ class TestAgentApproval:
 
         assert any(tc.name == "fetcher" and tc.is_error for tc in response.tool_calls)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_always_persists_auto_to_store(
         self, mock_amessages: object, test_user: User
@@ -1056,7 +1038,6 @@ class TestAgentApproval:
         level = await store.check_permission(test_user.id, "fetcher")
         assert level == PermissionLevel.ALWAYS
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_always_allow_all_persists_tool_level_for_every_resource(
         self, mock_amessages: object, test_user: User
@@ -1116,7 +1097,6 @@ class TestAgentApproval:
             == PermissionLevel.ALWAYS
         )
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_always_allow_all_does_not_escalate_when_tool_opted_out(
         self, mock_amessages: object, test_user: User
@@ -1179,7 +1159,6 @@ class TestAgentApproval:
             == PermissionLevel.ASK
         )
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_always_allow_scopes_to_single_resource(
         self, mock_amessages: object, test_user: User
@@ -1237,7 +1216,6 @@ class TestAgentApproval:
             == PermissionLevel.ASK
         )
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_never_persists_deny_to_store(
         self, mock_amessages: object, test_user: User
@@ -1282,7 +1260,6 @@ class TestAgentApproval:
         level = await store.check_permission(test_user.id, "fetcher")
         assert level == PermissionLevel.NEVER
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_with_ask_interrupted_returns_error(
         self, mock_amessages: object, test_user: User
@@ -1333,7 +1310,6 @@ class TestAgentApproval:
         level = await store.check_permission(test_user.id, "fetcher")
         assert level == PermissionLevel.ASK  # unchanged from default
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_interrupted_does_not_persist_permission(
         self, mock_amessages: object, test_user: User
@@ -1383,7 +1359,6 @@ class TestAgentApproval:
         assert "fetcher" not in data.get("tools", {})
         assert "fetcher" not in data.get("resources", {})
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_stored_auto_skips_prompt(self, mock_amessages: object, test_user: User) -> None:
         """A stored AUTO permission skips the approval prompt entirely."""
@@ -1429,7 +1404,6 @@ class TestAgentApproval:
 
 
 class TestIngestionIntercept:
-    @pytest.mark.asyncio()
     async def test_approval_response_resolves_gate(self, test_user: User) -> None:
         """An approval response resolves the gate and skips normal processing."""
         gate = get_approval_gate()
@@ -1470,7 +1444,6 @@ class TestIngestionIntercept:
         assert decision == ApprovalDecision.APPROVED
         assert not gate.has_pending(test_user.id)
 
-    @pytest.mark.asyncio()
     async def test_non_approval_text_interrupts_gate(self, test_user: User) -> None:
         """Unrelated text while pending resolves the gate as INTERRUPTED."""
         gate = get_approval_gate()
@@ -1521,7 +1494,6 @@ class TestIngestionIntercept:
         assert decision == ApprovalDecision.INTERRUPTED
         assert not gate.has_pending(test_user.id)
 
-    @pytest.mark.asyncio()
     async def test_ambiguous_reply_reprompts_and_keeps_gate_pending(self, test_user: User) -> None:
         """Filler like "lol" re-prompts without interrupting the batch.
 
@@ -1590,7 +1562,6 @@ class TestIngestionIntercept:
         assert decision == ApprovalDecision.APPROVED
         assert not gate.has_pending(test_user.id)
 
-    @pytest.mark.asyncio()
     async def test_repeated_ambiguous_replies_eventually_interrupt(self, test_user: User) -> None:
         """After the re-prompt cap, an ambiguous reply falls back to INTERRUPTED."""
         gate = get_approval_gate()
@@ -1647,7 +1618,6 @@ class TestIngestionIntercept:
         # The interrupting message falls through to the pipeline.
         mock_batcher.enqueue.assert_called_once()
 
-    @pytest.mark.asyncio()
     async def test_message_with_attachments_is_not_eaten_as_approval(self, test_user: User) -> None:
         """A message with media attachments bypasses approval-eating.
 
@@ -1705,7 +1675,6 @@ class TestIngestionIntercept:
         # The media-bearing message went to the pipeline, not the gate.
         mock_batcher.enqueue.assert_called_once()
 
-    @pytest.mark.asyncio()
     async def test_interrupted_message_dispatched_to_pipeline(self, test_user: User) -> None:
         """Unrelated message during approval is dispatched to the pipeline."""
         gate = get_approval_gate()
@@ -1754,7 +1723,6 @@ class TestIngestionIntercept:
         # The message should have been enqueued for pipeline processing
         mock_batcher.enqueue.assert_called_once()
 
-    @pytest.mark.asyncio()
     async def test_llm_classified_approval_resolves_gate(self, test_user: User) -> None:
         """LLM-classified natural-language approval resolves the gate."""
         gate = get_approval_gate()
@@ -1801,7 +1769,6 @@ class TestIngestionIntercept:
         assert decision == ApprovalDecision.APPROVED
         assert not gate.has_pending(test_user.id)
 
-    @pytest.mark.asyncio()
     async def test_dispatch_resolves_stale_gate_while_waiting_for_lock(
         self, test_user: User
     ) -> None:
@@ -1853,7 +1820,6 @@ class TestIngestionIntercept:
         decision = await gate_task
         assert decision == ApprovalDecision.INTERRUPTED
 
-    @pytest.mark.asyncio()
     async def test_dispatch_reloads_session_after_lock(self, test_user: User) -> None:
         """_dispatch_to_pipeline reloads session from DB after acquiring the user lock."""
         from backend.app.agent.dto import SessionState, StoredMessage
@@ -1942,7 +1908,6 @@ class TestClassifyApprovalResponseCallShape:
     response then fell through to the WARNING + INTERRUPTED fallback.
     """
 
-    @pytest.mark.asyncio()
     async def test_acompletion_called_without_temperature(self) -> None:
         from pydantic import BaseModel as _BaseModel
 
@@ -1970,7 +1935,6 @@ class TestClassifyApprovalResponseCallShape:
             "response_format is what actually constrains the output to the enum"
         )
 
-    @pytest.mark.asyncio()
     @pytest.mark.parametrize(
         ("decision", "expected"),
         [
@@ -2014,7 +1978,6 @@ class TestApprovalEvents:
     timed_out, recovered) instead of seeing the prompt text only.
     """
 
-    @pytest.mark.asyncio()
     async def test_requested_and_decided_pair_logged(self, test_user: User) -> None:
         from sqlalchemy import select
 
@@ -2065,7 +2028,6 @@ class TestApprovalEvents:
         assert [e.event_type for e in events] == ["requested", "decided"]
         assert events[1].decision == "approved"
 
-    @pytest.mark.asyncio()
     async def test_timeout_logs_timed_out_event(self, test_user: User) -> None:
         from sqlalchemy import select
 
@@ -2101,7 +2063,6 @@ class TestApprovalEvents:
         # No `decided` row on timeout: the gate never received a decision.
         assert all(r.decision is None for r in rows)
 
-    @pytest.mark.asyncio()
     async def test_resolve_records_interrupted_decision(self, test_user: User) -> None:
         from sqlalchemy import select
 
@@ -2141,7 +2102,6 @@ class TestApprovalEvents:
         assert rows[-1].event_type == "decided"
         assert rows[-1].decision == "interrupted"
 
-    @pytest.mark.asyncio()
     async def test_recovered_event_logged_on_orphan_cleanup(self, test_user: User) -> None:
         from sqlalchemy import select
 
@@ -2183,7 +2143,6 @@ class TestApprovalEvents:
         assert rows[0].channel == "telegram"
         assert rows[0].chat_id == "chat_99"
 
-    @pytest.mark.asyncio()
     async def test_event_store_respects_since_and_limit(self, test_user: User) -> None:
         from datetime import UTC, datetime, timedelta
 

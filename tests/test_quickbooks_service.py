@@ -45,7 +45,6 @@ def _service() -> QuickBooksOnlineService:
     )
 
 
-@pytest.mark.asyncio()
 async def test_create_entity_includes_requestid_in_query_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -65,7 +64,6 @@ async def test_create_entity_includes_requestid_in_query_params(
     assert len(rid) >= 16
 
 
-@pytest.mark.asyncio()
 async def test_update_entity_includes_requestid(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[httpx.Request] = []
 
@@ -80,7 +78,6 @@ async def test_update_entity_includes_requestid(monkeypatch: pytest.MonkeyPatch)
     assert captured[0].url.params.get("requestid")
 
 
-@pytest.mark.asyncio()
 async def test_send_entity_email_includes_requestid_alongside_sendTo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -99,7 +96,6 @@ async def test_send_entity_email_includes_requestid_alongside_sendTo(
     assert params.get("sendTo") == "to@example.com"
 
 
-@pytest.mark.asyncio()
 async def test_send_entity_email_uses_octet_stream_content_type(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -120,7 +116,6 @@ async def test_send_entity_email_uses_octet_stream_content_type(
     assert captured[0].content == b""
 
 
-@pytest.mark.asyncio()
 async def test_create_entity_uses_json_content_type(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[httpx.Request] = []
 
@@ -135,7 +130,6 @@ async def test_create_entity_uses_json_content_type(monkeypatch: pytest.MonkeyPa
     assert captured[0].headers.get("content-type") == "application/json"
 
 
-@pytest.mark.asyncio()
 async def test_query_uses_json_content_type(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[httpx.Request] = []
 
@@ -150,7 +144,6 @@ async def test_query_uses_json_content_type(monkeypatch: pytest.MonkeyPatch) -> 
     assert captured[0].headers.get("content-type") == "application/json"
 
 
-@pytest.mark.asyncio()
 async def test_query_does_not_set_requestid(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[httpx.Request] = []
 
@@ -165,7 +158,6 @@ async def test_query_does_not_set_requestid(monkeypatch: pytest.MonkeyPatch) -> 
     assert "requestid" not in captured[0].url.params
 
 
-@pytest.mark.asyncio()
 async def test_401_retry_reuses_same_requestid(monkeypatch: pytest.MonkeyPatch) -> None:
     """First POST returns 401, refresh succeeds, retry POST must carry the
     same ``requestid`` so QBO collapses the pair to a single entity."""
@@ -202,7 +194,6 @@ async def test_401_retry_reuses_same_requestid(monkeypatch: pytest.MonkeyPatch) 
     assert result["Id"] == "1"
 
 
-@pytest.mark.asyncio()
 async def test_each_create_call_uses_a_fresh_requestid(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two distinct logical creates must use distinct requestids; otherwise
     QBO would dedupe the second one as a duplicate of the first."""
@@ -223,7 +214,6 @@ async def test_each_create_call_uses_a_fresh_requestid(monkeypatch: pytest.Monke
     assert rid1 != rid2
 
 
-@pytest.mark.asyncio()
 async def test_send_entity_email_validates_inputs_before_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

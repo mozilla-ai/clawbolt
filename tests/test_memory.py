@@ -1,5 +1,3 @@
-import pytest
-
 from backend.app.agent.memory_db import (
     build_memory_context,
     get_memory_store,
@@ -9,7 +7,6 @@ from backend.app.agent.memory_db import (
 from backend.app.models import User
 
 
-@pytest.mark.asyncio()
 async def test_write_and_read_memory(test_user: User) -> None:
     """write_memory / read_memory should round-trip freeform content."""
     await write_memory(test_user.id, "## Pricing\n- Deck: $45/sqft")
@@ -17,14 +14,12 @@ async def test_write_and_read_memory(test_user: User) -> None:
     assert "Deck: $45/sqft" in content
 
 
-@pytest.mark.asyncio()
 async def test_read_memory_empty(test_user: User) -> None:
     """read_memory returns empty string when no MEMORY.md exists."""
     content = await read_memory(test_user.id)
     assert content == ""
 
 
-@pytest.mark.asyncio()
 async def test_write_memory_overwrites(test_user: User) -> None:
     """write_memory should fully replace the file."""
     await write_memory(test_user.id, "old content")
@@ -34,7 +29,6 @@ async def test_write_memory_overwrites(test_user: User) -> None:
     assert "old content" not in content
 
 
-@pytest.mark.asyncio()
 async def test_build_memory_context_with_memory(test_user: User) -> None:
     """build_memory_context should include memory text."""
     store = get_memory_store(test_user.id)
@@ -44,14 +38,12 @@ async def test_build_memory_context_with_memory(test_user: User) -> None:
     assert "$35/sqft" in context
 
 
-@pytest.mark.asyncio()
 async def test_build_memory_context_empty(test_user: User) -> None:
     """build_memory_context returns empty string when no memory."""
     context = await build_memory_context(test_user.id)
     assert context == ""
 
 
-@pytest.mark.asyncio()
 async def test_append_history_multi_append_round_trips(test_user: User) -> None:
     """Sequential ``append_history`` calls all round-trip through ``read_history``.
 
@@ -74,7 +66,6 @@ async def test_append_history_multi_append_round_trips(test_user: User) -> None:
     assert history == "first entry\nsecond entry\nthird entry"
 
 
-@pytest.mark.asyncio()
 async def test_append_history_after_seed_round_trips(test_user: User) -> None:
     """Appending against a row that already exists keeps every prior entry.
 
@@ -90,7 +81,6 @@ async def test_append_history_after_seed_round_trips(test_user: User) -> None:
     assert await store.read_history_async() == "seed\nfollow-up"
 
 
-@pytest.mark.asyncio()
 async def test_append_history_returns_new_full_text(test_user: User) -> None:
     """append_history returns the row's new full plaintext under the same
     row-level lock that wrote it. Compaction's audit-snapshot path relies
@@ -106,7 +96,6 @@ async def test_append_history_returns_new_full_text(test_user: User) -> None:
     assert second_text == "first\nsecond\n"
 
 
-@pytest.mark.asyncio()
 async def test_append_history_inserts_separator_when_existing_lacks_newline(
     test_user: User,
 ) -> None:

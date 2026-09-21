@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from backend.app.agent.dto import UserData
 from backend.app.agent.session_db import SessionStore
 from backend.app.agent.stores import HeartbeatStore
@@ -60,7 +58,6 @@ def test_workspace_tools_use_to_thread() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_session_store_add_message_still_works(
     test_user: UserData,
 ) -> None:
@@ -73,7 +70,6 @@ async def test_session_store_add_message_still_works(
     assert len(session.messages) == 1
 
 
-@pytest.mark.asyncio()
 async def test_heartbeat_log_still_works(
     test_user: UserData,
 ) -> None:
@@ -84,7 +80,6 @@ async def test_heartbeat_log_still_works(
     assert count == 1
 
 
-@pytest.mark.asyncio()
 async def test_workspace_read_file_db_backed(
     test_user: UserData,
 ) -> None:
@@ -103,7 +98,6 @@ async def test_workspace_read_file_db_backed(
     assert "Jake" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_workspace_write_file_db_backed(
     test_user: UserData,
 ) -> None:
@@ -119,7 +113,6 @@ async def test_workspace_write_file_db_backed(
         assert "Sarah" in user.user_text
 
 
-@pytest.mark.asyncio()
 async def test_workspace_edit_file_db_backed(
     test_user: UserData,
 ) -> None:

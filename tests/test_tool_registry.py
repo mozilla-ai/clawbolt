@@ -107,7 +107,6 @@ def test_auto_discovery_ignores_non_tool_modules() -> None:
     assert non_tool == set(), f"Non-tool modules were imported: {non_tool}"
 
 
-@pytest.mark.asyncio()
 async def test_create_ready_specialist_tools_skips_unauthenticated() -> None:
     """A specialist whose ``auth_check`` returns a reason string (user has
     not connected the integration yet) must NOT appear in the ready list.
@@ -151,7 +150,6 @@ async def test_create_ready_specialist_tools_skips_unauthenticated() -> None:
     assert len(tools) == 1
 
 
-@pytest.mark.asyncio()
 async def test_create_ready_specialist_tools_returns_empty_when_none_ready() -> None:
     """No connected specialists -> empty tool list."""
     from backend.app.agent.tools.registry import ToolRegistry
@@ -178,7 +176,6 @@ async def test_create_ready_specialist_tools_returns_empty_when_none_ready() -> 
     assert tools == []
 
 
-@pytest.mark.asyncio()
 async def test_create_ready_specialist_tools_respects_excluded_factories() -> None:
     """User-disabled tool groups must not load even when connected."""
     from backend.app.agent.tools.registry import ToolRegistry
@@ -205,7 +202,6 @@ async def test_create_ready_specialist_tools_respects_excluded_factories() -> No
     assert tools == []
 
 
-@pytest.mark.asyncio()
 async def test_ask_sub_tools_have_approval_policy() -> None:
     """Every tool with default_permission='ask' must have an ApprovalPolicy.
 
@@ -363,7 +359,6 @@ def test_strip_titles_keeps_a_parameter_named_title() -> None:
     assert "title" not in schema["properties"]["title"]
 
 
-@pytest.mark.asyncio()
 async def test_create_tools_auto_attaches_approval_policy_for_subtools() -> None:
     """Tools registered via SubToolInfo must end up with an ApprovalPolicy.
 
@@ -405,7 +400,6 @@ async def test_create_tools_auto_attaches_approval_policy_for_subtools() -> None
     )
 
 
-@pytest.mark.asyncio()
 async def test_create_tools_uses_subtool_default_for_synthesized_policy() -> None:
     """The auto-attached policy carries the SubToolInfo's default level.
 
@@ -470,7 +464,6 @@ async def test_create_tools_uses_subtool_default_for_synthesized_policy() -> Non
     )
 
 
-@pytest.mark.asyncio()
 async def test_state_mutating_tools_have_concurrency_group() -> None:
     """Tools that mutate shared state must declare a concurrency_group.
 
@@ -537,7 +530,6 @@ async def _instantiate_every_tool() -> list[Tool]:
     return tools
 
 
-@pytest.mark.asyncio()
 async def test_read_only_is_never_combined_with_a_mutating_tag() -> None:
     """``READ_ONLY`` and the mutation tags are contradictory by construction."""
     ensure_tool_modules_imported()
@@ -650,7 +642,6 @@ async def _every_tool_including_integrations() -> list[Tool]:
     return tools
 
 
-@pytest.mark.asyncio()
 async def test_the_classification_sweep_reaches_the_integration_tools() -> None:
     """Guard the guard: a sweep that sees 18 tools enforces almost nothing.
 
@@ -663,7 +654,6 @@ async def test_the_classification_sweep_reaches_the_integration_tools() -> None:
     assert len(names) > 40, f"only {len(names)} tools reached"
 
 
-@pytest.mark.asyncio()
 async def test_every_tool_is_classified_read_or_write() -> None:
     """``_is_mutating`` reads "not READ_ONLY" as "this writes", so decide once.
 
@@ -684,7 +674,6 @@ async def test_every_tool_is_classified_read_or_write() -> None:
     )
 
 
-@pytest.mark.asyncio()
 async def test_no_tool_is_both_read_only_and_mutating() -> None:
     """A typo in the roster silently classifies nothing.
 

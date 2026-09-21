@@ -664,14 +664,12 @@ def test_expired_state_returns_none(oauth_svc: OAuthService, qb_config: OAuthCon
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_handle_callback_invalid_state(oauth_svc: OAuthService) -> None:
     """Callback with unknown state should raise ValueError."""
     with pytest.raises(ValueError, match="Invalid or expired"):
         await oauth_svc.handle_callback("nonexistent", "code123")
 
 
-@pytest.mark.asyncio()
 async def test_handle_callback_exchanges_code(
     oauth_svc: OAuthService, qb_config: OAuthConfig, test_user: User
 ) -> None:
@@ -862,7 +860,6 @@ def test_pkce_params_present_when_enabled(
     assert "code_challenge_method=S256" in url
 
 
-@pytest.mark.asyncio()
 async def test_code_verifier_omitted_when_pkce_disabled(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
@@ -1146,7 +1143,6 @@ def _reset_discovery_cache() -> Generator[None]:
     _oauth_module._intuit_discovery_fetched_at = 0.0
 
 
-@pytest.mark.asyncio()
 async def test_warm_intuit_discovery_success(_reset_discovery_cache: None) -> None:
     """Successful discovery fetch should cache endpoints."""
     mock_resp = httpx.Response(200, json=_FAKE_DISCOVERY, request=httpx.Request("GET", "https://x"))
@@ -1167,7 +1163,6 @@ async def test_warm_intuit_discovery_success(_reset_discovery_cache: None) -> No
     )
 
 
-@pytest.mark.asyncio()
 async def test_warm_intuit_discovery_failure_swallowed(_reset_discovery_cache: None) -> None:
     """Failed discovery fetch should not raise; cache stays empty."""
     with patch("backend.app.services.oauth.httpx.AsyncClient") as mock_cls:

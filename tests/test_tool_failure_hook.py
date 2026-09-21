@@ -67,7 +67,6 @@ async def _run(agent: ClawboltAgent, tool: Tool, mock_llm: AsyncMock) -> None:
     await agent.process_message(message_context="go")
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 @patch("backend.app.agent.core.amessages")
 async def test_tool_returning_an_error_reaches_the_hook(
@@ -95,7 +94,6 @@ async def test_tool_returning_an_error_reaches_the_hook(
     assert payload.result_text == "QuickBooks returned 503"
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 @patch("backend.app.agent.core.amessages")
 async def test_result_text_excludes_our_own_error_hint(
@@ -116,7 +114,6 @@ async def test_result_text_excludes_our_own_error_hint(
     assert captured[0].result_text == "upstream down"
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 @patch("backend.app.agent.core.amessages")
 async def test_tool_raising_reaches_the_hook_as_internal(
@@ -137,7 +134,6 @@ async def test_tool_raising_reaches_the_hook_as_internal(
     assert "kaboom" in captured[0].result_text
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 @patch("backend.app.agent.core.amessages")
 async def test_successful_tool_does_not_reach_the_hook(
@@ -156,7 +152,6 @@ async def test_successful_tool_does_not_reach_the_hook(
     assert captured == []
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 @patch("backend.app.agent.core.amessages")
 async def test_a_raising_handler_does_not_break_the_turn(

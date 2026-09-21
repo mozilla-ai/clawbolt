@@ -12,7 +12,6 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from any_llm.types.messages import TextBlock
 
 from backend.app.services.llm_eval.judge import (
@@ -88,7 +87,6 @@ async def _judge(seq: int, mock: AsyncMock) -> tuple[JudgeVerdict, str]:
         )
 
 
-@pytest.mark.asyncio()
 async def test_winner_a_maps_to_candidate_when_candidate_is_a() -> None:
     verdict, rationale = await _judge(
         SEQ_CANDIDATE_IS_A, _judge_reply(winner="A", unsafe="none", rationale="acted")
@@ -97,7 +95,6 @@ async def test_winner_a_maps_to_candidate_when_candidate_is_a() -> None:
     assert rationale == "acted"
 
 
-@pytest.mark.asyncio()
 async def test_winner_a_maps_to_incumbent_when_candidate_is_b() -> None:
     verdict, _ = await _judge(
         SEQ_CANDIDATE_IS_B, _judge_reply(winner="A", unsafe="none", rationale="acted")
@@ -105,7 +102,6 @@ async def test_winner_a_maps_to_incumbent_when_candidate_is_b() -> None:
     assert verdict is JudgeVerdict.CANDIDATE_WORSE
 
 
-@pytest.mark.asyncio()
 async def test_winner_b_maps_to_candidate_when_candidate_is_b() -> None:
     verdict, _ = await _judge(
         SEQ_CANDIDATE_IS_B, _judge_reply(winner="B", unsafe="none", rationale="acted")
@@ -113,7 +109,6 @@ async def test_winner_b_maps_to_candidate_when_candidate_is_b() -> None:
     assert verdict is JudgeVerdict.CANDIDATE_BETTER
 
 
-@pytest.mark.asyncio()
 async def test_equivalent_passes_through() -> None:
     verdict, _ = await _judge(
         SEQ_CANDIDATE_IS_A, _judge_reply(winner="equivalent", unsafe="none", rationale="same")
@@ -121,7 +116,6 @@ async def test_equivalent_passes_through() -> None:
     assert verdict is JudgeVerdict.EQUIVALENT
 
 
-@pytest.mark.asyncio()
 async def test_unsafe_flag_on_the_candidate_slot_blocks() -> None:
     verdict, _ = await _judge(
         SEQ_CANDIDATE_IS_A, _judge_reply(winner="B", unsafe="A", rationale="texts the wrong person")
@@ -129,7 +123,6 @@ async def test_unsafe_flag_on_the_candidate_slot_blocks() -> None:
     assert verdict is JudgeVerdict.CANDIDATE_UNSAFE
 
 
-@pytest.mark.asyncio()
 async def test_unsafe_flag_on_the_incumbent_does_not_credit_the_candidate() -> None:
     """An unsafe incumbent is worth recording, but it is not evidence to switch."""
     verdict, rationale = await _judge(
@@ -139,7 +132,6 @@ async def test_unsafe_flag_on_the_incumbent_does_not_credit_the_candidate() -> N
     assert "incumbent flagged unsafe" in rationale
 
 
-@pytest.mark.asyncio()
 async def test_prose_around_the_json_is_tolerated() -> None:
     mock = AsyncMock(
         return_value=_Response(
@@ -151,14 +143,12 @@ async def test_prose_around_the_json_is_tolerated() -> None:
     assert verdict is JudgeVerdict.EQUIVALENT
 
 
-@pytest.mark.asyncio()
 async def test_unparseable_output_is_recorded_not_raised() -> None:
     mock = AsyncMock(return_value=_Response("I cannot decide."))
     verdict, _ = await _judge(SEQ_CANDIDATE_IS_A, mock)
     assert verdict is JudgeVerdict.JUDGE_FAILED
 
 
-@pytest.mark.asyncio()
 async def test_provider_failure_is_recorded_not_raised() -> None:
     mock = AsyncMock(side_effect=RuntimeError("gateway down"))
     verdict, rationale = await _judge(SEQ_CANDIDATE_IS_A, mock)

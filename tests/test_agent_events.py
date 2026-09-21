@@ -39,7 +39,6 @@ def agent(test_user: User) -> ClawboltAgent:
     return agent
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 async def test_events_emitted_for_text_response(
@@ -69,7 +68,6 @@ async def test_events_emitted_for_text_response(
     assert events[3].total_duration_ms > 0
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 async def test_events_emitted_for_tool_call(
@@ -126,7 +124,6 @@ async def test_events_emitted_for_tool_call(
     assert tool_ends[0].duration_ms >= 0
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 async def test_no_events_without_subscribers(
@@ -143,7 +140,6 @@ async def test_no_events_without_subscribers(
     assert response.reply_text == "Hello!"
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 async def test_subscriber_error_does_not_crash_agent(
@@ -165,7 +161,6 @@ async def test_subscriber_error_does_not_crash_agent(
     assert response.reply_text == "Hello!"
 
 
-@pytest.mark.asyncio
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt_parts", new_callable=AsyncMock)
 async def test_multiple_subscribers(
@@ -215,7 +210,6 @@ class TestDynamicContentCachePlacement:
         """
         return ClawboltAgent(user=test_user, llm_override=UserLLMOverride(provider="anthropic"))
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.core.amessages")
     @patch(
         "backend.app.agent.core.build_agent_system_prompt_parts",
@@ -249,7 +243,6 @@ class TestDynamicContentCachePlacement:
         assert "DYNAMIC-MEMORY-BLOCK" in current_turn["content"]
         assert "what's next?" in current_turn["content"]
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.core.amessages")
     @patch(
         "backend.app.agent.core.build_agent_system_prompt_parts",

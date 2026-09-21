@@ -1,14 +1,11 @@
 """Tests for heartbeat management tools."""
 
-import pytest
-
 from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.tools.heartbeat_tools import create_heartbeat_tools
 from backend.app.database import db_session_async
 from backend.app.models import User
 
 
-@pytest.mark.asyncio()
 async def test_get_heartbeat_returns_text(test_user: User) -> None:
     """get_heartbeat should return the user's heartbeat_text."""
     # Seed heartbeat text directly
@@ -23,7 +20,6 @@ async def test_get_heartbeat_returns_text(test_user: User) -> None:
     assert result.is_error is False
 
 
-@pytest.mark.asyncio()
 async def test_get_heartbeat_empty(test_user: User) -> None:
     """get_heartbeat should return a friendly message when no text is set."""
     tools = create_heartbeat_tools(test_user.id)
@@ -33,7 +29,6 @@ async def test_get_heartbeat_empty(test_user: User) -> None:
     assert result.is_error is False
 
 
-@pytest.mark.asyncio()
 async def test_update_heartbeat_writes_text(test_user: User) -> None:
     """update_heartbeat should write new text to heartbeat_text."""
     tools = create_heartbeat_tools(test_user.id)
@@ -49,7 +44,6 @@ async def test_update_heartbeat_writes_text(test_user: User) -> None:
     assert "Review inbox" in text
 
 
-@pytest.mark.asyncio()
 async def test_update_heartbeat_clears_with_empty_text(test_user: User) -> None:
     """update_heartbeat with empty text should clear heartbeat_text."""
     store = HeartbeatStore(test_user.id)
@@ -64,7 +58,6 @@ async def test_update_heartbeat_clears_with_empty_text(test_user: User) -> None:
     assert text == ""
 
 
-@pytest.mark.asyncio()
 async def test_update_then_get_roundtrip(test_user: User) -> None:
     """Writing and reading heartbeat text should round-trip correctly."""
     tools = create_heartbeat_tools(test_user.id)
@@ -78,7 +71,6 @@ async def test_update_then_get_roundtrip(test_user: User) -> None:
     assert result.content == new_text
 
 
-@pytest.mark.asyncio()
 async def test_update_heartbeat_shows_previous_content(test_user: User) -> None:
     """update_heartbeat should include previous content in the result (#873)."""
     store = HeartbeatStore(test_user.id)
@@ -93,7 +85,6 @@ async def test_update_heartbeat_shows_previous_content(test_user: User) -> None:
     assert "Follow up with client" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_update_heartbeat_empty_previous(test_user: User) -> None:
     """update_heartbeat on an empty file should note it was empty (#873)."""
     tools = create_heartbeat_tools(test_user.id)
@@ -102,7 +93,6 @@ async def test_update_heartbeat_empty_previous(test_user: User) -> None:
     assert "was empty" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_update_heartbeat_description_warns_about_overwrite(test_user: User) -> None:
     """update_heartbeat tool description should warn about overwrite behavior (#873)."""
     tools = create_heartbeat_tools(test_user.id)
@@ -112,7 +102,6 @@ async def test_update_heartbeat_description_warns_about_overwrite(test_user: Use
     assert "never re-add" in desc or "do not restore" in desc
 
 
-@pytest.mark.asyncio()
 async def test_update_heartbeat_description_steers_away_from_timed_reminders(
     test_user: User,
 ) -> None:
@@ -130,7 +119,6 @@ async def test_update_heartbeat_description_steers_away_from_timed_reminders(
     assert "calendar_create_event" in desc
 
 
-@pytest.mark.asyncio()
 async def test_get_heartbeat_usage_hint_does_not_promise_reminders(
     test_user: User,
 ) -> None:
@@ -142,7 +130,6 @@ async def test_get_heartbeat_usage_hint_does_not_promise_reminders(
     assert "or reminders" not in hint
 
 
-@pytest.mark.asyncio()
 async def test_heartbeat_scoped_to_user(test_user: User) -> None:
     """Each user's heartbeat text is independent."""
     async with db_session_async() as db:

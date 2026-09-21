@@ -105,7 +105,6 @@ def _tool_by_name(tools: list[Any], name: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_add_job_note_has_ask_approval_policy(async_test_user: Any) -> None:
     """The write tool must declare an ApprovalPolicy with default ASK.
 
@@ -119,7 +118,6 @@ async def test_add_job_note_has_ask_approval_policy(async_test_user: Any) -> Non
     assert tool.approval_policy.default_level == PermissionLevel.ASK
 
 
-@pytest.mark.asyncio()
 async def test_add_job_note_description_builder_quotes_job_id(
     async_test_user: Any,
 ) -> None:
@@ -134,7 +132,6 @@ async def test_add_job_note_description_builder_quotes_job_id(
     assert "pinned" in pinned_prompt.lower()
 
 
-@pytest.mark.asyncio()
 async def test_add_job_note_resource_extractor_returns_per_job_key(
     async_test_user: Any,
 ) -> None:
@@ -147,7 +144,6 @@ async def test_add_job_note_resource_extractor_returns_per_job_key(
     assert policy.resource_extractor({}) is None
 
 
-@pytest.mark.asyncio()
 async def test_add_job_note_has_concurrency_group(async_test_user: Any) -> None:
     """The write tool must declare a concurrency group.
 
@@ -191,7 +187,6 @@ def test_params_accept_minimal_inputs() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_add_job_note_happy_path_posts_to_fake(
     async_test_user: Any, shared_backend: Any
 ) -> None:
@@ -217,7 +212,6 @@ async def test_add_job_note_happy_path_posts_to_fake(
     assert persisted["isPinned"] is False
 
 
-@pytest.mark.asyncio()
 async def test_add_job_note_pin_to_top_propagates(
     async_test_user: Any, shared_backend: Any
 ) -> None:
@@ -238,7 +232,6 @@ async def test_add_job_note_pin_to_top_propagates(
     assert persisted["isPinned"] is True
 
 
-@pytest.mark.asyncio()
 async def test_add_job_note_unknown_job_returns_not_found(
     async_test_user: Any,
 ) -> None:
@@ -253,7 +246,6 @@ async def test_add_job_note_unknown_job_returns_not_found(
     assert "999999" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_add_job_note_blank_text_validation_error(async_test_user: Any) -> None:
     """The tool function rejects whitespace-only text up front.
 

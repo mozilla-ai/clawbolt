@@ -13,7 +13,6 @@ from __future__ import annotations
 import uuid
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
@@ -101,7 +100,6 @@ class TestReportInterception:
             db.expunge(user)
             return user
 
-    @pytest.mark.asyncio
     async def test_report_persists_row_and_sends_ack(self, report_user: User) -> None:
         """A ``/report`` message: writes one ReportedConversation row,
         sends one ack to the bus, never calls the agent pipeline."""
@@ -166,7 +164,6 @@ class TestReportInterception:
                 f"Unexpected non-typing outbound after /report ack: {extra.content!r}"
             )
 
-    @pytest.mark.asyncio
     async def test_report_anchor_seq_points_at_latest_message(self, report_user: User) -> None:
         """The ``anchor_seq`` column captures the seq of the last
         message in the session at report time so admins can highlight
@@ -224,7 +221,6 @@ class TestReportInterception:
             assert row.anchor_seq == 2
             assert row.reason == ""
 
-    @pytest.mark.asyncio
     async def test_non_report_message_is_not_intercepted(self, report_user: User) -> None:
         """A normal inbound text must reach the agent pipeline (no
         ReportedConversation row, no canned ack, no short-circuit)."""

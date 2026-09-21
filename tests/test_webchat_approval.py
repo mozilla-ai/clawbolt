@@ -80,7 +80,6 @@ def _auto_tool(name: str = "reader") -> Tool:
 class TestWebchatApprovalSSE:
     """Verify that approval prompts are published as SSE events for webchat."""
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_approval_publishes_sse_event_with_request_id(
         self, mock_amessages: object, test_user: User
@@ -129,7 +128,6 @@ class TestWebchatApprovalSSE:
 
         message_bus.remove_event_queue(request_id)
 
-    @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_no_sse_event_without_request_id(
         self, mock_amessages: object, test_user: User
@@ -209,7 +207,6 @@ def approval_client(approval_user: User) -> Generator[TestClient]:
 class TestMessageBasedApproval:
     """Approval responses arrive as regular chat messages via the bus."""
 
-    @pytest.mark.asyncio()
     async def test_approval_via_bus_resolves_gate(self, test_user: User) -> None:
         """A 'yes' message through the bus resolves a pending approval gate."""
         gate = get_approval_gate()
@@ -255,7 +252,6 @@ class TestMessageBasedApproval:
         decision = await asyncio.wait_for(approval_task, timeout=2.0)
         assert decision == ApprovalDecision.APPROVED
 
-    @pytest.mark.asyncio()
     async def test_approval_via_bus_resolves_response_future(self, test_user: User) -> None:
         """When an approval response has a request_id, the response future is resolved."""
         gate = get_approval_gate()

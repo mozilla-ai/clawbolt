@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 
-import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -97,7 +96,6 @@ class TestInboundRecoveryLockSerializationAsync:
         finally:
             await connection.close()
 
-    @pytest.mark.asyncio()
     async def test_only_one_of_n_concurrent_attempts_acquires_lock(
         self,
         _pg_async_engine: AsyncEngine,
@@ -137,7 +135,6 @@ class TestInboundRecoveryLockSerializationAsync:
             f"the async path"
         )
 
-    @pytest.mark.asyncio()
     async def test_contender_succeeds_after_holder_releases(
         self,
         _pg_async_engine: AsyncEngine,
@@ -178,7 +175,6 @@ class TestInboundRecoveryLockSerializationAsync:
         finally:
             await post_conn.close()
 
-    @pytest.mark.asyncio()
     async def test_unlock_on_different_connection_is_a_no_op_async(
         self,
         _pg_async_engine: AsyncEngine,

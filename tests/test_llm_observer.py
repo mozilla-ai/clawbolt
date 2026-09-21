@@ -86,7 +86,6 @@ def test_set_and_get_observer() -> None:
     assert get_llm_request_observer() is None
 
 
-@pytest.mark.asyncio()
 async def test_emit_calls_registered_observer() -> None:
     received: list[LLMRequestPayload] = []
 
@@ -100,13 +99,11 @@ async def test_emit_calls_registered_observer() -> None:
     assert received == [payload]
 
 
-@pytest.mark.asyncio()
 async def test_emit_is_noop_when_no_observer() -> None:
     # Should not raise.
     await emit_llm_request(_make_payload())
 
 
-@pytest.mark.asyncio()
 async def test_emit_swallows_observer_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -168,7 +165,6 @@ def test_compute_min_message_seq_skips_none_seqs() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_observer_fires_from_agent_loop(
     mock_amessages: MagicMock,
@@ -202,7 +198,6 @@ async def test_observer_fires_from_agent_loop(
     assert isinstance(payload.started_at, datetime)
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_observer_fires_again_after_context_length_trim_retry(
     mock_amessages: MagicMock,
@@ -246,7 +241,6 @@ async def test_observer_fires_again_after_context_length_trim_retry(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.compaction.amessages_streamed")
 async def test_observer_fires_from_compaction(
     mock_amessages: MagicMock,
@@ -289,7 +283,6 @@ async def test_observer_fires_from_compaction(
     assert payload.min_message_seq_in_prompt is None
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_observer_exception_does_not_crash_agent_loop(
     mock_amessages: MagicMock,
@@ -362,7 +355,6 @@ def test_set_and_get_response_observer() -> None:
     assert get_llm_response_observer() is None
 
 
-@pytest.mark.asyncio()
 async def test_emit_response_calls_registered_observer() -> None:
     received: list[LLMResponsePayload] = []
 
@@ -375,13 +367,11 @@ async def test_emit_response_calls_registered_observer() -> None:
     assert received == [payload]
 
 
-@pytest.mark.asyncio()
 async def test_emit_response_is_noop_when_no_observer() -> None:
     # Must not raise.
     await emit_llm_response(_make_response_payload())
 
 
-@pytest.mark.asyncio()
 async def test_emit_response_swallows_observer_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -404,7 +394,6 @@ async def test_emit_response_swallows_observer_exception(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_response_observer_fires_from_agent_loop(
     mock_amessages: MagicMock,
@@ -451,7 +440,6 @@ async def test_response_observer_fires_from_agent_loop(
         assert "type" in block
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_response_observer_purpose_followup_after_trim_retry(
     mock_amessages: MagicMock,
@@ -482,7 +470,6 @@ async def test_response_observer_purpose_followup_after_trim_retry(
     assert any(r.purpose == PURPOSE_AGENT_FOLLOWUP for r in responses)
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_response_observer_exception_does_not_crash_agent_loop(
     mock_amessages: MagicMock,
@@ -507,7 +494,6 @@ async def test_response_observer_exception_does_not_crash_agent_loop(
     assert any("observer raised" in rec.message for rec in caplog.records)
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.compaction.amessages_streamed")
 async def test_response_observer_fires_from_compaction(
     mock_amessages: MagicMock,
@@ -550,7 +536,6 @@ async def test_response_observer_fires_from_compaction(
         assert "type" in block
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.amessages_streamed")
 async def test_response_observer_fires_from_heartbeat_decision(
     mock_amessages: MagicMock,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
@@ -72,7 +71,6 @@ def _build_auth_test_registry() -> ToolRegistry:
 class TestGetAvailableSpecialistSummaries:
     """get_available_specialist_summaries excludes unauthenticated factories."""
 
-    @pytest.mark.asyncio()
     async def test_excludes_unauthenticated_specialist(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=MagicMock())
@@ -81,14 +79,12 @@ class TestGetAvailableSpecialistSummaries:
         assert "file" in summaries
         assert "quickbooks" not in summaries
 
-    @pytest.mark.asyncio()
     async def test_includes_factory_without_auth_check(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=MagicMock())
         summaries = await registry.get_available_specialist_summaries(ctx)
         assert "file" in summaries
 
-    @pytest.mark.asyncio()
     async def test_includes_factory_with_passing_auth_check(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"))
@@ -99,7 +95,6 @@ class TestGetAvailableSpecialistSummaries:
 class TestGetUnauthenticatedSpecialists:
     """get_unauthenticated_specialists returns only auth-failing factories."""
 
-    @pytest.mark.asyncio()
     async def test_returns_unauthenticated_factory(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=MagicMock())
@@ -107,28 +102,24 @@ class TestGetUnauthenticatedSpecialists:
         assert "quickbooks" in unauth
         assert "not connected" in unauth["quickbooks"].lower()
 
-    @pytest.mark.asyncio()
     async def test_excludes_authenticated_factory(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"))
         unauth = await registry.get_unauthenticated_specialists(ctx)
         assert "heartbeat" not in unauth
 
-    @pytest.mark.asyncio()
     async def test_excludes_factory_without_auth_check(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"), storage=MagicMock())
         unauth = await registry.get_unauthenticated_specialists(ctx)
         assert "file" not in unauth
 
-    @pytest.mark.asyncio()
     async def test_excludes_core_factories(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"))
         unauth = await registry.get_unauthenticated_specialists(ctx)
         assert "workspace" not in unauth
 
-    @pytest.mark.asyncio()
     async def test_respects_excluded_factories(self) -> None:
         registry = _build_auth_test_registry()
         ctx = ToolContext(user=User(id="1"))
@@ -137,7 +128,6 @@ class TestGetUnauthenticatedSpecialists:
         )
         assert "quickbooks" not in unauth
 
-    @pytest.mark.asyncio()
     async def test_empty_when_all_authenticated(self) -> None:
         registry = ToolRegistry()
         registry.register(
@@ -155,7 +145,6 @@ class TestGetUnauthenticatedSpecialists:
 class TestListCapabilitiesWithUnauthenticated:
     """list_capabilities shows unauthenticated integrations and blocks activation."""
 
-    @pytest.mark.asyncio
     async def test_listing_shows_unauthenticated_section(self) -> None:
         summaries = {"heartbeat": "Manage heartbeats"}
         unauth = {"quickbooks": "QuickBooks is not connected."}
@@ -166,7 +155,6 @@ class TestListCapabilitiesWithUnauthenticated:
         assert "not connected" in result.content.lower()
         assert not result.is_error
 
-    @pytest.mark.asyncio
     async def test_activating_unauthenticated_returns_auth_error(self) -> None:
         summaries = {"heartbeat": "Manage heartbeats"}
         unauth = {"quickbooks": "QuickBooks is not connected. Authenticate via web dashboard."}
@@ -176,7 +164,6 @@ class TestListCapabilitiesWithUnauthenticated:
         assert result.error_kind == ToolErrorKind.AUTH
         assert "not connected" in result.content.lower()
 
-    @pytest.mark.asyncio
     async def test_lookup_authenticated_category_returns_guidance(self) -> None:
         summaries = {"heartbeat": "Manage heartbeats"}
         unauth = {"quickbooks": "QuickBooks is not connected."}
@@ -185,7 +172,6 @@ class TestListCapabilitiesWithUnauthenticated:
         assert not result.is_error
         assert "already loaded" in result.content.lower()
 
-    @pytest.mark.asyncio
     async def test_usage_hint_mentions_unauthenticated(self) -> None:
         summaries = {"heartbeat": "Manage heartbeats"}
         unauth = {"quickbooks": "QuickBooks is not connected."}
@@ -193,14 +179,12 @@ class TestListCapabilitiesWithUnauthenticated:
         assert "quickbooks" in tool.usage_hint.lower()
         assert "not connected" in tool.usage_hint.lower()
 
-    @pytest.mark.asyncio
     async def test_no_unauthenticated_no_extra_section(self) -> None:
         summaries = {"heartbeat": "Manage heartbeats"}
         tool = create_list_capabilities_tool(summaries)
         result = await tool.function(category=None)
         assert "not connected" not in result.content.lower()
 
-    @pytest.mark.asyncio
     async def test_only_unauthenticated_still_shows_info(self) -> None:
         tool = create_list_capabilities_tool({}, unauthenticated={"quickbooks": "Not connected."})
         result = await tool.function(category=None)
@@ -212,7 +196,6 @@ class TestListCapabilitiesWithUnauthenticated:
 class TestQuickBooksAuthCheck:
     """QuickBooks auth_check function works correctly."""
 
-    @pytest.mark.asyncio()
     async def test_returns_none_when_not_configured(self) -> None:
         from unittest.mock import patch
 
@@ -224,7 +207,6 @@ class TestQuickBooksAuthCheck:
             ctx = ToolContext(user=User(id="test-user"))
             assert await _quickbooks_auth_check(ctx) is None
 
-    @pytest.mark.asyncio()
     async def test_returns_none_when_authenticated(self) -> None:
         from unittest.mock import AsyncMock, patch
 
@@ -243,7 +225,6 @@ class TestQuickBooksAuthCheck:
             ctx = ToolContext(user=User(id="test-user"))
             assert await _quickbooks_auth_check(ctx) is None
 
-    @pytest.mark.asyncio()
     async def test_returns_reason_when_no_token(self) -> None:
         from unittest.mock import AsyncMock, patch
 
@@ -265,7 +246,6 @@ class TestQuickBooksAuthCheck:
 class TestCalendarAuthCheck:
     """Google Calendar auth_check function works correctly."""
 
-    @pytest.mark.asyncio()
     async def test_returns_none_when_not_configured(self) -> None:
         from unittest.mock import patch
 
@@ -277,7 +257,6 @@ class TestCalendarAuthCheck:
             ctx = ToolContext(user=User(id="test-user"))
             assert await _calendar_auth_check(ctx) is None
 
-    @pytest.mark.asyncio()
     async def test_returns_none_when_authenticated(self) -> None:
         from unittest.mock import AsyncMock, patch
 
@@ -295,7 +274,6 @@ class TestCalendarAuthCheck:
             ctx = ToolContext(user=User(id="test-user"))
             assert await _calendar_auth_check(ctx) is None
 
-    @pytest.mark.asyncio()
     async def test_returns_reason_when_no_token(self) -> None:
         from unittest.mock import AsyncMock, patch
 
@@ -396,7 +374,6 @@ class TestGetDisabledSpecialistSubTools:
 class TestListCapabilitiesWithDisabledSubTools:
     """list_capabilities shows disabled sub-tool info when provided."""
 
-    @pytest.mark.asyncio
     async def test_listing_shows_disabled_info(self) -> None:
         summaries = {"quickbooks": "QB tools"}
         disabled = {
@@ -408,7 +385,6 @@ class TestListCapabilitiesWithDisabledSubTools:
         assert "qb_update" in result.content
         assert "disabled" in result.content.lower()
 
-    @pytest.mark.asyncio
     async def test_lookup_notes_disabled_tools(self) -> None:
         summaries = {"quickbooks": "QB tools"}
         disabled = {"quickbooks": [SubToolInfo("qb_create", "Create")]}
@@ -419,14 +395,12 @@ class TestListCapabilitiesWithDisabledSubTools:
         assert "qb_create" in result.content
         assert "disabled" in result.content.lower()
 
-    @pytest.mark.asyncio
     async def test_no_disabled_no_change(self) -> None:
         summaries = {"quickbooks": "QB tools"}
         tool = create_list_capabilities_tool(summaries)
         result = await tool.function(category=None)
         assert "disabled" not in result.content.lower()
 
-    @pytest.mark.asyncio
     async def test_activation_without_disabled_no_note(self) -> None:
         summaries = {"quickbooks": "QB tools"}
         tool = create_list_capabilities_tool(summaries)

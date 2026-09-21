@@ -71,7 +71,6 @@ async def _build_connected_service(user_id: str) -> ServiceTitanService:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_build_servicetitan_tools_returns_all_tools(async_test_user: Any) -> None:
     """build_servicetitan_tools must expose the read tools plus st_add_job_note."""
     service = await _build_connected_service(async_test_user.id)
@@ -85,7 +84,6 @@ async def test_build_servicetitan_tools_returns_all_tools(async_test_user: Any) 
     }
 
 
-@pytest.mark.asyncio()
 async def test_read_tools_have_no_approval_policy_or_concurrency_group(
     async_test_user: Any,
 ) -> None:
@@ -115,7 +113,6 @@ def _tool_by_name(tools: list[Any], name: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_search_customers_by_name_returns_match(async_test_user: Any) -> None:
     service = await _build_connected_service(async_test_user.id)
     search = _tool_by_name(
@@ -129,7 +126,6 @@ async def test_search_customers_by_name_returns_match(async_test_user: Any) -> N
     assert "#1003" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_search_customers_numeric_query_routes_to_phone(
     async_test_user: Any,
 ) -> None:
@@ -147,7 +143,6 @@ async def test_search_customers_numeric_query_routes_to_phone(
     assert "#1001" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_search_customers_empty_query_validation_error(
     async_test_user: Any,
 ) -> None:
@@ -161,7 +156,6 @@ async def test_search_customers_empty_query_validation_error(
     assert "empty" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_search_customers_no_match_returns_friendly_message(
     async_test_user: Any,
 ) -> None:
@@ -175,7 +169,6 @@ async def test_search_customers_no_match_returns_friendly_message(
     assert "No customers matched" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_search_customers_truncates_to_limit(async_test_user: Any) -> None:
     """A broad name query should respect the requested limit and surface a hint."""
     service = await _build_connected_service(async_test_user.id)
@@ -202,7 +195,6 @@ async def test_search_customers_truncates_to_limit(async_test_user: Any) -> None
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_get_customer_returns_full_record(async_test_user: Any) -> None:
     service = await _build_connected_service(async_test_user.id)
     get_customer = _tool_by_name(
@@ -217,7 +209,6 @@ async def test_get_customer_returns_full_record(async_test_user: Any) -> None:
     assert "+15555550103" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_get_customer_unknown_id_returns_not_found(async_test_user: Any) -> None:
     service = await _build_connected_service(async_test_user.id)
     get_customer = _tool_by_name(
@@ -236,7 +227,6 @@ async def test_get_customer_unknown_id_returns_not_found(async_test_user: Any) -
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_appointments_with_wide_range_returns_all(
     async_test_user: Any,
 ) -> None:
@@ -255,7 +245,6 @@ async def test_list_appointments_with_wide_range_returns_all(
     assert "Found 15 appointment(s)" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_appointments_status_filter_narrows(async_test_user: Any) -> None:
     """The status filter should narrow the result set by exact status."""
     service = await _build_connected_service(async_test_user.id)
@@ -280,7 +269,6 @@ async def test_list_appointments_status_filter_narrows(async_test_user: Any) -> 
         assert "[Scheduled]" in ln
 
 
-@pytest.mark.asyncio()
 async def test_list_appointments_empty_window_reports_no_match(
     async_test_user: Any,
 ) -> None:
@@ -297,7 +285,6 @@ async def test_list_appointments_empty_window_reports_no_match(
     assert "No ServiceTitan appointments found" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_list_appointments_defaults_to_today_when_no_dates(
     async_test_user: Any,
 ) -> None:

@@ -122,7 +122,6 @@ def test_manager_channels_returns_copy() -> None:
     assert "injected" not in mgr.channels
 
 
-@pytest.mark.asyncio
 async def test_manager_start_all() -> None:
     """start_all calls start() on every registered channel."""
     mgr = ChannelManager()
@@ -137,7 +136,6 @@ async def test_manager_start_all() -> None:
     assert ch2.started
 
 
-@pytest.mark.asyncio
 async def test_manager_stop_all() -> None:
     """stop_all calls stop() on every registered channel."""
     mgr = ChannelManager()
@@ -150,7 +148,6 @@ async def test_manager_stop_all() -> None:
     assert ch2.stopped
 
 
-@pytest.mark.asyncio
 async def test_handle_inbound_sends_error_fallback_on_crash() -> None:
     """When process_inbound_from_bus crashes, an error reply should be sent."""
     from backend.app.agent.ingestion import InboundMessage
@@ -183,7 +180,6 @@ async def test_handle_inbound_sends_error_fallback_on_crash() -> None:
     assert found, "Expected an error fallback message on the outbound bus"
 
 
-@pytest.mark.asyncio
 async def test_dispatcher_routes_typing_stop_to_channel() -> None:
     """An outbound with is_typing_stop=True must call channel.stop_typing_indicator,
     not send_text or send_typing_indicator."""
@@ -230,7 +226,6 @@ async def test_dispatcher_routes_typing_stop_to_channel() -> None:
     assert ch.stopped_typing_for == ["+15551234567"]
 
 
-@pytest.mark.asyncio
 async def test_dispatcher_does_not_block_on_slow_typing_indicator() -> None:
     """Outbound dispatcher must keep delivering messages even when a
     typing-indicator call hangs.

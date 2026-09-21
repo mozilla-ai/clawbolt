@@ -55,7 +55,6 @@ def _force_fake_backend() -> Any:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_mint_access_token_round_trips_against_fake() -> None:
     """The fake's ``/connect/token`` accepts any non-empty client credentials."""
     token, expires_at = await mint_access_token(
@@ -68,14 +67,12 @@ async def test_mint_access_token_round_trips_against_fake() -> None:
     assert expires_at > time.time() + 60
 
 
-@pytest.mark.asyncio()
 async def test_mint_access_token_rejects_missing_client_secret() -> None:
     """An empty client_secret should round-trip through to a 4xx error."""
     with pytest.raises(ServiceTitanAuthError):
         await mint_access_token(client_id="abc", client_secret="")
 
 
-@pytest.mark.asyncio()
 async def test_mint_access_token_hits_auth_host_not_api_host() -> None:
     """The token client must POST to the auth host, not the resource host.
 
@@ -115,7 +112,6 @@ async def test_mint_access_token_hits_auth_host_not_api_host() -> None:
     assert "api.example.test" not in captured["url"]
 
 
-@pytest.mark.asyncio()
 async def test_mint_access_token_wraps_network_failure() -> None:
     """A transport-level failure surfaces as ServiceTitanAuthError, not httpx."""
 
@@ -141,7 +137,6 @@ async def test_mint_access_token_wraps_network_failure() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_save_and_load_credentials_round_trip(async_test_user: Any) -> None:
     user_id = async_test_user.id
 
@@ -169,7 +164,6 @@ async def test_save_and_load_credentials_round_trip(async_test_user: Any) -> Non
     assert await is_connected(user_id) is True
 
 
-@pytest.mark.asyncio()
 async def test_save_credentials_overwrites_previous_row(async_test_user: Any) -> None:
     """A second save replaces tenant + bearer cleanly."""
     user_id = async_test_user.id
@@ -199,7 +193,6 @@ async def test_save_credentials_overwrites_previous_row(async_test_user: Any) ->
     assert cred.access_token == "bearer-B"
 
 
-@pytest.mark.asyncio()
 async def test_clear_credentials_removes_row(async_test_user: Any) -> None:
     user_id = async_test_user.id
     await save_credentials(
@@ -217,7 +210,6 @@ async def test_clear_credentials_removes_row(async_test_user: Any) -> None:
     assert await load_credentials(user_id) is None
 
 
-@pytest.mark.asyncio()
 async def test_load_credentials_treats_partial_row_as_not_connected(
     async_test_user: Any,
 ) -> None:
@@ -250,7 +242,6 @@ async def test_load_credentials_treats_partial_row_as_not_connected(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_credential_token_expiry_window() -> None:
     """``is_token_expired`` respects the buffer and the empty-token sentinel."""
     cred = ServiceTitanCredential(
@@ -272,14 +263,12 @@ async def test_credential_token_expiry_window() -> None:
     assert cred.is_token_expired(now=990.0) is True
 
 
-@pytest.mark.asyncio()
 async def test_get_valid_token_returns_none_when_no_credential(
     async_test_user: Any,
 ) -> None:
     assert await get_valid_token(async_test_user.id) is None
 
 
-@pytest.mark.asyncio()
 async def test_get_valid_token_reuses_fresh_bearer(async_test_user: Any) -> None:
     """A non-expired bearer is returned without a refresh call."""
     user_id = async_test_user.id
@@ -305,7 +294,6 @@ async def test_get_valid_token_reuses_fresh_bearer(async_test_user: Any) -> None
     assert cred.access_token == "still-fresh"
 
 
-@pytest.mark.asyncio()
 async def test_load_credentials_uncached_observes_peer_writes(
     async_test_user: Any,
 ) -> None:
@@ -348,7 +336,6 @@ async def test_load_credentials_uncached_observes_peer_writes(
     assert fresh.access_token == "bearer-from-peer"
 
 
-@pytest.mark.asyncio()
 async def test_get_valid_token_refreshes_when_expired(async_test_user: Any) -> None:
     """An expired bearer triggers a fresh client-credentials mint."""
     user_id = async_test_user.id

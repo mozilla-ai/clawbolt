@@ -14,7 +14,6 @@ import datetime
 import json
 from unittest.mock import patch
 
-import pytest
 from sqlalchemy import select
 
 from backend.app.agent.compaction_recovery import (
@@ -94,7 +93,6 @@ async def _read_event(event_id: int) -> CompactionEvent:
         return event
 
 
-@pytest.mark.asyncio()
 async def test_recovers_stale_pending_event(test_user: UserData) -> None:
     """A stale pending event is retried, completed, and its facts land."""
     await _seed_session_with_messages(test_user, message_count=6)
@@ -115,7 +113,6 @@ async def test_recovers_stale_pending_event(test_user: UserData) -> None:
     assert "fact: recovered" in content
 
 
-@pytest.mark.asyncio()
 async def test_skips_fresh_pending_event(test_user: UserData) -> None:
     """Events younger than the grace floor are in-flight, not stale."""
     await _seed_session_with_messages(test_user, message_count=6)
@@ -131,7 +128,6 @@ async def test_skips_fresh_pending_event(test_user: UserData) -> None:
     assert event.retry_count == 0
 
 
-@pytest.mark.asyncio()
 async def test_skips_event_beyond_lookback(test_user: UserData) -> None:
     """Events older than the lookback window are not retried."""
     await _seed_session_with_messages(test_user, message_count=6)
@@ -148,7 +144,6 @@ async def test_skips_event_beyond_lookback(test_user: UserData) -> None:
     assert (await _read_event(event_id)).retry_count == 0
 
 
-@pytest.mark.asyncio()
 async def test_skips_exhausted_event(test_user: UserData) -> None:
     """Rows at the attempt cap stop being selected (no infinite retry)."""
     await _seed_session_with_messages(test_user, message_count=6)
@@ -166,7 +161,6 @@ async def test_skips_exhausted_event(test_user: UserData) -> None:
     assert event.retry_count == _MAX_ATTEMPTS
 
 
-@pytest.mark.asyncio()
 async def test_failed_retry_keeps_pending_and_counts_attempt(
     test_user: UserData,
 ) -> None:
@@ -185,7 +179,6 @@ async def test_failed_retry_keeps_pending_and_counts_attempt(
     assert event.retry_count == 1
 
 
-@pytest.mark.asyncio()
 async def test_empty_range_exhausts_event(test_user: UserData) -> None:
     """A range with no recoverable messages stops being selected."""
     await _seed_session_with_messages(test_user, message_count=6)
@@ -201,7 +194,6 @@ async def test_empty_range_exhausts_event(test_user: UserData) -> None:
     assert event.retry_count == _MAX_ATTEMPTS
 
 
-@pytest.mark.asyncio()
 async def test_sweep_disabled_by_zero_lookback(test_user: UserData) -> None:
     await _seed_session_with_messages(test_user, message_count=6)
     event_id = await _insert_pending_event(test_user.id, min_seq=1, max_seq=4)

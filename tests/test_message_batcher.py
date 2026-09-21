@@ -51,7 +51,6 @@ def _stub_dispatch_db_calls() -> Generator[None]:
 class TestMessageBatcher:
     """Unit tests for the batching logic."""
 
-    @pytest.mark.asyncio
     async def test_single_message_processed_after_window(self) -> None:
         """A single message should be processed after the batch window expires."""
         batcher = MessageBatcher(window_ms=50)
@@ -80,7 +79,6 @@ class TestMessageBatcher:
             assert call_kwargs["message"] is mock_message
             assert call_kwargs["media_urls"] == []
 
-    @pytest.mark.asyncio
     async def test_multiple_messages_batched_into_one(self) -> None:
         """Rapid-fire messages should be batched: only the last triggers the pipeline."""
         batcher = MessageBatcher(window_ms=100)
@@ -133,7 +131,6 @@ class TestMessageBatcher:
                 ("file_b", "audio/ogg"),
             ]
 
-    @pytest.mark.asyncio
     async def test_different_users_not_batched(self) -> None:
         """Messages from different users should be processed independently."""
         batcher = MessageBatcher(window_ms=50)
@@ -166,7 +163,6 @@ class TestMessageBatcher:
             # Both users should get their own pipeline call
             assert mock_handle.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_timer_resets_on_new_message(self) -> None:
         """Adding a message should reset the batch window timer."""
         batcher = MessageBatcher(window_ms=100)
@@ -206,7 +202,6 @@ class TestMessageBatcher:
             await asyncio.sleep(0.1)
             mock_handle.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_zero_window_processes_immediately(self) -> None:
         """A zero window should process messages without batching delay."""
         batcher = MessageBatcher(window_ms=0)
@@ -232,7 +227,6 @@ class TestMessageBatcher:
 
             mock_handle.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_pipeline_failure_sends_fallback_error(self) -> None:
         """When the agent pipeline raises, a fallback error is sent via the bus."""
         batcher = MessageBatcher(window_ms=50)
@@ -267,7 +261,6 @@ class TestMessageBatcher:
                     break
             assert found
 
-    @pytest.mark.asyncio
     async def test_pipeline_failure_fallback_send_also_fails(self) -> None:
         """When both the pipeline and bus publish fail, no exception propagates."""
         batcher = MessageBatcher(window_ms=50)
@@ -300,7 +293,6 @@ class TestMessageBatcher:
 class TestProcessingTimeout:
     """Tests for agent_processing_timeout_seconds on the lock scope."""
 
-    @pytest.mark.asyncio
     async def test_batcher_flush_times_out_and_sends_fallback(self) -> None:
         """When the pipeline exceeds the timeout, a fallback error is sent."""
         batcher = MessageBatcher(window_ms=50)
@@ -336,7 +328,6 @@ class TestProcessingTimeout:
                     break
             assert found
 
-    @pytest.mark.asyncio
     async def test_timeout_releases_lock_for_next_request(self) -> None:
         """After a timeout, the next request for the same user should proceed."""
         batcher = MessageBatcher(window_ms=50)
@@ -375,7 +366,6 @@ class TestProcessingTimeout:
             # Both calls should have been attempted
             assert call_count == 2
 
-    @pytest.mark.asyncio
     async def test_non_batcher_path_times_out_and_sends_fallback(self) -> None:
         """Timeout on the non-batcher (direct) path sends a fallback error."""
         inbound = InboundMessage(
@@ -441,7 +431,6 @@ class TestProcessingTimeout:
 class TestProcessInboundFallbackError:
     """Tests for error fallback in process_inbound_from_bus (non-batcher path)."""
 
-    @pytest.mark.asyncio
     async def test_pipeline_failure_sends_fallback_error(self) -> None:
         """When the agent pipeline raises in the non-batcher path, a fallback is sent."""
         inbound = InboundMessage(

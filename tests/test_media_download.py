@@ -74,7 +74,6 @@ def _patch_client(transport: httpx.MockTransport) -> AbstractContextManager[obje
     )
 
 
-@pytest.mark.asyncio()
 async def test_download_telegram_media() -> None:
     """download_telegram_media should call getFile then stream-download bytes."""
     transport = _telegram_transport()
@@ -87,7 +86,6 @@ async def test_download_telegram_media() -> None:
     assert result.filename.endswith(".jpg")
 
 
-@pytest.mark.asyncio()
 async def test_download_infers_mime_from_file_path_when_octet_stream() -> None:
     """When Telegram returns application/octet-stream, infer MIME from file path."""
     transport = _telegram_transport(
@@ -101,7 +99,6 @@ async def test_download_infers_mime_from_file_path_when_octet_stream() -> None:
     assert result.filename.endswith(".jpg")
 
 
-@pytest.mark.asyncio()
 async def test_download_keeps_octet_stream_for_unknown_extension() -> None:
     """When extension is unrecognised, keep application/octet-stream as-is."""
     transport = _telegram_transport(
@@ -115,7 +112,6 @@ async def test_download_keeps_octet_stream_for_unknown_extension() -> None:
     assert result.mime_type == "application/octet-stream"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.media.download.settings")
 async def test_download_rejects_oversized_streamed_body(mock_settings: object) -> None:
     """Files exceeding max_media_size_bytes mid-stream should raise ValueError."""
@@ -129,7 +125,6 @@ async def test_download_rejects_oversized_streamed_body(mock_settings: object) -
         await download_telegram_media("abc123", bot_token="TOKEN")
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.media.download.settings")
 async def test_download_rejects_oversized_content_length(mock_settings: object) -> None:
     """Servers that volunteer a too-big Content-Length should be rejected upfront."""
@@ -156,7 +151,6 @@ def test_parse_content_length_handles_garbage() -> None:
     assert _parse_content_length("100; chunked") is None
 
 
-@pytest.mark.asyncio()
 async def test_download_telegram_media_error() -> None:
     """download_telegram_media should raise on HTTP error from getFile."""
 
@@ -168,7 +162,6 @@ async def test_download_telegram_media_error() -> None:
         await download_telegram_media("abc123", bot_token="TOKEN")
 
 
-@pytest.mark.asyncio()
 async def test_download_bounded_enforces_wall_time_deadline() -> None:
     """A slow-drip server that holds the connection open must be aborted."""
 

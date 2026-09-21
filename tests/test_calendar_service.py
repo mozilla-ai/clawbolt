@@ -45,7 +45,6 @@ def service() -> GoogleCalendarService:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_events_returns_events(service: GoogleCalendarService) -> None:
     """Should parse Google Calendar event items into CalendarEventData."""
     api_response = {
@@ -76,7 +75,6 @@ async def test_list_events_returns_events(service: GoogleCalendarService) -> Non
     assert events[0].location == "123 Oak St"
 
 
-@pytest.mark.asyncio()
 async def test_list_events_empty(service: GoogleCalendarService) -> None:
     """Should return empty list when no events."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -90,7 +88,6 @@ async def test_list_events_empty(service: GoogleCalendarService) -> None:
     assert events == []
 
 
-@pytest.mark.asyncio()
 async def test_list_events_encodes_calendar_id(service: GoogleCalendarService) -> None:
     """Calendar IDs with '#' or '@' must be percent-encoded in the URL path."""
     cal_id = "en.usa#holiday@group.v.calendar.google.com"
@@ -107,7 +104,6 @@ async def test_list_events_encodes_calendar_id(service: GoogleCalendarService) -
     assert "en.usa%23holiday%40group.v.calendar.google.com" in path
 
 
-@pytest.mark.asyncio()
 async def test_list_events_skips_malformed_events(service: GoogleCalendarService) -> None:
     """Should skip malformed events instead of crashing the entire list."""
     api_response = {
@@ -140,7 +136,6 @@ async def test_list_events_skips_malformed_events(service: GoogleCalendarService
     assert events[0].id == "good-event"
 
 
-@pytest.mark.asyncio()
 async def test_list_events_api_error(service: GoogleCalendarService) -> None:
     """Should propagate API errors."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -162,7 +157,6 @@ async def test_list_events_api_error(service: GoogleCalendarService) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_list_events_all_day_returns_tz_aware(service: GoogleCalendarService) -> None:
     """All-day events should have timezone-aware datetimes (not naive)."""
     api_response = {
@@ -196,7 +190,6 @@ async def test_list_events_all_day_returns_tz_aware(service: GoogleCalendarServi
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_create_event_success(service: GoogleCalendarService) -> None:
     """Should create an event and return parsed data."""
     api_response = {
@@ -222,7 +215,6 @@ async def test_create_event_success(service: GoogleCalendarService) -> None:
     assert event.title == "Job: Test"
 
 
-@pytest.mark.asyncio()
 async def test_create_event_no_reminder_omits_field(service: GoogleCalendarService) -> None:
     """Without reminder_minutes_before, the request body must omit `reminders`.
 
@@ -251,7 +243,6 @@ async def test_create_event_no_reminder_omits_field(service: GoogleCalendarServi
         assert "reminders" not in body
 
 
-@pytest.mark.asyncio()
 async def test_create_event_with_reminder_at_start(service: GoogleCalendarService) -> None:
     """reminder_minutes_before=0 must produce a popup override at exact start (#1067)."""
     api_response = {
@@ -279,7 +270,6 @@ async def test_create_event_with_reminder_at_start(service: GoogleCalendarServic
         }
 
 
-@pytest.mark.asyncio()
 async def test_create_event_with_reminder_minutes_before(
     service: GoogleCalendarService,
 ) -> None:
@@ -307,7 +297,6 @@ async def test_create_event_with_reminder_minutes_before(
         assert body["reminders"]["useDefault"] is False
 
 
-@pytest.mark.asyncio()
 async def test_create_event_api_error(service: GoogleCalendarService) -> None:
     """Should propagate API errors on create."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -332,7 +321,6 @@ async def test_create_event_api_error(service: GoogleCalendarService) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_update_event_success(service: GoogleCalendarService) -> None:
     """Should update an event and return parsed data."""
     api_response = {
@@ -358,7 +346,6 @@ async def test_update_event_success(service: GoogleCalendarService) -> None:
     assert "evt-001" in call_args[0][1]
 
 
-@pytest.mark.asyncio()
 async def test_update_event_not_found(service: GoogleCalendarService) -> None:
     """Should raise on 404."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -380,7 +367,6 @@ async def test_update_event_not_found(service: GoogleCalendarService) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_delete_event_success(service: GoogleCalendarService) -> None:
     """Should delete without error."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -391,7 +377,6 @@ async def test_delete_event_success(service: GoogleCalendarService) -> None:
     assert "evt-001" in mock_req.call_args[0][1]
 
 
-@pytest.mark.asyncio()
 async def test_delete_event_not_found(service: GoogleCalendarService) -> None:
     """Should raise on 404."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -409,7 +394,6 @@ async def test_delete_event_not_found(service: GoogleCalendarService) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_busy(service: GoogleCalendarService) -> None:
     """Should return busy slots."""
     api_response = {
@@ -437,7 +421,6 @@ async def test_check_availability_busy(service: GoogleCalendarService) -> None:
     assert slots[0].start.hour == 9
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_email_key(service: GoogleCalendarService) -> None:
     """Should find busy slots even when Google returns email as key instead of 'primary'."""
     api_response = {
@@ -465,7 +448,6 @@ async def test_check_availability_email_key(service: GoogleCalendarService) -> N
     assert slots[0].start.hour == 9
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_free(service: GoogleCalendarService) -> None:
     """Should return empty list when free."""
     api_response = {"calendars": {"primary": {"busy": []}}}
@@ -481,7 +463,6 @@ async def test_check_availability_free(service: GoogleCalendarService) -> None:
     assert slots == []
 
 
-@pytest.mark.asyncio()
 async def test_check_availability_api_error(service: GoogleCalendarService) -> None:
     """Should propagate API errors."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -503,7 +484,6 @@ async def test_check_availability_api_error(service: GoogleCalendarService) -> N
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_proactive_token_refresh() -> None:
     """Should refresh token when about to expire."""
     svc = GoogleCalendarService(
@@ -550,7 +530,6 @@ async def test_proactive_token_refresh() -> None:
     assert svc._access_token == "new-token"
 
 
-@pytest.mark.asyncio()
 async def test_reactive_token_refresh_on_401() -> None:
     """Should refresh and retry on 401."""
     svc = GoogleCalendarService(
@@ -602,7 +581,6 @@ async def test_reactive_token_refresh_on_401() -> None:
     assert svc._access_token == "fresh-token"
 
 
-@pytest.mark.asyncio()
 async def test_token_refresh_callback() -> None:
     """Should call on_token_refresh when tokens are refreshed."""
     callback_calls: list[tuple[str, str, float]] = []
@@ -656,7 +634,6 @@ async def test_token_refresh_callback() -> None:
     assert callback_calls[0][2] > time.time()  # actual expires_at from response
 
 
-@pytest.mark.asyncio()
 async def test_refresh_failure_propagates() -> None:
     """Should propagate refresh failure."""
     svc = GoogleCalendarService(
@@ -693,7 +670,6 @@ async def test_refresh_failure_propagates() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_timeout_handling(service: GoogleCalendarService) -> None:
     """Should propagate timeout exceptions."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:

@@ -8,7 +8,6 @@ from backend.app.agent.ingestion import InboundMessage
 from backend.app.bus import MessageBus, OutboundMessage
 
 
-@pytest.mark.asyncio
 async def test_publish_consume_inbound_round_trip() -> None:
     """Inbound messages should survive a publish/consume round-trip."""
     bus = MessageBus()
@@ -20,7 +19,6 @@ async def test_publish_consume_inbound_round_trip() -> None:
     assert result.text == "hello"
 
 
-@pytest.mark.asyncio
 async def test_publish_consume_outbound_round_trip() -> None:
     """Outbound messages should survive a publish/consume round-trip."""
     bus = MessageBus()
@@ -31,7 +29,6 @@ async def test_publish_consume_outbound_round_trip() -> None:
     assert result.content == "reply"
 
 
-@pytest.mark.asyncio
 async def test_response_future_registration_and_resolution() -> None:
     """Registering and resolving a response future should deliver the outbound message."""
     bus = MessageBus()
@@ -46,7 +43,6 @@ async def test_response_future_registration_and_resolution() -> None:
     assert fut.result() is msg
 
 
-@pytest.mark.asyncio
 async def test_resolve_unknown_request_id_returns_false() -> None:
     """Resolving an unregistered request_id should return False."""
     bus = MessageBus()
@@ -54,7 +50,6 @@ async def test_resolve_unknown_request_id_returns_false() -> None:
     assert bus.resolve_response("unknown", msg) is False
 
 
-@pytest.mark.asyncio
 async def test_wait_for_response_resolves() -> None:
     """wait_for_response should return when the response future is resolved."""
     bus = MessageBus()
@@ -73,7 +68,6 @@ async def test_wait_for_response_resolves() -> None:
     await task
 
 
-@pytest.mark.asyncio
 async def test_wait_for_response_timeout() -> None:
     """wait_for_response should raise TimeoutError when no reply arrives."""
     bus = MessageBus()
@@ -82,7 +76,6 @@ async def test_wait_for_response_timeout() -> None:
         await bus.wait_for_response("req-timeout", timeout=0.05)
 
 
-@pytest.mark.asyncio
 async def test_wait_for_response_auto_registers_future() -> None:
     """wait_for_response should auto-register a future if one does not exist."""
     bus = MessageBus()
@@ -99,7 +92,6 @@ async def test_wait_for_response_auto_registers_future() -> None:
     await task
 
 
-@pytest.mark.asyncio
 async def test_queue_sizes() -> None:
     """Queue size properties should reflect pending messages."""
     bus = MessageBus()
@@ -116,7 +108,6 @@ async def test_queue_sizes() -> None:
     assert bus.inbound_size == 0
 
 
-@pytest.mark.asyncio
 async def test_resolve_cleans_up_future() -> None:
     """After resolution, the future should be removed from the internal map."""
     bus = MessageBus()
@@ -129,7 +120,6 @@ async def test_resolve_cleans_up_future() -> None:
     assert bus.resolve_response(request_id, msg) is False
 
 
-@pytest.mark.asyncio
 async def test_sse_handler_can_read_already_resolved_future() -> None:
     """Race: dispatcher resolves the response BEFORE the SSE client opens
     the event stream. The SSE handler then calls
@@ -162,7 +152,6 @@ async def test_sse_handler_can_read_already_resolved_future() -> None:
     assert fetched.result().content == "ack"
 
 
-@pytest.mark.asyncio
 async def test_ttl_cleanup_removes_event_queue() -> None:
     """TTL cleanup should remove orphaned event queues when SSE is never opened."""
     bus = MessageBus()

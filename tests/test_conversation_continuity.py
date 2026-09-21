@@ -1,7 +1,6 @@
 import datetime
 import json
 
-import pytest
 import pytest_asyncio
 
 from backend.app.agent.context import (
@@ -26,7 +25,6 @@ async def conversation(test_user: User) -> SessionState:
     return session
 
 
-@pytest.mark.asyncio()
 async def test_load_history_chronological_order(
     test_user: User,
     conversation: SessionState,
@@ -52,7 +50,6 @@ async def test_load_history_chronological_order(
     assert history[2].content == "Message 2"
 
 
-@pytest.mark.asyncio()
 async def test_load_history_roles(
     conversation: SessionState,
 ) -> None:
@@ -66,7 +63,6 @@ async def test_load_history_roles(
     assert isinstance(history[1], AssistantMessage)
 
 
-@pytest.mark.asyncio()
 async def test_load_history_soft_limit(
     conversation: SessionState,
 ) -> None:
@@ -83,7 +79,6 @@ async def test_load_history_soft_limit(
     assert len(history_all) == 9
 
 
-@pytest.mark.asyncio()
 async def test_load_history_prefers_processed_context(
     conversation: SessionState,
 ) -> None:
@@ -105,7 +100,6 @@ async def test_load_history_prefers_processed_context(
     assert "damaged deck railing" in content
 
 
-@pytest.mark.asyncio()
 async def test_load_history_outbound_uses_llm_reply_text_when_set(
     conversation: SessionState,
 ) -> None:
@@ -132,7 +126,6 @@ async def test_load_history_outbound_uses_llm_reply_text_when_set(
     assert (history[0].content or "").endswith("Sent.")
 
 
-@pytest.mark.asyncio()
 async def test_load_history_outbound_falls_back_to_body_for_legacy_rows(
     conversation: SessionState,
 ) -> None:
@@ -154,7 +147,6 @@ async def test_load_history_outbound_falls_back_to_body_for_legacy_rows(
     assert (history[0].content or "").endswith("Got it.")
 
 
-@pytest.mark.asyncio()
 async def test_load_history_skips_blank_inbound_placeholder_rows(
     conversation: SessionState,
 ) -> None:
@@ -177,7 +169,6 @@ async def test_load_history_skips_blank_inbound_placeholder_rows(
     assert history == []
 
 
-@pytest.mark.asyncio()
 async def test_load_history_keeps_processed_attachment_only_turns(
     conversation: SessionState,
 ) -> None:
@@ -201,7 +192,6 @@ async def test_load_history_keeps_processed_attachment_only_turns(
     assert "Photo 1" in (history[0].content or "")
 
 
-@pytest.mark.asyncio()
 async def test_load_history_empty_conversation(
     conversation: SessionState,
 ) -> None:
@@ -210,7 +200,6 @@ async def test_load_history_empty_conversation(
     assert history == []
 
 
-@pytest.mark.asyncio()
 async def test_load_history_single_message(
     conversation: SessionState,
 ) -> None:
@@ -221,7 +210,6 @@ async def test_load_history_single_message(
     assert history == []
 
 
-@pytest.mark.asyncio()
 async def test_get_or_create_conversation_new(
     test_user: User,
 ) -> None:
@@ -231,7 +219,6 @@ async def test_get_or_create_conversation_new(
     assert conv.user_id == test_user.id
 
 
-@pytest.mark.asyncio()
 async def test_get_or_create_conversation_existing_active(
     test_user: User,
     conversation: SessionState,
@@ -243,7 +230,6 @@ async def test_get_or_create_conversation_existing_active(
     assert conv.session_id == conversation.session_id
 
 
-@pytest.mark.asyncio()
 async def test_get_or_create_conversation_reuses_old_session(
     test_user: User,
 ) -> None:
@@ -285,7 +271,6 @@ def test_webhook_uses_canonical_get_or_create_conversation() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_load_history_reconstructs_tool_interactions(
     conversation: SessionState,
 ) -> None:
@@ -335,7 +320,6 @@ async def test_load_history_reconstructs_tool_interactions(
     assert history[3].content == "I saved your rate."
 
 
-@pytest.mark.asyncio()
 async def test_load_history_without_tool_interactions(
     conversation: SessionState,
 ) -> None:
@@ -360,7 +344,6 @@ async def test_load_history_without_tool_interactions(
     assert history[1].tool_calls == []
 
 
-@pytest.mark.asyncio()
 async def test_load_history_multiple_tool_calls_in_one_turn(
     conversation: SessionState,
 ) -> None:
@@ -404,7 +387,6 @@ async def test_load_history_multiple_tool_calls_in_one_turn(
     assert history[4].content == "Done!"
 
 
-@pytest.mark.asyncio()
 async def test_load_history_malformed_tool_json_falls_back_to_flat(
     conversation: SessionState,
 ) -> None:
@@ -452,7 +434,6 @@ _LEGACY_APPROVAL_PROMPT = (
 )
 
 
-@pytest.mark.asyncio()
 async def test_load_history_filters_persisted_approval_prompts(
     conversation: SessionState,
 ) -> None:
@@ -477,7 +458,6 @@ async def test_load_history_filters_persisted_approval_prompts(
     )
 
 
-@pytest.mark.asyncio()
 async def test_load_history_filters_legacy_approval_prompt_wording(
     conversation: SessionState,
 ) -> None:
@@ -499,7 +479,6 @@ async def test_load_history_filters_legacy_approval_prompt_wording(
     assert history[0].content.endswith("Create that estimate")
 
 
-@pytest.mark.asyncio()
 async def test_load_history_filters_orphan_approval_reply_following_prompt(
     conversation: SessionState,
 ) -> None:
@@ -521,7 +500,6 @@ async def test_load_history_filters_orphan_approval_reply_following_prompt(
     assert history[0].content.endswith("Create that estimate")
 
 
-@pytest.mark.asyncio()
 async def test_load_history_keeps_yes_unrelated_to_approval_prompt(
     conversation: SessionState,
 ) -> None:
@@ -539,7 +517,6 @@ async def test_load_history_keeps_yes_unrelated_to_approval_prompt(
     assert history[2].content == "Yes"
 
 
-@pytest.mark.asyncio()
 async def test_load_history_keeps_assistant_reply_that_happens_to_mention_yes_no(
     conversation: SessionState,
 ) -> None:
@@ -566,7 +543,6 @@ async def test_load_history_keeps_assistant_reply_that_happens_to_mention_yes_no
     assert "yes-or-no" in (history[1].content or "")
 
 
-@pytest.mark.asyncio()
 async def test_load_history_filters_llm_generated_fake_approval_prompt(
     conversation: SessionState,
 ) -> None:

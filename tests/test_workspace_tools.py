@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-import pytest
 from sqlalchemy import select
 
 from backend.app.agent.tools.base import ToolResult
@@ -49,7 +48,6 @@ async def _get_user_column(user_id: str, column: str) -> str:
 # --- read_file tests (DB-backed: USER.md, SOUL.md, HEARTBEAT.md) ---
 
 
-@pytest.mark.asyncio()
 async def test_read_file_success(test_user: User) -> None:
     """read_file should return user_text from DB for USER.md."""
     await _set_user_column(test_user.id, "user_text", "# User\n\n- Name: Jake\n")
@@ -60,7 +58,6 @@ async def test_read_file_success(test_user: User) -> None:
     assert "Jake" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_read_file_not_found(test_user: User) -> None:
     """read_file should return error for missing disk file."""
     read_fn = _get_tool_fn(test_user.id, "read_file")
@@ -69,7 +66,6 @@ async def test_read_file_not_found(test_user: User) -> None:
     assert "not found" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_read_file_rejects_unsupported_extension(test_user: User) -> None:
     """read_file should reject files with unsupported extensions."""
     read_fn = _get_tool_fn(test_user.id, "read_file")
@@ -78,7 +74,6 @@ async def test_read_file_rejects_unsupported_extension(test_user: User) -> None:
     assert ".md" in result.content or ".json" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_read_file_rejects_path_traversal(test_user: User) -> None:
     """read_file should reject paths that escape the user directory."""
     read_fn = _get_tool_fn(test_user.id, "read_file")
@@ -89,7 +84,6 @@ async def test_read_file_rejects_path_traversal(test_user: User) -> None:
 # --- write_file tests (DB-backed for USER.md, disk for others) ---
 
 
-@pytest.mark.asyncio()
 async def test_write_file_db_backed(test_user: User) -> None:
     """write_file should write USER.md to the DB."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
@@ -99,7 +93,6 @@ async def test_write_file_db_backed(test_user: User) -> None:
     assert await _get_user_column(test_user.id, "user_text") == "# User\n\n- Name: Sarah\n"
 
 
-@pytest.mark.asyncio()
 async def test_write_file_overwrites_db(test_user: User) -> None:
     """write_file should overwrite existing DB content."""
     await _set_user_column(test_user.id, "user_text", "old content")
@@ -109,7 +102,6 @@ async def test_write_file_overwrites_db(test_user: User) -> None:
     assert await _get_user_column(test_user.id, "user_text") == "new content"
 
 
-@pytest.mark.asyncio()
 async def test_write_file_creates_subdirectory(test_user: User) -> None:
     """write_file should create parent directories for disk files."""
     cdir = _user_dir(test_user)
@@ -121,7 +113,6 @@ async def test_write_file_creates_subdirectory(test_user: User) -> None:
     assert (cdir / "memory" / "NOTES.md").exists()
 
 
-@pytest.mark.asyncio()
 async def test_write_file_rejects_unsupported_extension(test_user: User) -> None:
     """write_file should reject files with unsupported extensions."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
@@ -129,7 +120,6 @@ async def test_write_file_rejects_unsupported_extension(test_user: User) -> None
     assert result.is_error is True
 
 
-@pytest.mark.asyncio()
 async def test_write_file_rejects_path_traversal(test_user: User) -> None:
     """write_file should reject paths that escape the user directory."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
@@ -140,7 +130,6 @@ async def test_write_file_rejects_path_traversal(test_user: User) -> None:
 # --- edit_file tests (DB-backed for USER.md, disk for others) ---
 
 
-@pytest.mark.asyncio()
 async def test_edit_file_replaces_text(test_user: User) -> None:
     """edit_file should replace exact text in DB column."""
     await _set_user_column(test_user.id, "user_text", "- Rate: $85/hr\n- Hours: 8-5\n")
@@ -151,7 +140,6 @@ async def test_edit_file_replaces_text(test_user: User) -> None:
     assert await _get_user_column(test_user.id, "user_text") == "- Rate: $100/hr\n- Hours: 8-5\n"
 
 
-@pytest.mark.asyncio()
 async def test_edit_file_text_not_found(test_user: User) -> None:
     """edit_file should return error when old_text not found."""
     await _set_user_column(test_user.id, "user_text", "- Name: Jake\n")
@@ -162,7 +150,6 @@ async def test_edit_file_text_not_found(test_user: User) -> None:
     assert "not found" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_edit_file_ambiguous_match(test_user: User) -> None:
     """edit_file should return error when old_text matches multiple times."""
     await _set_user_column(test_user.id, "user_text", "foo bar\nfoo baz\n")
@@ -173,7 +160,6 @@ async def test_edit_file_ambiguous_match(test_user: User) -> None:
     assert "2 matches" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_edit_file_not_found(test_user: User) -> None:
     """edit_file should return error for missing disk file."""
     edit_fn = _get_tool_fn(test_user.id, "edit_file")
@@ -199,7 +185,6 @@ def test_workspace_tools_registered(test_user: User) -> None:
 # --- delete_file tests (always disk-based) ---
 
 
-@pytest.mark.asyncio()
 async def test_delete_file_success(test_user: User) -> None:
     """delete_file should remove the file."""
     cdir = _user_dir(test_user)
@@ -213,7 +198,6 @@ async def test_delete_file_success(test_user: User) -> None:
     assert not (cdir / "BOOTSTRAP.md").exists()
 
 
-@pytest.mark.asyncio()
 async def test_delete_file_not_found(test_user: User) -> None:
     """delete_file should return error for missing file."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
@@ -222,7 +206,6 @@ async def test_delete_file_not_found(test_user: User) -> None:
     assert "not found" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_delete_file_protected(test_user: User) -> None:
     """delete_file should reject protected files."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
@@ -232,7 +215,6 @@ async def test_delete_file_protected(test_user: User) -> None:
         assert "protected" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_delete_file_protected_via_path_variant(test_user: User) -> None:
     """delete_file should catch protected files even with path variations like ./USER.md."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
@@ -242,7 +224,6 @@ async def test_delete_file_protected_via_path_variant(test_user: User) -> None:
         assert "protected" in result.content.lower()
 
 
-@pytest.mark.asyncio()
 async def test_delete_file_rejects_unsupported_extension(test_user: User) -> None:
     """delete_file should reject files with unsupported extensions."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
@@ -251,7 +232,6 @@ async def test_delete_file_rejects_unsupported_extension(test_user: User) -> Non
     assert ".md" in result.content or ".json" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_delete_file_rejects_path_traversal(test_user: User) -> None:
     """delete_file should reject paths that escape the user directory."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
@@ -262,7 +242,6 @@ async def test_delete_file_rejects_path_traversal(test_user: User) -> None:
 # --- DB-backed virtual file tests for SOUL.md and HEARTBEAT.md ---
 
 
-@pytest.mark.asyncio()
 async def test_soul_md_roundtrip(test_user: User) -> None:
     """SOUL.md should read/write through the DB."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
@@ -274,7 +253,6 @@ async def test_soul_md_roundtrip(test_user: User) -> None:
     assert "Direct and helpful" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_heartbeat_md_roundtrip(test_user: User) -> None:
     """HEARTBEAT.md should read/write through the DB."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
@@ -314,7 +292,6 @@ async def _get_memory_doc(user_id: str, column: str) -> str:
         return getattr(doc, column, "") or ""
 
 
-@pytest.mark.asyncio()
 async def test_read_memory_md_via_path(test_user: User) -> None:
     """read_file('memory/MEMORY.md') should read from MemoryDocument.memory_text."""
     await _set_memory_doc(test_user.id, "memory_text", "- User prefers morning check-ins\n")
@@ -325,7 +302,6 @@ async def test_read_memory_md_via_path(test_user: User) -> None:
     assert "morning check-ins" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_read_memory_md_top_level(test_user: User) -> None:
     """read_file('MEMORY.md') should also read from MemoryDocument."""
     await _set_memory_doc(test_user.id, "memory_text", "- Has 3 active jobs\n")
@@ -336,7 +312,6 @@ async def test_read_memory_md_top_level(test_user: User) -> None:
     assert "3 active jobs" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_read_memory_md_empty(test_user: User) -> None:
     """read_file('memory/MEMORY.md') should return '(empty)' when no MemoryDocument exists."""
     read_fn = _get_tool_fn(test_user.id, "read_file")
@@ -345,7 +320,6 @@ async def test_read_memory_md_empty(test_user: User) -> None:
     assert result.content == "(empty)"
 
 
-@pytest.mark.asyncio()
 async def test_write_memory_md_via_path(test_user: User) -> None:
     """write_file('memory/MEMORY.md') should write to MemoryDocument.memory_text."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
@@ -355,7 +329,6 @@ async def test_write_memory_md_via_path(test_user: User) -> None:
     assert "Rates: $85/hr" in await _get_memory_doc(test_user.id, "memory_text")
 
 
-@pytest.mark.asyncio()
 async def test_write_memory_md_creates_doc(test_user: User) -> None:
     """write_file should create MemoryDocument if it doesn't exist yet."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
@@ -363,7 +336,6 @@ async def test_write_memory_md_creates_doc(test_user: User) -> None:
     assert "fresh memory" in await _get_memory_doc(test_user.id, "memory_text")
 
 
-@pytest.mark.asyncio()
 async def test_edit_memory_md(test_user: User) -> None:
     """edit_file should work on memory/MEMORY.md."""
     await _set_memory_doc(test_user.id, "memory_text", "- Rate: $85/hr\n- Hours: 8-5\n")
@@ -374,7 +346,6 @@ async def test_edit_memory_md(test_user: User) -> None:
     assert "$100/hr" in await _get_memory_doc(test_user.id, "memory_text")
 
 
-@pytest.mark.asyncio()
 async def test_history_md_roundtrip(test_user: User) -> None:
     """HISTORY.md should read/write through MemoryDocument.history_text."""
     await _set_memory_doc(test_user.id, "history_text", "2026-03-18: Session compacted\n")
@@ -385,7 +356,6 @@ async def test_history_md_roundtrip(test_user: User) -> None:
     assert "Session compacted" in result.content
 
 
-@pytest.mark.asyncio()
 async def test_delete_memory_md_protected(test_user: User) -> None:
     """delete_file should reject MEMORY.md and HISTORY.md as protected files."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")

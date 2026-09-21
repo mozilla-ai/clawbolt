@@ -39,7 +39,6 @@ def _mock_lifespan_deps() -> None:  # type: ignore[misc]
         yield
 
 
-@pytest.mark.asyncio
 async def test_warns_when_cors_origins_is_wildcard(caplog: pytest.LogCaptureFixture) -> None:
     """Startup should warn when CORS_ORIGINS='*'."""
     with patch("backend.app.main.settings") as mock_settings:
@@ -51,7 +50,6 @@ async def test_warns_when_cors_origins_is_wildcard(caplog: pytest.LogCaptureFixt
     assert any("CORS_ORIGINS" in msg for msg in caplog.messages)
 
 
-@pytest.mark.asyncio
 async def test_no_warning_when_cors_origins_is_specific(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -561,7 +561,6 @@ class TestEvaluateHeartbeatNeed:
 
         mock_build_prompt.return_value = "system prompt"
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -592,7 +591,6 @@ class TestEvaluateHeartbeatNeed:
         assert decision.action == "skip"
         assert decision.tasks == ""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -626,7 +624,6 @@ class TestEvaluateHeartbeatNeed:
         assert decision.input_tokens == 42
         assert decision.output_tokens == 7
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -659,7 +656,6 @@ class TestEvaluateHeartbeatNeed:
         assert decision.action == "run"
         assert "QuickBooks" in decision.tasks
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -692,7 +688,6 @@ class TestEvaluateHeartbeatNeed:
         call_kwargs = mock_llm.call_args
         assert call_kwargs.kwargs["model"] == "gpt-4o-mini"
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -730,7 +725,6 @@ class TestEvaluateHeartbeatNeed:
         assert kwargs["api_base"] == "http://localhost:1234/v1"
         assert "api_key" not in kwargs
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -759,7 +753,6 @@ class TestEvaluateHeartbeatNeed:
         decision = await evaluate_heartbeat_need(user)
         assert decision.action == "skip"
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -790,7 +783,6 @@ class TestEvaluateHeartbeatNeed:
         assert "tools" in kwargs
         assert kwargs["tools"] == [HEARTBEAT_DECISION_TOOL]
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.asyncio.sleep", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
@@ -841,13 +833,11 @@ class TestEvaluateHeartbeatNeed:
 class TestRunHeartbeatForUser:
     """Tests for the two-phase run_heartbeat_for_user orchestrator."""
 
-    @pytest.mark.asyncio
     async def test_skip_not_onboarded(self) -> None:
         c = User(id="10", user_id="hb-new", phone="+15550000000", onboarding_complete=False)
         result = await run_heartbeat_for_user(c, "telegram", c.phone, 5)
         assert result is None
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
     async def test_skip_rate_limited(
         self,
@@ -858,7 +848,6 @@ class TestRunHeartbeatForUser:
         result = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
         assert result is None
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat._user_messaged_within")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -881,7 +870,6 @@ class TestRunHeartbeatForUser:
         # and would catch a regression that re-arranged the gates.
         mock_eval.assert_not_awaited()
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat._user_messaged_within")
@@ -909,7 +897,6 @@ class TestRunHeartbeatForUser:
         await run_heartbeat_for_user(user, "telegram", "+15550000000", 5)
         mock_eval.assert_awaited_once()
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -941,7 +928,6 @@ class TestRunHeartbeatForUser:
             reasoning="Nothing actionable right now",
         )
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
@@ -1016,7 +1002,6 @@ class TestRunHeartbeatForUser:
             tasks="Check QuickBooks for unpaid invoices",
         )
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
@@ -1097,7 +1082,6 @@ class TestRunHeartbeatForUser:
         assert parsed[1]["args"]["entity_id"] == "544"
         assert parsed[1]["is_error"] is False
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
@@ -1173,7 +1157,6 @@ class TestRunHeartbeatForUser:
             "bob@example.com",
         ]
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
@@ -1199,7 +1182,6 @@ class TestRunHeartbeatForUser:
         assert result is not None
         assert result.action_type == "no_action"
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
@@ -1265,7 +1247,6 @@ class TestRunHeartbeatForUser:
         assert kwargs["tasks"] == ("Remove the stale 'follow up on Smith estimate' entry")
         assert kwargs["reasoning"]  # reasoning is propagated for audit
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
@@ -1297,7 +1278,6 @@ class TestRunHeartbeatForUser:
         # No log entry was written for the crashed run.
         mock_hb_store.log_heartbeat.assert_not_awaited()
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.OutboundMessage")
     @patch("backend.app.agent.heartbeat.message_bus")
@@ -1330,7 +1310,6 @@ class TestRunHeartbeatForUser:
         assert result is not None
         assert result.action_type == "send_message"
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1366,7 +1345,6 @@ class TestRunHeartbeatForUser:
         assert stops[0].channel == "bluebubbles"
         assert stops[0].chat_id == "+15559990000"
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1398,7 +1376,6 @@ class TestRunHeartbeatForUser:
         stops = [m for m in published if m.is_typing_stop]
         assert len(stops) == 1
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
@@ -1431,7 +1408,6 @@ class TestRunHeartbeatForUser:
         stops = [m for m in published if m.is_typing_stop]
         assert len(stops) == 1
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
@@ -1504,7 +1480,6 @@ def clear_heartbeat_hooks() -> object:
 class TestHeartbeatUsageHooks:
     """Tests for register_heartbeat_usage_hook and post-run dispatch."""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1541,7 +1516,6 @@ class TestHeartbeatUsageHooks:
 
         assert calls == [(user.id, 120, 30, False)]
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
@@ -1600,7 +1574,6 @@ class TestHeartbeatUsageHooks:
 
         assert calls == [(user.id, 900, 250, True)]
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1635,7 +1608,6 @@ class TestHeartbeatUsageHooks:
         result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
         assert result is not None
 
-    @pytest.mark.asyncio
     async def test_hook_not_called_when_no_llm_ran(self, clear_heartbeat_hooks: object) -> None:
         """Early-return paths (not onboarded, rate-limited, etc.) skip the hook."""
         calls: list[tuple[str, int, int, bool]] = []
@@ -1773,11 +1745,9 @@ class TestUserMessagedWithinIntegration:
 
 
 class TestGetDailyHeartbeatCount:
-    @pytest.mark.asyncio
     async def test_zero_when_no_logs(self, user: User) -> None:
         assert await get_daily_heartbeat_count(user.id) == 0
 
-    @pytest.mark.asyncio
     async def test_counts_today_only(self, user: User) -> None:
         """Logs from yesterday should not count toward today's limit."""
         from backend.app.agent.stores import HeartbeatStore
@@ -1794,7 +1764,6 @@ class TestGetDailyHeartbeatCount:
 
         assert await get_daily_heartbeat_count(user.id) == 1
 
-    @pytest.mark.asyncio
     async def test_counts_multiple_today(self, user: User) -> None:
         from backend.app.agent.stores import HeartbeatStore
 
@@ -1804,7 +1773,6 @@ class TestGetDailyHeartbeatCount:
 
         assert await get_daily_heartbeat_count(user.id) == 3
 
-    @pytest.mark.asyncio
     async def test_scoped_to_user(self, user: User) -> None:
         """Logs from other users should not count."""
         from backend.app.agent.stores import HeartbeatStore
@@ -1828,7 +1796,6 @@ class TestGetDailyHeartbeatCount:
         assert await get_daily_heartbeat_count(user.id) == 0
         assert await get_daily_heartbeat_count(other_id) == 1
 
-    @pytest.mark.asyncio
     async def test_excludes_skips(self, user: User) -> None:
         """Skip logs should not count toward the daily rate limit."""
         from backend.app.agent.stores import HeartbeatStore
@@ -1841,7 +1808,6 @@ class TestGetDailyHeartbeatCount:
         # Only the 2 sends should count
         assert await get_daily_heartbeat_count(user.id) == 2
 
-    @pytest.mark.asyncio
     async def test_excludes_cleanup(self, user: User) -> None:
         """Cleanup logs (Phase 2 ran without sending) must not count.
 
@@ -1866,7 +1832,6 @@ class TestGetDailyHeartbeatCount:
 
 
 class TestExecuteHeartbeatTasks:
-    @pytest.mark.asyncio
     async def test_returns_agent_reply(self, user: User) -> None:
         """Phase 2 should return the agent's reply text."""
         from backend.app.agent.core import AgentResponse
@@ -1902,7 +1867,6 @@ class TestExecuteHeartbeatTasks:
             assert result.reply_text == "You have 3 unpaid invoices."
             mock_agent_instance.process_message.assert_awaited_once()
 
-    @pytest.mark.asyncio
     async def test_returns_empty_on_error(self, user: User) -> None:
         """Phase 2 should return empty string if agent raises."""
         with (
@@ -1932,7 +1896,6 @@ class TestExecuteHeartbeatTasks:
             result = await execute_heartbeat_tasks(user, "Check something")
             assert result is None
 
-    @pytest.mark.asyncio
     async def test_returns_none_on_error_fallback(self, user: User) -> None:
         """Phase 2 should return None if agent returns error fallback."""
         from backend.app.agent.core import AgentResponse
@@ -1966,7 +1929,6 @@ class TestExecuteHeartbeatTasks:
             result = await execute_heartbeat_tasks(user, "Check something")
             assert result is None
 
-    @pytest.mark.asyncio
     async def test_includes_messaging_and_uses_list_capabilities(self, user: User) -> None:
         """Phase 2 should use core tools (including messaging) + list_capabilities."""
         from backend.app.agent.core import AgentResponse
@@ -2031,7 +1993,6 @@ class TestHeartbeatScheduler:
         scheduler.stop()  # Should not raise
         assert scheduler._task is None
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
     async def test_run_sleeps_warmup_before_first_tick(self, mock_settings: MagicMock) -> None:
         """The scheduler must wait heartbeat_startup_warmup_seconds before
@@ -2067,7 +2028,6 @@ class TestHeartbeatScheduler:
         assert sleep_calls[0] == 60
         scheduler.tick.assert_not_called()  # type: ignore[attr-defined]
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
     async def test_run_skips_warmup_when_disabled(self, mock_settings: MagicMock) -> None:
         """heartbeat_startup_warmup_seconds=0 disables the warmup so we
@@ -2110,7 +2070,6 @@ class TestHeartbeatScheduler:
             f"expected tick first when warmup=0, got events={events}"
         )
 
-    @pytest.mark.asyncio
     async def test_tick_queries_onboarded(self) -> None:
         """Tick should query all users from DB and filter by onboarding_complete."""
         # Empty DB: no users inserted
@@ -2118,7 +2077,6 @@ class TestHeartbeatScheduler:
         await scheduler.tick()
         # No error means it successfully queried the DB and found no users
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_skips_inactive_user(
@@ -2155,7 +2113,6 @@ class TestHeartbeatScheduler:
 
         mock_run.assert_not_called()
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_filters_users_in_sql(
@@ -2239,7 +2196,6 @@ class TestHeartbeatScheduler:
 
         assert mock_run.await_count == 1
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_concurrent_processing(
@@ -2280,7 +2236,6 @@ class TestHeartbeatScheduler:
         # run_heartbeat_for_user called once per user
         assert mock_run.await_count == 4
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_error_isolation(
@@ -2327,7 +2282,6 @@ class TestHeartbeatScheduler:
         # All three were attempted
         assert mock_run.await_count == 3
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_semaphore_limits_concurrency(
@@ -2388,7 +2342,6 @@ class TestHeartbeatScheduler:
         assert mock_run.await_count == 5
         assert max_concurrent <= concurrency_limit
 
-    @pytest.mark.asyncio
     async def test_tick_no_users(self) -> None:
         """tick() with no onboarded users should return early."""
         # Empty DB: no users inserted
@@ -2443,7 +2396,6 @@ class TestParseFrequencyToMinutes:
 
 
 class TestPerUserFrequencyScheduling:
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_user_skipped_when_interval_not_elapsed(
@@ -2490,7 +2442,6 @@ class TestPerUserFrequencyScheduling:
         await scheduler.tick()
         assert mock_run.await_count == 1  # Still 1, not called again
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_user_processed_when_interval_elapsed(
@@ -2544,7 +2495,6 @@ class TestPerUserFrequencyScheduling:
         await scheduler.tick()
         assert mock_run.await_count == 2
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_invalid_frequency_falls_back_to_global(
@@ -2675,7 +2625,6 @@ class TestGetChannelIdentifier:
 class TestTickChatIdLookup:
     """Heartbeat tick should look up the correct chat_id for the target channel."""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_uses_channel_specific_chat_id(
@@ -2716,7 +2665,6 @@ class TestTickChatIdLookup:
         assert call_kwargs["chat_id"] == "tg-12345"
         assert call_kwargs["channel"] == "telegram"
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_skips_user_without_channel_route(
@@ -2758,7 +2706,6 @@ class TestTickChatIdLookup:
 class TestPerUserMaxDaily:
     """Tests for per-user heartbeat_max_daily override."""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_uses_per_user_max_daily(
@@ -2800,7 +2747,6 @@ class TestPerUserMaxDaily:
         mock_run.assert_awaited_once()
         assert mock_run.call_args.kwargs["max_daily"] == 10
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_falls_back_to_global_when_zero(
@@ -2842,7 +2788,6 @@ class TestPerUserMaxDaily:
         mock_run.assert_awaited_once()
         assert mock_run.call_args.kwargs["max_daily"] == 7
 
-    @pytest.mark.asyncio
     async def test_model_default_is_five(self) -> None:
         """The ORM default for heartbeat_max_daily is 5.
 
@@ -2991,7 +2936,6 @@ class TestFormatHeartbeatHistory:
 class TestEvaluateHeartbeatNeedPassesHistory:
     """Test that evaluate_heartbeat_need passes heartbeat history to the prompt builder."""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -3051,7 +2995,6 @@ class TestEvaluateHeartbeatNeedPassesHistory:
         assert call_kwargs.kwargs["heartbeat_history"] != ""
         assert "heartbeat messages" in call_kwargs.kwargs["heartbeat_history"]
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -3104,7 +3047,6 @@ class TestEvaluateHeartbeatNeedPassesHistory:
 class TestRecentMessagesIncludeTimestamps:
     """Regression: recent messages passed to the heartbeat prompt must include timestamps."""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -3161,7 +3103,6 @@ class TestRecentMessagesIncludeTimestamps:
         assert "Assistant," in recent_text
         assert "Here is your morning joke!" in recent_text
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -3229,7 +3170,6 @@ class TestHeartbeatPromptAlwaysIncludesSection:
     there are no items to act on, rather than silently omitting it while
     old task descriptions remain visible in the history section."""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.system_prompt.build_memory_section", new_callable=AsyncMock)
     async def test_empty_heartbeat_text_produces_placeholder(
         self,
@@ -3255,7 +3195,6 @@ class TestHeartbeatPromptAlwaysIncludesSection:
         # The history section must be annotated as timing reference only
         assert "timing reference only" in prompt
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.system_prompt.build_memory_section", new_callable=AsyncMock)
     async def test_nonempty_heartbeat_text_included_verbatim(
         self,
@@ -3282,7 +3221,6 @@ class TestHeartbeatPromptAlwaysIncludesSection:
         heartbeat_section = prompt[hb_start:hb_end]
         assert "no heartbeat items configured" not in heartbeat_section
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.system_prompt.build_memory_section", new_callable=AsyncMock)
     async def test_history_section_header_includes_timing_disclaimer(
         self,
@@ -3310,7 +3248,6 @@ class TestHeartbeatPromptAlwaysIncludesSection:
 class TestSkipEmptyHeartbeatText:
     """Regression for #864: heartbeat must not send messages when no items configured."""
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -3331,7 +3268,6 @@ class TestSkipEmptyHeartbeatText:
         assert result is None
         mock_eval.assert_not_awaited()
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -3352,7 +3288,6 @@ class TestSkipEmptyHeartbeatText:
         assert result is None
         mock_eval.assert_not_awaited()
 
-    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -3640,7 +3575,6 @@ class TestHeartbeatRulesPruneStaleOneTimeItems:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: User) -> None:
     """execute_heartbeat_tasks should use create_core_tools + list_capabilities,
     not create_tools with all factories (regression test for #874)."""
@@ -3701,7 +3635,6 @@ async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: Use
     assert "messaging" not in excluded
 
 
-@pytest.mark.asyncio()
 async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
     """execute_heartbeat_tasks should respect user's disabled tool config (#874)."""
     mock_agent_cls = MagicMock()
@@ -3761,7 +3694,6 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
     assert "qb_query" in excluded_tools
 
 
-@pytest.mark.asyncio()
 async def test_execute_heartbeat_task_context_includes_cleanup_instruction(
     user: User,
 ) -> None:
@@ -3854,7 +3786,6 @@ def test_update_heartbeat_usage_hint_anchors_on_scheduled_task_prefix() -> None:
     assert SCHEDULED_TASK_PREFIX in update_tool.usage_hint
 
 
-@pytest.mark.asyncio()
 async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User) -> None:
     """When the agent already sent via a SENDS_REPLY tool (send_media_reply),
     the heartbeat runner should not publish the reply_text again
@@ -3916,7 +3847,6 @@ async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User)
     mock_hb.log_heartbeat.assert_awaited_once()
 
 
-@pytest.mark.asyncio()
 async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -> None:
     """When the agent sent via a SENDS_REPLY tool but produced no reply_text,
     the runner should still log the heartbeat (#921)."""
@@ -3977,7 +3907,6 @@ async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -
     mock_hb.log_heartbeat.assert_awaited_once()
 
 
-@pytest.mark.asyncio()
 async def test_heartbeat_auto_approves_send_media_reply(user: User) -> None:
     """Heartbeat Phase 2 should clear approval_policy on send_media_reply so
     the agent can deliver attachments without prompting the user

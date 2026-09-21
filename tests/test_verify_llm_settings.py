@@ -2,12 +2,9 @@
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from backend.app.main import _verify_llm_settings
 
 
-@pytest.mark.asyncio
 async def test_verify_llm_uses_sufficient_max_tokens() -> None:
     """max_tokens must be high enough to avoid provider rejections.
 

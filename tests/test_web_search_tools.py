@@ -111,7 +111,6 @@ class TestBraveSearchProvider:
         """The seam is what lets the backend be swapped, so assert on it."""
         assert isinstance(BraveSearchProvider(api_key="k"), SearchProvider)
 
-    @pytest.mark.asyncio
     async def test_search_happy_path(self) -> None:
         provider = BraveSearchProvider(api_key="test-key")
         client = _mock_client([_make_httpx_response(200, _make_brave_response())])
@@ -127,7 +126,6 @@ class TestBraveSearchProvider:
         assert r["description"] == "Type L is commonly $1.40-$2.20 per foot."
         assert r["age"] == "March 12, 2026"
 
-    @pytest.mark.asyncio
     async def test_sends_the_key_as_a_header_not_a_query_param(self) -> None:
         """A key in the URL leaks into logs and referrers."""
         provider = BraveSearchProvider(api_key="secret-key")
@@ -140,7 +138,6 @@ class TestBraveSearchProvider:
         assert kwargs["headers"]["X-Subscription-Token"] == "secret-key"
         assert "secret-key" not in str(kwargs["params"])
 
-    @pytest.mark.asyncio
     async def test_max_results_is_requested_and_enforced(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         many = [
@@ -157,7 +154,6 @@ class TestBraveSearchProvider:
         # Trust the parameter, but do not depend on the provider honoring it.
         assert len(results) == 3
 
-    @pytest.mark.asyncio
     async def test_falls_back_to_page_age_when_age_is_null(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         results_json = [
@@ -176,7 +172,6 @@ class TestBraveSearchProvider:
 
         assert results[0]["page_age"] == "2026-01-15"
 
-    @pytest.mark.asyncio
     async def test_parses_the_structured_product_price(self) -> None:
         """The price that matters is the one bound to a product name."""
         provider = BraveSearchProvider(api_key="k")
@@ -204,7 +199,6 @@ class TestBraveSearchProvider:
             "USG 4.5G Plus-3 Lightweight Joint Compound Blue Lid"
         )
 
-    @pytest.mark.asyncio
     async def test_result_without_a_product_has_no_price(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         client = _mock_client([_make_httpx_response(200, _make_brave_response())])
@@ -214,7 +208,6 @@ class TestBraveSearchProvider:
 
         assert "product" not in results[0]
 
-    @pytest.mark.asyncio
     async def test_numeric_product_price_is_accepted(self) -> None:
         """Brave sends the price as a string, but a number must not crash it."""
         provider = BraveSearchProvider(api_key="k")
@@ -233,7 +226,6 @@ class TestBraveSearchProvider:
 
         assert results[0]["product"]["price"] == 2.8
 
-    @pytest.mark.asyncio
     async def test_keeps_every_record_including_ones_without_a_url(self) -> None:
         """Pass-through does not judge records. The sourcing rule in the result
         footer is what stops an unlinked figure being quoted."""
@@ -249,7 +241,6 @@ class TestBraveSearchProvider:
 
         assert [r["url"] for r in results] == ["", "https://example.com/ok"]
 
-    @pytest.mark.asyncio
     async def test_empty_payload_yields_no_results(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         client = _mock_client([_make_httpx_response(200, {})])
@@ -259,7 +250,6 @@ class TestBraveSearchProvider:
 
         assert results == []
 
-    @pytest.mark.asyncio
     async def test_retries_on_429_then_succeeds(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         client = _mock_client(
@@ -278,7 +268,6 @@ class TestBraveSearchProvider:
         assert len(results) == 1
         assert client.get.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_retries_on_503_then_succeeds(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         client = _mock_client(
@@ -297,7 +286,6 @@ class TestBraveSearchProvider:
         assert len(results) == 1
         assert client.get.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_backoff_is_exponential_and_bounded(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         client = _mock_client([_make_httpx_response(429) for _ in range(3)])
@@ -314,7 +302,6 @@ class TestBraveSearchProvider:
         assert client.get.call_count == 3
         assert [c.args[0] for c in sleeper.await_args_list] == [0.5, 1.0]
 
-    @pytest.mark.asyncio
     async def test_does_not_retry_a_client_error(self) -> None:
         """A 400 fails identically on retry, so spending attempts on it is waste."""
         provider = BraveSearchProvider(api_key="k")
@@ -325,7 +312,6 @@ class TestBraveSearchProvider:
 
         assert client.get.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_auth_failure_propagates_as_status_error(self) -> None:
         provider = BraveSearchProvider(api_key="bad")
         client = _mock_client([_make_httpx_response(401)])
@@ -342,17 +328,14 @@ class TestBraveSearchProvider:
 
 
 class TestSearchCache:
-    @pytest.mark.asyncio
     async def test_cache_miss(self) -> None:
         assert await SearchCache().get("nope") is None
 
-    @pytest.mark.asyncio
     async def test_cache_set_and_get(self) -> None:
         cache = SearchCache()
         await cache.set("k", ["value"])
         assert await cache.get("k") == ["value"]
 
-    @pytest.mark.asyncio
     async def test_cache_ttl_expiry(self) -> None:
         cache = SearchCache(ttl_seconds=1)
         await cache.set("k", ["v"])
@@ -360,7 +343,6 @@ class TestSearchCache:
         await asyncio.sleep(1.1)
         assert await cache.get("k") is None
 
-    @pytest.mark.asyncio
     async def test_cache_max_size_eviction(self) -> None:
         cache = SearchCache(maxsize=2)
         await cache.set("a", 1)
@@ -432,7 +414,6 @@ class TestWebSearchTool:
         tools = _create_web_search_tools(provider, cache)
         return tools[0].function, provider, cache
 
-    @pytest.mark.asyncio
     async def test_happy_path_includes_every_source_url(self) -> None:
         tool_fn, _, _ = self._make_tool(
             results=[
@@ -446,7 +427,6 @@ class TestWebSearchTool:
         assert "url: https://example.com/a" in result.content
         assert "url: https://example.com/b" in result.content
 
-    @pytest.mark.asyncio
     async def test_result_carries_the_staleness_caveat(self) -> None:
         """The framing rides with the data, not only in the system prompt: a
         cached snippet otherwise reaches the model as undated plain text."""
@@ -456,7 +436,6 @@ class TestWebSearchTool:
         assert "ballpark" in result.content
         assert "never as a firm quote" in result.content
 
-    @pytest.mark.asyncio
     async def test_footer_sends_a_broad_query_back_for_one_retry(self) -> None:
         """Measured against Brave: "how much does a bucket cost from lowes"
         returns only category pages and no price, while "Lowes 5 gallon bucket
@@ -468,7 +447,6 @@ class TestWebSearchTool:
         assert "too broad" in content
         assert "search once more" in content
 
-    @pytest.mark.asyncio
     async def test_renders_provider_fields_it_was_never_told_about(self) -> None:
         """The whole point of the pass-through: a field this code has no
         knowledge of still reaches the model."""
@@ -488,7 +466,6 @@ class TestWebSearchTool:
         assert "product.price: 24.99" in result.content
         assert "some_future_brave_field: surfaced anyway" in result.content
 
-    @pytest.mark.asyncio
     async def test_cache_hit_skips_the_api(self) -> None:
         tool_fn, provider, _ = self._make_tool(results=[_record(title="Cached")])
 
@@ -499,7 +476,6 @@ class TestWebSearchTool:
         assert "Cached" in result.content
         assert provider.search.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_cache_hit_ignores_casing_and_spacing(self) -> None:
         tool_fn, provider, _ = self._make_tool(results=[_record()])
 
@@ -508,7 +484,6 @@ class TestWebSearchTool:
 
         assert provider.search.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_empty_query_is_a_validation_error(self) -> None:
         tool_fn, provider, _ = self._make_tool()
         result = await tool_fn(query="   ")
@@ -517,7 +492,6 @@ class TestWebSearchTool:
         assert result.error_kind.value == "validation"
         provider.search.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_zero_results_is_not_an_error(self) -> None:
         """No results is a fact about the query, not a failure to retry."""
         tool_fn, _, _ = self._make_tool(results=[])
@@ -526,7 +500,6 @@ class TestWebSearchTool:
         assert not result.is_error
         assert "No web results" in result.content
 
-    @pytest.mark.asyncio
     async def test_backend_unavailable_returns_a_relayable_error(self) -> None:
         tool_fn, _, _ = self._make_tool(side_effect=SearchUnavailableError("down"))
         result = await tool_fn(query="test")
@@ -535,7 +508,6 @@ class TestWebSearchTool:
         assert result.error_kind.value == "service"
         assert "search" in result.content.lower()
 
-    @pytest.mark.asyncio
     async def test_timeout_returns_a_relayable_error(self) -> None:
         tool_fn, _, _ = self._make_tool(side_effect=httpx.TimeoutException("timeout"))
         result = await tool_fn(query="test")
@@ -544,7 +516,6 @@ class TestWebSearchTool:
         assert result.error_kind.value == "service"
         assert "timed out" in result.content.lower()
 
-    @pytest.mark.asyncio
     async def test_failure_hint_never_tells_the_model_to_reword(self) -> None:
         """An infrastructure failure is not the query's fault. A hint that
         suggests rewording sends the model into a retry storm (issue #1496)."""
@@ -553,7 +524,6 @@ class TestWebSearchTool:
             result = await tool_fn(query="test")
             assert "rewording will not help" in result.hint
 
-    @pytest.mark.asyncio
     async def test_auth_failure_tells_the_model_not_to_retry(self) -> None:
         response = _make_httpx_response(401)
         exc = httpx.HTTPStatusError("unauthorized", request=response.request, response=response)
@@ -564,7 +534,6 @@ class TestWebSearchTool:
         assert "not configured correctly" in result.content
         assert "Do not retry" in result.hint
 
-    @pytest.mark.asyncio
     async def test_unexpected_error_never_escapes_the_tool(self) -> None:
         """A provider bug must degrade to a tool error, never break the loop."""
         tool_fn, _, _ = self._make_tool(side_effect=RuntimeError("boom"))
@@ -573,7 +542,6 @@ class TestWebSearchTool:
         assert result.is_error
         assert result.error_kind.value == "service"
 
-    @pytest.mark.asyncio
     async def test_a_failure_is_not_cached(self) -> None:
         """Caching a failure would serve the error after the backend recovers."""
         provider = AsyncMock(spec=BraveSearchProvider)
@@ -678,7 +646,6 @@ class TestSearchParameters:
         provider.search = AsyncMock(return_value=[_record()])
         return provider
 
-    @pytest.mark.asyncio
     async def test_omitted_max_results_uses_the_configured_default(self) -> None:
         provider = self._provider()
         with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
@@ -687,7 +654,6 @@ class TestSearchParameters:
 
         assert provider.search.call_args.kwargs["max_results"] == 3
 
-    @pytest.mark.asyncio
     async def test_agent_supplied_max_results_wins(self) -> None:
         provider = self._provider()
         with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
@@ -696,7 +662,6 @@ class TestSearchParameters:
 
         assert provider.search.call_args.kwargs["max_results"] == 10
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(("asked", "expected"), [(50, 20), (0, 1), (-5, 1), (20, 20)])
     async def test_max_results_is_clamped_not_rejected(self, asked: int, expected: int) -> None:
         """A model asking for 50 wants "lots". Spending a turn on a validation
@@ -709,7 +674,6 @@ class TestSearchParameters:
         assert not result.is_error
         assert provider.search.call_args.kwargs["max_results"] == expected
 
-    @pytest.mark.asyncio
     async def test_freshness_is_passed_through(self) -> None:
         provider = self._provider()
         with patch("backend.app.integrations.web_search.factory.settings") as mock_settings:
@@ -718,7 +682,6 @@ class TestSearchParameters:
 
         assert provider.search.call_args.kwargs["freshness"] == "pm"
 
-    @pytest.mark.asyncio
     async def test_freshness_defaults_to_unfiltered(self) -> None:
         """Codes and standards have old but correct answers; filtering by
         default would hide them."""
@@ -729,7 +692,6 @@ class TestSearchParameters:
 
         assert provider.search.call_args.kwargs["freshness"] is None
 
-    @pytest.mark.asyncio
     async def test_different_freshness_does_not_share_a_cache_entry(self) -> None:
         """Serving a filtered query from an unfiltered hit reintroduces exactly
         the staleness the caller asked to avoid."""
@@ -742,7 +704,6 @@ class TestSearchParameters:
 
         assert provider.search.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_different_result_counts_do_not_share_a_cache_entry(self) -> None:
         provider = self._provider()
         tool_fn = self._tool(provider)
@@ -782,7 +743,6 @@ class TestSearchParameters:
 
 
 class TestBraveParameterMapping:
-    @pytest.mark.asyncio
     async def test_count_and_freshness_reach_the_request(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         client = _mock_client([_make_httpx_response(200, _make_brave_response())])
@@ -794,7 +754,6 @@ class TestBraveParameterMapping:
         assert params["count"] == "7"
         assert params["freshness"] == "pm"
 
-    @pytest.mark.asyncio
     async def test_freshness_is_omitted_when_unset(self) -> None:
         provider = BraveSearchProvider(api_key="k")
         client = _mock_client([_make_httpx_response(200, _make_brave_response())])
@@ -804,7 +763,6 @@ class TestBraveParameterMapping:
 
         assert "freshness" not in client.get.call_args.kwargs["params"]
 
-    @pytest.mark.asyncio
     async def test_unrecognized_freshness_is_dropped_rather_than_sent(self) -> None:
         """Brave 422s on an invalid value. An unfiltered search is the better
         fallback: the question may have an old but correct answer."""
@@ -816,7 +774,6 @@ class TestBraveParameterMapping:
 
         assert "freshness" not in client.get.call_args.kwargs["params"]
 
-    @pytest.mark.asyncio
     async def test_count_is_clamped_to_the_api_ceiling(self) -> None:
         """Brave returns 422 for count above 20."""
         provider = BraveSearchProvider(api_key="k")
@@ -922,7 +879,6 @@ class TestWebSearchFactory:
 
         assert [t.name for t in tools] == ["web_search"]
 
-    @pytest.mark.asyncio
     async def test_auth_check_explains_an_unconfigured_install(self) -> None:
         from backend.app.integrations.web_search.factory import _web_search_auth_check
 
@@ -937,7 +893,6 @@ class TestWebSearchFactory:
         # not offer them an OAuth link that does not exist.
         assert "nothing the user can connect" in reason
 
-    @pytest.mark.asyncio
     async def test_auth_check_passes_when_configured(self) -> None:
         from backend.app.integrations.web_search.factory import _web_search_auth_check
 

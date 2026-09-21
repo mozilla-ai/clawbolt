@@ -49,7 +49,6 @@ def mock_download_media() -> AsyncMock:
     return AsyncMock()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_text_only_message(
     mock_amessages: object,
@@ -77,7 +76,6 @@ async def test_text_only_message(
             break
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
 async def test_message_with_photo(
@@ -115,7 +113,6 @@ async def test_message_with_photo(
     assert mock_vision.await_count == 0
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_stores_outbound_message(
     mock_amessages: object,
@@ -139,7 +136,6 @@ async def test_stores_outbound_message(
     assert outbound_msgs[-1].body == "Reply stored!"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_stores_tool_interactions_with_outbound(
     mock_amessages: object,
@@ -181,7 +177,6 @@ async def test_stores_tool_interactions_with_outbound(
     assert "result" in interactions[0]
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_no_tool_interactions_for_text_only_response(
     mock_amessages: object,
@@ -205,7 +200,6 @@ async def test_no_tool_interactions_for_text_only_response(
     assert outbound_msgs[-1].tool_interactions_json == ""
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_media_download_failure_still_processes_text(
     mock_amessages: object,
@@ -229,7 +223,6 @@ async def test_media_download_failure_still_processes_text(
     assert response.reply_text == "Got your text!"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_partial_media_download_failure_surfaces_note(
     mock_amessages: object,
@@ -272,7 +265,6 @@ async def test_partial_media_download_failure_surfaces_note(
     assert "couldn't download 1 of the 2 attachments" in inbound_message.processed_context
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_processed_context_saved_to_message(
     mock_amessages: object,
@@ -295,7 +287,6 @@ async def test_processed_context_saved_to_message(
     assert inbound_message.body in inbound_message.processed_context
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.router.init_storage", new_callable=AsyncMock)
 async def test_file_tools_wired_when_storage_configured(
@@ -321,7 +312,6 @@ async def test_file_tools_wired_when_storage_configured(
     mock_init_storage.assert_awaited()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.router.init_storage", new_callable=AsyncMock)
 async def test_file_tools_skipped_when_no_storage(
@@ -346,7 +336,6 @@ async def test_file_tools_skipped_when_no_storage(
     assert response.reply_text == "No file tools!"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 @patch(
     "backend.app.media.pipeline.analyze_image",
@@ -407,7 +396,6 @@ async def test_pipeline_failure_note_mentions_vision(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_media_download_failure_adds_system_note_to_context(
     mock_amessages: object,
@@ -431,7 +419,6 @@ async def test_media_download_failure_adds_system_note_to_context(
     assert "couldn't download" in inbound_message.processed_context.lower()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_media_pipeline_failure_retries_with_empty_media(
     mock_amessages: object,
@@ -482,7 +469,6 @@ async def test_media_pipeline_failure_retries_with_empty_media(
     assert second_call_args[0][1] == []  # second positional arg is empty media list
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.router.oauth_service.get_valid_token", new_callable=AsyncMock)
 @patch("backend.app.agent.router.settings")
@@ -515,7 +501,6 @@ async def test_storage_exception_skips_file_tools(
     mock_get_valid_token.assert_awaited()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_returns_fallback_reply(
     mock_amessages: object,
@@ -538,7 +523,6 @@ async def test_agent_processing_failure_returns_fallback_reply(
     assert "try again" in response.reply_text.lower()
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_does_not_store_fallback(
     mock_amessages: object,
@@ -561,7 +545,6 @@ async def test_agent_processing_failure_does_not_store_fallback(
     assert len(outbound_msgs) == 0
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_dispatches_fallback_via_bus(
     mock_amessages: object,
@@ -587,7 +570,6 @@ async def test_agent_processing_failure_dispatches_fallback_via_bus(
             break
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_outbound_message_is_persisted_in_session(
     mock_amessages: object,
@@ -614,7 +596,6 @@ async def test_outbound_message_is_persisted_in_session(
     assert outbound_msgs[-1].body == "Here is your reply!"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
     mock_amessages: object,
@@ -657,7 +638,6 @@ async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
     assert "Vision analysis was unavailable" not in inbound_message.processed_context
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_empty_to_address_returns_early(
     mock_amessages: object,
@@ -690,7 +670,6 @@ async def test_empty_to_address_returns_early(
     mock_amessages.assert_not_called()  # type: ignore[union-attr]
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_send_media_reply_suppresses_duplicate_text(
     mock_amessages: object,
@@ -738,7 +717,6 @@ async def test_send_media_reply_suppresses_duplicate_text(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_typing_indicator_sent_before_agent_processing(
     mock_amessages: object,
@@ -770,7 +748,6 @@ async def test_typing_indicator_sent_before_agent_processing(
     assert found_reply
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_typing_indicator_failure_does_not_block_processing(
     mock_amessages: object,
@@ -809,7 +786,6 @@ async def test_typing_indicator_failure_does_not_block_processing(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_content_filter_error_returns_rephrasing_message(
     mock_amessages: AsyncMock,
@@ -838,7 +814,6 @@ async def test_content_filter_error_returns_rephrasing_message(
             break
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_authentication_error_returns_config_message(
     mock_amessages: AsyncMock,
@@ -866,7 +841,6 @@ async def test_authentication_error_returns_config_message(
             break
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_content_filter_error_does_not_store_outbound(
     mock_amessages: AsyncMock,
@@ -889,7 +863,6 @@ async def test_content_filter_error_does_not_store_outbound(
     assert len(outbound_msgs) == 0
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_authentication_error_does_not_store_outbound(
     mock_amessages: AsyncMock,
@@ -917,7 +890,6 @@ async def test_authentication_error_does_not_store_outbound(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_normal_response_still_stored_as_outbound(
     mock_amessages: object,
@@ -941,7 +913,6 @@ async def test_normal_response_still_stored_as_outbound(
     assert outbound_msgs[-1].body == "Here's your estimate!"
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_fallback_dispatched_but_not_stored(
     mock_amessages: object,
@@ -980,7 +951,6 @@ async def test_error_fallback_dispatched_but_not_stored(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_dispatch_reply_step_suppresses_when_sends_reply_tool_succeeds() -> None:
     """Auto-reply should be suppressed when a SENDS_REPLY tool (send_media_reply)
     succeeded. The tool already published to the bus; reply_text would duplicate."""
@@ -1014,7 +984,6 @@ async def test_dispatch_reply_step_suppresses_when_sends_reply_tool_succeeds() -
     assert message_bus.outbound.empty()
 
 
-@pytest.mark.asyncio()
 async def test_dispatch_reply_step_sends_when_sends_reply_tool_fails() -> None:
     """Auto-reply should be dispatched via bus when the SENDS_REPLY tool failed."""
     from backend.app.agent.context import StoredToolInteraction
@@ -1053,7 +1022,6 @@ async def test_dispatch_reply_step_sends_when_sends_reply_tool_fails() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_dispatch_reply_step_resolves_sse_on_empty_reply() -> None:
     """When reply is empty and request_id is set (webchat), resolve SSE with empty content."""
     from backend.app.agent.core import AgentResponse
@@ -1079,7 +1047,6 @@ async def test_dispatch_reply_step_resolves_sse_on_empty_reply() -> None:
     assert outbound.request_id == "req-123"
 
 
-@pytest.mark.asyncio()
 async def test_dispatch_reply_step_no_outbound_on_empty_reply_without_request_id() -> None:
     """When reply is empty and there's no request_id (Telegram), nothing is published."""
     from backend.app.agent.core import AgentResponse
@@ -1107,7 +1074,6 @@ async def test_dispatch_reply_step_no_outbound_on_empty_reply_without_request_id
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_stop_reason_not_persisted_to_session(
     mock_amessages: object,
@@ -1137,7 +1103,6 @@ async def test_error_stop_reason_not_persisted_to_session(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_to_address_uses_channel_specific_identifier(
     mock_amessages: object,
@@ -1218,7 +1183,6 @@ async def test_to_address_uses_channel_specific_identifier(
             break
 
 
-@pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_stop_reason_still_dispatches_reply_to_user(
     mock_amessages: object,

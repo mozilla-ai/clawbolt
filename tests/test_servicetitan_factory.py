@@ -113,7 +113,6 @@ def test_data_factory_lists_subtools_with_expected_defaults() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_auth_check_returns_reason_when_not_connected(
     async_test_user: Any,
 ) -> None:
@@ -125,7 +124,6 @@ async def test_auth_check_returns_reason_when_not_connected(
     assert "web app" in reason.lower()
 
 
-@pytest.mark.asyncio()
 async def test_auth_check_returns_none_when_connected(async_test_user: Any) -> None:
     user_id = async_test_user.id
     await save_credentials(
@@ -146,7 +144,6 @@ async def test_auth_check_returns_none_when_connected(async_test_user: Any) -> N
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_data_factory_returns_empty_when_not_connected(
     async_test_user: Any,
 ) -> None:
@@ -155,7 +152,6 @@ async def test_data_factory_returns_empty_when_not_connected(
     assert tools == []
 
 
-@pytest.mark.asyncio()
 async def test_data_factory_returns_all_tools_when_connected(async_test_user: Any) -> None:
     """A connected user gets the read tools plus the write tool."""
     user_id = async_test_user.id
@@ -184,7 +180,6 @@ async def test_data_factory_returns_all_tools_when_connected(async_test_user: An
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio()
 async def test_connect_credentials_persists_credentials(async_test_user: Any) -> None:
     user_id = async_test_user.id
 
@@ -207,7 +202,6 @@ async def test_connect_credentials_persists_credentials(async_test_user: Any) ->
     assert loaded.expires_at > time.time()
 
 
-@pytest.mark.asyncio()
 async def test_connect_credentials_rejects_empty_fields(async_test_user: Any) -> None:
     with pytest.raises(ServiceTitanAuthError, match="required"):
         await connect_credentials(
@@ -218,7 +212,6 @@ async def test_connect_credentials_rejects_empty_fields(async_test_user: Any) ->
         )
 
 
-@pytest.mark.asyncio()
 async def test_connect_credentials_errors_without_app_key(async_test_user: Any) -> None:
     """When the operator has not set the App Key, connect must fail loudly."""
     from backend.app.config import settings as _settings
@@ -235,7 +228,6 @@ async def test_connect_credentials_errors_without_app_key(async_test_user: Any) 
         )
 
 
-@pytest.mark.asyncio()
 async def test_connect_credentials_strips_and_rejects_blank_client_secret(
     async_test_user: Any,
 ) -> None:
@@ -249,7 +241,6 @@ async def test_connect_credentials_strips_and_rejects_blank_client_secret(
         )
 
 
-@pytest.mark.asyncio()
 async def test_connect_credentials_surfaces_token_endpoint_failure(
     async_test_user: Any,
 ) -> None:
