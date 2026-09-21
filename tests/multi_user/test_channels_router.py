@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 import pytest_asyncio
+from fastapi.routing import APIRoute
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -141,22 +144,86 @@ async def _get_user(async_db: async_sessionmaker, user_id: str) -> User | None:
 
 
 # ---------------------------------------------------------------------------
-# Telegram linking
+# Per-channel identity linking
 # ---------------------------------------------------------------------------
+#
+# Every channel exposes the same GET / PUT / DELETE contract over one
+# identifier, and differs only in the field name and what counts as a
+# well-formed value. The shared contract is asserted once, parametrized
+# over the channels; each channel's own format rules follow in its own
+# class below.
 
 
-class TestGetTelegramLink:
-    """GET /api/channels/telegram"""
+@dataclass(frozen=True)
+class ChannelCase:
+    """One channel's identity-link endpoint and three sample identifiers."""
 
-    async def test_returns_null_when_not_linked(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.get("/api/channels/telegram")
+    channel: str
+    field: str
+    first: str
+    second: str
+    taken: str
+
+    @property
+    def url(self) -> str:
+        return f"/api/channels/{self.channel}"
+
+    def __str__(self) -> str:
+        return self.channel
+
+
+# The three phone channels can share sample numbers: ChannelRoute is unique on
+# (channel, channel_identifier), and the 409 pre-check filters on channel too.
+_PHONE = {"first": "+15551234567", "second": "+15552222222", "taken": "+15559999999"}
+CHANNEL_CASES = [
+    ChannelCase(
+        channel="telegram",
+        field="telegram_user_id",
+        first="123456789",
+        second="222222222",
+        taken="555555555",
+    ),
+    ChannelCase(channel="linq", field="phone_number", **_PHONE),
+    ChannelCase(channel="bluebubbles", field="phone_number", **_PHONE),
+    ChannelCase(channel="twilio", field="phone_number", **_PHONE),
+]
+
+
+def test_channel_cases_cover_every_link_endpoint() -> None:
+    """CHANNEL_CASES is the only roster, so it must match the router's.
+
+    A channel added to channels.py but not here would ship with no contract
+    coverage at all, and the build would stay green.
+    """
+    from backend.app.routers import channels as channels_router
+
+    linked = {
+        route.path.removeprefix("/channels/")
+        for route in channels_router.router.routes
+        if isinstance(route, APIRoute)
+        and route.path.startswith("/channels/")
+        and route.path.count("/") == 2
+        and "{" not in route.path
+    }
+    assert linked == {case.channel for case in CHANNEL_CASES}
+
+
+@pytest.mark.parametrize("case", CHANNEL_CASES, ids=str)
+class TestChannelLinkContract:
+    """GET / PUT / DELETE /api/channels/{channel}"""
+
+    async def test_returns_null_when_not_linked(
+        self, case: ChannelCase, async_client: httpx.AsyncClient
+    ) -> None:
+        resp = await async_client.get(case.url)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["telegram_user_id"] is None
+        assert data[case.field] is None
         assert data["connected"] is False
 
-    async def test_returns_linked_id(
+    async def test_returns_linked_identifier(
         self,
+        case: ChannelCase,
         async_client: httpx.AsyncClient,
         async_db: async_sessionmaker,
         async_test_user: User,
@@ -164,194 +231,120 @@ class TestGetTelegramLink:
         await _add_route(
             async_db,
             user_id=async_test_user.id,
-            channel="telegram",
-            channel_identifier="999888777",
+            channel=case.channel,
+            channel_identifier=case.first,
         )
 
-        resp = await async_client.get("/api/channels/telegram")
+        resp = await async_client.get(case.url)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["telegram_user_id"] == "999888777"
+        assert data[case.field] == case.first
+        assert data["connected"] is True
 
-
-class TestSetTelegramLink:
-    """PUT /api/channels/telegram"""
-
-    async def test_links_telegram_id(
+    async def test_links_identifier(
         self,
+        case: ChannelCase,
         async_client: httpx.AsyncClient,
         async_db: async_sessionmaker,
         async_test_user: User,
     ) -> None:
-        resp = await async_client.put(
-            "/api/channels/telegram", json={"telegram_user_id": "123456789"}
-        )
+        resp = await async_client.put(case.url, json={case.field: case.first})
         assert resp.status_code == 200
         data = resp.json()
-        assert data["telegram_user_id"] == "123456789"
+        assert data[case.field] == case.first
         assert data["connected"] is True
 
-        route = await _get_route(async_db, async_test_user.id, "telegram")
+        route = await _get_route(async_db, async_test_user.id, case.channel)
         assert route is not None
-        assert route.channel_identifier == "123456789"
+        assert route.channel_identifier == case.first
 
     async def test_updates_existing_link(
         self,
+        case: ChannelCase,
         async_client: httpx.AsyncClient,
         async_db: async_sessionmaker,
         async_test_user: User,
     ) -> None:
-        await async_client.put("/api/channels/telegram", json={"telegram_user_id": "111111111"})
-        resp = await async_client.put(
-            "/api/channels/telegram", json={"telegram_user_id": "222222222"}
-        )
+        await async_client.put(case.url, json={case.field: case.first})
+        resp = await async_client.put(case.url, json={case.field: case.second})
         assert resp.status_code == 200
-        assert resp.json()["telegram_user_id"] == "222222222"
+        assert resp.json()[case.field] == case.second
 
-        routes = await _list_routes(async_db, async_test_user.id, "telegram")
+        routes = await _list_routes(async_db, async_test_user.id, case.channel)
         assert len(routes) == 1
-        assert routes[0].channel_identifier == "222222222"
+        assert routes[0].channel_identifier == case.second
 
-    async def test_rejects_empty_id(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.put("/api/channels/telegram", json={"telegram_user_id": "  "})
+    async def test_rejects_empty_identifier(
+        self, case: ChannelCase, async_client: httpx.AsyncClient
+    ) -> None:
+        resp = await async_client.put(case.url, json={case.field: "  "})
         assert resp.status_code == 422
+
+    async def test_rejects_identifier_linked_to_another_user(
+        self,
+        case: ChannelCase,
+        async_client: httpx.AsyncClient,
+        async_db: async_sessionmaker,
+    ) -> None:
+        other_id = str(uuid.uuid4())
+        await _add_user(async_db, user_id=other_id, preferred_channel=case.channel)
+        await _add_route(
+            async_db,
+            user_id=other_id,
+            channel=case.channel,
+            channel_identifier=case.taken,
+        )
+
+        resp = await async_client.put(case.url, json={case.field: case.taken})
+        assert resp.status_code == 409
+        assert "already linked" in resp.json()["detail"].lower()
+
+    async def test_allows_same_user_to_re_save(
+        self, case: ChannelCase, async_client: httpx.AsyncClient
+    ) -> None:
+        await async_client.put(case.url, json={case.field: case.first})
+        resp = await async_client.put(case.url, json={case.field: case.first})
+        assert resp.status_code == 200
+        assert resp.json()[case.field] == case.first
+
+    async def test_removes_link(
+        self,
+        case: ChannelCase,
+        async_client: httpx.AsyncClient,
+        async_db: async_sessionmaker,
+        async_test_user: User,
+    ) -> None:
+        await async_client.put(case.url, json={case.field: case.first})
+        resp = await async_client.delete(case.url)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data[case.field] is None
+        assert data["connected"] is False
+
+        route = await _get_route(async_db, async_test_user.id, case.channel)
+        assert route is None
+
+    async def test_remove_when_not_linked_is_ok(
+        self, case: ChannelCase, async_client: httpx.AsyncClient
+    ) -> None:
+        resp = await async_client.delete(case.url)
+        assert resp.status_code == 200
+        assert resp.json()[case.field] is None
+
+
+class TestTelegramIdentifierFormat:
+    """Telegram ids are numeric."""
 
     async def test_rejects_non_numeric_id(self, async_client: httpx.AsyncClient) -> None:
         resp = await async_client.put("/api/channels/telegram", json={"telegram_user_id": "abc123"})
         assert resp.status_code == 422
         assert "numeric" in resp.json()["detail"].lower()
 
-    async def test_rejects_duplicate_telegram_id(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-    ) -> None:
-        # Create another user with a ChannelRoute claiming the same identifier
-        other_id = str(uuid.uuid4())
-        await _add_user(async_db, user_id=other_id, preferred_channel="telegram")
-        await _add_route(
-            async_db,
-            user_id=other_id,
-            channel="telegram",
-            channel_identifier="555555555",
-        )
 
-        resp = await async_client.put(
-            "/api/channels/telegram", json={"telegram_user_id": "555555555"}
-        )
-        assert resp.status_code == 409
-        assert "already linked" in resp.json()["detail"].lower()
+class TestLinqIdentifierFormat:
+    """Linq takes an E.164 phone number."""
 
-    async def test_allows_same_user_to_re_save_same_id(
-        self,
-        async_client: httpx.AsyncClient,
-    ) -> None:
-        await async_client.put("/api/channels/telegram", json={"telegram_user_id": "777777777"})
-        resp = await async_client.put(
-            "/api/channels/telegram", json={"telegram_user_id": "777777777"}
-        )
-        assert resp.status_code == 200
-        assert resp.json()["telegram_user_id"] == "777777777"
-
-
-class TestRemoveTelegramLink:
-    """DELETE /api/channels/telegram"""
-
-    async def test_removes_link(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await async_client.put("/api/channels/telegram", json={"telegram_user_id": "123456789"})
-        resp = await async_client.delete("/api/channels/telegram")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["telegram_user_id"] is None
-        assert data["connected"] is False
-
-        route = await _get_route(async_db, async_test_user.id, "telegram")
-        assert route is None
-
-    async def test_remove_when_not_linked_is_ok(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.delete("/api/channels/telegram")
-        assert resp.status_code == 200
-        assert resp.json()["telegram_user_id"] is None
-
-
-# ---------------------------------------------------------------------------
-# Linq (iMessage / RCS / SMS) linking
-# ---------------------------------------------------------------------------
-
-
-class TestGetLinqLink:
-    """GET /api/channels/linq"""
-
-    async def test_returns_null_when_not_linked(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.get("/api/channels/linq")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] is None
-        assert data["connected"] is False
-
-    async def test_returns_linked_phone(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await _add_route(
-            async_db,
-            user_id=async_test_user.id,
-            channel="linq",
-            channel_identifier="+15551234567",
-        )
-
-        resp = await async_client.get("/api/channels/linq")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] == "+15551234567"
-
-
-class TestSetLinqLink:
-    """PUT /api/channels/linq"""
-
-    async def test_links_phone_number(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        resp = await async_client.put("/api/channels/linq", json={"phone_number": "+15551234567"})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] == "+15551234567"
-        assert data["connected"] is True
-
-        route = await _get_route(async_db, async_test_user.id, "linq")
-        assert route is not None
-        assert route.channel_identifier == "+15551234567"
-
-    async def test_updates_existing_link(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await async_client.put("/api/channels/linq", json={"phone_number": "+15551111111"})
-        resp = await async_client.put("/api/channels/linq", json={"phone_number": "+15552222222"})
-        assert resp.status_code == 200
-        assert resp.json()["phone_number"] == "+15552222222"
-
-        routes = await _list_routes(async_db, async_test_user.id, "linq")
-        assert len(routes) == 1
-        assert routes[0].channel_identifier == "+15552222222"
-
-    async def test_rejects_empty_phone(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.put("/api/channels/linq", json={"phone_number": "  "})
-        assert resp.status_code == 422
-
-    async def test_rejects_invalid_format(self, async_client: httpx.AsyncClient) -> None:
+    async def test_rejects_bare_national_number(self, async_client: httpx.AsyncClient) -> None:
         resp = await async_client.put("/api/channels/linq", json={"phone_number": "5551234567"})
         assert resp.status_code == 422
         assert "E.164" in resp.json()["detail"]
@@ -361,91 +354,9 @@ class TestSetLinqLink:
         assert resp.status_code == 422
         assert "E.164" in resp.json()["detail"]
 
-    async def test_rejects_duplicate_phone_number(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-    ) -> None:
-        other_id = str(uuid.uuid4())
-        await _add_user(async_db, user_id=other_id, preferred_channel="linq")
-        await _add_route(
-            async_db,
-            user_id=other_id,
-            channel="linq",
-            channel_identifier="+15559999999",
-        )
 
-        resp = await async_client.put("/api/channels/linq", json={"phone_number": "+15559999999"})
-        assert resp.status_code == 409
-        assert "already linked" in resp.json()["detail"].lower()
-
-    async def test_allows_same_user_to_re_save_same_phone(
-        self,
-        async_client: httpx.AsyncClient,
-    ) -> None:
-        await async_client.put("/api/channels/linq", json={"phone_number": "+15557777777"})
-        resp = await async_client.put("/api/channels/linq", json={"phone_number": "+15557777777"})
-        assert resp.status_code == 200
-        assert resp.json()["phone_number"] == "+15557777777"
-
-
-class TestRemoveLinqLink:
-    """DELETE /api/channels/linq"""
-
-    async def test_removes_link(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await async_client.put("/api/channels/linq", json={"phone_number": "+15551234567"})
-        resp = await async_client.delete("/api/channels/linq")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] is None
-        assert data["connected"] is False
-
-        route = await _get_route(async_db, async_test_user.id, "linq")
-        assert route is None
-
-    async def test_remove_when_not_linked_is_ok(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.delete("/api/channels/linq")
-        assert resp.status_code == 200
-        assert resp.json()["phone_number"] is None
-
-
-# ---------------------------------------------------------------------------
-# BlueBubbles (iMessage via self-hosted Mac bridge) linking
-# ---------------------------------------------------------------------------
-
-
-class TestGetBlueBubblesLink:
-    """GET /api/channels/bluebubbles"""
-
-    async def test_returns_null_when_not_linked(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.get("/api/channels/bluebubbles")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] is None
-        assert data["connected"] is False
-
-    async def test_returns_linked_phone(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await _add_route(
-            async_db,
-            user_id=async_test_user.id,
-            channel="bluebubbles",
-            channel_identifier="+15551234567",
-        )
-
-        resp = await async_client.get("/api/channels/bluebubbles")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] == "+15551234567"
+class TestBlueBubblesIdentifierFormat:
+    """BlueBubbles takes an E.164 phone number or an iCloud email."""
 
     async def test_returns_linked_email(
         self,
@@ -464,28 +375,6 @@ class TestGetBlueBubblesLink:
         assert resp.status_code == 200
         assert resp.json()["phone_number"] == "user@icloud.com"
 
-
-class TestSetBlueBubblesLink:
-    """PUT /api/channels/bluebubbles"""
-
-    async def test_links_phone_number(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        resp = await async_client.put(
-            "/api/channels/bluebubbles", json={"phone_number": "+15551234567"}
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] == "+15551234567"
-        assert data["connected"] is True
-
-        route = await _get_route(async_db, async_test_user.id, "bluebubbles")
-        assert route is not None
-        assert route.channel_identifier == "+15551234567"
-
     async def test_links_email(self, async_client: httpx.AsyncClient) -> None:
         resp = await async_client.put(
             "/api/channels/bluebubbles", json={"phone_number": "user@icloud.com"}
@@ -495,27 +384,6 @@ class TestSetBlueBubblesLink:
         assert data["phone_number"] == "user@icloud.com"
         assert data["connected"] is True
 
-    async def test_updates_existing_link(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await async_client.put("/api/channels/bluebubbles", json={"phone_number": "+15551111111"})
-        resp = await async_client.put(
-            "/api/channels/bluebubbles", json={"phone_number": "+15552222222"}
-        )
-        assert resp.status_code == 200
-        assert resp.json()["phone_number"] == "+15552222222"
-
-        routes = await _list_routes(async_db, async_test_user.id, "bluebubbles")
-        assert len(routes) == 1
-        assert routes[0].channel_identifier == "+15552222222"
-
-    async def test_rejects_empty_identifier(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.put("/api/channels/bluebubbles", json={"phone_number": "  "})
-        assert resp.status_code == 422
-
     async def test_rejects_invalid_format(self, async_client: httpx.AsyncClient) -> None:
         resp = await async_client.put(
             "/api/channels/bluebubbles", json={"phone_number": "not-valid"}
@@ -523,61 +391,21 @@ class TestSetBlueBubblesLink:
         assert resp.status_code == 422
         assert "E.164" in resp.json()["detail"]
 
-    async def test_rejects_duplicate_identifier(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-    ) -> None:
-        other_id = str(uuid.uuid4())
-        await _add_user(async_db, user_id=other_id, preferred_channel="bluebubbles")
-        await _add_route(
-            async_db,
-            user_id=other_id,
-            channel="bluebubbles",
-            channel_identifier="+15559999999",
-        )
 
+class TestTwilioIdentifierFormat:
+    """Twilio is phone-only: an iCloud email is a BlueBubbles thing."""
+
+    async def test_rejects_invalid_format(self, async_client: httpx.AsyncClient) -> None:
+        resp = await async_client.put("/api/channels/twilio", json={"phone_number": "not-valid"})
+        assert resp.status_code == 422
+        assert "E.164" in resp.json()["detail"]
+
+    async def test_rejects_email(self, async_client: httpx.AsyncClient) -> None:
         resp = await async_client.put(
-            "/api/channels/bluebubbles", json={"phone_number": "+15559999999"}
+            "/api/channels/twilio", json={"phone_number": "user@icloud.com"}
         )
-        assert resp.status_code == 409
-        assert "already linked" in resp.json()["detail"].lower()
-
-    async def test_allows_same_user_to_re_save(
-        self,
-        async_client: httpx.AsyncClient,
-    ) -> None:
-        await async_client.put("/api/channels/bluebubbles", json={"phone_number": "+15557777777"})
-        resp = await async_client.put(
-            "/api/channels/bluebubbles", json={"phone_number": "+15557777777"}
-        )
-        assert resp.status_code == 200
-        assert resp.json()["phone_number"] == "+15557777777"
-
-
-class TestRemoveBlueBubblesLink:
-    """DELETE /api/channels/bluebubbles"""
-
-    async def test_removes_link(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await async_client.put("/api/channels/bluebubbles", json={"phone_number": "+15551234567"})
-        resp = await async_client.delete("/api/channels/bluebubbles")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] is None
-        assert data["connected"] is False
-
-        route = await _get_route(async_db, async_test_user.id, "bluebubbles")
-        assert route is None
-
-    async def test_remove_when_not_linked_is_ok(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.delete("/api/channels/bluebubbles")
-        assert resp.status_code == 200
-        assert resp.json()["phone_number"] is None
+        assert resp.status_code == 422
+        assert "E.164" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -772,144 +600,6 @@ class TestSingleChannelEnforcement:
         user = await _get_user(async_db, async_test_user.id)
         assert user is not None
         assert user.preferred_channel == "bluebubbles"
-
-
-# ---------------------------------------------------------------------------
-# Twilio (RCS via Messaging Service, with SMS/MMS fallback)
-# ---------------------------------------------------------------------------
-
-
-class TestGetTwilioLink:
-    """GET /api/channels/twilio"""
-
-    async def test_returns_null_when_not_linked(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.get("/api/channels/twilio")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] is None
-        assert data["connected"] is False
-
-    async def test_returns_linked_phone(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await _add_route(
-            async_db,
-            user_id=async_test_user.id,
-            channel="twilio",
-            channel_identifier="+15551234567",
-        )
-
-        resp = await async_client.get("/api/channels/twilio")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] == "+15551234567"
-        assert data["connected"] is True
-
-
-class TestSetTwilioLink:
-    """PUT /api/channels/twilio"""
-
-    async def test_links_phone_number(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        resp = await async_client.put("/api/channels/twilio", json={"phone_number": "+15551234567"})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] == "+15551234567"
-        assert data["connected"] is True
-
-        route = await _get_route(async_db, async_test_user.id, "twilio")
-        assert route is not None
-        assert route.channel_identifier == "+15551234567"
-
-    async def test_updates_existing_link(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await async_client.put("/api/channels/twilio", json={"phone_number": "+15551111111"})
-        resp = await async_client.put("/api/channels/twilio", json={"phone_number": "+15552222222"})
-        assert resp.status_code == 200
-        assert resp.json()["phone_number"] == "+15552222222"
-
-        routes = await _list_routes(async_db, async_test_user.id, "twilio")
-        assert len(routes) == 1
-        assert routes[0].channel_identifier == "+15552222222"
-
-    async def test_rejects_empty_identifier(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.put("/api/channels/twilio", json={"phone_number": "  "})
-        assert resp.status_code == 422
-
-    async def test_rejects_invalid_format(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.put("/api/channels/twilio", json={"phone_number": "not-valid"})
-        assert resp.status_code == 422
-        assert "E.164" in resp.json()["detail"]
-
-    async def test_rejects_email(self, async_client: httpx.AsyncClient) -> None:
-        """Twilio is phone-only -- iCloud emails are a BlueBubbles thing."""
-        resp = await async_client.put(
-            "/api/channels/twilio", json={"phone_number": "user@icloud.com"}
-        )
-        assert resp.status_code == 422
-        assert "E.164" in resp.json()["detail"]
-
-    async def test_rejects_duplicate_identifier(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-    ) -> None:
-        other_id = str(uuid.uuid4())
-        await _add_user(async_db, user_id=other_id, preferred_channel="twilio")
-        await _add_route(
-            async_db,
-            user_id=other_id,
-            channel="twilio",
-            channel_identifier="+15559999999",
-        )
-
-        resp = await async_client.put("/api/channels/twilio", json={"phone_number": "+15559999999"})
-        assert resp.status_code == 409
-        assert "already linked" in resp.json()["detail"].lower()
-
-    async def test_allows_same_user_to_re_save(
-        self,
-        async_client: httpx.AsyncClient,
-    ) -> None:
-        await async_client.put("/api/channels/twilio", json={"phone_number": "+15557777777"})
-        resp = await async_client.put("/api/channels/twilio", json={"phone_number": "+15557777777"})
-        assert resp.status_code == 200
-        assert resp.json()["phone_number"] == "+15557777777"
-
-
-class TestRemoveTwilioLink:
-    """DELETE /api/channels/twilio"""
-
-    async def test_removes_link(
-        self,
-        async_client: httpx.AsyncClient,
-        async_db: async_sessionmaker,
-        async_test_user: User,
-    ) -> None:
-        await async_client.put("/api/channels/twilio", json={"phone_number": "+15551234567"})
-        resp = await async_client.delete("/api/channels/twilio")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["phone_number"] is None
-        assert data["connected"] is False
-
-        route = await _get_route(async_db, async_test_user.id, "twilio")
-        assert route is None
-
-    async def test_remove_when_not_linked_is_ok(self, async_client: httpx.AsyncClient) -> None:
-        resp = await async_client.delete("/api/channels/twilio")
-        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
