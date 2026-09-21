@@ -59,6 +59,72 @@ _OPS_MUTED = "#7A746C"
 _OPS_BORDER = "#E3DFD9"
 
 
+def _message(to_email: str, subject: str, text_body: str, html_body: str) -> EmailMessage:
+    """Assemble the multipart message that every sender in this module returns."""
+    msg = EmailMessage()
+    msg["From"] = settings.smtp_from_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+    return msg
+
+
+def _ops_header(title: str, subtitle: str = "") -> str:
+    """Title row for an operator email. *title* and *subtitle* are raw HTML."""
+    subtitle_html = (
+        f'\n              <p style="margin: 6px 0 0; font-family: {_OPS_FONT}; '
+        f'font-size: 13px; color: {_OPS_MUTED};">{subtitle}</p>'
+        if subtitle
+        else ""
+    )
+    return f"""
+          <tr>
+            <td style="padding: 20px 24px 4px;">
+              <h1 style="margin: 0; font-family: {_OPS_FONT}; font-size: 18px; font-weight: 700; color: {_OPS_TEXT};">
+                {title}
+              </h1>{subtitle_html}
+            </td>
+          </tr>"""
+
+
+def _ops_footer(note: str, padding: str) -> str:
+    """Closing note row for an operator email."""
+    return f"""
+          <tr>
+            <td style="padding: {padding};">
+              <p style="margin: 0; font-family: {_OPS_FONT}; font-size: 12px; line-height: 1.5; color: {_OPS_MUTED};">
+                {note}
+              </p>
+            </td>
+          </tr>"""
+
+
+def _ops_page(subject: str, rows: str) -> str:
+    """Wrap operator-email rows in the shared 640px card shell.
+
+    The three operator emails (application errors, health transitions,
+    self-repair) differ only in their rows. Inline styles and nested tables
+    rather than flexbox, because Outlook renders with the Word engine.
+    """
+    return f"""\
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(subject)}</title></head>
+<body style="margin: 0; padding: 0; background-color: #F6F5F3; font-family: {_OPS_FONT}; color: {_OPS_TEXT};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td align="center" style="padding: 24px 12px;">
+        <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="max-width: 640px; width: 100%; background-color: #FEFEFE; border: 1px solid {_OPS_BORDER}; border-radius: 10px;">{rows}
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+
+
 def _is_configured() -> bool:
     return bool(settings.smtp_host and settings.smtp_from_email)
 
@@ -517,13 +583,7 @@ def _waitlist_approved_message(to_email: str, name: str) -> EmailMessage:
 </html>
 """
 
-    msg = EmailMessage()
-    msg["From"] = settings.smtp_from_email
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.set_content(text_body)
-    msg.add_alternative(html_body, subtype="html")
-    return msg
+    return _message(to_email, subject, text_body, html_body)
 
 
 async def send_waitlist_approved(to_email: str, name: str = "") -> bool:
@@ -732,25 +792,14 @@ def _admin_alert_message(
     body_parts = "\n".join(text_parts) + dropped_note if alerts else ""
     text_body = f"{header}\n{'=' * len(header)}\n\n" + body_parts + tool_text
 
-    html_body = f"""\
-<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(subject)}</title></head>
-<body style="margin: 0; padding: 0; background-color: #F6F5F3; font-family: {_OPS_FONT}; color: {_OPS_TEXT};">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-    <tr>
-      <td align="center" style="padding: 24px 12px;">
-        <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="max-width: 640px; width: 100%; background-color: #FEFEFE; border: 1px solid {_OPS_BORDER}; border-radius: 10px;">
-          <tr>
-            <td style="padding: 20px 24px 4px;">
-              <h1 style="margin: 0; font-family: {_OPS_FONT}; font-size: 18px; font-weight: 700; color: {_OPS_TEXT};">
-                Application errors
-              </h1>
-              <p style="margin: 6px 0 0; font-family: {_OPS_FONT}; font-size: 13px; color: {_OPS_MUTED};">
-                Grouped by logger and exception type. Repeats within the dedupe window are counted, not resent.
-              </p>
-            </td>
-          </tr>
+    html_body = _ops_page(
+        subject,
+        _ops_header(
+            "Application errors",
+            "Grouped by logger and exception type. Repeats within the dedupe "
+            "window are counted, not resent.",
+        )
+        + f"""
           <tr>
             <td style="padding: 0 24px 20px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -759,22 +808,10 @@ def _admin_alert_message(
               {dropped_html}
               {_tool_failure_html(tool_failures)}
             </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-"""
+          </tr>""",
+    )
 
-    msg = EmailMessage()
-    msg["From"] = settings.smtp_from_email
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.set_content(text_body)
-    msg.add_alternative(html_body, subtype="html")
-    return msg
+    return _message(to_email, subject, text_body, html_body)
 
 
 async def send_admin_alert(
@@ -857,51 +894,25 @@ def _health_alert_message(to_email: str, transitions: Sequence[HealthTransition]
         "arrives when it recovers.\n"
     )
 
-    html_body = f"""\
-<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(subject)}</title></head>
-<body style="margin: 0; padding: 0; background-color: #F6F5F3; font-family: {_OPS_FONT}; color: {_OPS_TEXT};">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-    <tr>
-      <td align="center" style="padding: 24px 12px;">
-        <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="max-width: 640px; width: 100%; background-color: #FEFEFE; border: 1px solid {_OPS_BORDER}; border-radius: 10px;">
-          <tr>
-            <td style="padding: 20px 24px 4px;">
-              <h1 style="margin: 0; font-family: {_OPS_FONT}; font-size: 18px; font-weight: 700; color: {_OPS_TEXT};">
-                Health status change
-              </h1>
-            </td>
-          </tr>
+    html_body = _ops_page(
+        subject,
+        _ops_header("Health status change")
+        + f"""
           <tr>
             <td style="padding: 0 24px 8px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 {"".join(html_parts)}
               </table>
             </td>
-          </tr>
-          <tr>
-            <td style="padding: 4px 24px 20px;">
-              <p style="margin: 0; font-family: {_OPS_FONT}; font-size: 12px; line-height: 1.5; color: {_OPS_MUTED};">
-                Steady-state failures are not resent. The next email for a system arrives when it recovers.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-"""
+          </tr>"""
+        + _ops_footer(
+            "Steady-state failures are not resent. The next email for a "
+            "system arrives when it recovers.",
+            "4px 24px 20px",
+        ),
+    )
 
-    msg = EmailMessage()
-    msg["From"] = settings.smtp_from_email
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.set_content(text_body)
-    msg.add_alternative(html_body, subtype="html")
-    return msg
+    return _message(to_email, subject, text_body, html_body)
 
 
 async def send_health_alert(to_email: str, transitions: Sequence[HealthTransition]) -> bool:
@@ -925,22 +936,10 @@ def _repair_notice_message(to_email: str, label: str, problem: str, outcome: str
         "so no DOWN alert would ever be sent for it.\n"
     )
 
-    html_body = f"""\
-<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(subject)}</title></head>
-<body style="margin: 0; padding: 0; background-color: #F6F5F3; font-family: {_OPS_FONT}; color: {_OPS_TEXT};">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-    <tr>
-      <td align="center" style="padding: 24px 12px;">
-        <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="max-width: 640px; width: 100%; background-color: #FEFEFE; border: 1px solid {_OPS_BORDER}; border-radius: 10px;">
-          <tr>
-            <td style="padding: 20px 24px 4px;">
-              <h1 style="margin: 0; font-family: {_OPS_FONT}; font-size: 18px; font-weight: 700; color: {_OPS_TEXT};">
-                Self-repair &middot; {html.escape(label)}
-              </h1>
-            </td>
-          </tr>
+    html_body = _ops_page(
+        subject,
+        _ops_header(f"Self-repair &middot; {html.escape(label)}")
+        + f"""
           <tr>
             <td style="padding: 8px 24px;">
               <p style="margin: 0 0 4px; font-family: {_OPS_FONT}; font-size: 13px; font-weight: 700; color: {_OPS_DOWN};">Problem</p>
@@ -948,30 +947,16 @@ def _repair_notice_message(to_email: str, label: str, problem: str, outcome: str
               <p style="margin: 0 0 4px; font-family: {_OPS_FONT}; font-size: 13px; font-weight: 700; color: {_OPS_UP};">Action taken</p>
               <p style="margin: 0; font-family: {_OPS_MONO}; font-size: 12px; line-height: 1.5; color: {_OPS_TEXT}; word-break: break-word;">{html.escape(outcome)}</p>
             </td>
-          </tr>
-          <tr>
-            <td style="padding: 12px 24px 20px;">
-              <p style="margin: 0; font-family: {_OPS_FONT}; font-size: 12px; line-height: 1.5; color: {_OPS_MUTED};">
-                Sent separately from health alerts: the repair resolves the failure before the
-                consecutive-failure threshold is met, so no DOWN alert would ever fire for it.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-"""
+          </tr>"""
+        + _ops_footer(
+            "Sent separately from health alerts: the repair resolves the "
+            "failure before the consecutive-failure threshold is met, so no "
+            "DOWN alert would ever fire for it.",
+            "12px 24px 20px",
+        ),
+    )
 
-    msg = EmailMessage()
-    msg["From"] = settings.smtp_from_email
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.set_content(text_body)
-    msg.add_alternative(html_body, subtype="html")
-    return msg
+    return _message(to_email, subject, text_body, html_body)
 
 
 async def send_repair_notice(to_email: str, label: str, problem: str, outcome: str) -> bool:
