@@ -73,6 +73,7 @@ from backend.app.channels.bluebubbles import (
 from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal
 from backend.app.models import Subscription, User
+from backend.app.query_helpers import iso_or_none
 from backend.app.routers.health import health_check
 from backend.app.services import email_service
 from backend.app.services.llm_endpoints import resolve_target
@@ -225,8 +226,8 @@ class _RunStep:
             "label": self.label,
             "status": self.status,
             "detail": self.detail,
-            "started_at": self.started_at.isoformat() if self.started_at else None,
-            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "started_at": iso_or_none(self.started_at),
+            "finished_at": iso_or_none(self.finished_at),
             # Computed live for a running step, so a slow dependency is visibly
             # slow while it is still being waited on rather than only in
             # hindsight.
@@ -260,7 +261,7 @@ class _Run:
             "trigger": self.trigger,
             "running": self.finished_at is None,
             "started_at": self.started_at.isoformat(),
-            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "finished_at": iso_or_none(self.finished_at),
             "error": self.error,
             "steps": [step.as_dict() for step in self.steps],
         }
@@ -960,7 +961,7 @@ class HealthMonitor:
                 "detail": state.detail,
                 "consecutive_failures": state.consecutive_failures,
                 "since": state.since.isoformat(),
-                "last_checked": state.last_checked.isoformat() if state.last_checked else None,
+                "last_checked": iso_or_none(state.last_checked),
                 # DOWN, but only because it was never connected in the first
                 # place. The admin view shows these separately from breakage.
                 "never_connected": state.never_connected,

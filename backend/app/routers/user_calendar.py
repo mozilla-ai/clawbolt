@@ -19,6 +19,7 @@ from backend.app.database import get_async_db
 from backend.app.integrations.calendar.factory import parse_disabled_tools
 from backend.app.integrations.calendar.service import GoogleCalendarService
 from backend.app.models import CalendarConfig, User
+from backend.app.query_helpers import fetch_all
 from backend.app.schemas import (
     CalendarConfigEntry,
     CalendarConfigResponse,
@@ -79,16 +80,8 @@ async def get_calendar_config(
     db: AsyncSession = Depends(get_async_db),
 ) -> CalendarConfigResponse:
     """Get all enabled calendars for the user."""
-    configs = (
-        (
-            await db.execute(
-                select(CalendarConfig).filter_by(
-                    user_id=current_user.id, provider="google_calendar"
-                )
-            )
-        )
-        .scalars()
-        .all()
+    configs = await fetch_all(
+        db, select(CalendarConfig).filter_by(user_id=current_user.id, provider="google_calendar")
     )
 
     return CalendarConfigResponse(

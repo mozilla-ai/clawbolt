@@ -12,6 +12,7 @@ from backend.app.auth.admin_dep import get_current_admin
 from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.models import User
+from backend.app.query_helpers import iso_or_none
 from backend.app.services import admin_alerts, email_service, health_monitor
 
 logger = logging.getLogger(__name__)
@@ -103,10 +104,10 @@ def _email_status() -> dict:
         "host": status.host,
         "port": status.port,
         "timeout_seconds": status.timeout_seconds,
-        "last_attempt_at": status.last_attempt_at.isoformat() if status.last_attempt_at else None,
-        "last_success_at": status.last_success_at.isoformat() if status.last_success_at else None,
+        "last_attempt_at": iso_or_none(status.last_attempt_at),
+        "last_success_at": iso_or_none(status.last_success_at),
         "last_error": status.last_error,
-        "last_error_at": status.last_error_at.isoformat() if status.last_error_at else None,
+        "last_error_at": iso_or_none(status.last_error_at),
     }
 
 

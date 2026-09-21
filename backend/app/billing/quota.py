@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.billing.plans import get_plan_limits
 from backend.app.config import settings
 from backend.app.models import Subscription, UsageQuota
+from backend.app.query_helpers import iso_or_none
 
 
 def _current_period_start() -> datetime.datetime:
@@ -209,7 +210,7 @@ async def get_usage_summary(db: AsyncSession, user_id: str) -> dict:
     return {
         "messages": {"used": quota.messages_used, "limit": quota.messages_limit},
         "tokens": {"used": quota.tokens_used, "limit": quota.tokens_limit},
-        "period_start": quota.period_start.isoformat() if quota.period_start else None,
+        "period_start": iso_or_none(quota.period_start),
     }
 
 

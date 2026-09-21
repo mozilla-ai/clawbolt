@@ -71,6 +71,7 @@ from backend.app.models import (
     Subscription,
     User,
 )
+from backend.app.query_helpers import count_rows, fetch_all, iso_or_none
 from backend.app.schemas import (
     SharedDataApprovalEventItem,
     SharedDataApprovalEventListResponse,
@@ -207,14 +208,9 @@ async def get_shared_data_summary(
     # (opt-in OR opt-out), so this surfaces "consent state moved
     # recently" rather than "first-time opt-ins". A user who toggled
     # off and back on within the week still counts.
-    consents_changed_this_week = (
-        await db.execute(
-            select(sa_func.count(User.id)).where(
-                User.data_sharing_consent.is_(True),
-                User.data_sharing_consent_at >= week_ago,
-            )
-        )
-    ).scalar_one() or 0
+    consents_changed_this_week = await count_rows(
+        db, User.id, User.data_sharing_consent.is_(True), User.data_sharing_consent_at >= week_ago
+    )
 
     consenting_user_ids = (
         (await db.execute(select(User.id).where(User.data_sharing_consent.is_(True))))
@@ -228,14 +224,12 @@ async def get_shared_data_summary(
     # "what session shells got created".
     conversations_this_week = 0
     if consenting_user_ids:
-        conversations_this_week = (
-            await db.execute(
-                select(sa_func.count(ChatSession.id)).where(
-                    ChatSession.user_id.in_(consenting_user_ids),
-                    ChatSession.last_message_at >= week_ago,
-                )
-            )
-        ).scalar_one() or 0
+        conversations_this_week = await count_rows(
+            db,
+            ChatSession.id,
+            ChatSession.user_id.in_(consenting_user_ids),
+            ChatSession.last_message_at >= week_ago,
+        )
 
     # Heartbeat events scoped to consenting users in the last 7 days.
     # No "errors" sub-count here: the OSS heartbeat scheduler writes
@@ -246,26 +240,20 @@ async def get_shared_data_summary(
     # structured logs.
     heartbeats_this_week = 0
     if consenting_user_ids:
-        heartbeats_this_week = (
-            await db.execute(
-                select(sa_func.count(HeartbeatLog.id)).where(
-                    HeartbeatLog.user_id.in_(consenting_user_ids),
-                    HeartbeatLog.created_at >= week_ago,
-                )
-            )
-        ).scalar_one() or 0
+        heartbeats_this_week = await count_rows(
+            db,
+            HeartbeatLog.id,
+            HeartbeatLog.user_id.in_(consenting_user_ids),
+            HeartbeatLog.created_at >= week_ago,
+        )
 
     # Open reports: dismissed_at is null for an open report. Not
     # restricted to consenting users because reports are admin triage
     # signal independent of consent (the report row itself does not
     # surface message bodies; those are still gated).
-    open_reports_count = (
-        await db.execute(
-            select(sa_func.count(ReportedConversation.id)).where(
-                ReportedConversation.dismissed_at.is_(None)
-            )
-        )
-    ).scalar_one() or 0
+    open_reports_count = await count_rows(
+        db, ReportedConversation.id, ReportedConversation.dismissed_at.is_(None)
+    )
 
     # Top-5 consenting users by message count this week. Joins
     # Message -> ChatSession to pull user_id, then groups. Sub-query
@@ -368,18 +356,13 @@ async def list_shared_data_users(
     total = (
         await db.execute(select(sa_func.count(User.id)).where(User.data_sharing_consent.is_(True)))
     ).scalar_one() or 0
-    consenting_users = (
-        (
-            await db.execute(
-                select(User)
-                .where(User.data_sharing_consent.is_(True))
-                .order_by(User.data_sharing_consent_at.desc().nullslast())
-                .offset(offset)
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    consenting_users = await fetch_all(
+        db,
+        select(User)
+        .where(User.data_sharing_consent.is_(True))
+        .order_by(User.data_sharing_consent_at.desc().nullslast())
+        .offset(offset)
+        .limit(limit),
     )
 
     user_ids = [u.id for u in consenting_users]
@@ -414,9 +397,7 @@ async def list_shared_data_users(
             id=u.id,
             user_id=u.user_id,
             email=sub_emails.get(u.id, ""),
-            consent_at=(
-                u.data_sharing_consent_at.isoformat() if u.data_sharing_consent_at else None
-            ),
+            consent_at=(iso_or_none(u.data_sharing_consent_at)),
             conversation_count=activity.get(u.id, (0, None))[0],
             last_message_at=(
                 activity[u.id][1].isoformat()
@@ -462,8 +443,8 @@ async def get_shared_data_conversation(
     return SharedDataConversationItem(
         session_id=session.session_id,
         channel=session.channel or "",
-        created_at=session.created_at.isoformat() if session.created_at else None,
-        last_message_at=session.last_message_at.isoformat() if session.last_message_at else None,
+        created_at=iso_or_none(session.created_at),
+        last_message_at=iso_or_none(session.last_message_at),
         message_count=int(message_count),
         last_trim_seq=session.last_trim_seq,
     )
@@ -563,7 +544,7 @@ def _group_turns(messages: list[Message]) -> list[SharedDataTurn]:
                 direction="outbound",
                 body=redact_pii(joined_body),
                 thinking=redact_pii(joined_thinking),
-                timestamp=last.timestamp.isoformat() if last.timestamp else None,
+                timestamp=iso_or_none(last.timestamp),
             )
         user_message: SharedDataMessageItem | None = None
         started_at: str | None = None
@@ -572,12 +553,12 @@ def _group_turns(messages: list[Message]) -> list[SharedDataTurn]:
                 seq=pending_user.seq,
                 direction="inbound",
                 body=redact_pii(pending_user.body or ""),
-                timestamp=pending_user.timestamp.isoformat() if pending_user.timestamp else None,
+                timestamp=iso_or_none(pending_user.timestamp),
             )
             started_at = user_message.timestamp
         elif pending_agent_msgs:
             first = pending_agent_msgs[0]
-            started_at = first.timestamp.isoformat() if first.timestamp else None
+            started_at = iso_or_none(first.timestamp)
         finished_at = agent_reply.timestamp if agent_reply else started_at
 
         turns.append(
@@ -668,9 +649,7 @@ async def list_shared_data_conversation_turns(
     return SharedDataConversationTurnsResponse(
         session_id=session.session_id,
         user_id=user.id,
-        consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        consent_at=(iso_or_none(user.data_sharing_consent_at)),
         turns=turns,
         total=len(turns),
         last_trim_seq=session.last_trim_seq,
@@ -705,9 +684,7 @@ async def get_shared_data_profile(
 
     return SharedDataProfileResponse(
         user_id=user.id,
-        consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        consent_at=(iso_or_none(user.data_sharing_consent_at)),
         soul_text=redact_pii(user.soul_text or ""),
         user_text=redact_pii(user.user_text or ""),
         heartbeat_text=redact_pii(user.heartbeat_text or ""),
@@ -757,14 +734,8 @@ async def list_shared_data_heartbeat_logs(
         if end_dt is not None:
             base_stmt = base_stmt.where(HeartbeatLog.created_at <= end_dt)
             count_stmt = count_stmt.where(HeartbeatLog.created_at <= end_dt)
-    rows = (
-        (
-            await db.execute(
-                base_stmt.order_by(HeartbeatLog.created_at.desc().nullslast()).limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    rows = await fetch_all(
+        db, base_stmt.order_by(HeartbeatLog.created_at.desc().nullslast()).limit(limit)
     )
     items = [
         SharedDataHeartbeatLogItem(
@@ -774,16 +745,14 @@ async def list_shared_data_heartbeat_logs(
             message_text=redact_pii(row.message_text or ""),
             reasoning=redact_pii(row.reasoning or ""),
             tasks=redact_pii(row.tasks or ""),
-            created_at=row.created_at.isoformat() if row.created_at else None,
+            created_at=iso_or_none(row.created_at),
         )
         for row in rows
     ]
     total = (await db.execute(count_stmt)).scalar_one() or 0
     return SharedDataHeartbeatLogListResponse(
         user_id=user.id,
-        consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        consent_at=(iso_or_none(user.data_sharing_consent_at)),
         items=items,
         total=int(total),
     )
@@ -821,9 +790,7 @@ async def get_shared_data_memory(
     ).scalar_one_or_none()
     return SharedDataMemoryDocumentResponse(
         user_id=user.id,
-        consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        consent_at=(iso_or_none(user.data_sharing_consent_at)),
         memory_text=redact_pii(doc.memory_text if doc else ""),
         history_text=redact_pii(doc.history_text if doc else ""),
         updated_at=(doc.updated_at.isoformat() if doc and doc.updated_at else None),
@@ -938,19 +905,13 @@ async def list_shared_data_compaction_events(
         if end_dt is not None:
             base_stmt = base_stmt.where(CompactionEvent.triggered_at <= end_dt)
             count_stmt = count_stmt.where(CompactionEvent.triggered_at <= end_dt)
-    rows = (
-        (
-            await db.execute(
-                base_stmt.order_by(CompactionEvent.triggered_at.desc().nullslast()).limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    rows = await fetch_all(
+        db, base_stmt.order_by(CompactionEvent.triggered_at.desc().nullslast()).limit(limit)
     )
     items = [
         SharedDataCompactionEventItem(
             id=row.id,
-            triggered_at=row.triggered_at.isoformat() if row.triggered_at else None,
+            triggered_at=iso_or_none(row.triggered_at),
             duration_ms=row.duration_ms,
             trimmed_count=row.trimmed_count,
             trimmed_chars=row.trimmed_chars,
@@ -980,9 +941,7 @@ async def list_shared_data_compaction_events(
     total = (await db.execute(count_stmt)).scalar_one() or 0
     return SharedDataCompactionEventListResponse(
         user_id=user.id,
-        consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        consent_at=(iso_or_none(user.data_sharing_consent_at)),
         items=items,
         total=int(total),
     )
@@ -1048,15 +1007,13 @@ async def list_shared_data_approval_events(
             channel=r.channel,
             chat_id=r.chat_id,
             decision=r.decision,
-            created_at=r.created_at.isoformat() if r.created_at else None,
+            created_at=iso_or_none(r.created_at),
         )
         for r in records
     ]
     return SharedDataApprovalEventListResponse(
         user_id=user.id,
-        consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        consent_at=(iso_or_none(user.data_sharing_consent_at)),
         items=items,
         total=len(items),
     )
@@ -1128,19 +1085,14 @@ async def export_shared_data_user(
     )
 
     # ---- counts: sessions / messages ---------------------------------
-    sessions = (
-        (
-            await db.execute(
-                select(ChatSession)
-                .where(
-                    ChatSession.user_id == user.id,
-                    ChatSession.last_message_at >= window_start,
-                )
-                .order_by(ChatSession.last_message_at.desc().nullslast())
-            )
+    sessions = await fetch_all(
+        db,
+        select(ChatSession)
+        .where(
+            ChatSession.user_id == user.id,
+            ChatSession.last_message_at >= window_start,
         )
-        .scalars()
-        .all()
+        .order_by(ChatSession.last_message_at.desc().nullslast()),
     )
     session_count = len(sessions)
     session_ids = [s.id for s in sessions]
@@ -1184,14 +1136,12 @@ async def export_shared_data_user(
     heartbeats_total = sum(heartbeats_by_action.values())
 
     # ---- counts: compactions -----------------------------------------
-    compactions_count = (
-        await db.execute(
-            select(sa_func.count(CompactionEvent.id)).where(
-                CompactionEvent.user_id == user.id,
-                CompactionEvent.triggered_at >= window_start,
-            )
-        )
-    ).scalar_one() or 0
+    compactions_count = await count_rows(
+        db,
+        CompactionEvent.id,
+        CompactionEvent.user_id == user.id,
+        CompactionEvent.triggered_at >= window_start,
+    )
 
     # ---- counts: LLM usage by purpose --------------------------------
     llm_rows = (
@@ -1274,14 +1224,12 @@ async def export_shared_data_user(
     # ``heartbeats_total`` and ``message_count``. Cumulative report
     # totals are still reachable via the dedicated
     # ``/admin/reported-conversations`` endpoints.
-    reports_total = (
-        await db.execute(
-            select(sa_func.count(ReportedConversation.id)).where(
-                ReportedConversation.user_id == user.id,
-                ReportedConversation.created_at >= window_start,
-            )
-        )
-    ).scalar_one() or 0
+    reports_total = await count_rows(
+        db,
+        ReportedConversation.id,
+        ReportedConversation.user_id == user.id,
+        ReportedConversation.created_at >= window_start,
+    )
 
     summary = SharedDataExportSummary(
         session_count=session_count,
@@ -1319,8 +1267,8 @@ async def export_shared_data_user(
         SharedDataConversationItem(
             session_id=s.session_id,
             channel=s.channel or "",
-            created_at=s.created_at.isoformat() if s.created_at else None,
-            last_message_at=s.last_message_at.isoformat() if s.last_message_at else None,
+            created_at=iso_or_none(s.created_at),
+            last_message_at=iso_or_none(s.last_message_at),
             message_count=msg_count_by_session.get(s.id, 0),
             last_trim_seq=s.last_trim_seq,
         )
@@ -1328,19 +1276,14 @@ async def export_shared_data_user(
     ]
 
     # ---- heartbeat logs (PII-redacted content) -----------------------
-    hb_rows = (
-        (
-            await db.execute(
-                select(HeartbeatLog)
-                .where(
-                    HeartbeatLog.user_id == user.id,
-                    HeartbeatLog.created_at >= window_start,
-                )
-                .order_by(HeartbeatLog.created_at.desc())
-            )
+    hb_rows = await fetch_all(
+        db,
+        select(HeartbeatLog)
+        .where(
+            HeartbeatLog.user_id == user.id,
+            HeartbeatLog.created_at >= window_start,
         )
-        .scalars()
-        .all()
+        .order_by(HeartbeatLog.created_at.desc()),
     )
     heartbeat_logs = [
         SharedDataHeartbeatLogItem(
@@ -1350,30 +1293,25 @@ async def export_shared_data_user(
             message_text=redact_pii(row.message_text or ""),
             reasoning=redact_pii(row.reasoning or ""),
             tasks=redact_pii(row.tasks or ""),
-            created_at=row.created_at.isoformat() if row.created_at else None,
+            created_at=iso_or_none(row.created_at),
         )
         for row in hb_rows
     ]
 
     # ---- compaction events -------------------------------------------
-    compaction_rows = (
-        (
-            await db.execute(
-                select(CompactionEvent)
-                .where(
-                    CompactionEvent.user_id == user.id,
-                    CompactionEvent.triggered_at >= window_start,
-                )
-                .order_by(CompactionEvent.triggered_at.desc())
-            )
+    compaction_rows = await fetch_all(
+        db,
+        select(CompactionEvent)
+        .where(
+            CompactionEvent.user_id == user.id,
+            CompactionEvent.triggered_at >= window_start,
         )
-        .scalars()
-        .all()
+        .order_by(CompactionEvent.triggered_at.desc()),
     )
     compaction_events = [
         SharedDataCompactionEventItem(
             id=row.id,
-            triggered_at=row.triggered_at.isoformat() if row.triggered_at else None,
+            triggered_at=iso_or_none(row.triggered_at),
             duration_ms=row.duration_ms,
             trimmed_count=row.trimmed_count,
             trimmed_chars=row.trimmed_chars,
@@ -1404,9 +1342,7 @@ async def export_shared_data_user(
     # ---- profile + memory --------------------------------------------
     profile = SharedDataProfileResponse(
         user_id=user.id,
-        consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        consent_at=(iso_or_none(user.data_sharing_consent_at)),
         soul_text=redact_pii(user.soul_text or ""),
         user_text=redact_pii(user.user_text or ""),
         heartbeat_text=redact_pii(user.heartbeat_text or ""),
@@ -1420,9 +1356,7 @@ async def export_shared_data_user(
     ).scalar_one_or_none()
     memory = SharedDataMemoryDocumentResponse(
         user_id=user.id,
-        consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        consent_at=(iso_or_none(user.data_sharing_consent_at)),
         memory_text=redact_pii(mem_row.memory_text if mem_row and mem_row.memory_text else ""),
         history_text=redact_pii(mem_row.history_text if mem_row and mem_row.history_text else ""),
         updated_at=(mem_row.updated_at.isoformat() if mem_row and mem_row.updated_at else None),
@@ -1435,16 +1369,11 @@ async def export_shared_data_user(
     # conversations under include_turns=true that was a real cost.
     turns_payload: list[SharedDataConversationTurnsResponse] | None = None
     if include_turns and session_ids:
-        all_messages = (
-            (
-                await db.execute(
-                    select(Message)
-                    .where(Message.session_id.in_(session_ids))
-                    .order_by(Message.session_id.asc(), Message.seq.asc())
-                )
-            )
-            .scalars()
-            .all()
+        all_messages = await fetch_all(
+            db,
+            select(Message)
+            .where(Message.session_id.in_(session_ids))
+            .order_by(Message.session_id.asc(), Message.seq.asc()),
         )
         messages_by_session: dict[int, list[Message]] = {}
         for msg in all_messages:
@@ -1456,11 +1385,7 @@ async def export_shared_data_user(
                 SharedDataConversationTurnsResponse(
                     session_id=sess.session_id,
                     user_id=user.id,
-                    consent_at=(
-                        user.data_sharing_consent_at.isoformat()
-                        if user.data_sharing_consent_at
-                        else None
-                    ),
+                    consent_at=(iso_or_none(user.data_sharing_consent_at)),
                     turns=grouped,
                     total=len(grouped),
                 )
@@ -1482,10 +1407,8 @@ async def export_shared_data_user(
             "onboarding_complete": bool(user.onboarding_complete),
             "timezone": user.timezone or "",
             "preferred_channel": user.preferred_channel or "",
-            "data_sharing_consent_at": (
-                user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-            ),
-            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "data_sharing_consent_at": (iso_or_none(user.data_sharing_consent_at)),
+            "created_at": iso_or_none(user.created_at),
             "last_login_at": last_login_iso,
         },
         window={

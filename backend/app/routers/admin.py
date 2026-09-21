@@ -44,6 +44,7 @@ from backend.app.models import (
     User,
     WaitlistEntry,
 )
+from backend.app.query_helpers import count_rows, fetch_all, iso, iso_or_none
 from backend.app.schemas import (
     AdminApiKeyCreate,
     AdminApiKeyItem,
@@ -544,7 +545,7 @@ async def get_user_detail(
             channel=cr.channel,
             channel_identifier=_mask_channel_identifier(cr.channel_identifier),
             enabled=cr.enabled,
-            last_inbound_at=cr.last_inbound_at.isoformat() if cr.last_inbound_at else None,
+            last_inbound_at=iso_or_none(cr.last_inbound_at),
         )
         for cr in (*routes_with_inbound, *routes_without_inbound)
     ]
@@ -822,23 +823,14 @@ async def get_user_heartbeat_logs(
         raise HTTPException(status_code=404, detail="User not found")
     ctx.target_user_id = user_id
 
-    total: int = (
-        await db.execute(
-            select(sa_func.count(HeartbeatLog.id)).where(HeartbeatLog.user_id == user_id)
-        )
-    ).scalar_one() or 0
+    total = await count_rows(db, HeartbeatLog.id, HeartbeatLog.user_id == user_id)
 
-    logs = (
-        (
-            await db.execute(
-                select(HeartbeatLog)
-                .where(HeartbeatLog.user_id == user_id)
-                .order_by(HeartbeatLog.created_at.desc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    logs = await fetch_all(
+        db,
+        select(HeartbeatLog)
+        .where(HeartbeatLog.user_id == user_id)
+        .order_by(HeartbeatLog.created_at.desc())
+        .limit(limit),
     )
 
     return AdminHeartbeatLogListResponse(
@@ -849,7 +841,7 @@ async def get_user_heartbeat_logs(
                 user_id=log.user_id,
                 action_type=getattr(log, "action_type", None) or "send",
                 channel=getattr(log, "channel", None) or "",
-                created_at=log.created_at.isoformat() if log.created_at else "",
+                created_at=iso(log.created_at),
             )
             for log in logs
         ],
@@ -882,23 +874,14 @@ async def get_user_llm_usage_logs(
         raise HTTPException(status_code=404, detail="User not found")
     ctx.target_user_id = user_id
 
-    total: int = (
-        await db.execute(
-            select(sa_func.count(LLMUsageLog.id)).where(LLMUsageLog.user_id == user_id)
-        )
-    ).scalar_one() or 0
+    total = await count_rows(db, LLMUsageLog.id, LLMUsageLog.user_id == user_id)
 
-    logs = (
-        (
-            await db.execute(
-                select(LLMUsageLog)
-                .where(LLMUsageLog.user_id == user_id)
-                .order_by(LLMUsageLog.created_at.desc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    logs = await fetch_all(
+        db,
+        select(LLMUsageLog)
+        .where(LLMUsageLog.user_id == user_id)
+        .order_by(LLMUsageLog.created_at.desc())
+        .limit(limit),
     )
 
     return LLMUsageLogListResponse(
@@ -906,7 +889,7 @@ async def get_user_llm_usage_logs(
         items=[
             LLMUsageLogItem(
                 id=log.id,
-                timestamp=log.created_at.isoformat() if log.created_at else "",
+                timestamp=iso(log.created_at),
                 endpoint=log.endpoint,
                 provider=log.provider,
                 model=log.model,
@@ -960,39 +943,20 @@ async def get_user_staged_media(
     ctx.target_user_id = user_id
 
     now = datetime.datetime.now(datetime.UTC)
-    total: int = (
-        await db.execute(
-            select(sa_func.count(StagedMedia.id)).where(StagedMedia.user_id == user_id)
-        )
-    ).scalar_one() or 0
-    active: int = (
-        await db.execute(
-            select(sa_func.count(StagedMedia.id)).where(
-                StagedMedia.user_id == user_id,
-                StagedMedia.expires_at > now,
-            )
-        )
-    ).scalar_one() or 0
-    uploaded: int = (
-        await db.execute(
-            select(sa_func.count(StagedMedia.id)).where(
-                StagedMedia.user_id == user_id,
-                StagedMedia.upload_status.isnot(None),
-            )
-        )
-    ).scalar_one() or 0
+    total = await count_rows(db, StagedMedia.id, StagedMedia.user_id == user_id)
+    active = await count_rows(
+        db, StagedMedia.id, StagedMedia.user_id == user_id, StagedMedia.expires_at > now
+    )
+    uploaded = await count_rows(
+        db, StagedMedia.id, StagedMedia.user_id == user_id, StagedMedia.upload_status.isnot(None)
+    )
 
-    rows = (
-        (
-            await db.execute(
-                select(StagedMedia)
-                .where(StagedMedia.user_id == user_id)
-                .order_by(StagedMedia.created_at.desc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    rows = await fetch_all(
+        db,
+        select(StagedMedia)
+        .where(StagedMedia.user_id == user_id)
+        .order_by(StagedMedia.created_at.desc())
+        .limit(limit),
     )
 
     return StagedMediaListResponse(
@@ -1005,11 +969,11 @@ async def get_user_staged_media(
                 handle=row.handle,
                 original_url=row.original_url,
                 mime_type=row.mime_type,
-                created_at=row.created_at.isoformat() if row.created_at else "",
-                expires_at=row.expires_at.isoformat() if row.expires_at else "",
+                created_at=iso(row.created_at),
+                expires_at=iso(row.expires_at),
                 upload_service=row.upload_service,
                 upload_status=row.upload_status,
-                uploaded_at=row.uploaded_at.isoformat() if row.uploaded_at else None,
+                uploaded_at=iso_or_none(row.uploaded_at),
             )
             for row in rows
         ],
@@ -1117,7 +1081,7 @@ async def get_user_webhook_events(
         items.append(
             WebhookEventItem(
                 external_id=key_row.external_id,
-                created_at=key_row.created_at.isoformat() if key_row.created_at else "",
+                created_at=iso(key_row.created_at),
                 message_persisted=msg_row is not None,
                 user_id=msg_user_id,
                 message_timestamp=(
@@ -1281,7 +1245,7 @@ async def get_user_usage(
     return AdminUsageSummary(
         messages=UsageBucket(used=quota.messages_used, limit=quota.messages_limit),
         tokens=UsageBucket(used=quota.tokens_used, limit=quota.tokens_limit),
-        period_start=quota.period_start.isoformat() if quota.period_start else None,
+        period_start=iso_or_none(quota.period_start),
         **costs,
     )
 
@@ -1306,7 +1270,7 @@ async def list_allowed_emails(
                 id=r.id,
                 email=r.email,
                 note=r.note,
-                created_at=r.created_at.isoformat() if r.created_at else "",
+                created_at=iso(r.created_at),
             )
             for r in rows
         ],
@@ -1337,7 +1301,7 @@ async def add_allowed_email(
         id=entry.id,
         email=entry.email,
         note=entry.note,
-        created_at=entry.created_at.isoformat() if entry.created_at else "",
+        created_at=iso(entry.created_at),
     )
 
 
@@ -1376,17 +1340,9 @@ async def list_waitlist_entries(
     """List waitlist entries, newest first."""
     ctx.detail = {"offset": offset, "limit": limit}
     total = (await db.execute(select(sa_func.count(WaitlistEntry.id)))).scalar_one() or 0
-    rows = (
-        (
-            await db.execute(
-                select(WaitlistEntry)
-                .order_by(WaitlistEntry.created_at.desc())
-                .offset(offset)
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    rows = await fetch_all(
+        db,
+        select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc()).offset(offset).limit(limit),
     )
     return WaitlistListResponse(
         total=total,
@@ -1397,7 +1353,7 @@ async def list_waitlist_entries(
                 name=r.name,
                 use_case=r.use_case,
                 source=r.source,
-                created_at=r.created_at.isoformat() if r.created_at else "",
+                created_at=iso(r.created_at),
             )
             for r in rows
         ],
@@ -1455,7 +1411,7 @@ async def approve_waitlist_entry(
         id=allowed.id,
         email=allowed.email,
         note=allowed.note,
-        created_at=allowed.created_at.isoformat() if allowed.created_at else "",
+        created_at=iso(allowed.created_at),
     )
 
 
@@ -1975,9 +1931,9 @@ def _to_api_key_item(row: AdminApiKey) -> AdminApiKeyItem:
         id=row.id,
         label=row.label or "",
         key_prefix=row.key_prefix or "",
-        created_at=row.created_at.isoformat() if row.created_at else "",
-        last_used_at=row.last_used_at.isoformat() if row.last_used_at else None,
-        revoked_at=row.revoked_at.isoformat() if row.revoked_at else None,
+        created_at=iso(row.created_at),
+        last_used_at=iso_or_none(row.last_used_at),
+        revoked_at=iso_or_none(row.revoked_at),
     )
 
 
@@ -1992,16 +1948,11 @@ async def list_admin_api_keys(
     can audit their own history. The cleartext token is never
     returned; only the prefix + metadata.
     """
-    rows = (
-        (
-            await db.execute(
-                select(AdminApiKey)
-                .where(AdminApiKey.user_id == ctx.admin_user_id)
-                .order_by(AdminApiKey.created_at.desc())
-            )
-        )
-        .scalars()
-        .all()
+    rows = await fetch_all(
+        db,
+        select(AdminApiKey)
+        .where(AdminApiKey.user_id == ctx.admin_user_id)
+        .order_by(AdminApiKey.created_at.desc()),
     )
     return AdminApiKeyListResponse(items=[_to_api_key_item(r) for r in rows])
 
@@ -2052,7 +2003,7 @@ async def create_admin_api_key(
         token=cleartext,
         key_prefix=row.key_prefix or "",
         label=row.label or "",
-        created_at=row.created_at.isoformat() if row.created_at else "",
+        created_at=iso(row.created_at),
     )
 
 

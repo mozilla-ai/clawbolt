@@ -36,6 +36,7 @@ from backend.app.bus import OutboundMessage
 from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import ApprovalEvent, PendingApprovalRow, UserPermissionSet
+from backend.app.query_helpers import fetch_all
 
 logger = logging.getLogger(__name__)
 
@@ -1114,16 +1115,9 @@ class ApprovalEventStore:
             stmt = select(ApprovalEvent).where(ApprovalEvent.user_id == user_id)
             if since is not None:
                 stmt = stmt.where(ApprovalEvent.created_at >= since)
-            rows = (
-                (
-                    await db.execute(
-                        stmt.order_by(ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc()).limit(
-                            limit
-                        )
-                    )
-                )
-                .scalars()
-                .all()
+            rows = await fetch_all(
+                db,
+                stmt.order_by(ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc()).limit(limit),
             )
             return [
                 ApprovalEventRecord(

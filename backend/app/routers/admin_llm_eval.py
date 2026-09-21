@@ -42,6 +42,7 @@ from backend.app.auth.admin_dep import get_current_admin
 from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, Subscription, User
+from backend.app.query_helpers import count_rows
 from backend.app.schemas import (
     AdminLLMEvalDecision,
     AdminLLMEvalReportResponse,
@@ -340,11 +341,7 @@ async def start_run(
 
     # Runs compete with live inbound traffic for the same provider rate limit,
     # so the per-user guard above is not enough on its own.
-    running_total = (
-        await db.execute(
-            select(sa_func.count(LLMEvalRun.id)).where(LLMEvalRun.status.in_(ACTIVE_STATUSES))
-        )
-    ).scalar_one()
+    running_total = await count_rows(db, LLMEvalRun.id, LLMEvalRun.status.in_(ACTIVE_STATUSES))
     if running_total >= settings.llm_eval_max_concurrent_runs:
         raise HTTPException(
             status_code=429,

@@ -64,6 +64,7 @@ from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal, get_async_engine
 from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, Message, User
+from backend.app.query_helpers import iso
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
@@ -174,17 +175,15 @@ def _orphan_to_stored_and_state(
         tool_interactions_json=msg.tool_interactions_json or "",
         external_message_id=msg.external_message_id or "",
         media_urls_json=msg.media_urls_json or "[]",
-        timestamp=msg.timestamp.isoformat() if msg.timestamp else "",
+        timestamp=iso(msg.timestamp),
         seq=msg.seq,
     )
     state = SessionState(
         session_id=chat_session.session_id,
         user_id=chat_session.user_id,
         messages=[stored],
-        created_at=chat_session.created_at.isoformat() if chat_session.created_at else "",
-        last_message_at=(
-            chat_session.last_message_at.isoformat() if chat_session.last_message_at else ""
-        ),
+        created_at=iso(chat_session.created_at),
+        last_message_at=(iso(chat_session.last_message_at)),
         channel=chat_session.channel or "",
     )
     return stored, state

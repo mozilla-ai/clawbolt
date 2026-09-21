@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.auth.admin_dep import get_current_admin
 from backend.app.database import get_async_db
 from backend.app.models import ChatSession, Message, ReportedConversation, Subscription, User
+from backend.app.query_helpers import count_rows, fetch_all, iso, iso_or_none
 from backend.app.schemas import (
     DismissReportedConversationResponse,
     ReportedConversationItem,
@@ -92,27 +93,18 @@ async def list_reported_conversations(
         count_stmt = count_stmt.where(ReportedConversation.dismissed_at.is_not(None))
 
     total = (await db.execute(count_stmt)).scalar_one() or 0
-    open_count = (
-        await db.execute(
-            select(sa_func.count(ReportedConversation.id)).where(
-                ReportedConversation.dismissed_at.is_(None)
-            )
-        )
-    ).scalar_one() or 0
+    open_count = await count_rows(
+        db, ReportedConversation.id, ReportedConversation.dismissed_at.is_(None)
+    )
 
-    rows = (
-        (
-            await db.execute(
-                base_stmt.order_by(
-                    ReportedConversation.dismissed_at.is_not(None).asc(),
-                    ReportedConversation.created_at.desc(),
-                )
-                .offset(offset)
-                .limit(limit)
-            )
+    rows = await fetch_all(
+        db,
+        base_stmt.order_by(
+            ReportedConversation.dismissed_at.is_not(None).asc(),
+            ReportedConversation.created_at.desc(),
         )
-        .scalars()
-        .all()
+        .offset(offset)
+        .limit(limit),
     )
 
     # Hydrate user emails (from Subscription) and session metadata in
@@ -149,8 +141,8 @@ async def list_reported_conversations(
             anchor_seq=r.anchor_seq,
             reason=redact_pii(r.reason or ""),
             status="dismissed" if r.dismissed_at else "open",
-            created_at=r.created_at.isoformat() if r.created_at else "",
-            dismissed_at=r.dismissed_at.isoformat() if r.dismissed_at else None,
+            created_at=iso(r.created_at),
+            dismissed_at=iso_or_none(r.dismissed_at),
             reviewed_admin_email=(
                 sub_emails.get(r.reviewed_admin_user_id, "") if r.reviewed_admin_user_id else None
             ),
@@ -227,7 +219,7 @@ async def get_reported_conversation_messages(
             seq=m.seq,
             direction=m.direction,
             body=redact_pii(m.body or ""),
-            timestamp=m.timestamp.isoformat() if m.timestamp else None,
+            timestamp=iso_or_none(m.timestamp),
             is_anchor=(report.anchor_seq is not None and m.seq == report.anchor_seq),
         )
         for m in messages

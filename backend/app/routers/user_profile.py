@@ -32,7 +32,7 @@ from backend.app.config_store import (
 )
 from backend.app.database import get_async_db
 from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
-from backend.app.query_helpers import get_or_404_async
+from backend.app.query_helpers import count_rows, fetch_all, get_or_404_async, iso, iso_or_none
 from backend.app.schemas import (
     AdminLLMModelsResponse,
     ChannelConfigResponse,
@@ -99,9 +99,7 @@ def _profile_response(c: User) -> UserProfileResponse:
         onboarding_complete=c.onboarding_complete,
         is_active=c.is_active,
         data_sharing_consent=c.data_sharing_consent,
-        data_sharing_consent_at=(
-            c.data_sharing_consent_at.isoformat() if c.data_sharing_consent_at else None
-        ),
+        data_sharing_consent_at=(iso_or_none(c.data_sharing_consent_at)),
         created_at=c.created_at.isoformat(),
         updated_at=c.updated_at.isoformat(),
     )
@@ -187,11 +185,7 @@ async def get_data_sharing_consent(
     """Return the current user's data sharing consent state."""
     return DataSharingConsentResponse(
         data_sharing_consent=current_user.data_sharing_consent,
-        data_sharing_consent_at=(
-            current_user.data_sharing_consent_at.isoformat()
-            if current_user.data_sharing_consent_at
-            else None
-        ),
+        data_sharing_consent_at=(iso_or_none(current_user.data_sharing_consent_at)),
     )
 
 
@@ -216,9 +210,7 @@ async def update_data_sharing_consent(
     await db.refresh(user)
     return DataSharingConsentResponse(
         data_sharing_consent=user.data_sharing_consent,
-        data_sharing_consent_at=(
-            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
-        ),
+        data_sharing_consent_at=(iso_or_none(user.data_sharing_consent_at)),
     )
 
 
@@ -300,16 +292,11 @@ async def get_channel_routes(
     db: AsyncSession = Depends(get_async_db),
 ) -> ChannelRouteListResponse:
     """Return the current user's channel routes with enabled status."""
-    routes = (
-        (
-            await db.execute(
-                select(ChannelRoute)
-                .where(ChannelRoute.user_id == current_user.id)
-                .order_by(ChannelRoute.created_at)
-            )
-        )
-        .scalars()
-        .all()
+    routes = await fetch_all(
+        db,
+        select(ChannelRoute)
+        .where(ChannelRoute.user_id == current_user.id)
+        .order_by(ChannelRoute.created_at),
     )
     return ChannelRouteListResponse(
         routes=[
@@ -317,8 +304,8 @@ async def get_channel_routes(
                 channel=r.channel,
                 channel_identifier=r.channel_identifier,
                 enabled=r.enabled,
-                created_at=r.created_at.isoformat() if r.created_at else "",
-                last_inbound_at=r.last_inbound_at.isoformat() if r.last_inbound_at else None,
+                created_at=iso(r.created_at),
+                last_inbound_at=iso_or_none(r.last_inbound_at),
             )
             for r in routes
         ]
@@ -395,8 +382,8 @@ async def update_channel_route(
             channel=route.channel,
             channel_identifier=route.channel_identifier,
             enabled=route.enabled,
-            created_at=route.created_at.isoformat() if route.created_at else "",
-            last_inbound_at=route.last_inbound_at.isoformat() if route.last_inbound_at else None,
+            created_at=iso(route.created_at),
+            last_inbound_at=iso_or_none(route.last_inbound_at),
         )
     return ChannelRouteResponse(
         channel=channel,
@@ -869,17 +856,12 @@ async def get_heartbeat_logs(
         )
     ) or 0
 
-    logs = (
-        (
-            await db.execute(
-                select(HeartbeatLog)
-                .where(HeartbeatLog.user_id == current_user.id)
-                .order_by(HeartbeatLog.created_at.desc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    logs = await fetch_all(
+        db,
+        select(HeartbeatLog)
+        .where(HeartbeatLog.user_id == current_user.id)
+        .order_by(HeartbeatLog.created_at.desc())
+        .limit(limit),
     )
 
     return HeartbeatLogListResponse(
@@ -893,7 +875,7 @@ async def get_heartbeat_logs(
                 channel=log.channel or "",
                 reasoning=log.reasoning or "",
                 tasks=log.tasks or "",
-                created_at=log.created_at.isoformat() if log.created_at else "",
+                created_at=iso(log.created_at),
             )
             for log in logs
         ],
@@ -970,15 +952,13 @@ async def get_llm_usage(
         for row in rows
     ]
 
-    unpriced = (
-        await db.execute(
-            select(sa_func.count(LLMUsageLog.id)).where(
-                LLMUsageLog.user_id == current_user.id,
-                LLMUsageLog.created_at >= since,
-                LLMUsageLog.pricing_available.is_(False),
-            )
-        )
-    ).scalar_one()
+    unpriced = await count_rows(
+        db,
+        LLMUsageLog.id,
+        LLMUsageLog.user_id == current_user.id,
+        LLMUsageLog.created_at >= since,
+        LLMUsageLog.pricing_available.is_(False),
+    )
 
     return LLMUsageSummary(
         total_calls=sum(p.call_count for p in by_purpose),

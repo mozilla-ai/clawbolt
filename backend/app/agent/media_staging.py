@@ -47,6 +47,7 @@ from sqlalchemy.engine.cursor import CursorResult
 from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import StagedMedia
+from backend.app.query_helpers import fetch_all
 
 logger = logging.getLogger(__name__)
 
@@ -265,17 +266,12 @@ async def get_all_for_user(user_id: str) -> dict[str, bytes]:
 
     db = AsyncSessionLocal()
     try:
-        rows = (
-            (
-                await db.execute(
-                    select(StagedMedia).where(
-                        StagedMedia.user_id == user_id,
-                        StagedMedia.expires_at > now,
-                    )
-                )
-            )
-            .scalars()
-            .all()
+        rows = await fetch_all(
+            db,
+            select(StagedMedia).where(
+                StagedMedia.user_id == user_id,
+                StagedMedia.expires_at > now,
+            ),
         )
         for row in rows:
             content = _read_bytes(_resolve_disk_path(row.disk_path))
@@ -327,19 +323,14 @@ async def list_urls_for_user(user_id: str) -> list[str]:
     now = datetime.now(UTC)
     db = AsyncSessionLocal()
     try:
-        rows = (
-            (
-                await db.execute(
-                    select(StagedMedia.original_url)
-                    .where(
-                        StagedMedia.user_id == user_id,
-                        StagedMedia.expires_at > now,
-                    )
-                    .order_by(StagedMedia.expires_at.desc())
-                )
+        rows = await fetch_all(
+            db,
+            select(StagedMedia.original_url)
+            .where(
+                StagedMedia.user_id == user_id,
+                StagedMedia.expires_at > now,
             )
-            .scalars()
-            .all()
+            .order_by(StagedMedia.expires_at.desc()),
         )
     finally:
         await db.close()

@@ -33,6 +33,7 @@ from backend.app.models import (
     ToolConfig,
     User,
 )
+from backend.app.query_helpers import iso
 from backend.app.services.llm_pricing import compute_cost, is_known_model
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ def _heartbeat_log_to_dto(log: HeartbeatLog) -> HeartbeatLogEntry:
         channel=log.channel or "",
         reasoning=log.reasoning or "",
         tasks=log.tasks or "",
-        created_at=log.created_at.isoformat() if log.created_at else "",
+        created_at=iso(log.created_at),
     )
 
 

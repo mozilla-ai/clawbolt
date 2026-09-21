@@ -28,6 +28,7 @@ from backend.app.database import (
     db_session_async,
 )
 from backend.app.models import ChatSession, Message
+from backend.app.query_helpers import iso
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 def _msg_to_stored(msg: Message) -> StoredMessage:
     """Convert a Message ORM object to a StoredMessage DTO."""
-    ts = msg.timestamp.isoformat() if msg.timestamp else ""
+    ts = iso(msg.timestamp)
     return StoredMessage(
         direction=msg.direction,
         body=msg.body,
@@ -64,8 +65,8 @@ def _session_to_state(
         session_id=cs.session_id,
         user_id=cs.user_id,
         messages=[_msg_to_stored(m) for m in sorted(msgs, key=lambda m: m.seq)],
-        created_at=cs.created_at.isoformat() if cs.created_at else "",
-        last_message_at=cs.last_message_at.isoformat() if cs.last_message_at else "",
+        created_at=iso(cs.created_at),
+        last_message_at=iso(cs.last_message_at),
         channel=cs.channel,
         initial_system_prompt=cs.initial_system_prompt,
         last_trim_seq=cs.last_trim_seq,

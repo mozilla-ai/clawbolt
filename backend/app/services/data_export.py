@@ -12,6 +12,7 @@ from backend.app.agent.file_store import (
     get_session_store,
 )
 from backend.app.models import LLMUsageLog, Subscription, UsageQuota, User
+from backend.app.query_helpers import fetch_all
 
 logger = logging.getLogger(__name__)
 
@@ -79,17 +80,12 @@ async def export_user_data(db: AsyncSession, user: User) -> dict:
     heartbeat_text = await heartbeat_store.read_heartbeat_md_async()
 
     # LLM usage from DB
-    llm_logs = (
-        (
-            await db.execute(
-                select(LLMUsageLog)
-                .where(LLMUsageLog.user_id == uid)
-                .order_by(LLMUsageLog.created_at.desc())
-                .limit(10_000)
-            )
-        )
-        .scalars()
-        .all()
+    llm_logs = await fetch_all(
+        db,
+        select(LLMUsageLog)
+        .where(LLMUsageLog.user_id == uid)
+        .order_by(LLMUsageLog.created_at.desc())
+        .limit(10_000),
     )
     llm_usage = [
         {

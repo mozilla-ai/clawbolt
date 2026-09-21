@@ -28,6 +28,7 @@ from backend.app.integrations.calendar.provider import (
 )
 from backend.app.integrations.calendar.service import GoogleCalendarService
 from backend.app.models import CalendarConfig
+from backend.app.query_helpers import fetch_all
 from backend.app.services.oauth import (
     oauth_service,
 )
@@ -985,14 +986,8 @@ async def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str]
     """
     db = AsyncSessionLocal()
     try:
-        configs = (
-            (
-                await db.execute(
-                    select(CalendarConfig).filter_by(user_id=user_id, provider="google_calendar")
-                )
-            )
-            .scalars()
-            .all()
+        configs = await fetch_all(
+            db, select(CalendarConfig).filter_by(user_id=user_id, provider="google_calendar")
         )
         if configs:
             result: list[tuple[str, str, list[str], str]] = []
