@@ -43,7 +43,7 @@ from backend.app.config import settings
 from backend.app.config_store import MASK
 from backend.app.database import AsyncSessionLocal
 from backend.app.models import LLMEndpoint, LLMEvalRun, Subscription
-from backend.app.schemas import LLMEndpointItem
+from backend.app.schemas.llm import LLMEndpointItem
 from backend.app.services.llm_service import (
     LLMTarget,
     ReasoningStyle,

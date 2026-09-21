@@ -6,7 +6,7 @@ from backend.app.agent.markdown_registry import BudgetExceededError
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.models import User
-from backend.app.schemas import MemoryResponse, MemoryUpdate
+from backend.app.schemas.common import MemoryResponse, MemoryUpdate
 
 router = APIRouter()
 

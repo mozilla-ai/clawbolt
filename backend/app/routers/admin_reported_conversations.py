@@ -47,7 +47,7 @@ from backend.app.auth.admin_dep import get_current_admin
 from backend.app.database import get_async_db
 from backend.app.models import ChatSession, Message, ReportedConversation, Subscription, User
 from backend.app.query_helpers import count_rows, fetch_all, iso, iso_or_none
-from backend.app.schemas import (
+from backend.app.schemas.shared_data import (
     DismissReportedConversationResponse,
     ReportedConversationItem,
     ReportedConversationListResponse,

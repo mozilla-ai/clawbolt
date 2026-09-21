@@ -10,7 +10,9 @@ from backend.app.auth.dependencies import get_current_user
 from backend.app.billing.quota import get_usage_summary
 from backend.app.database import get_async_db
 from backend.app.models import Subscription, User
-from backend.app.schemas import ProfileResponse, StatusResponse, UsageSummary
+from backend.app.schemas.auth import UsageSummary
+from backend.app.schemas.common import StatusResponse
+from backend.app.schemas.user import ProfileResponse
 from backend.app.services.data_export import export_user_data
 from backend.app.services.user_deletion import delete_account as _delete_account
 

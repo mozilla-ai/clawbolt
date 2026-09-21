@@ -43,7 +43,7 @@ from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.models import LLMEvalRun, LLMEvalTurnResult, Subscription, User
 from backend.app.query_helpers import count_rows
-from backend.app.schemas import (
+from backend.app.schemas.llm_eval import (
     AdminLLMEvalDecision,
     AdminLLMEvalReportResponse,
     AdminLLMEvalRunCreate,

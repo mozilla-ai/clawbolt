@@ -72,7 +72,7 @@ from backend.app.models import (
     User,
 )
 from backend.app.query_helpers import count_rows, fetch_all, iso_or_none
-from backend.app.schemas import (
+from backend.app.schemas.shared_data import (
     SharedDataApprovalEventItem,
     SharedDataApprovalEventListResponse,
     SharedDataCompactionEventItem,

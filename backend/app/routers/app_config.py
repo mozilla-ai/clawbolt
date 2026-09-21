@@ -11,7 +11,7 @@ the user is signed in.
 from fastapi import APIRouter
 
 from backend.app.config import settings
-from backend.app.schemas import AppConfigResponse
+from backend.app.schemas.common import AppConfigResponse
 
 router = APIRouter()
 

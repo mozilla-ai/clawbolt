@@ -45,31 +45,17 @@ from backend.app.models import (
     WaitlistEntry,
 )
 from backend.app.query_helpers import count_rows, fetch_all, iso, iso_or_none
-from backend.app.schemas import (
+from backend.app.schemas.admin import (
     AdminApiKeyCreate,
     AdminApiKeyItem,
     AdminApiKeyListResponse,
     AdminApiKeyMintResponse,
-    AdminChannelConfigResponse,
-    AdminChannelConfigUpdate,
     AdminChannelRouteEntry,
-    AdminHeartbeatLogItem,
-    AdminHeartbeatLogListResponse,
-    AdminLLMConfigResponse,
-    AdminLLMConfigUpdate,
-    AdminLLMModelsResponse,
-    AdminLLMProvider,
-    AdminLLMProvidersResponse,
     AdminStatsResponse,
     AdminToolConfigEntry,
-    AdminUsageSummary,
     AdminUserDetailResponse,
-    AdminUserLLMOverrideResponse,
-    AdminUserLLMOverrideUpdate,
     AdminUserPermissionEntry,
     AdminUserPermissions,
-    AdminUserPlanResponse,
-    AdminUserPlanUpdate,
     AdminUserResourcePermissionEntry,
     AdminVersionResponse,
     AllowedEmailCreate,
@@ -79,15 +65,8 @@ from backend.app.schemas import (
     CompactUserContextResponse,
     DeleteResponse,
     HygieneCompactMemoryResponse,
-    LLMUsageLogItem,
-    LLMUsageLogListResponse,
     StagedMediaItem,
     StagedMediaListResponse,
-    StatusResponse,
-    TelegramWebhookRequest,
-    TelegramWebhookResponse,
-    UsageBucket,
-    UsageSummary,
     UserActiveResponse,
     UserItem,
     UserListResponse,
@@ -95,6 +74,28 @@ from backend.app.schemas import (
     WaitlistListResponse,
     WebhookEventItem,
     WebhookEventListResponse,
+)
+from backend.app.schemas.auth import AdminUsageSummary, UsageBucket, UsageSummary
+from backend.app.schemas.channels import (
+    AdminChannelConfigResponse,
+    AdminChannelConfigUpdate,
+    TelegramWebhookRequest,
+    TelegramWebhookResponse,
+)
+from backend.app.schemas.common import StatusResponse
+from backend.app.schemas.heartbeat import AdminHeartbeatLogItem, AdminHeartbeatLogListResponse
+from backend.app.schemas.llm import (
+    AdminLLMConfigResponse,
+    AdminLLMConfigUpdate,
+    AdminLLMModelsResponse,
+    AdminLLMProvider,
+    AdminLLMProvidersResponse,
+    AdminUserLLMOverrideResponse,
+    AdminUserLLMOverrideUpdate,
+    AdminUserPlanResponse,
+    AdminUserPlanUpdate,
+    LLMUsageLogItem,
+    LLMUsageLogListResponse,
 )
 from backend.app.services.admin_api_keys import (
     ACTIVE_KEY_CAP_PER_ADMIN,

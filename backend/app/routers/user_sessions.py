@@ -21,10 +21,12 @@ from backend.app.agent.tool_assembly import build_initial_turn_tools
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import AsyncSessionLocal
 from backend.app.models import ChatSession, User
-from backend.app.schemas import (
+from backend.app.schemas.heartbeat import (
     BatchDeleteRequest,
     DeleteMessageResponse,
     DeleteMessagesResponse,
+)
+from backend.app.schemas.user import (
     SessionDetailResponse,
     SessionMessage,
     SessionSystemPromptResponse,

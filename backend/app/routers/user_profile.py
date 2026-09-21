@@ -33,18 +33,21 @@ from backend.app.config_store import (
 from backend.app.database import get_async_db
 from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
 from backend.app.query_helpers import count_rows, fetch_all, get_or_404_async, iso, iso_or_none
-from backend.app.schemas import (
-    AdminLLMModelsResponse,
+from backend.app.schemas.channels import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
     ChannelRouteListResponse,
     ChannelRouteResponse,
     ChannelRouteUpdate,
-    DataSharingConsentRequest,
-    DataSharingConsentResponse,
+    TelegramBotInfoResponse,
+)
+from backend.app.schemas.heartbeat import (
     DeleteHeartbeatLogsResponse,
     HeartbeatLogItemResponse,
     HeartbeatLogListResponse,
+)
+from backend.app.schemas.llm import (
+    AdminLLMModelsResponse,
     LLMEndpointItem,
     LLMEndpointListResponse,
     LLMEndpointTestRequest,
@@ -55,7 +58,10 @@ from backend.app.schemas import (
     ModelConfigResponse,
     ModelConfigUpdate,
     ProviderInfo,
-    TelegramBotInfoResponse,
+)
+from backend.app.schemas.user import (
+    DataSharingConsentRequest,
+    DataSharingConsentResponse,
     UserProfileResponse,
     UserProfileUpdate,
 )

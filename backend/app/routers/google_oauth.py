@@ -30,7 +30,7 @@ from backend.app.auth.oauth_flow import (
 from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.middleware.rate_limit import check_rate_limit
-from backend.app.schemas import AuthResponse, GoogleAuthRequest, StateResponse
+from backend.app.schemas.auth import AuthResponse, GoogleAuthRequest, StateResponse
 from backend.app.services.login_tracker import update_last_login
 
 logger = logging.getLogger(__name__)

@@ -35,7 +35,7 @@ from backend.app.config import settings
 from backend.app.database import get_async_db
 from backend.app.enums import MessageDirection
 from backend.app.models import ChannelRoute, User
-from backend.app.schemas import (
+from backend.app.schemas.channels import (
     BlueBubblesLinkRequest,
     BlueBubblesLinkResponse,
     LinqLinkRequest,

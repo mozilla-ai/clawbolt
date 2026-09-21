@@ -1102,19 +1102,19 @@ class TestUserDetail:
             db.add(MemoryDocument(user_id=async_admin_user.id, memory_text=marker, history_text=""))
             await db.commit()
 
-        from backend.app import schemas
+        from backend.app.schemas import admin as admin_schemas
 
-        original_init = schemas.AdminUserDetailResponse.__init__
+        original_init = admin_schemas.AdminUserDetailResponse.__init__
 
         def kaboom_init(self: object, **_kwargs: object) -> None:
             raise RuntimeError(f"simulated serialization explosion {marker}")
 
-        monkeypatch.setattr(schemas.AdminUserDetailResponse, "__init__", kaboom_init)
+        monkeypatch.setattr(admin_schemas.AdminUserDetailResponse, "__init__", kaboom_init)
 
         try:
             resp = await admin_async_client.get(f"/api/admin/users/{async_admin_user.id}")
         finally:
-            monkeypatch.setattr(schemas.AdminUserDetailResponse, "__init__", original_init)
+            monkeypatch.setattr(admin_schemas.AdminUserDetailResponse, "__init__", original_init)
 
         assert marker not in resp.text, f"{marker!r} leaked via error-path response body"
         header_text = "\n".join(f"{k}: {v}" for k, v in resp.headers.items())

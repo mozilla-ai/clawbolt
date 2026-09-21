@@ -10,11 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.models import User
-from backend.app.schemas import (
-    OAuthAuthorizeResponse,
-    OAuthStatusEntry,
-    OAuthStatusResponse,
-)
+from backend.app.schemas.tools import OAuthAuthorizeResponse, OAuthStatusEntry, OAuthStatusResponse
 from backend.app.services.oauth import (
     get_oauth_config,
     list_oauth_integrations,

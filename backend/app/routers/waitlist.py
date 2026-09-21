@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.database import get_async_db
 from backend.app.middleware.rate_limit import check_rate_limit
 from backend.app.models import WAITLIST_NAME_DEFAULT, AllowedEmail, WaitlistEntry
-from backend.app.schemas import StatusResponse, WaitlistJoinRequest
+from backend.app.schemas.admin import WaitlistJoinRequest
+from backend.app.schemas.common import StatusResponse
 
 router = APIRouter(prefix="/waitlist", tags=["waitlist"])
 

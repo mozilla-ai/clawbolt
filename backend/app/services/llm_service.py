@@ -30,7 +30,8 @@ from any_llm.types.messages import (
 )
 
 from backend.app.config import settings
-from backend.app.schemas import ProviderInfo, ReasoningEffort
+from backend.app.schemas.common import ReasoningEffort
+from backend.app.schemas.llm import ProviderInfo
 
 logger = logging.getLogger(__name__)
 

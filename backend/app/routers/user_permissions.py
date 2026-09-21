@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.app.agent.approval import get_approval_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.models import User
-from backend.app.schemas import PermissionsResponse, PermissionsUpdate
+from backend.app.schemas.user import PermissionsResponse, PermissionsUpdate
 
 router = APIRouter()
 

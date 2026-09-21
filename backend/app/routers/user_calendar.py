@@ -20,7 +20,7 @@ from backend.app.integrations.calendar.factory import parse_disabled_tools
 from backend.app.integrations.calendar.service import GoogleCalendarService
 from backend.app.models import CalendarConfig, User
 from backend.app.query_helpers import fetch_all
-from backend.app.schemas import (
+from backend.app.schemas.tools import (
     CalendarConfigEntry,
     CalendarConfigResponse,
     CalendarConfigUpdate,

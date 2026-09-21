@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from sqlalchemy import text
 
 from backend.app.database import AsyncSessionLocal
-from backend.app.schemas import HealthResponse
+from backend.app.schemas.common import HealthResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

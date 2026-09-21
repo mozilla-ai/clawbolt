@@ -11,7 +11,7 @@ from backend.app.auth.jwt_auth import (
     decode_refresh_token,
 )
 from backend.app.middleware.rate_limit import check_rate_limit
-from backend.app.schemas import RefreshRequest, TokenResponse
+from backend.app.schemas.auth import RefreshRequest, TokenResponse
 
 logger = logging.getLogger(__name__)
 

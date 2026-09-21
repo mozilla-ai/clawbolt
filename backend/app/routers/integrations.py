@@ -29,7 +29,7 @@ from backend.app.integrations.servicetitan.auth import (
     ServiceTitanUnavailableError,
 )
 from backend.app.models import User
-from backend.app.schemas import (
+from backend.app.schemas.tools import (
     AppFolioConnectRequest,
     IntegrationConnectionResponse,
     ServiceTitanConnectRequest,

@@ -25,7 +25,7 @@ from backend.app.agent.tools.registry import (
     ensure_tool_modules_imported,
 )
 from backend.app.auth.dependencies import get_current_user
-from backend.app.schemas import (
+from backend.app.schemas.tools import (
     SubToolEntryResponse,
     ToolConfigEntryResponse,
     ToolConfigResponse,
