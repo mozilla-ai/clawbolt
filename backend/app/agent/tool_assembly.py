@@ -2,12 +2,11 @@
 
 Three callers need the same list: the runtime turn in
 :mod:`backend.app.agent.router`, the heartbeat's Phase 2 agent, and the
-system-prompt preview. They used to build it inline, three times, which
-meant the preview could drift from what the agent was actually handed.
+system-prompt preview. Assembling it here is what keeps the preview
+showing what the agent was actually handed.
 
-:func:`assemble_turn_tools` is that shared build.
-:func:`build_initial_turn_tools` wraps it for preview callers, which have
-no storage backend or outbound hook to supply.
+:func:`build_initial_turn_tools` wraps :func:`assemble_turn_tools` for
+preview callers, which have no storage backend or outbound hook to supply.
 """
 
 from __future__ import annotations
@@ -38,7 +37,14 @@ async def assemble_turn_tools(
     something to discover.
 
     Returns the tools and the specialist summaries, which callers log.
+
+    Nothing populates the registry at startup, and an unpopulated registry
+    yields an empty tool list rather than an error. Priming it here means a
+    caller cannot get silently toolless by forgetting to. It is guarded and
+    cached, so the repeat calls cost nothing.
     """
+    ensure_tool_modules_imported()
+
     tools = await default_registry.create_core_tools(
         tool_context,
         excluded_factories=disabled_factories or None,
@@ -89,11 +95,6 @@ async def build_initial_turn_tools(
     and usage hints (for system-prompt rendering or debugging) -- not
     their executors.
     """
-    # The registry is auto-discovery-driven; ensure all *_tools modules
-    # have run their _register() side effects before we ask it for the
-    # current set of factories. Idempotent / cached after the first call.
-    ensure_tool_modules_imported()
-
     tool_context = ToolContext(
         user=user,
         storage=None,

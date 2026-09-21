@@ -1,7 +1,7 @@
 """Database-backed replacements for file-based stores.
 
 Replaces HeartbeatStore, IdempotencyStore, LLMUsageStore, and
-ToolConfigStore from file_store.py. Uses the corresponding ORM models for
+ToolConfigStore. Uses the corresponding ORM models for
 persistence, while keeping Pydantic DTOs as the public API surface.
 
 Follows the same AsyncSessionLocal() / try-finally pattern used in session_db.py.

@@ -67,7 +67,6 @@ Key store modules:
 - `backend/app/agent/memory_db.py` -- `MemoryStore` (per-user via `get_memory_store(id)`)
 - `backend/app/agent/stores.py` -- `HeartbeatStore`, `IdempotencyStore`, `LLMUsageStore`, `ToolConfigStore`
 - `backend/app/agent/dto.py` -- Pydantic DTOs: `UserData`, `StoredMessage`, `SessionState`, etc.
-- `backend/app/agent/file_store.py` -- Compatibility shim (re-exports from above modules)
 - `backend/app/database.py` -- `Base`, `AsyncSessionLocal`, `db_session_async()`, `get_async_db()`, `get_async_engine()`
 - `backend/app/models/` -- SQLAlchemy ORM models, one module per product area. Importing the package is what registers every mapper on `Base.metadata`, so Alembic autogenerate and the test-suite TRUNCATE both depend on it.
 

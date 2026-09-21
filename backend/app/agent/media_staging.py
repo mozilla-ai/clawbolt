@@ -88,13 +88,6 @@ def _staging_root() -> Path:
     return root
 
 
-def _user_dir(user_id: str) -> Path:
-    """Return ``<staging_root>/<user_id>``, ensuring it exists."""
-    d = _staging_root() / user_id
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def _store_disk_path(user_id: str, handle: str) -> str:
     """Suffix stored in ``staged_media.disk_path``, relative to the staging root.
 
