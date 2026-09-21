@@ -18,12 +18,6 @@ import backend.app.database as _db_module
 from backend.app.agent.dto import HeartbeatLogEntry
 from backend.app.agent.heartbeat import (
     _HISTORY_LOOKBACK_DAYS,
-    COMPOSE_MESSAGE_TOOL,
-    HEARTBEAT_DECISION_TOOL,
-    ComposeMessageParams,
-    HeartbeatAction,
-    HeartbeatDecision,
-    HeartbeatDecisionParams,
     HeartbeatScheduler,
     _format_heartbeat_history,
     _heartbeat_usage_hooks,
@@ -33,9 +27,17 @@ from backend.app.agent.heartbeat import (
     evaluate_heartbeat_need,
     execute_heartbeat_tasks,
     get_daily_heartbeat_count,
-    parse_frequency_to_minutes,
     register_heartbeat_usage_hook,
     run_heartbeat_for_user,
+)
+from backend.app.agent.heartbeat_frequency import parse_frequency_to_minutes
+from backend.app.agent.heartbeat_types import (
+    COMPOSE_MESSAGE_TOOL,
+    HEARTBEAT_DECISION_TOOL,
+    ComposeMessageParams,
+    HeartbeatAction,
+    HeartbeatDecision,
+    HeartbeatDecisionParams,
 )
 from backend.app.agent.system_prompt import to_local_time
 from backend.app.database import db_session_async

@@ -223,7 +223,7 @@ async def test_heartbeat_resolve_skips_disabled(test_user: User) -> None:
         await db.refresh(user)
         db.expunge(user)
 
-    with patch("backend.app.agent.heartbeat.get_channel"):
+    with patch("backend.app.agent.heartbeat_routing.get_channel"):
         async with db_session_async() as db:
             result = await resolve_heartbeat_route_async(user, db)
 
@@ -250,7 +250,7 @@ async def test_heartbeat_resolve_is_pure_lookup(test_user: User) -> None:
         await db.refresh(user)
         db.expunge(user)
 
-    with patch("backend.app.agent.heartbeat.get_channel"):
+    with patch("backend.app.agent.heartbeat_routing.get_channel"):
         async with db_session_async() as db:
             result = await resolve_heartbeat_route_async(user, db)
 

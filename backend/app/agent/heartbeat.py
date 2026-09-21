@@ -18,20 +18,27 @@ import datetime
 import json
 import logging
 import random
-import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from any_llm import RateLimitError
 from any_llm.types.messages import MessageResponse
-from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import Select, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from pydantic import ValidationError
+from sqlalchemy import select
 
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.dto import HeartbeatLogEntry
+from backend.app.agent.heartbeat_frequency import parse_frequency_to_minutes
+from backend.app.agent.heartbeat_routing import (
+    resolve_heartbeat_route_async,
+)
+from backend.app.agent.heartbeat_types import (
+    HEARTBEAT_DECISION_TOOL,
+    ComposeMessageParams,
+    HeartbeatAction,
+    HeartbeatDecision,
+    HeartbeatDecisionParams,
+)
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.observer import (
     PURPOSE_HEARTBEAT_DECISION,
@@ -50,12 +57,11 @@ from backend.app.agent.system_prompt import (
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.bus import OutboundMessage, message_bus
-from backend.app.channels import get_channel
 from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.logging_utils import mask_pii
-from backend.app.models import ChannelRoute, User
+from backend.app.models import User
 from backend.app.services.llm_endpoints import resolve_target, role_selection
 from backend.app.services.llm_service import amessages_streamed, prepare_system_with_caching
 from backend.app.services.llm_usage import log_llm_usage
@@ -64,18 +70,6 @@ if TYPE_CHECKING:
     from backend.app.agent.core import AgentResponse
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Frequency parsing
-# ---------------------------------------------------------------------------
-
-_FREQ_RE = re.compile(r"^(\d+)\s*([mhd])$", re.IGNORECASE)
-
-_NAMED_FREQUENCIES: dict[str, int] = {
-    "daily": 1440,
-    "weekdays": 1440,
-    "weekly": 10080,
-}
 
 # Minimum tick resolution: the scheduler wakes up this often.
 _TICK_RESOLUTION_MINUTES = 1
@@ -91,99 +85,6 @@ _HISTORY_LOOKBACK_DAYS = 7
 # agent could start removing HEARTBEAT.md lines mid-conversation. Both
 # sides import this constant so the strings cannot drift.
 SCHEDULED_TASK_PREFIX = "Execute this scheduled task now"
-
-
-def parse_frequency_to_minutes(freq: str) -> int | None:
-    """Convert a frequency string like ``15m``, ``2h``, ``1d`` to minutes.
-
-    Named presets (``daily``, ``weekdays``, ``weekly``) are also supported.
-    Returns *None* if the string cannot be parsed.
-    """
-    freq = freq.strip().lower()
-    if freq in _NAMED_FREQUENCIES:
-        return _NAMED_FREQUENCIES[freq]
-    m = _FREQ_RE.match(freq)
-    if not m:
-        return None
-    value, unit = int(m.group(1)), m.group(2)
-    if unit == "m":
-        return max(value, 1)
-    if unit == "h":
-        return value * 60
-    if unit == "d":
-        return value * 1440
-    return None  # pragma: no cover
-
-
-# ---------------------------------------------------------------------------
-# Data structures -- Phase 1 (decision)
-# ---------------------------------------------------------------------------
-
-
-class HeartbeatDecisionParams(BaseModel):
-    """Parameters for the Phase 1 heartbeat_decision tool."""
-
-    action: Literal["skip", "run"]
-    tasks: str = Field(
-        default="",
-        description=(
-            "When action is 'run': a natural-language description of the tasks "
-            "the agent should execute. Be specific about what to check or do."
-        ),
-    )
-    reasoning: str = Field(description="Brief explanation of why this action was chosen")
-
-
-HEARTBEAT_DECISION_TOOL: dict[str, Any] = {
-    "name": ToolName.HEARTBEAT_DECISION,
-    "description": (
-        "Decide whether any heartbeat items or proactive tasks need attention right now. "
-        "Choose 'skip' if nothing needs doing, or 'run' with a task description "
-        "to hand off to the full agent for execution."
-    ),
-    "input_schema": HeartbeatDecisionParams.model_json_schema(),
-}
-
-
-@dataclass
-class HeartbeatDecision:
-    """Result of Phase 1: should the agent act?"""
-
-    action: str  # "skip" or "run"
-    tasks: str
-    reasoning: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-
-# Legacy data structure kept for backwards compatibility with existing code
-# that references HeartbeatAction (e.g. tests, return types).
-class ComposeMessageParams(BaseModel):
-    """Parameters for the heartbeat compose_message tool (legacy)."""
-
-    action: Literal["send_message", "no_action"]
-    message: str = Field(
-        default="", description="The message to send (required if action is send_message)"
-    )
-    reasoning: str = Field(description="Brief explanation of why this action was chosen")
-    priority: int = Field(ge=1, le=5, description="Priority level from 1 (lowest) to 5 (highest)")
-
-
-COMPOSE_MESSAGE_TOOL: dict[str, Any] = {
-    "name": ToolName.COMPOSE_MESSAGE,
-    "description": (
-        "Compose a proactive message to send to the user, or decide no message is needed."
-    ),
-    "input_schema": ComposeMessageParams.model_json_schema(),
-}
-
-
-@dataclass
-class HeartbeatAction:
-    action_type: str  # "send_message" or "no_action"
-    message: str
-    reasoning: str
-    priority: int
 
 
 async def _publish_heartbeat_typing(channel: str, chat_id: str, *, stop: bool) -> None:
@@ -1101,86 +1002,6 @@ async def run_heartbeat_for_user(
 
 # ---------------------------------------------------------------------------
 # Channel selection for proactive messages
-# ---------------------------------------------------------------------------
-
-# Channels that cannot deliver proactive (push) messages because the user
-# must be actively connected to receive them.
-_NON_PUSHABLE_CHANNELS: frozenset[str] = frozenset({"webchat"})
-
-
-def _heartbeat_route_select(user: User) -> Select[tuple[ChannelRoute]]:
-    """Pure builder shared by sync and async ``resolve_heartbeat_route`` peers."""
-    return select(ChannelRoute).where(
-        ChannelRoute.user_id == user.id,
-        ChannelRoute.enabled.is_(True),
-        ChannelRoute.channel.notin_(list(_NON_PUSHABLE_CHANNELS)),
-    )
-
-
-def _check_route_is_registered(user: User, route: ChannelRoute) -> tuple[str, ChannelRoute] | None:
-    """Verify the channel is registered in this process and return the result tuple.
-
-    Pure helper shared between the sync and async ``resolve_heartbeat_route``
-    peers so the post-query branching cannot drift.
-    """
-    try:
-        get_channel(route.channel)
-    except KeyError:
-        logger.debug(
-            "Heartbeat skipped for user %s: channel %s not registered",
-            user.id,
-            route.channel,
-        )
-        return None
-    return route.channel, route
-
-
-def resolve_heartbeat_route(
-    user: User,
-    db: Session,
-) -> tuple[str, ChannelRoute] | None:
-    """Pick the user's single active messaging channel for heartbeat delivery.
-
-    Returns ``(channel_name, route)`` on success, or ``None`` when no
-    pushable route can be found.
-
-    Pure lookup: never mutates the database. Under single-channel enforcement
-    each user has at most one enabled non-webchat route, and the write paths
-    that flip ``enabled`` are responsible for keeping ``User.preferred_channel``
-    in sync.
-    """
-    route = db.execute(_heartbeat_route_select(user)).scalar_one_or_none()
-
-    if route is None:
-        logger.debug(
-            "Heartbeat skipped for user %s: no pushable route configured",
-            user.id,
-        )
-        return None
-
-    return _check_route_is_registered(user, route)
-
-
-async def resolve_heartbeat_route_async(
-    user: User,
-    db: AsyncSession,
-) -> tuple[str, ChannelRoute] | None:
-    """Async peer of :func:`resolve_heartbeat_route`.
-
-    Same shape and semantics as the sync version; only the IO is async.
-    """
-    route = (await db.execute(_heartbeat_route_select(user))).scalar_one_or_none()
-
-    if route is None:
-        logger.debug(
-            "Heartbeat skipped for user %s: no pushable route configured",
-            user.id,
-        )
-        return None
-
-    return _check_route_is_registered(user, route)
-
-
 # ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
