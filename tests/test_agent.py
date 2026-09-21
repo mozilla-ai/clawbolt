@@ -13,11 +13,8 @@ from any_llm import (
 )
 from pydantic import BaseModel
 
-from backend.app.agent.core import (
-    MAX_TOOL_ROUNDS,
-    ClawboltAgent,
-    _is_context_overflow,
-)
+from backend.app.agent.core import MAX_TOOL_ROUNDS, ClawboltAgent
+from backend.app.agent.core_support import _is_context_overflow
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -882,7 +879,7 @@ async def test_agent_records_full_prompt_size_including_cached_tokens(
     a mostly-cached 180k-token context as 7k, so the token trigger never
     fires and compaction goes quiet for token-heavy, turn-light users.
     """
-    from backend.app.agent.core import _recall_input_tokens, reset_last_input_tokens
+    from backend.app.agent.core_support import _recall_input_tokens, reset_last_input_tokens
 
     reset_last_input_tokens()
     mock_amessages.return_value = make_text_response(
@@ -914,7 +911,7 @@ async def test_agent_token_trim_fires_on_cached_heavy_context(
     top of ``process_message`` must drop history and inject a summary.
     Recording only the uncached 7k would leave the history untrimmed.
     """
-    from backend.app.agent.core import reset_last_input_tokens
+    from backend.app.agent.core_support import reset_last_input_tokens
 
     reset_last_input_tokens()
     mock_amessages.return_value = make_text_response(
@@ -968,7 +965,7 @@ async def test_reactive_trim_drops_messages_on_cached_heavy_context(
     trimmer sees 7k < target, drops nothing, and the retry re-sends the
     same oversized prompt until retries exhaust and the turn fails.
     """
-    from backend.app.agent.core import reset_last_input_tokens
+    from backend.app.agent.core_support import reset_last_input_tokens
 
     reset_last_input_tokens()
     mock_amessages.side_effect = [
@@ -1487,7 +1484,7 @@ def test_input_token_cache_remember_recall_and_reset() -> None:
     proactive trim uses the real API-reported count instead of the chars/4
     heuristic (issue #1433), and is bounded plus resettable for tests.
     """
-    from backend.app.agent.core import (
+    from backend.app.agent.core_support import (
         _LAST_INPUT_TOKENS_MAX,
         _recall_input_tokens,
         _remember_input_tokens,

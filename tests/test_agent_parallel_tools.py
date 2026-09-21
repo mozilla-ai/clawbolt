@@ -21,8 +21,8 @@ import time
 from pydantic import BaseModel
 
 from backend.app.agent.context import StoredToolInteraction
-from backend.app.agent.core import (
-    ClawboltAgent,
+from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.core_support import (
     _bucket_by_concurrency_group,
     _resolve_concurrency_group,
 )

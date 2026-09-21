@@ -31,7 +31,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from backend.app.agent.core import _stringify_numbers_for_string_fields
+from backend.app.agent.core_support import _stringify_numbers_for_string_fields
 from backend.app.agent.tools.base import Tool, ToolTags
 from backend.app.services.llm_eval.types import (
     _BLOCKING_FINDINGS,
@@ -124,7 +124,7 @@ def _args_are_valid(tool: Tool, args: dict[str, Any]) -> tuple[bool, str]:
     """Whether *args* would survive the agent's own validation of *tool*.
 
     Applies the same numeric-to-string repair the agent applies before
-    giving up on a call (``core._stringify_numbers_for_string_fields``).
+    giving up on a call (``core_support._stringify_numbers_for_string_fields``).
     Skipping it would report ``invalid_args`` for calls production accepts,
     which is the difference between "this model is unsafe" and "this model
     writes house numbers as JSON numbers, like every model does".
