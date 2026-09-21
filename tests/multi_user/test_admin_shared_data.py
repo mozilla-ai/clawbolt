@@ -1910,7 +1910,7 @@ class TestSharedDataApprovalEvents:
     ) -> None:
         consenter = await _consenting_user(async_db)
         with patch(
-            "backend.app.routers.admin_shared_data.get_approval_event_store"
+            "backend.app.routers.admin_shared_data.approvals.get_approval_event_store"
         ) as mock_store_factory:
             mock_store_factory.return_value.list_for_user = AsyncMock(return_value=[])
             resp = await async_client.get(
@@ -1943,7 +1943,7 @@ class TestSharedDataApprovalEvents:
             ),
         ]
         with patch(
-            "backend.app.routers.admin_shared_data.get_approval_event_store"
+            "backend.app.routers.admin_shared_data.approvals.get_approval_event_store"
         ) as mock_store_factory:
             mock_store_factory.return_value.list_for_user = AsyncMock(return_value=records)
             resp = await async_client.get(
@@ -1976,7 +1976,7 @@ class TestSharedDataApprovalEvents:
             )
         ]
         with patch(
-            "backend.app.routers.admin_shared_data.get_approval_event_store"
+            "backend.app.routers.admin_shared_data.approvals.get_approval_event_store"
         ) as mock_store_factory:
             mock_store_factory.return_value.list_for_user = AsyncMock(return_value=records)
             resp = await async_client.get(
@@ -1996,7 +1996,7 @@ class TestSharedDataApprovalEvents:
     ) -> None:
         consenter = await _consenting_user(async_db)
         with patch(
-            "backend.app.routers.admin_shared_data.get_approval_event_store"
+            "backend.app.routers.admin_shared_data.approvals.get_approval_event_store"
         ) as mock_store_factory:
             mock_store_factory.return_value.list_for_user = AsyncMock(return_value=[])
             resp = await async_client.get(
