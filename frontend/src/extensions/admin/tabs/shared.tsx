@@ -788,7 +788,7 @@ function buildHaystack(item: ActivityItem): string {
     case 'agent-reply':
       parts.push(item.raw.message.body, item.raw.message.thinking);
       for (const c of item.raw.turn.tool_calls ?? []) {
-        parts.push(c.name, JSON.stringify(c.args), c.result);
+        parts.push(c.name, JSON.stringify(c.args ?? {}), c.result);
         if (c.receipt) {
           parts.push(c.receipt.action, c.receipt.target, c.receipt.url ?? '');
         }
@@ -984,11 +984,12 @@ export function SharedActivityView({
       if (turn.agent_reply) {
         const ts = turn.agent_reply.timestamp ?? turn.finished_at;
         if (within(ts)) {
-          const errorCount = (turn.tool_calls ?? []).filter(c => c.is_error).length;
+          const toolCalls = turn.tool_calls ?? [];
+          const errorCount = toolCalls.filter(c => c.is_error).length;
           const summary =
             turn.agent_reply.body ||
-            ((turn.tool_calls ?? []).length > 0
-              ? `${(turn.tool_calls ?? []).length} tool call${(turn.tool_calls ?? []).length === 1 ? '' : 's'}`
+            (toolCalls.length > 0
+              ? `${toolCalls.length} tool call${toolCalls.length === 1 ? '' : 's'}`
               : '(empty)');
           out.push({
             key: `ta:${turn.agent_reply.seq}`,
@@ -1327,7 +1328,8 @@ function ActivityRowDetail({ item }: { item: ActivityItem }) {
   if (item.raw.kind === 'agent-reply') {
     const m = item.raw.message;
     const turn = item.raw.turn;
-    const errorCount = (turn.tool_calls ?? []).filter(c => c.is_error).length;
+    const toolCalls = turn.tool_calls ?? [];
+    const errorCount = toolCalls.filter(c => c.is_error).length;
     return (
       <div className="space-y-2">
         <div className="text-sm whitespace-pre-wrap break-words">
@@ -1340,10 +1342,10 @@ function ActivityRowDetail({ item }: { item: ActivityItem }) {
             onToggle={() => toggleReasoning(item.key)}
           />
         )}
-        {(turn.tool_calls ?? []).length > 0 && (
+        {toolCalls.length > 0 && (
           <div className="text-xs">
             <div className="text-muted-foreground mb-1">
-              {(turn.tool_calls ?? []).length} tool call{(turn.tool_calls ?? []).length === 1 ? '' : 's'}
+              {toolCalls.length} tool call{toolCalls.length === 1 ? '' : 's'}
               {errorCount > 0 && (
                 <span className="text-danger font-medium">
                   {' '}· {errorCount} error{errorCount === 1 ? '' : 's'}
@@ -1351,7 +1353,7 @@ function ActivityRowDetail({ item }: { item: ActivityItem }) {
               )}
             </div>
             <ul className="border-l-2 border-border pl-3 space-y-1">
-              {(turn.tool_calls ?? []).map((c, i) => {
+              {toolCalls.map((c, i) => {
                 const key = toolCallKey(item.key, i);
                 return (
                   <ToolCallRow

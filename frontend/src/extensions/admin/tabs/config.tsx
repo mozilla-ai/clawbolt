@@ -23,6 +23,24 @@ import {
   ReasoningEffortSelect,
 } from '../llm-picker';
 
+
+// Typed against the generated schema rather than loose strings: if a value is
+// ever removed backend-side, these stop compiling instead of silently offering
+// an option every PUT would 422 on.
+const CACHE_CONTROL_MODES: readonly LLMEndpointUpsert['cache_control'][] = [
+  'auto',
+  'always',
+  'never',
+] as const;
+const REASONING_MODES: readonly LLMEndpointUpsert['reasoning'][] = [
+  'auto',
+  'thinking',
+  'effort',
+  'none',
+] as const;
+const PRICING_MODES: readonly LLMEndpointUpsert['pricing'][] = ['auto', 'unpriced'] as const;
+
+
 const inputClass =
   'w-full px-3 py-2 text-sm bg-card border border-border rounded-[--radius-md] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30';
 
@@ -358,10 +376,10 @@ function LLMEndpointsSection({ onChanged }: { onChanged: () => void }) {
                   onChange={e => set({ [field]: e.target.value } as Partial<LLMEndpointUpsert>)}
                 >
                   {(field === 'cache_control'
-                    ? (['auto', 'always', 'never'] as const)
+                    ? CACHE_CONTROL_MODES
                     : field === 'reasoning'
-                      ? (['auto', 'thinking', 'effort', 'none'] as const)
-                      : (['auto', 'unpriced'] as const)
+                      ? REASONING_MODES
+                      : PRICING_MODES
                   ).map(option => (
                     <option key={option} value={option}>
                       {option}

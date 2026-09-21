@@ -1,7 +1,13 @@
 import type { components } from '@/generated/api';
 import client from '@/lib/api-client';
 
-// --- Types (match backend schemas exactly) ---
+// --- Types ---
+//
+// Anything whose name matches a schema in the generated spec is aliased to it,
+// so those cannot drift. The rest are hand-written because the backend name
+// differs (SharedDataMessage vs SharedDataMessageItem, EvalRun vs
+// AdminLLMEvalRunItem, ...); those are only as accurate as the last person to
+// touch them, so prefer aliasing a renamed schema over editing one by hand.
 
 export interface AdminUser {
   id: string;
@@ -231,12 +237,7 @@ export async function getUserUsage(userId: string): Promise<AdminUserUsage> {
 // Admin-triggered compaction of a user's currently-visible context.
 // ``keepRecent`` preserves the tail; ``hint`` is prepended to the
 // compaction LLM's <conversation> block as ``[admin note: ...]``.
-export interface CompactUserContextResult {
-  compacted_message_count: number;
-  new_watermark: number | null;
-  memory_updated: boolean;
-  event_id: number | null;
-}
+export type CompactUserContextResult = components['schemas']['CompactUserContextResponse'];
 
 export async function compactUserContext(
   id: string,
@@ -553,7 +554,8 @@ export async function updateUserPlan(
 
 // --- LLM provider/model enumeration (uses OSS endpoints; available to admins) ---
 
-export type ProviderInfo = components['schemas']['ProviderInfo'];
+export type { ProviderInfo } from '@/types';
+import type { ProviderInfo } from '@/types';
 
 /**
  * Module-scoped cache for ``listProviders`` and ``listProviderModels``.
@@ -1283,28 +1285,7 @@ export type EvalRecommendation =
   | 'do_not_switch'
   | 'inconclusive';
 
-export interface EvalModelTotals {
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
-  cache_read_ratio: number;
-  /**
-   * Cached share of prompt tokens, read plus written. Prefer this over
-   * cache_read_ratio for any comparison: the read ratio depends on whether an
-   * earlier run left warm cache entries behind, so it swings between runs of
-   * the same models.
-   */
-  cache_participation_ratio: number;
-  total_cost_usd: string;
-  // False when the pricing library has no entry for this model. The cost is
-  // then zero and must be rendered as "unknown", never as "free".
-  pricing_available: boolean;
-  latency_p50_ms: number;
-  latency_p95_ms: number;
-}
+export type EvalModelTotals = components['schemas']['AdminLLMEvalModelTotals'];
 
 export interface EvalSummary {
   turns_total: number;
