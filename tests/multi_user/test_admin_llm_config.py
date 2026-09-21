@@ -641,7 +641,7 @@ class TestListLLMProviderModels:
         test_subscription: Subscription,
     ) -> None:
         with patch(
-            "backend.app.routers.admin.get_models",
+            "backend.app.routers.admin.llm_config.get_models",
             return_value=[
                 "claude-opus-4-5",
                 "claude-haiku-4-5",
@@ -671,7 +671,7 @@ class TestListLLMProviderModels:
         fallback rather than seeing a generic 5xx and hiding the field.
         """
         with patch(
-            "backend.app.routers.admin.get_models",
+            "backend.app.routers.admin.llm_config.get_models",
             side_effect=NotImplementedError("Provider doesn't support listing models."),
         ):
             resp = client.get("/api/admin/config/llm/providers/sometinyprovider/models")
@@ -690,7 +690,7 @@ class TestListLLMProviderModels:
         ``supports_listing`` stays True so the UI hints "this provider
         could list, but needs a key configured first"."""
         with patch(
-            "backend.app.routers.admin.get_models",
+            "backend.app.routers.admin.llm_config.get_models",
             side_effect=MissingApiKeyError("openai", "OPENAI_API_KEY"),
         ):
             resp = client.get("/api/admin/config/llm/providers/openai/models")
@@ -708,7 +708,7 @@ class TestListLLMProviderModels:
         """Network errors etc. produce a structured error response,
         not a 502, so the UI can render an inline "Retry" button."""
         with patch(
-            "backend.app.routers.admin.get_models",
+            "backend.app.routers.admin.llm_config.get_models",
             side_effect=RuntimeError("connection refused"),
         ):
             resp = client.get("/api/admin/config/llm/providers/anthropic/models")
@@ -750,7 +750,7 @@ class TestListLLMProviderModelsApiBase:
         settings.llm_api_base = "https://gateway.example.com"
         try:
             with patch(
-                "backend.app.routers.admin.get_models",
+                "backend.app.routers.admin.llm_config.get_models",
                 return_value=["alias-a:model-1"],
             ) as mock_get_models:
                 resp = client.get("/api/admin/config/llm/providers/anthropic/models")
@@ -772,7 +772,7 @@ class TestListLLMProviderModelsApiBase:
         settings.llm_api_base = None
         try:
             with patch(
-                "backend.app.routers.admin.get_models",
+                "backend.app.routers.admin.llm_config.get_models",
                 return_value=[],
             ) as mock_get_models:
                 resp = client.get("/api/admin/config/llm/providers/anthropic/models")
@@ -799,7 +799,7 @@ class TestListLLMProviderModelsApiBase:
         settings.llm_api_base = "https://gateway.example.com"
         try:
             with patch(
-                "backend.app.routers.admin.get_models",
+                "backend.app.routers.admin.llm_config.get_models",
                 return_value=[],
             ) as mock_get_models:
                 resp = client.get(
@@ -825,7 +825,7 @@ class TestListLLMProviderModelsApiBase:
         settings.llm_api_base = "https://gateway.example.com"
         try:
             with patch(
-                "backend.app.routers.admin.get_models",
+                "backend.app.routers.admin.llm_config.get_models",
                 return_value=[],
             ):
                 resp = client.get("/api/admin/config/llm/providers/anthropic/models")

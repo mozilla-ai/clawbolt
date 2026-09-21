@@ -182,7 +182,7 @@ class TestAdminTelegramWebhook:
         test_subscription: Subscription,
     ) -> None:
         with patch(
-            "backend.app.routers.admin.register_webhook",
+            "backend.app.routers.admin.channels.register_webhook",
             new_callable=AsyncMock,
             return_value=(True, "https://app.clawbolt.ai/api/webhooks/telegram"),
         ):
@@ -198,7 +198,7 @@ class TestAdminTelegramWebhook:
         test_subscription: Subscription,
     ) -> None:
         with patch(
-            "backend.app.routers.admin.register_webhook",
+            "backend.app.routers.admin.channels.register_webhook",
             new_callable=AsyncMock,
             return_value=(True, "https://custom.example.com/hook"),
         ):
@@ -215,7 +215,7 @@ class TestAdminTelegramWebhook:
         test_subscription: Subscription,
     ) -> None:
         with patch(
-            "backend.app.routers.admin.register_webhook",
+            "backend.app.routers.admin.channels.register_webhook",
             new_callable=AsyncMock,
             return_value=(False, "https://app.clawbolt.ai/api/webhooks/telegram"),
         ):
@@ -228,7 +228,7 @@ class TestAdminTelegramWebhook:
         test_subscription: Subscription,
     ) -> None:
         with patch(
-            "backend.app.routers.admin.unregister_webhook",
+            "backend.app.routers.admin.channels.unregister_webhook",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -244,7 +244,7 @@ class TestAdminTelegramWebhook:
         test_subscription: Subscription,
     ) -> None:
         with patch(
-            "backend.app.routers.admin.unregister_webhook",
+            "backend.app.routers.admin.channels.unregister_webhook",
             new_callable=AsyncMock,
             return_value=False,
         ):

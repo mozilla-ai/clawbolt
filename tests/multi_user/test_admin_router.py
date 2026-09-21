@@ -178,16 +178,21 @@ async def admin_async_client(
     settings_store_mock.delete = AsyncMock()
     with (
         patch("backend.app.main.get_settings_store", return_value=settings_store_mock),
-        # The admin router imports ``get_settings_store`` directly from
-        # ``backend.app.config_store``; patching just the lifespan-side
+        # Each admin router module imports ``get_settings_store`` directly
+        # from ``backend.app.config_store``; patching just the lifespan-side
         # binding leaves the route writing through the real
         # ``DbSettingsStore`` whose INSERTs FK on ``users.id``. The admin
         # user lives in the per-test ``async_db`` transaction and is
         # invisible to a fresh DB session, which surfaces as an FK
         # violation for any test that PUTs ``/channels/config`` or
-        # ``/llm/config``. Mock the route-side binding too.
+        # ``/config/llm``. Both route modules bind the name, so both need
+        # mocking: one patch covers only the module it names.
         patch(
-            "backend.app.routers.admin.get_settings_store",
+            "backend.app.routers.admin.channels.get_settings_store",
+            return_value=settings_store_mock,
+        ),
+        patch(
+            "backend.app.routers.admin.llm_config.get_settings_store",
             return_value=settings_store_mock,
         ),
         patch("backend.app.main.import_legacy_config_json", new_callable=AsyncMock),
@@ -711,7 +716,7 @@ class TestCompactUserContext:
             event_id=42,
         )
         with patch(
-            "backend.app.routers.admin.admin_compact_visible_messages",
+            "backend.app.routers.admin.context.admin_compact_visible_messages",
             new=AsyncMock(return_value=oss_result),
         ) as mock_compact:
             resp = await admin_async_client.post(
@@ -754,7 +759,7 @@ class TestCompactUserContext:
             previous_event_id=42,
         )
         with patch(
-            "backend.app.routers.admin.admin_compact_visible_messages",
+            "backend.app.routers.admin.context.admin_compact_visible_messages",
             new=AsyncMock(return_value=oss_result),
         ):
             resp = await admin_async_client.post(
@@ -784,7 +789,7 @@ class TestCompactUserContext:
             event_id=99,
         )
         with patch(
-            "backend.app.routers.admin.admin_compact_visible_messages",
+            "backend.app.routers.admin.context.admin_compact_visible_messages",
             new=AsyncMock(return_value=oss_result),
         ) as mock_compact:
             resp = await admin_async_client.post(
@@ -808,7 +813,7 @@ class TestCompactUserContext:
         ``keep_recent`` at the boundary, before the OSS helper runs.
         """
         with patch(
-            "backend.app.routers.admin.admin_compact_visible_messages",
+            "backend.app.routers.admin.context.admin_compact_visible_messages",
             new=AsyncMock(),
         ) as mock_compact:
             resp = await admin_async_client.post(
@@ -859,7 +864,7 @@ class TestHygieneCompactMemory:
         """
         other_id = await _create_user_async(async_db, user_id="google_hygiene1", is_active=True)
         with patch(
-            "backend.app.routers.admin.hygiene_compact_memory",
+            "backend.app.routers.admin.context.hygiene_compact_memory",
             new=AsyncMock(
                 return_value=(
                     "## Pricing\n- Standard day rate: $600\n",
@@ -890,7 +895,7 @@ class TestHygieneCompactMemory:
         """
         other_id = await _create_user_async(async_db, user_id="google_hygiene2", is_active=True)
         with patch(
-            "backend.app.routers.admin.hygiene_compact_memory",
+            "backend.app.routers.admin.context.hygiene_compact_memory",
             new=AsyncMock(return_value=("", False)),
         ) as mock_hygiene:
             resp = await admin_async_client.post(
@@ -1379,7 +1384,7 @@ class TestUserDetail:
 
     def test_mask_channel_identifier_edge_cases(self) -> None:
         """Direct unit tests for ``_mask_channel_identifier``."""
-        from backend.app.routers.admin import _mask_channel_identifier
+        from backend.app.routers.admin.users import _mask_channel_identifier
 
         masked = _mask_channel_identifier("+1234567")
         assert masked != "+1234567"
