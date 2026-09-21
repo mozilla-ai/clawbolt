@@ -178,23 +178,6 @@ async def admin_async_client(
     settings_store_mock.delete = AsyncMock()
     with (
         patch("backend.app.main.get_settings_store", return_value=settings_store_mock),
-        # Each admin router module imports ``get_settings_store`` directly
-        # from ``backend.app.config_store``; patching just the lifespan-side
-        # binding leaves the route writing through the real
-        # ``DbSettingsStore`` whose INSERTs FK on ``users.id``. The admin
-        # user lives in the per-test ``async_db`` transaction and is
-        # invisible to a fresh DB session, which surfaces as an FK
-        # violation for any test that PUTs ``/channels/config`` or
-        # ``/config/llm``. Both route modules bind the name, so both need
-        # mocking: one patch covers only the module it names.
-        patch(
-            "backend.app.routers.admin.channels.get_settings_store",
-            return_value=settings_store_mock,
-        ),
-        patch(
-            "backend.app.routers.admin.llm_config.get_settings_store",
-            return_value=settings_store_mock,
-        ),
         patch("backend.app.main.import_legacy_config_json", new_callable=AsyncMock),
         patch("backend.app.main.apply_to_settings", return_value={}),
         patch("backend.app.main.load_dotenv"),

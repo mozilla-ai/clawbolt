@@ -69,7 +69,7 @@ Key store modules:
 - `backend/app/agent/dto.py` -- Pydantic DTOs: `UserData`, `StoredMessage`, `SessionState`, etc.
 - `backend/app/agent/file_store.py` -- Compatibility shim (re-exports from above modules)
 - `backend/app/database.py` -- `Base`, `AsyncSessionLocal`, `db_session_async()`, `get_async_db()`, `get_async_engine()`
-- `backend/app/models.py` -- All SQLAlchemy ORM model classes
+- `backend/app/models/` -- SQLAlchemy ORM models, one module per product area. Importing the package is what registers every mapper on `Base.metadata`, so Alembic autogenerate and the test-suite TRUNCATE both depend on it.
 
 File storage is exposed through the Google Drive integration: each user grants the `drive.file` scope and uploads land in their own Drive under a top-level `Clawbolt` folder. The operator wires the OAuth client via `GOOGLE_DRIVE_CLIENT_ID` / `GOOGLE_DRIVE_CLIENT_SECRET`; without those, the file tools never load.
 
@@ -177,7 +177,7 @@ When you need realistic-looking data, use clearly synthetic values: `jane.doe@ex
 
 ## Architecture
 
-- **PostgreSQL storage**: all structured data in PostgreSQL via SQLAlchemy 2.0 ORM. See `backend/app/database.py` and `backend/app/models.py`. Store modules in `backend/app/agent/` provide CRUD APIs.
+- **PostgreSQL storage**: all structured data in PostgreSQL via SQLAlchemy 2.0 ORM. See `backend/app/database.py` and `backend/app/models/`. Store modules in `backend/app/agent/` provide CRUD APIs.
 - **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). `AUTH_MODE` selects the model: `single_user` (default) resolves every request to the one user in the database; `multi_user` delegates to a resolver registered via `set_current_user_resolver()` and never falls back to the single-user path, since that would serve one tenant's data to an unauthenticated caller.
 - **`user_id` scoping** on every data class and endpoint from day one
 - **Message bus**: async inbound/outbound queues in `bus.py`. Channels publish inbound messages; the agent publishes outbound replies. The ``ChannelManager`` dispatches outbound messages to the correct channel.
@@ -194,7 +194,7 @@ What the mode switches on, and where it lives:
 | Surface | Modules |
 |---|---|
 | Google OAuth sign-in, JWT sessions, admin API keys | `auth/google_oauth` router, `auth/oauth_flow.py`, `auth/jwt_auth.py`, `auth/session_auth.py`, `services/admin_api_keys.py` |
-| Admin console, audit log, consent-gated shared data | `routers/admin.py`, `routers/admin_shared_data.py`, `routers/admin_reported_conversations.py`, `services/admin_audit.py`, `services/pii_redaction.py` |
+| Admin console, audit log, consent-gated shared data | `routers/admin/`, `routers/admin_shared_data/`, `routers/admin_reported_conversations.py`, `services/admin_audit.py`, `services/pii_redaction.py` |
 | Account page, data export, deletion | `routers/account.py`, `services/data_export.py`, `services/user_deletion.py`, `services/inactive_cleanup.py` |
 | Per-tenant quotas and plans | `billing/` |
 | Operator monitoring and email | `routers/monitoring.py`, `services/health_monitor.py`, `services/admin_alerts.py`, `services/email_service.py` |
@@ -339,7 +339,7 @@ cd frontend && npm run test                        # vitest suite passes
 
 ### Frontend generated types
 
-When backend schemas change (`backend/app/schemas.py`, route signatures, response models, or endpoint docstrings), you **must** regenerate the frontend OpenAPI types. Never hand-edit `frontend/src/generated/api.d.ts`. CI will fail if the committed file doesn't match what the generator produces.
+When backend schemas change (`backend/app/schemas/`, route signatures, response models, or endpoint docstrings), you **must** regenerate the frontend OpenAPI types. Never hand-edit `frontend/src/generated/api.d.ts`. CI will fail if the committed file doesn't match what the generator produces.
 
 The spec is exported in `multi_user` mode, so it documents every route the product can serve. The frontend ships as one bundle for both modes and calls those routes through a typed client; a spec narrowed to `single_user` would leave the sign-in, account, and admin calls untyped.
 

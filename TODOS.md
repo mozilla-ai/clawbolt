@@ -16,5 +16,5 @@ Plan:
    the current user's preference is off. Grouped receipts likewise skip the URL line.
 5. Tests: preference toggling, render output shape, LLM tool.
 
-Blast radius: `backend/app/models.py`, `alembic/`, `backend/app/agent/tool_summary.py`,
+Blast radius: `backend/app/models/`, `alembic/`, `backend/app/agent/tool_summary.py`,
 new preferences tool, new tests. Estimate: one day CC.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class HeartbeatLogItemResponse(BaseModel):
@@ -24,20 +24,6 @@ class HeartbeatLogListResponse(BaseModel):
 class DeleteHeartbeatLogsResponse(BaseModel):
     status: str
     deleted: int
-
-
-class DeleteMessagesResponse(BaseModel):
-    status: str
-    messages_deleted: int
-
-
-class BatchDeleteRequest(BaseModel):
-    seqs: list[int] = Field(..., min_length=1, max_length=1000)
-
-
-class DeleteMessageResponse(BaseModel):
-    status: str
-    seq: int
 
 
 class AdminHeartbeatLogItem(BaseModel):

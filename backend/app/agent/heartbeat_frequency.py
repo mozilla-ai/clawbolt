@@ -17,18 +17,6 @@ _NAMED_FREQUENCIES: dict[str, int] = {
     "weekly": 10080,
 }
 
-# How far back to look when building heartbeat history context for the LLM.
-_HISTORY_LOOKBACK_DAYS = 7
-
-# Literal prefix that identifies the heartbeat-driven (scheduled) message
-# path to the agent. Phase 2's ``task_context`` starts with this string.
-# ``backend/app/agent/tools/heartbeat_tools.py`` matches on the same
-# constant in ``update_heartbeat``'s ``usage_hint`` to scope proactive
-# pruning to the heartbeat path; without that gate, the user-driven
-# agent could start removing HEARTBEAT.md lines mid-conversation. Both
-# sides import this constant so the strings cannot drift.
-SCHEDULED_TASK_PREFIX = "Execute this scheduled task now"
-
 
 def parse_frequency_to_minutes(freq: str) -> int | None:
     """Convert a frequency string like ``15m``, ``2h``, ``1d`` to minutes.
